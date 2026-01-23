@@ -1,0 +1,538 @@
+//
+//  RootTabView.swift
+//  Trace
+//
+//  Created by Justin on 2026/01/10.
+//
+
+import os
+import SwiftUI
+import TraceCore
+import TraceFeatures
+import TraceUI
+import UniformTypeIdentifiers
+
+struct RootTabView: View {
+    @ObservedObject var viewModel: CaptureViewModel
+    @State private var selectedTab: Tab = .network
+    @State private var showingOnboarding = false
+    @ObservedObject private var vpnManager = VPNManager.shared
+
+    enum Tab {
+        case network
+        case tools
+        case settings
+    }
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            // Network Tab - Shows all network activity (HTTP, WebSocket, SSE) with filtering
+            NetworkView(viewModel: viewModel)
+                .tabItem {
+                    Label("Network", systemImage: "network")
+                }
+                .tag(Tab.network)
+                .accessibilityLabel("Network tab")
+                .accessibilityHint("View captured network requests and activity")
+
+            // Tools Tab
+            ToolsTabView()
+                .tabItem {
+                    Label("Tools", systemImage: "wrench.and.screwdriver")
+                }
+                .tag(Tab.tools)
+                .accessibilityLabel("Tools tab")
+                .accessibilityHint("Access traffic modification and utility tools")
+
+            // Settings Tab
+            SettingsTabView(viewModel: viewModel, showingOnboarding: $showingOnboarding)
+                .tabItem {
+                    Label("Settings", systemImage: "gear")
+                }
+                .tag(Tab.settings)
+                .accessibilityLabel("Settings tab")
+                .accessibilityHint("Configure app settings and preferences")
+        }
+        .onAppear {
+            checkOnboarding()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .viewRequest)) { notification in
+            guard let requestIdString = notification.userInfo?["requestId"] as? String,
+                  let requestId = UUID(uuidString: requestIdString) else {
+                return
+            }
+            selectedTab = .network
+            viewModel.selectedRequestId = requestId
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openTab)) { notification in
+            guard let tabValue = notification.userInfo?["tab"] as? String else { return }
+            switch tabValue {
+            case "network":
+                selectedTab = .network
+            case "tools":
+                selectedTab = .tools
+            case "settings":
+                selectedTab = .settings
+            default:
+                break
+            }
+        }
+        .onChange(of: viewModel.selectedSession) { newValue in
+            if newValue != nil {
+                selectedTab = .network
+            }
+        }
+        .onChange(of: viewModel.selectedRequestId) { newValue in
+            if newValue != nil {
+                selectedTab = .network
+            }
+        }
+        .sheet(isPresented: $showingOnboarding) {
+            OnboardingView {
+                showingOnboarding = false
+                // Initialize VPN after onboarding is complete
+                // This loads any existing configuration without triggering permission popup
+                vpnManager.initializeIfNeeded()
+            }
+            .interactiveDismissDisabled()
+        }
+    }
+
+    private func checkOnboarding() {
+        let hasCompleted = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+        if !hasCompleted {
+            showingOnboarding = true
+        } else {
+            // Onboarding already complete, initialize VPN
+            vpnManager.initializeIfNeeded()
+        }
+    }
+}
+
+// MARK: - Tools Tab View
+
+struct ToolsTabView: View {
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Traffic Modification") {
+                    NavigationLink {
+                        RewriteRulesView()
+                    } label: {
+                        Label("Rewrite Rules", systemImage: "doc.text.fill")
+                    }
+
+                    NavigationLink {
+                        RequestMapView()
+                    } label: {
+                        Label("Request Maps", systemImage: "map.fill")
+                    }
+
+                    NavigationLink {
+                        ScriptListView()
+                    } label: {
+                        Label("Scripts", systemImage: "chevron.left.forwardslash.chevron.right")
+                    }
+
+                    NavigationLink {
+                        HostsListView()
+                    } label: {
+                        Label("Hosts", systemImage: "network")
+                    }
+
+                    NavigationLink {
+                        BreakpointConfigView()
+                    } label: {
+                        Label("Breakpoints", systemImage: "pause.circle.fill")
+                    }
+                }
+
+                Section("Utilities") {
+                    NavigationLink {
+                        Base64ToolView()
+                    } label: {
+                        Label("Base64 Encoder/Decoder", systemImage: "arrow.left.arrow.right.circle")
+                    }
+
+                    NavigationLink {
+                        TimestampToolView()
+                    } label: {
+                        Label("Timestamp Converter", systemImage: "clock")
+                    }
+
+                    NavigationLink {
+                        HashToolView()
+                    } label: {
+                        Label("Hash Generator", systemImage: "number")
+                    }
+
+                    NavigationLink {
+                        URLEncoderView()
+                    } label: {
+                        Label("URL Encoder/Decoder", systemImage: "link")
+                    }
+
+                    NavigationLink {
+                        JSONFormatterView()
+                    } label: {
+                        Label("JSON Formatter", systemImage: "curlybraces")
+                    }
+                }
+            }
+            .navigationTitle("Tools")
+            .listStyle(.insetGrouped)
+        }
+    }
+}
+
+// MARK: - Settings Tab View
+
+struct SettingsTabView: View {
+    @ObservedObject var viewModel: CaptureViewModel
+    @Binding var showingOnboarding: Bool
+    @State private var showingClearAlert = false
+    @State private var showingCertificateGuide = false
+    @State private var showingHARImport = false
+    @State private var harShareItem: ShareURLItem?
+    @State private var toastMessage: String?
+    @ObservedObject private var vpnManager = VPNManager.shared
+
+    private struct ShareURLItem: Identifiable {
+        let id = UUID()
+        let url: URL
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                // VPN Status Section
+                Section {
+                    HStack {
+                        VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
+                            Text("VPN Status")
+                                .font(.headline)
+                            Text(vpnManager.statusText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Circle()
+                            .fill(statusColor)
+                            .frame(width: 12, height: 12)
+                    }
+
+                    if vpnManager.isConnected {
+                        Button(role: .destructive) {
+                            vpnManager.stop()
+                        } label: {
+                            Label("Stop Capture", systemImage: "stop.circle.fill")
+                        }
+                    } else {
+                        Button {
+                            Task {
+                                do {
+                                    try await vpnManager.start()
+                                } catch {
+                                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+                                        if let vpnError = error as? VPNError, vpnError == .notConfigured {
+                                            toastMessage = "VPN configuration not installed. Open Settings → Show Onboarding to add it."
+                                        } else {
+                                            toastMessage = "VPN error: \(error.localizedDescription)"
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            Label("Start Capture", systemImage: "play.circle.fill")
+                        }
+                    }
+                } header: {
+                    Text("Capture")
+                } footer: {
+                    Text("Captures HTTP/HTTPS via VPN System Proxy (apps must honor proxy settings)")
+                }
+
+                // Configuration Section
+                Section("Configuration") {
+                    NavigationLink {
+                        CertificateGuideView()
+                    } label: {
+                        Label("HTTPS Certificate", systemImage: "checkmark.shield.fill")
+                    }
+
+                    NavigationLink {
+                        NotificationSettingsView()
+                    } label: {
+                        Label("Notifications", systemImage: "bell.fill")
+                    }
+
+                    NavigationLink {
+                        CaptureSettingsView(vpnManager: vpnManager)
+                    } label: {
+                        Label("Capture Mode", systemImage: "arrow.triangle.2.circlepath")
+                    }
+
+                    NavigationLink {
+                        NetworkConditionProfilesView(viewModel: viewModel)
+                    } label: {
+                        HStack {
+                            Label("Network Throttling", systemImage: "gauge.with.dots.needle.67percent")
+                            Spacer()
+                            if viewModel.throttlingEnabled, let condition = viewModel.selectedNetworkCondition {
+                                Text(condition.displayName)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Off")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    NavigationLink {
+                        ConnectionsView()
+                    } label: {
+                        Label("Connections", systemImage: "arrow.left.arrow.right")
+                    }
+
+                    NavigationLink {
+                        UDPFlowsView()
+                    } label: {
+                        Label("UDP Flows", systemImage: "arrow.up.arrow.down.circle")
+                    }
+                }
+
+                // Data Management Section
+                Section("Data") {
+                    Button {
+                        exportToHAR()
+                    } label: {
+                        Label("Export HAR", systemImage: "square.and.arrow.up.fill")
+                    }
+                    .disabled(viewModel.requests.isEmpty)
+
+                    Button {
+                        showingHARImport = true
+                    } label: {
+                        Label("Import HAR", systemImage: "square.and.arrow.down.fill")
+                    }
+
+                    NavigationLink {
+                        PCAPExportView()
+                    } label: {
+                        Label("Packet Captures", systemImage: "network.badge.shield.half.filled")
+                    }
+
+                    NavigationLink {
+                        StorageSettingsView()
+                    } label: {
+                        Label("Storage & Cleanup", systemImage: "externaldrive.fill")
+                    }
+
+                    HStack {
+                        Label("Total Requests", systemImage: "number")
+                        Spacer()
+                        Text("\(viewModel.requests.count)")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if viewModel.requests.isEmpty {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(DesignSystem.Colors.success)
+                                .font(.title3)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("All Clear")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                Text("No requests to delete")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 8)
+                    } else {
+                        Button(role: .destructive) {
+                            showingClearAlert = true
+                        } label: {
+                            Label("Clear All Requests", systemImage: "trash.fill")
+                        }
+                    }
+                }
+
+                // Appearance Section
+                Section("Appearance") {
+                    Picker("Theme", selection: $viewModel.selectedTheme) {
+                        ForEach(AppTheme.allCases, id: \.self) { theme in
+                            Label(theme.rawValue, systemImage: themeIcon(for: theme))
+                                .tag(theme)
+                        }
+                    }
+                }
+
+                // About Section
+                Section("About") {
+                    HStack {
+                        Label("Version", systemImage: "info.circle.fill")
+                        Spacer()
+                        Text(AppVersion.fullVersion)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Link(destination: URL(string: "https://github.com")!) {
+                        HStack {
+                            Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
+                            Spacer()
+                            Image(systemName: "arrow.up.forward.square.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    NavigationLink {
+                        PrivacyPolicyView()
+                    } label: {
+                        Label("Privacy Policy", systemImage: "hand.raised.fill")
+                    }
+
+                    Button {
+                        UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
+                        showingOnboarding = true
+                    } label: {
+                        Label("Show Onboarding", systemImage: "info.circle.fill")
+                    }
+                }
+            }
+            .navigationTitle("Settings")
+            .alert("Clear All Requests", isPresented: $showingClearAlert) {
+                Button("Cancel", role: .cancel) {}
+                Button("Clear", role: .destructive) {
+                    viewModel.clearRequests()
+                }
+            } message: {
+                Text("Are you sure you want to clear all captured requests? This action cannot be undone.")
+            }
+            .sheet(item: $harShareItem) { item in
+                ShareSheet(items: [item.url])
+            }
+            .fileImporter(
+                isPresented: $showingHARImport,
+                allowedContentTypes: {
+                    // Accept both .json and .har extensions so HAR files show up in the picker.
+                    if let harType = UTType(filenameExtension: "har") {
+                        return [.json, harType]
+                    }
+                    return [.json]
+                }(),
+                allowsMultipleSelection: false
+            ) { result in
+                handleHARImport(result)
+            }
+            .toast(message: $toastMessage)
+        }
+    }
+
+    private func themeIcon(for theme: AppTheme) -> String {
+        switch theme {
+        case .system: "circle.lefthalf.filled"
+        case .light: "sun.max.fill"
+        case .dark: "moon.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch vpnManager.statusColor {
+        case "green": DesignSystem.Colors.success
+        case "yellow": DesignSystem.Colors.favorite
+        case "red": DesignSystem.Colors.danger
+        default: DesignSystem.Colors.muted
+        }
+    }
+
+    // MARK: - HAR Export/Import
+
+    private func exportToHAR() {
+        do {
+            let url = try HARExporter.exportToFile(requests: viewModel.requests)
+            harShareItem = ShareURLItem(url: url)
+        } catch {
+            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+                toastMessage = "Export failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func handleHARImport(_ result: Result<[URL], Error>) {
+        Task {
+            do {
+                let urls = try result.get()
+                guard let url = urls.first else { return }
+
+                // Check if file exists before attempting to access
+                guard FileManager.default.fileExists(atPath: url.path) else {
+                    CoreLog.storage.warning("event=storage.har_import outcome=failure reason=file_not_found")
+                    await MainActor.run {
+                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+                            toastMessage = "File not found"
+                        }
+                    }
+                    return
+                }
+
+                // Access security-scoped resource from Files picker
+                let canAccess = url.startAccessingSecurityScopedResource()
+                defer {
+                    if canAccess { url.stopAccessingSecurityScopedResource() }
+                }
+
+                let requests = try HARExporter.importFromFile(url)
+                CoreLog.storage.info("event=storage.har_import outcome=success count=\(requests.count)")
+
+                // Save imported requests to storage
+                var savedCount = 0
+                for request in requests {
+                    do {
+                        try AppGroupStorage.shared.saveRequest(request)
+                        savedCount += 1
+                        CoreLog.storage.debug(
+                            "event=storage.request_save outcome=success request_id=\(request.id.uuidString, privacy: .public) method=\(request.method.rawValue, privacy: .public) url=\(request.url, privacy: .private(mask: .hash))"
+                        )
+                    } catch {
+                        CoreLog.storage.error(
+                            "event=storage.request_save outcome=failure request_id=\(request.id.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                        )
+                    }
+                }
+                CoreLog.storage.info(
+                    "event=storage.har_import_save outcome=success saved=\(savedCount) total=\(requests.count)"
+                )
+
+                // Reload all requests from storage to ensure consistency
+                await viewModel.reloadRequests()
+                CoreLog.storage.info(
+                    "event=storage.requests_reload outcome=success count=\(viewModel.requests.count)"
+                )
+
+                await MainActor.run {
+                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+                        toastMessage = "Imported \(requests.count) requests"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+                        toastMessage = "Import failed: \(error.localizedDescription)"
+                    }
+                }
+            }
+        }
+    }
+}
+
+#Preview {
+    RootTabView(viewModel: CaptureViewModel())
+}

@@ -1,0 +1,37 @@
+//
+//  HeadersSection.swift
+//  Trace
+//
+//  Created by Justin on 2026/01/14.
+//
+
+import SwiftUI
+import TraceCore
+import TraceUI
+
+struct HeadersSection: View {
+    let headers: [TraceHTTPHeader]
+
+    var body: some View {
+        VStack(spacing: DesignSystem.Spacing.lg) {
+            if !headers.isEmpty {
+                InfoCard(title: "Headers") {
+                    ForEach(Array(headers.enumerated()), id: \.element.id) { index, header in
+                        if index > 0 {
+                            Divider()
+                        }
+                        InfoRow(label: header.key, value: header.value)
+                    }
+                }
+            } else {
+                InfoCard(title: "Headers") {
+                    Text("No headers")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding()
+                }
+            }
+        }
+        .padding()
+    }
+}

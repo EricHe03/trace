@@ -1,0 +1,431 @@
+//
+//  BreakpointManager.swift
+//  TraceFeatures
+//
+//  Created by Justin on 2026/01/10.
+//
+
+import Foundation
+#if canImport(TraceCore)
+import TraceCore
+#endif
+
+/// Manages breakpoint evaluation and pause/resume flows.
+public actor BreakpointManager {
+    public static let shared = BreakpointManager()
+
+    private var configuration: BreakpointConfiguration
+    private var pausedRequests: [String: PausedRequest] = [:]
+    private var continuations: [String: CheckedContinuation<BreakpointAction, Never>] = [:]
+    private var totalHitCount: Int = 0
+    private var storedRequestModifications: PausedRequest?
+    private var storedResponseModifications: PausedRequest?
+    private var editOnceApplied: Bool = false
+    private nonisolated(unsafe) let storage: AppGroupStorage
+    private nonisolated(unsafe) let configFileName = "BreakpointConfiguration.json"
+
+    private init() {
+        self.storage = AppGroupStorage.shared
+        self.configuration = BreakpointConfiguration()
+        // Rule: Load configuration after initialization to avoid blocking actor creation.
+        Task {
+            await self.loadConfiguration()
+        }
+    }
+
+    // MARK: - Configuration Management
+
+    /// Returns the current breakpoint configuration.
+    public func getConfiguration() -> BreakpointConfiguration {
+        configuration
+    }
+
+    /// Updates the breakpoint configuration and persists it.
+    /// - Parameter config: The new breakpoint configuration.
+    public func updateConfiguration(_ config: BreakpointConfiguration) {
+        configuration = config
+        saveConfiguration()
+    }
+
+    /// Enables or disables breakpoint handling.
+    /// - Parameter enabled: Whether breakpoint handling is enabled.
+    public func setEnabled(_ enabled: Bool) {
+        configuration.enabled = enabled
+        saveConfiguration()
+
+        // Rule: Resume all paused requests when breakpoints are disabled.
+        if !enabled {
+            Task {
+                await resumeAllRequests(action: .continue)
+            }
+        }
+    }
+
+    /// Returns whether breakpoint handling is enabled.
+    public func isEnabled() -> Bool {
+        configuration.enabled
+    }
+
+    // MARK: - Breakpoint Checking
+
+    /// Returns whether a request should be paused.
+    /// - Parameters:
+    ///   - url: The request URL.
+    ///   - method: The HTTP method.
+    public func shouldBreakOnRequest(
+        url: String,
+        method: HTTPMethod,
+        headers: [TraceHTTPHeader],
+        body: Data?
+    ) -> Bool {
+        guard configuration.executionMode != .logOnly else { return false }
+        if configuration.executionMode == .editOnce, editOnceApplied {
+            return false
+        }
+        if configuration.executionMode == .alwaysApply, storedRequestModifications != nil {
+            return false
+        }
+        if let maxHits = configuration.maxHits, totalHitCount >= maxHits {
+            return false
+        }
+        guard configuration.shouldBreakOnRequest(url: url, method: method) else { return false }
+        guard conditionsPass(url: url, headers: headers, body: body) else { return false }
+        totalHitCount += 1
+        return true
+    }
+
+    /// Returns whether a response should be paused.
+    /// - Parameters:
+    ///   - url: The request URL.
+    ///   - statusCode: The HTTP status code.
+    public func shouldBreakOnResponse(
+        url: String,
+        statusCode: Int,
+        headers: [TraceHTTPHeader],
+        body: Data?
+    ) -> Bool {
+        guard configuration.executionMode != .logOnly else { return false }
+        if configuration.executionMode == .editOnce, editOnceApplied {
+            return false
+        }
+        if configuration.executionMode == .alwaysApply, storedResponseModifications != nil {
+            return false
+        }
+        if let maxHits = configuration.maxHits, totalHitCount >= maxHits {
+            return false
+        }
+        guard configuration.shouldBreakOnResponse(url: url, statusCode: statusCode) else { return false }
+        guard conditionsPass(url: url, headers: headers, body: body) else { return false }
+        totalHitCount += 1
+        return true
+    }
+
+    // MARK: - Request Pausing
+
+    /// Pauses a request and waits for user action.
+    /// - Parameters:
+    ///   - id: The request identifier.
+    ///   - url: The request URL.
+    ///   - method: The HTTP method.
+    ///   - headers: The request headers.
+    ///   - body: The request body.
+    public func pauseRequest(
+        id: String,
+        url: String,
+        method: HTTPMethod,
+        headers: [TraceHTTPHeader],
+        body: Data?
+    ) async -> BreakpointAction {
+        let pausedRequest = PausedRequest(
+            id: id,
+            url: url,
+            method: method,
+            headers: headers,
+            body: body,
+            breakpointType: .request
+        )
+
+        pausedRequests[id] = pausedRequest
+
+        // Concurrency: UI notifications are sent on the MainActor.
+        let methodRawValue = method.rawValue
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: .breakpointTriggered,
+                object: nil,
+                userInfo: [
+                    BreakpointNotificationKey.requestId.rawValue: id,
+                    BreakpointNotificationKey.url.rawValue: url,
+                    BreakpointNotificationKey.method.rawValue: methodRawValue,
+                    BreakpointNotificationKey.breakpointType.rawValue: BreakpointType.request.rawValue
+                ]
+            )
+        }
+
+        return await withCheckedContinuation { continuation in
+            continuations[id] = continuation
+        }
+    }
+
+    /// Pauses a response and waits for user action.
+    /// - Parameters:
+    ///   - id: The request identifier.
+    ///   - url: The request URL.
+    ///   - method: The HTTP method.
+    ///   - statusCode: The HTTP status code.
+    ///   - statusMessage: The HTTP status message.
+    ///   - headers: The response headers.
+    ///   - body: The response body.
+    public func pauseResponse(
+        id: String,
+        url: String,
+        method: HTTPMethod,
+        statusCode: Int,
+        statusMessage: String,
+        headers: [TraceHTTPHeader],
+        body: Data?
+    ) async -> BreakpointAction {
+        var pausedRequest = PausedRequest(
+            id: id,
+            url: url,
+            method: method,
+            headers: headers,
+            body: body,
+            breakpointType: .response,
+            statusCode: statusCode,
+            statusMessage: statusMessage
+        )
+        pausedRequest.statusCode = statusCode
+        pausedRequest.statusMessage = statusMessage
+
+        pausedRequests[id] = pausedRequest
+
+        // Concurrency: UI notifications are sent on the MainActor.
+        let methodRawValue = method.rawValue
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: .breakpointTriggered,
+                object: nil,
+                userInfo: [
+                    BreakpointNotificationKey.requestId.rawValue: id,
+                    BreakpointNotificationKey.url.rawValue: url,
+                    BreakpointNotificationKey.method.rawValue: methodRawValue,
+                    BreakpointNotificationKey.breakpointType.rawValue: BreakpointType.response.rawValue
+                ]
+            )
+        }
+
+        return await withCheckedContinuation { continuation in
+            continuations[id] = continuation
+        }
+    }
+
+    // MARK: - Request Resuming
+
+    /// Resumes a paused request with the given action.
+    /// - Parameters:
+    ///   - id: The request identifier.
+    ///   - action: The action selected by the user.
+    public func resumeRequest(id: String, action: BreakpointAction) {
+        guard let continuation = continuations[id] else { return }
+
+        if var pausedRequest = pausedRequests[id] {
+            pausedRequest.isPaused = false
+            pausedRequest.state = action == .drop ? .dropped : .continuing
+            pausedRequests[id] = pausedRequest
+            if action == .continue, pausedRequest.hasModifications {
+                if configuration.executionMode == .editOnce || configuration.executionMode == .alwaysApply {
+                    if pausedRequest.breakpointType == .response {
+                        storedResponseModifications = pausedRequest
+                    } else {
+                        storedRequestModifications = pausedRequest
+                    }
+                    if configuration.executionMode == .editOnce {
+                        editOnceApplied = true
+                    }
+                }
+            }
+        }
+
+        continuation.resume(returning: action)
+        continuations.removeValue(forKey: id)
+
+        // Concurrency: UI notifications are sent on the MainActor.
+        Task { @MainActor in
+            NotificationCenter.default.post(
+                name: .breakpointResumed,
+                object: nil,
+                userInfo: [BreakpointNotificationKey.requestId.rawValue: id]
+            )
+        }
+
+        pausedRequests.removeValue(forKey: id)
+    }
+
+    /// Resumes all paused requests with the given action.
+    /// - Parameter action: The action to apply to each paused request.
+    public func resumeAllRequests(action: BreakpointAction) {
+        let requestIds = Array(pausedRequests.keys)
+        for id in requestIds {
+            resumeRequest(id: id, action: action)
+        }
+    }
+
+    public func applyStoredRequestModifications(to request: inout NetworkRequest) -> Bool {
+        guard let stored = storedRequestModifications else { return false }
+        request.requestHeaders = stored.effectiveHeaders
+        if let modifiedBody = stored.effectiveBody {
+            request.requestBody = BodyStorage.from(data: modifiedBody)
+            return true
+        }
+        return false
+    }
+
+    public func applyStoredResponseModifications(to request: inout NetworkRequest) -> Bool {
+        guard let stored = storedResponseModifications else { return false }
+        request.responseHeaders = stored.effectiveHeaders
+        if let modifiedBody = stored.effectiveBody {
+            request.responseBody = BodyStorage.from(data: modifiedBody)
+        }
+        if let code = stored.effectiveStatusCode {
+            request.statusCode = code
+        }
+        if let message = stored.effectiveStatusMessage {
+            request.statusMessage = message
+        }
+        return true
+    }
+
+    private func conditionsPass(url: String, headers: [TraceHTTPHeader], body: Data?) -> Bool {
+        guard !configuration.conditions.isEmpty else { return true }
+        let headerDict = Dictionary(uniqueKeysWithValues: headers.map { ($0.key.lowercased(), $0.value) })
+        let bodyString = body.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        let queryItems = URLComponents(string: url)?.queryItems ?? []
+
+        for condition in configuration.conditions {
+            switch condition.type {
+            case .headerExists:
+                if headerDict[condition.parameter.lowercased()] == nil { return false }
+            case .headerEquals:
+                if headerDict[condition.parameter.lowercased()] != condition.value { return false }
+            case .bodyContains:
+                if !bodyString.contains(condition.value) { return false }
+            case .bodyRegex:
+                if !RegexMatcher.safeMatch(pattern: condition.value, in: bodyString, caseSensitive: false) { return false }
+            case .queryParamExists:
+                if !queryItems.contains(where: { $0.name == condition.parameter }) { return false }
+            }
+        }
+        return true
+    }
+
+    // MARK: - Request Modification
+
+    /// Updates a paused request with user modifications.
+    /// - Parameters:
+    ///   - id: The request identifier.
+    ///   - modifications: The new values to apply.
+    public func updatePausedRequest(id: String, modifications: PausedRequestModifications) {
+        guard var pausedRequest = pausedRequests[id] else { return }
+
+        pausedRequest.modifiedUrl = modifications.url
+        pausedRequest.modifiedMethod = modifications.method
+        pausedRequest.modifiedHeaders = modifications.headers
+        pausedRequest.modifiedBody = modifications.body
+        pausedRequest.modifiedStatusCode = modifications.statusCode
+        pausedRequest.modifiedStatusMessage = modifications.statusMessage
+        pausedRequest.state = .modified
+
+        pausedRequests[id] = pausedRequest
+    }
+
+    /// Returns a paused request by identifier.
+    /// - Parameter id: The request identifier.
+    public func getPausedRequest(id: String) -> PausedRequest? {
+        pausedRequests[id]
+    }
+
+    /// Returns all paused requests.
+    public func getAllPausedRequests() -> [PausedRequest] {
+        Array(pausedRequests.values)
+    }
+
+    /// Returns the number of paused requests.
+    func pausedRequestsCount() -> Int {
+        pausedRequests.count
+    }
+
+    // MARK: - Persistence
+
+    private func loadConfiguration() {
+        guard let container = storage.containerURL else {
+            FeatureLog.breakpoint.error("event=breakpoint.config_load outcome=failure error=app_group_unavailable")
+            configuration = BreakpointConfiguration()
+            return
+        }
+
+        let fileURL = container
+            .appendingPathComponent("Configuration")
+            .appendingPathComponent(configFileName)
+
+        do {
+            let data = try Data(contentsOf: fileURL)
+            configuration = try JSONDecoder().decode(BreakpointConfiguration.self, from: data)
+            FeatureLog.breakpoint.info("event=breakpoint.config_load outcome=success")
+        } catch {
+            // Rule: Treat missing configuration as first launch and use defaults.
+            if (error as NSError).domain == NSCocoaErrorDomain && (error as NSError).code == NSFileReadNoSuchFileError {
+                FeatureLog.breakpoint.info("event=breakpoint.config_load outcome=skipped reason=file_not_found")
+            } else {
+                FeatureLog.breakpoint.error("event=breakpoint.config_load outcome=failure error=\(error.localizedDescription, privacy: .public)")
+            }
+            configuration = BreakpointConfiguration()
+            // Rule: Persist defaults to create the configuration file.
+            saveConfiguration()
+        }
+    }
+
+    private func saveConfiguration() {
+        guard let container = storage.containerURL else {
+            FeatureLog.breakpoint.error("event=breakpoint.config_save outcome=failure error=app_group_unavailable")
+            return
+        }
+
+        let fileURL = container
+            .appendingPathComponent("Configuration")
+            .appendingPathComponent(configFileName)
+
+        do {
+            let data = try JSONEncoder().encode(configuration)
+            try data.write(to: fileURL)
+        } catch {
+            FeatureLog.breakpoint.error("event=breakpoint.config_save outcome=failure error=\(error.localizedDescription, privacy: .public)")
+        }
+    }
+}
+
+/// Represents user-supplied edits for a paused request.
+public struct PausedRequestModifications {
+    public var url: String?
+    public var method: HTTPMethod?
+    public var headers: [TraceHTTPHeader]?
+    public var body: Data?
+    public var statusCode: Int?
+    public var statusMessage: String?
+
+    public init(
+        url: String? = nil,
+        method: HTTPMethod? = nil,
+        headers: [TraceHTTPHeader]? = nil,
+        body: Data? = nil,
+        statusCode: Int? = nil,
+        statusMessage: String? = nil
+    ) {
+        self.url = url
+        self.method = method
+        self.headers = headers
+        self.body = body
+        self.statusCode = statusCode
+        self.statusMessage = statusMessage
+    }
+}

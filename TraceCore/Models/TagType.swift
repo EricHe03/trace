@@ -1,0 +1,215 @@
+//
+//  TagType.swift
+//  TraceCore
+//
+//  Created by Justin on 2026/01/10.
+//
+
+import SwiftUI
+
+/// Defines tag priority used to rank tags for display.
+public enum TagPriority: Int, Comparable {
+    case critical = 0
+    case high = 1
+    case medium = 2
+    case low = 3
+
+    public static func < (lhs: TagPriority, rhs: TagPriority) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+/// Represents a request tag used for display and filtering.
+public enum TagType: Hashable {
+    // MARK: - Type and Protocol
+
+    case h2, h3, ws, sse, grpc, graphql
+
+    // MARK: - Reliability
+
+    case failed, timeout, blocked, cancelled, retry(count: Int)
+
+    // MARK: - TLS and Security
+
+    case tlsPassthrough(reason: String?)
+    case pinned
+
+    // MARK: - Performance
+
+    case slow(duration: TimeInterval)
+    case throttled(profile: String?)
+    case stalled(duration: TimeInterval)
+
+    // MARK: - Caching and Routing
+
+    case cached(source: String?)
+    case stale
+    case redirected(count: Int)
+    case rewritten
+
+    // MARK: - Source
+
+    case manual, replayed, script(name: String?), mock
+
+    // MARK: - Analysis
+
+    case large(size: Int)
+    case binary
+    case breakpoint
+
+    public var priority: TagPriority {
+        switch self {
+        case .failed, .timeout, .blocked, .cancelled, .tlsPassthrough, .pinned:
+            .critical
+        case .slow, .throttled, .stalled, .h2, .h3, .ws, .sse, .grpc, .graphql:
+            .high
+        case .manual, .replayed, .script, .mock, .cached, .redirected, .rewritten:
+            .medium
+        case .retry, .large, .binary, .stale, .breakpoint:
+            .low
+        }
+    }
+
+    public var displayText: String {
+        switch self {
+        case .h2: "H2"
+        case .h3: "H3"
+        case .ws: "WS"
+        case .sse: "SSE"
+        case .grpc: "gRPC"
+        case .graphql: "GraphQL"
+        case .failed: "Failed"
+        case .timeout: "Timeout"
+        case .blocked: "Blocked"
+        case .cancelled: "Cancelled"
+        case let .retry(count): "Retry ×\(count)"
+        case .tlsPassthrough: "TLS"
+        case .pinned: "Pinned"
+        case .slow: "Slow"
+        case .throttled: "Throttled"
+        case .stalled: "Stalled"
+        case .cached: "Cached"
+        case .stale: "Stale"
+        case .redirected: "Redirected"
+        case .rewritten: "Rewritten"
+        case .manual: "Manual"
+        case .replayed: "Replayed"
+        case .script: "Script"
+        case .mock: "Mock"
+        case .large: "Large"
+        case .binary: "Binary"
+        case .breakpoint: "Breakpoint"
+        }
+    }
+
+    public var color: Color {
+        switch self {
+        case .failed, .blocked:
+            .red
+        case .timeout, .slow, .retry, .stale, .stalled:
+            .orange
+        case .throttled:
+            .yellow.opacity(0.8)
+        case .h2, .h3, .ws, .sse, .grpc, .graphql:
+            .purple
+        case .tlsPassthrough:
+            .orange
+        case .pinned:
+            .red.opacity(0.8)
+        case .cached:
+            .green.opacity(0.8)
+        case .manual:
+            .teal
+        case .replayed:
+            .purple.opacity(0.8)
+        case .script:
+            .indigo
+        case .mock:
+            .cyan
+        case .redirected, .rewritten:
+            .blue
+        case .large, .binary:
+            .gray
+        case .cancelled:
+            Color.secondary.opacity(0.6)
+        case .breakpoint:
+            .red
+        }
+    }
+
+    public var tooltip: String {
+        switch self {
+        case .h2: "HTTP/2 Protocol"
+        case .h3: "HTTP/3 over QUIC"
+        case .ws: "WebSocket Connection"
+        case .sse: "Server-Sent Events Stream"
+        case .grpc: "gRPC Protocol"
+        case .graphql: "GraphQL Request"
+        case .failed: "Request Failed"
+        case .timeout: "Request Timed Out"
+        case .blocked: "Blocked by Filter/Rule"
+        case .cancelled: "Request Cancelled"
+        case let .retry(count): "Retried \(count) time(s)"
+        case let .tlsPassthrough(reason):
+            "TLS Passthrough – Not Decrypted" + (reason.map { " (\($0))" } ?? "")
+        case .pinned:
+            "Certificate Pinning Detected – App refuses MITM certificates"
+        case let .slow(duration): String(format: "%.1fs – Slower than 5s", duration)
+        case let .throttled(profile):
+            "Throttled" + (profile.map { ": \($0)" } ?? "")
+        case let .stalled(duration):
+            String(format: "Stalled %.1fs waiting", duration)
+        case let .cached(source):
+            "Served from \(source ?? "")Cache"
+        case .stale: "Stale Cache Entry"
+        case let .redirected(count): "Redirected \(count) time(s)"
+        case .rewritten: "URL/Headers Rewritten"
+        case .manual: "Manually Created Request"
+        case .replayed: "Replayed Request"
+        case let .script(name):
+            "Generated by Script" + (name.map { ": \($0)" } ?? "")
+        case .mock: "Mocked Response"
+        case let .large(size):
+            "\(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)) – Larger than 10MB"
+        case .binary: "Binary Content"
+        case .breakpoint: "Breakpoint Active"
+        }
+    }
+}
+
+// MARK: - Tag Selection Algorithm
+
+/// Returns the visible tags and overflow count for a display limit.
+///
+/// - Parameters:
+///   - allTags: The tags to evaluate.
+///   - maxVisible: The maximum number of visible tags.
+/// - Returns: The visible tags and the overflow count.
+public func selectVisibleTags(
+    from allTags: [TagType],
+    maxVisible: Int = 3
+) -> (visible: [TagType], overflow: Int) {
+    // Rationale: Order by priority, then by label, to keep the output stable.
+    let sorted = allTags.sorted { lhs, rhs in
+        if lhs.priority != rhs.priority {
+            return lhs.priority < rhs.priority
+        }
+        return lhs.displayText < rhs.displayText
+    }
+
+    // Rule: Always include critical tags in the visible list.
+    let critical = sorted.filter { $0.priority == .critical }
+    let remaining = maxVisible - critical.count
+
+    guard remaining > 0 else {
+        let overflow = sorted.count - critical.count
+        return (critical, overflow)
+    }
+
+    // Rule: Fill remaining slots with the highest-priority non-critical tags.
+    let others = sorted.filter { $0.priority != .critical }
+    let visible = critical + Array(others.prefix(remaining))
+    let overflow = max(0, allTags.count - visible.count)
+
+    return (visible, overflow)
+}
