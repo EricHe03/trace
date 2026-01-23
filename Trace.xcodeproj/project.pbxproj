@@ -1,0 +1,1093 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		5F4B07A62F149B1000D9933A /* TraceCompression in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07A52F149B1000D9933A /* TraceCompression */; };
+		5F4B07A82F149B1000D9933A /* TraceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07A72F149B1000D9933A /* TraceCore */; };
+		5F4B07AA2F149B1000D9933A /* TraceFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07A92F149B1000D9933A /* TraceFeatures */; };
+		5F4B07AC2F149B1000D9933A /* TraceNetworking in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07AB2F149B1000D9933A /* TraceNetworking */; };
+		5F4B07AE2F149B1000D9933A /* TraceProxy in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07AD2F149B1000D9933A /* TraceProxy */; };
+		5F4B07B02F149B1000D9933A /* TraceSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07AF2F149B1000D9933A /* TraceSecurity */; };
+		5F4B07B22F149B1000D9933A /* TraceUI in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07B12F149B1000D9933A /* TraceUI */; };
+		5F4B07C02F149C0000D9933A /* TraceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C12F149C0000D9933A /* TraceCore */; };
+		5F4B07C22F149C0000D9933A /* TraceCompression in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C32F149C0000D9933A /* TraceCompression */; };
+		5F4B07C42F149C0000D9933A /* TraceSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C52F149C0000D9933A /* TraceSecurity */; };
+		5F4B07C62F149C0000D9933A /* TraceNetworking in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C72F149C0000D9933A /* TraceNetworking */; };
+		5F4B07C82F149C0000D9933A /* TraceProxy in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C92F149C0000D9933A /* TraceProxy */; };
+		5F4B07CA2F149C0000D9933A /* TraceFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07CB2F149C0000D9933A /* TraceFeatures */; };
+		5F4B07CC2F149C0000D9933A /* TracePacket in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07CD2F149C0000D9933A /* TracePacket */; };
+		5F4B07CE2F149C0000D9933A /* HevSocks5Tunnel in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07CF2F149C0000D9933A /* HevSocks5Tunnel */; };
+		5F4B07D02F149D0000D9933A /* TraceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07D12F149D0000D9933A /* TraceCore */; };
+		5F4B07D22F149D0000D9933A /* TraceCompression in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07D32F149D0000D9933A /* TraceCompression */; };
+		5F6EDD242F081F82002BB89C /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F6EDD232F081F82002BB89C /* WidgetKit.framework */; };
+		5F6EDD262F081F82002BB89C /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F6EDD252F081F82002BB89C /* SwiftUI.framework */; };
+		5F6EDD372F081F83002BB89C /* TraceWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5F6EDD222F081F82002BB89C /* TraceWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		5F9A0DAA2F0A123400222223 /* HevSocks5Tunnel in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07CF2F149C0000D9933A /* HevSocks5Tunnel */; };
+		5F9A0DB52F0A123400222224 /* TracePacket in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07CD2F149C0000D9933A /* TracePacket */; };
+		5FCEECDC2F02AE4500D3CD59 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5FCEECDB2F02AE4500D3CD59 /* NetworkExtension.framework */; };
+		5FCEECE42F02AE4600D3CD59 /* TraceVPN.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5FCEECD92F02AE4500D3CD59 /* TraceVPN.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		5FF0AA112F1A000000000001 /* TracePacket in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07CD2F149C0000D9933A /* TracePacket */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5F6EDD352F081F83002BB89C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5FCEEBF92F0152E400D3CD59 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5F6EDD212F081F82002BB89C;
+			remoteInfo = TraceWidgetExtension;
+		};
+		5FCEEC112F0152E600D3CD59 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5FCEEBF92F0152E400D3CD59 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5FCEEC002F0152E400D3CD59;
+			remoteInfo = Trace;
+		};
+		5FCEEC1B2F0152E600D3CD59 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5FCEEBF92F0152E400D3CD59 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5FCEEC002F0152E400D3CD59;
+			remoteInfo = Trace;
+		};
+		5FCEECE22F02AE4600D3CD59 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5FCEEBF92F0152E400D3CD59 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5FCEECD82F02AE4500D3CD59;
+			remoteInfo = TraceVPN;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		5FCEECE92F02AE4600D3CD59 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				5F6EDD372F081F83002BB89C /* TraceWidgetExtension.appex in Embed Foundation Extensions */,
+				5FCEECE42F02AE4600D3CD59 /* TraceVPN.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		5F6EDD222F081F82002BB89C /* TraceWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TraceWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		5F6EDD232F081F82002BB89C /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		5F6EDD252F081F82002BB89C /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		5FCEEC012F0152E400D3CD59 /* Trace.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Trace.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5FCEEC102F0152E600D3CD59 /* TraceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TraceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5FCEEC1A2F0152E600D3CD59 /* TraceUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TraceUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5FCEECD92F02AE4500D3CD59 /* TraceVPN.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TraceVPN.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		5FCEECDB2F02AE4500D3CD59 /* NetworkExtension.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NetworkExtension.framework; path = System/Library/Frameworks/NetworkExtension.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		5F135A9F200082ED1F8C4786 /* Exceptions for "Trace" folder in "Trace" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Exports.swift,
+			);
+			target = 5FCEEC002F0152E400D3CD59 /* Trace */;
+		};
+		5F6EDD3B2F081F83002BB89C /* Exceptions for "TraceWidget" folder in "TraceWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 5F6EDD212F081F82002BB89C /* TraceWidgetExtension */;
+		};
+		5FCEECE52F02AE4600D3CD59 /* Exceptions for "TraceVPN" folder in "TraceVPN" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 5FCEECD82F02AE4500D3CD59 /* TraceVPN */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		5F6EDD272F081F82002BB89C /* TraceWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5F6EDD3B2F081F83002BB89C /* Exceptions for "TraceWidget" folder in "TraceWidgetExtension" target */,
+			);
+			path = TraceWidget;
+			sourceTree = "<group>";
+		};
+		5FCEEC032F0152E400D3CD59 /* Trace */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5F135A9F200082ED1F8C4786 /* Exceptions for "Trace" folder in "Trace" target */,
+			);
+			path = Trace;
+			sourceTree = "<group>";
+		};
+		5FCEEC132F0152E600D3CD59 /* TraceTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = TraceTests;
+			sourceTree = "<group>";
+		};
+		5FCEEC1D2F0152E600D3CD59 /* TraceUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = TraceUITests;
+			sourceTree = "<group>";
+		};
+		5FCEECDD2F02AE4500D3CD59 /* TraceVPN */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5FCEECE52F02AE4600D3CD59 /* Exceptions for "TraceVPN" folder in "TraceVPN" target */,
+			);
+			path = TraceVPN;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		5F6EDD1F2F081F82002BB89C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5F6EDD262F081F82002BB89C /* SwiftUI.framework in Frameworks */,
+				5F6EDD242F081F82002BB89C /* WidgetKit.framework in Frameworks */,
+				5F4B07D02F149D0000D9933A /* TraceCore in Frameworks */,
+				5F4B07D22F149D0000D9933A /* TraceCompression in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5FCEEBFE2F0152E400D3CD59 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5F4B07AE2F149B1000D9933A /* TraceProxy in Frameworks */,
+				5F4B07AA2F149B1000D9933A /* TraceFeatures in Frameworks */,
+				5F4B07B02F149B1000D9933A /* TraceSecurity in Frameworks */,
+				5F4B07A62F149B1000D9933A /* TraceCompression in Frameworks */,
+				5F4B07AC2F149B1000D9933A /* TraceNetworking in Frameworks */,
+				5F4B07A82F149B1000D9933A /* TraceCore in Frameworks */,
+				5F4B07B22F149B1000D9933A /* TraceUI in Frameworks */,
+				5FF0AA112F1A000000000001 /* TracePacket in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5FCEEC0D2F0152E600D3CD59 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5F9A0DB52F0A123400222224 /* TracePacket in Frameworks */,
+				5F9A0DAA2F0A123400222223 /* HevSocks5Tunnel in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5FCEEC172F0152E600D3CD59 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5FCEECD62F02AE4500D3CD59 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5FCEECDC2F02AE4500D3CD59 /* NetworkExtension.framework in Frameworks */,
+				5F4B07C02F149C0000D9933A /* TraceCore in Frameworks */,
+				5F4B07C22F149C0000D9933A /* TraceCompression in Frameworks */,
+				5F4B07C42F149C0000D9933A /* TraceSecurity in Frameworks */,
+				5F4B07C62F149C0000D9933A /* TraceNetworking in Frameworks */,
+				5F4B07C82F149C0000D9933A /* TraceProxy in Frameworks */,
+				5F4B07CA2F149C0000D9933A /* TraceFeatures in Frameworks */,
+				5F4B07CC2F149C0000D9933A /* TracePacket in Frameworks */,
+				5F4B07CE2F149C0000D9933A /* HevSocks5Tunnel in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		5FCEEBF82F0152E400D3CD59 = {
+			isa = PBXGroup;
+			children = (
+				5FCEEC032F0152E400D3CD59 /* Trace */,
+				5FCEEC132F0152E600D3CD59 /* TraceTests */,
+				5FCEEC1D2F0152E600D3CD59 /* TraceUITests */,
+				5FCEECDD2F02AE4500D3CD59 /* TraceVPN */,
+				5F6EDD272F081F82002BB89C /* TraceWidget */,
+				5FCEECDA2F02AE4500D3CD59 /* Frameworks */,
+				5FCEEC022F0152E400D3CD59 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		5FCEEC022F0152E400D3CD59 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				5FCEEC012F0152E400D3CD59 /* Trace.app */,
+				5FCEEC102F0152E600D3CD59 /* TraceTests.xctest */,
+				5FCEEC1A2F0152E600D3CD59 /* TraceUITests.xctest */,
+				5FCEECD92F02AE4500D3CD59 /* TraceVPN.appex */,
+				5F6EDD222F081F82002BB89C /* TraceWidgetExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		5FCEECDA2F02AE4500D3CD59 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				5FCEECDB2F02AE4500D3CD59 /* NetworkExtension.framework */,
+				5F6EDD232F081F82002BB89C /* WidgetKit.framework */,
+				5F6EDD252F081F82002BB89C /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5F6EDD212F081F82002BB89C /* TraceWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5F6EDD3A2F081F83002BB89C /* Build configuration list for PBXNativeTarget "TraceWidgetExtension" */;
+			buildPhases = (
+				5F6EDD1E2F081F82002BB89C /* Sources */,
+				5F6EDD1F2F081F82002BB89C /* Frameworks */,
+				5F6EDD202F081F82002BB89C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				5F6EDD272F081F82002BB89C /* TraceWidget */,
+			);
+			name = TraceWidgetExtension;
+			packageProductDependencies = (
+				5F4B07D12F149D0000D9933A /* TraceCore */,
+				5F4B07D32F149D0000D9933A /* TraceCompression */,
+			);
+			productName = TraceWidgetExtension;
+			productReference = 5F6EDD222F081F82002BB89C /* TraceWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		5FCEEC002F0152E400D3CD59 /* Trace */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5FCEEC242F0152E600D3CD59 /* Build configuration list for PBXNativeTarget "Trace" */;
+			buildPhases = (
+				5FCEEBFD2F0152E400D3CD59 /* Sources */,
+				5FCEEBFE2F0152E400D3CD59 /* Frameworks */,
+				5FCEEBFF2F0152E400D3CD59 /* Resources */,
+				5FCEECE92F02AE4600D3CD59 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5FCEECE32F02AE4600D3CD59 /* PBXTargetDependency */,
+				5F6EDD362F081F83002BB89C /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5FCEEC032F0152E400D3CD59 /* Trace */,
+			);
+			name = Trace;
+			packageProductDependencies = (
+				5F4B07A52F149B1000D9933A /* TraceCompression */,
+				5F4B07A72F149B1000D9933A /* TraceCore */,
+				5F4B07A92F149B1000D9933A /* TraceFeatures */,
+				5F4B07AB2F149B1000D9933A /* TraceNetworking */,
+				5F4B07AD2F149B1000D9933A /* TraceProxy */,
+				5F4B07AF2F149B1000D9933A /* TraceSecurity */,
+				5F4B07B12F149B1000D9933A /* TraceUI */,
+				5F4B07CD2F149C0000D9933A /* TracePacket */,
+			);
+			productName = Trace;
+			productReference = 5FCEEC012F0152E400D3CD59 /* Trace.app */;
+			productType = "com.apple.product-type.application";
+		};
+		5FCEEC0F2F0152E600D3CD59 /* TraceTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5FCEEC272F0152E600D3CD59 /* Build configuration list for PBXNativeTarget "TraceTests" */;
+			buildPhases = (
+				5FCEEC0C2F0152E600D3CD59 /* Sources */,
+				5FCEEC0D2F0152E600D3CD59 /* Frameworks */,
+				5FCEEC0E2F0152E600D3CD59 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5FCEEC122F0152E600D3CD59 /* PBXTargetDependency */,
+				5F9A0D9E2F0A123400222222 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5FCEEC132F0152E600D3CD59 /* TraceTests */,
+			);
+			name = TraceTests;
+			packageProductDependencies = (
+				5F4B07CD2F149C0000D9933A /* TracePacket */,
+				5F4B07CF2F149C0000D9933A /* HevSocks5Tunnel */,
+			);
+			productName = TraceTests;
+			productReference = 5FCEEC102F0152E600D3CD59 /* TraceTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		5FCEEC192F0152E600D3CD59 /* TraceUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5FCEEC2A2F0152E600D3CD59 /* Build configuration list for PBXNativeTarget "TraceUITests" */;
+			buildPhases = (
+				5FCEEC162F0152E600D3CD59 /* Sources */,
+				5FCEEC172F0152E600D3CD59 /* Frameworks */,
+				5FCEEC182F0152E600D3CD59 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5FCEEC1C2F0152E600D3CD59 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5FCEEC1D2F0152E600D3CD59 /* TraceUITests */,
+			);
+			name = TraceUITests;
+			packageProductDependencies = (
+			);
+			productName = TraceUITests;
+			productReference = 5FCEEC1A2F0152E600D3CD59 /* TraceUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		5FCEECD82F02AE4500D3CD59 /* TraceVPN */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5FCEECE62F02AE4600D3CD59 /* Build configuration list for PBXNativeTarget "TraceVPN" */;
+			buildPhases = (
+				5FCEECD52F02AE4500D3CD59 /* Sources */,
+				5FCEECD62F02AE4500D3CD59 /* Frameworks */,
+				5FCEECD72F02AE4500D3CD59 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				5FCEECDD2F02AE4500D3CD59 /* TraceVPN */,
+			);
+			name = TraceVPN;
+			packageProductDependencies = (
+				5F4B07C12F149C0000D9933A /* TraceCore */,
+				5F4B07C32F149C0000D9933A /* TraceCompression */,
+				5F4B07C52F149C0000D9933A /* TraceSecurity */,
+				5F4B07C72F149C0000D9933A /* TraceNetworking */,
+				5F4B07C92F149C0000D9933A /* TraceProxy */,
+				5F4B07CB2F149C0000D9933A /* TraceFeatures */,
+				5F4B07CD2F149C0000D9933A /* TracePacket */,
+				5F4B07CF2F149C0000D9933A /* HevSocks5Tunnel */,
+			);
+			productName = TraceVPN;
+			productReference = 5FCEECD92F02AE4500D3CD59 /* TraceVPN.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		5FCEEBF92F0152E400D3CD59 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2620;
+				LastUpgradeCheck = 2620;
+				TargetAttributes = {
+					5F6EDD212F081F82002BB89C = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					5FCEEC002F0152E400D3CD59 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					5FCEEC0F2F0152E600D3CD59 = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = 5FCEEC002F0152E400D3CD59;
+					};
+					5FCEEC192F0152E600D3CD59 = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = 5FCEEC002F0152E400D3CD59;
+					};
+					5FCEECD82F02AE4500D3CD59 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+				};
+			};
+			buildConfigurationList = 5FCEEBFC2F0152E400D3CD59 /* Build configuration list for PBXProject "Trace" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 5FCEEBF82F0152E400D3CD59;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				5F4B07A42F149B1000D9933A /* XCLocalSwiftPackageReference "../Trace" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 5FCEEC022F0152E400D3CD59 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5FCEEC002F0152E400D3CD59 /* Trace */,
+				5FCEEC0F2F0152E600D3CD59 /* TraceTests */,
+				5FCEEC192F0152E600D3CD59 /* TraceUITests */,
+				5FCEECD82F02AE4500D3CD59 /* TraceVPN */,
+				5F6EDD212F081F82002BB89C /* TraceWidgetExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5F6EDD202F081F82002BB89C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5FCEEBFF2F0152E400D3CD59 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5FCEEC0E2F0152E600D3CD59 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5FCEEC182F0152E600D3CD59 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5FCEECD72F02AE4500D3CD59 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5F6EDD1E2F081F82002BB89C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5FCEEBFD2F0152E400D3CD59 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5FCEEC0C2F0152E600D3CD59 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5FCEEC162F0152E600D3CD59 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5FCEECD52F02AE4500D3CD59 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		5F6EDD362F081F83002BB89C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5F6EDD212F081F82002BB89C /* TraceWidgetExtension */;
+			targetProxy = 5F6EDD352F081F83002BB89C /* PBXContainerItemProxy */;
+		};
+		5F9A0D9E2F0A123400222222 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5FCEECD82F02AE4500D3CD59 /* TraceVPN */;
+			targetProxy = 5FCEECE22F02AE4600D3CD59 /* PBXContainerItemProxy */;
+		};
+		5FCEEC122F0152E600D3CD59 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5FCEEC002F0152E400D3CD59 /* Trace */;
+			targetProxy = 5FCEEC112F0152E600D3CD59 /* PBXContainerItemProxy */;
+		};
+		5FCEEC1C2F0152E600D3CD59 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5FCEEC002F0152E400D3CD59 /* Trace */;
+			targetProxy = 5FCEEC1B2F0152E600D3CD59 /* PBXContainerItemProxy */;
+		};
+		5FCEECE32F02AE4600D3CD59 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5FCEECD82F02AE4500D3CD59 /* TraceVPN */;
+			targetProxy = 5FCEECE22F02AE4600D3CD59 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		5F6EDD382F081F83002BB89C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = TraceWidget/TraceWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = 5M6X766FSQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TraceWidget/Info.plist;
+				INFOPLIST_KEY_AppGroupIdentifier = "$(APP_GROUP_IDENTIFIER)";
+				INFOPLIST_KEY_CFBundleDisplayName = TraceWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.justin.trace.tracewidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		5F6EDD392F081F83002BB89C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = TraceWidget/TraceWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = 5M6X766FSQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TraceWidget/Info.plist;
+				INFOPLIST_KEY_AppGroupIdentifier = "$(APP_GROUP_IDENTIFIER)";
+				INFOPLIST_KEY_CFBundleDisplayName = TraceWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.justin.trace.tracewidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		5FCEEC222F0152E600D3CD59 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				APP_GROUP_IDENTIFIER = group.com.justin.trace;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		5FCEEC232F0152E600D3CD59 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				APP_GROUP_IDENTIFIER = group.com.justin.trace;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		5FCEEC252F0152E600D3CD59 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Trace/Trace.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 5;
+				DEVELOPMENT_TEAM = 5M6X766FSQ;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_AppGroupIdentifier = "$(APP_GROUP_IDENTIFIER)";
+				INFOPLIST_KEY_CFBundleDisplayName = Trace;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.justin.trace;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		5FCEEC262F0152E600D3CD59 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Trace/Trace.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 5;
+				DEVELOPMENT_TEAM = 5M6X766FSQ;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_AppGroupIdentifier = "$(APP_GROUP_IDENTIFIER)";
+				INFOPLIST_KEY_CFBundleDisplayName = Trace;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.justin.trace;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		5FCEEC282F0152E600D3CD59 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = 5M6X766FSQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.justin.trace.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Trace.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Trace";
+			};
+			name = Debug;
+		};
+		5FCEEC292F0152E600D3CD59 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = 5M6X766FSQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.justin.trace.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Trace.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Trace";
+			};
+			name = Release;
+		};
+		5FCEEC2B2F0152E600D3CD59 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5M6X766FSQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.justin.trace.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Trace;
+			};
+			name = Debug;
+		};
+		5FCEEC2C2F0152E600D3CD59 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5M6X766FSQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.justin.trace.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Trace;
+			};
+			name = Release;
+		};
+		5FCEECE72F02AE4600D3CD59 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = TraceVPN/TraceVPN.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5M6X766FSQ;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TraceVPN/Info.plist;
+				INFOPLIST_KEY_AppGroupIdentifier = "$(APP_GROUP_IDENTIFIER)";
+				INFOPLIST_KEY_CFBundleDisplayName = TraceVPN;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.justin.trace.vpn;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		5FCEECE82F02AE4600D3CD59 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = TraceVPN/TraceVPN.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5M6X766FSQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TraceVPN/Info.plist;
+				INFOPLIST_KEY_AppGroupIdentifier = "$(APP_GROUP_IDENTIFIER)";
+				INFOPLIST_KEY_CFBundleDisplayName = TraceVPN;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.justin.trace.vpn;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		5F6EDD3A2F081F83002BB89C /* Build configuration list for PBXNativeTarget "TraceWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5F6EDD382F081F83002BB89C /* Debug */,
+				5F6EDD392F081F83002BB89C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5FCEEBFC2F0152E400D3CD59 /* Build configuration list for PBXProject "Trace" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5FCEEC222F0152E600D3CD59 /* Debug */,
+				5FCEEC232F0152E600D3CD59 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5FCEEC242F0152E600D3CD59 /* Build configuration list for PBXNativeTarget "Trace" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5FCEEC252F0152E600D3CD59 /* Debug */,
+				5FCEEC262F0152E600D3CD59 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5FCEEC272F0152E600D3CD59 /* Build configuration list for PBXNativeTarget "TraceTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5FCEEC282F0152E600D3CD59 /* Debug */,
+				5FCEEC292F0152E600D3CD59 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5FCEEC2A2F0152E600D3CD59 /* Build configuration list for PBXNativeTarget "TraceUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5FCEEC2B2F0152E600D3CD59 /* Debug */,
+				5FCEEC2C2F0152E600D3CD59 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5FCEECE62F02AE4600D3CD59 /* Build configuration list for PBXNativeTarget "TraceVPN" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5FCEECE72F02AE4600D3CD59 /* Debug */,
+				5FCEECE82F02AE4600D3CD59 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		5F4B07A42F149B1000D9933A /* XCLocalSwiftPackageReference "../Trace" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Trace;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		5F4B07A52F149B1000D9933A /* TraceCompression */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceCompression;
+		};
+		5F4B07A72F149B1000D9933A /* TraceCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceCore;
+		};
+		5F4B07A92F149B1000D9933A /* TraceFeatures */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceFeatures;
+		};
+		5F4B07AB2F149B1000D9933A /* TraceNetworking */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceNetworking;
+		};
+		5F4B07AD2F149B1000D9933A /* TraceProxy */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceProxy;
+		};
+		5F4B07AF2F149B1000D9933A /* TraceSecurity */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceSecurity;
+		};
+		5F4B07B12F149B1000D9933A /* TraceUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceUI;
+		};
+		5F4B07C12F149C0000D9933A /* TraceCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceCore;
+		};
+		5F4B07C32F149C0000D9933A /* TraceCompression */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceCompression;
+		};
+		5F4B07C52F149C0000D9933A /* TraceSecurity */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceSecurity;
+		};
+		5F4B07C72F149C0000D9933A /* TraceNetworking */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceNetworking;
+		};
+		5F4B07C92F149C0000D9933A /* TraceProxy */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceProxy;
+		};
+		5F4B07CB2F149C0000D9933A /* TraceFeatures */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceFeatures;
+		};
+		5F4B07CD2F149C0000D9933A /* TracePacket */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TracePacket;
+		};
+		5F4B07CF2F149C0000D9933A /* HevSocks5Tunnel */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HevSocks5Tunnel;
+		};
+		5F4B07D12F149D0000D9933A /* TraceCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceCore;
+		};
+		5F4B07D32F149D0000D9933A /* TraceCompression */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceCompression;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 5FCEEBF92F0152E400D3CD59 /* Project object */;
+}

@@ -1,0 +1,1394 @@
+//
+//  CaptureViewModel.swift
+//  Trace
+//
+//  Created by Justin on 2026/01/10.
+//
+
+import Combine
+import Foundation
+import NetworkExtension
+import os
+import SwiftUI
+import TraceCore
+import TraceFeatures
+
+// MARK: - Search Scope
+
+enum SearchScope: String, CaseIterable {
+    case all = "All"
+    case url = "URL"
+    case headers = "Headers"
+    case body = "Body"
+}
+
+// MARK: - Response Time Filter
+
+enum ResponseTimeFilter: String, CaseIterable {
+    case fast = "Fast"
+    case normal = "Normal"
+    case slow = "Slow"
+
+    var range: ClosedRange<TimeInterval> {
+        switch self {
+        case .fast: 0 ... 0.1 // < 100ms
+        case .normal: 0.1 ... 1.0 // 100ms - 1s
+        case .slow: 1.0 ... Double.infinity // > 1s
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .fast: "Fast (< 100ms)"
+        case .normal: "Normal (100ms - 1s)"
+        case .slow: "Slow (> 1s)"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .fast: "hare.fill"
+        case .normal: "gauge.medium"
+        case .slow: "tortoise.fill"
+        }
+    }
+}
+
+// MARK: - Content Type Filter
+
+enum ContentTypeFilter: String, CaseIterable {
+    case json = "JSON"
+    case html = "HTML"
+    case xml = "XML"
+    case image = "Image"
+    case javascript = "JavaScript"
+    case css = "CSS"
+    case plainText = "Plain Text"
+    case binary = "Binary"
+
+    var mimeTypes: [String] {
+        switch self {
+        case .json: ["application/json", "text/json"]
+        case .html: ["text/html"]
+        case .xml: ["application/xml", "text/xml"]
+        case .image: [
+                "image/png",
+                "image/jpeg",
+                "image/gif",
+                "image/webp",
+                "image/svg+xml",
+                "image/heic",
+                "image/heif",
+                "image/avif",
+                "image/tiff",
+                "image/bmp",
+                "image/x-ms-bmp",
+                "image/x-icon",
+                "image/vnd.microsoft.icon"
+            ]
+        case .javascript: ["application/javascript", "text/javascript"]
+        case .css: ["text/css"]
+        case .plainText: ["text/plain"]
+        case .binary: ["application/octet-stream", "binary/octet-stream", "octet-stream"]
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .json: "curlybraces"
+        case .html: "doc.text"
+        case .xml: "chevron.left.forwardslash.chevron.right"
+        case .image: "photo"
+        case .javascript: "scroll"
+        case .css: "paintbrush"
+        case .plainText: "text.alignleft"
+        case .binary: "doc.zipper"
+        }
+    }
+}
+
+// MARK: - Request Grouping
+
+enum RequestGroupingMode: String, CaseIterable, Codable {
+    case none = "None"
+    case byDomain = "By Domain"
+    case bySession = "By Session"
+    case hierarchical = "Hierarchical"
+
+    var icon: String {
+        switch self {
+        case .none: "list.bullet"
+        case .byDomain: "globe"
+        case .bySession: "clock"
+        case .hierarchical: "list.bullet.indent"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .none: "Flat list of all requests"
+        case .byDomain: "Group by domain"
+        case .bySession: "Group by capture session"
+        case .hierarchical: "Group by session, then domain"
+        }
+    }
+}
+
+struct DomainGroup: Identifiable {
+    let id = UUID()
+    let domain: String
+    let requests: [NetworkRequest]
+
+    var requestCount: Int {
+        requests.count
+    }
+
+    var totalSize: Int64 {
+        requests.reduce(0) { $0 + Int64($1.responseSize ?? 0) }
+    }
+
+    var totalSizeString: String {
+        ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
+    }
+}
+
+struct SessionGroup: Identifiable {
+    let id = UUID()
+    let session: CaptureSession
+    let requests: [NetworkRequest]
+    let domainGroups: [DomainGroup]
+
+    var requestCount: Int {
+        requests.count
+    }
+
+    var totalSize: Int64 {
+        requests.reduce(0) { $0 + Int64($1.responseSize ?? 0) }
+    }
+
+    var totalSizeString: String {
+        ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
+    }
+}
+
+struct GroupedRequests {
+    let mode: RequestGroupingMode
+    let domainGroups: [DomainGroup]
+    let sessionGroups: [SessionGroup]
+
+    init(mode: RequestGroupingMode, domainGroups: [DomainGroup] = [], sessionGroups: [SessionGroup] = []) {
+        self.mode = mode
+        self.domainGroups = domainGroups
+        self.sessionGroups = sessionGroups
+    }
+
+    var isEmpty: Bool {
+        domainGroups.isEmpty && sessionGroups.isEmpty
+    }
+}
+
+// MARK: - Saved Filter Preset
+
+struct SavedFilterPreset: Codable, Identifiable, Equatable {
+    let id: UUID
+    var name: String
+    var filterMethod: String?
+    var filterStatusCode: Int?
+    var filterDomains: [String]
+    var filterFavoritesOnly: Bool
+    var filterContentTypes: [String]
+    var filterNetworkEventTypes: [String]?
+    var filterMinSize: Int?
+    var filterMaxSize: Int?
+    var filterMinDuration: TimeInterval?
+    var filterMaxDuration: TimeInterval?
+    var filterRegexPattern: String?
+    var filterResponseTime: String?
+    var filterShowDuplicatesOnly: Bool
+    var filterShowErrorsOnly: Bool
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        filterMethod: HTTPMethod? = nil,
+        filterStatusCode: Int? = nil,
+        filterDomains: [String] = [],
+        filterFavoritesOnly: Bool = false,
+        filterContentTypes: [ContentTypeFilter] = [],
+        filterNetworkEventTypes: [NetworkEventType]? = nil,
+        filterMinSize: Int? = nil,
+        filterMaxSize: Int? = nil,
+        filterMinDuration: TimeInterval? = nil,
+        filterMaxDuration: TimeInterval? = nil,
+        filterRegexPattern: String? = nil,
+        filterResponseTime: ResponseTimeFilter? = nil,
+        filterShowDuplicatesOnly: Bool = false,
+        filterShowErrorsOnly: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.filterMethod = filterMethod?.rawValue
+        self.filterStatusCode = filterStatusCode
+        self.filterDomains = filterDomains
+        self.filterFavoritesOnly = filterFavoritesOnly
+        self.filterContentTypes = filterContentTypes.map(\.rawValue)
+        self.filterNetworkEventTypes = filterNetworkEventTypes?.map(\.rawValue)
+        self.filterMinSize = filterMinSize
+        self.filterMaxSize = filterMaxSize
+        self.filterMinDuration = filterMinDuration
+        self.filterMaxDuration = filterMaxDuration
+        self.filterRegexPattern = filterRegexPattern
+        self.filterResponseTime = filterResponseTime?.rawValue
+        self.filterShowDuplicatesOnly = filterShowDuplicatesOnly
+        self.filterShowErrorsOnly = filterShowErrorsOnly
+    }
+}
+
+@MainActor
+final class CaptureViewModel: ObservableObject {
+    // Use App Group storage for VPN-captured requests
+    private let storage = AppGroupStorage.shared
+    private struct FilterCacheKey: Hashable {
+        let requestsVersion: Int
+        let favoritesVersion: Int
+        let bodySearchVersion: Int
+        let filterMethod: String?
+        let filterStatusCode: Int?
+        let filterDomains: [String]
+        let filterFavoritesOnly: Bool
+        let filterContentTypes: [String]
+        let filterNetworkEventTypes: [String]
+        let filterMinSize: Int?
+        let filterMaxSize: Int?
+        let filterMinDuration: TimeInterval?
+        let filterMaxDuration: TimeInterval?
+        let filterRegexPattern: String?
+        let filterResponseTime: String?
+        let filterShowDuplicatesOnly: Bool
+        let filterShowErrorsOnly: Bool
+        let searchText: String
+        let searchScope: SearchScope
+    }
+
+    @Published var requests: [NetworkRequest] = [] {
+        didSet {
+            requestsVersion &+= 1
+            filteredRequestsCache = nil
+            invalidateGroupingCache()
+        }
+    }
+
+    @Published var isCapturing: Bool = false
+    @Published var searchText: String = "" {
+        didSet { debounceBodySearch() }
+    }
+
+    @Published var searchScope: SearchScope = .all {
+        didSet { debounceBodySearch() }
+    }
+
+    // Basic filters
+    @Published var filterMethod: HTTPMethod?
+    @Published var filterStatusCode: Int?
+    @Published var filterDomains: [String] = []
+    @Published var filterFavoritesOnly: Bool = false
+    @Published var selectedTheme: AppTheme = .system
+
+    // Advanced filters
+    @Published var filterContentTypes: Set<ContentTypeFilter> = []
+    @Published var filterNetworkEventTypes: Set<NetworkEventType> = Set(NetworkEventType.allCases) {
+        didSet {
+            // Affects both `filteredRequests` and whether grouping is allowed (HTTP-only).
+            filteredRequestsCache = nil
+            invalidateGroupingCache()
+        }
+    }
+
+    @Published var filterMinSize: Int?
+    @Published var filterMaxSize: Int?
+    @Published var filterMinDuration: TimeInterval?
+    @Published var filterMaxDuration: TimeInterval?
+    @Published var filterRegexPattern: String?
+    @Published var filterResponseTime: ResponseTimeFilter?
+    @Published var filterShowDuplicatesOnly: Bool = false
+    @Published var filterShowErrorsOnly: Bool = false
+
+    // Filter convenience properties for UI
+    var minResponseTime: Int? {
+        get { filterMinDuration.map { Int($0 * 1000) } }
+        set { filterMinDuration = newValue.map { TimeInterval($0) / 1000.0 } }
+    }
+
+    var maxResponseTime: Int? {
+        get { filterMaxDuration.map { Int($0 * 1000) } }
+        set { filterMaxDuration = newValue.map { TimeInterval($0) / 1000.0 } }
+    }
+
+    var minResponseSize: Int? { get { filterMinSize } set { filterMinSize = newValue } }
+    var maxResponseSize: Int? { get { filterMaxSize } set { filterMaxSize = newValue } }
+    var minDuration: TimeInterval? { get { filterMinDuration } set { filterMinDuration = newValue } }
+    var maxDuration: TimeInterval? { get { filterMaxDuration } set { filterMaxDuration = newValue } }
+    var regexFilter: String { get { filterRegexPattern ?? "" } set { filterRegexPattern = newValue.isEmpty ? nil : newValue } }
+
+    // Saved filter presets
+    @Published var savedFilterPresets: [SavedFilterPreset] = []
+
+    // Network Throttling
+    @Published var throttlingEnabled: Bool = false {
+        didSet { handleThrottlingStateChange() }
+    }
+
+    @Published var selectedNetworkCondition: NetworkCondition? {
+        didSet { handleThrottlingStateChange() }
+    }
+
+    // Grouping and Sessions
+    @Published var groupingMode: RequestGroupingMode = .none {
+        didSet {
+            UserDefaults.standard.set(groupingMode.rawValue, forKey: "requestGroupingMode")
+            invalidateGroupingCache()
+        }
+    }
+
+    @Published var sessions: [CaptureSession] = []
+    @Published var currentSession: CaptureSession?
+    @Published var selectedSession: CaptureSession?
+    @Published var selectedRequestId: UUID?
+    private var cachedGroupedRequests: GroupedRequests?
+    private var lastGroupingTimestamp: Date?
+    private var groupingRestoreEventTypes: Set<NetworkEventType>?
+
+    // Duplicate detection cache
+    private var duplicateRequestCache: [String: UUID] = [:] // URL+Method -> First Request ID
+
+    // Favorites manager
+    private let favoritesManager = FavoritesManager.shared
+
+    // Search optimization
+    private var searchTask: Task<Void, Never>?
+    private let maxSearchBodySize = 100_000 // 100KB limit for body search
+    @Published private var bodySearchMatches: Set<UUID> = [] {
+        didSet {
+            bodySearchVersion &+= 1
+            filteredRequestsCache = nil
+        }
+    }
+
+    // Regex cache
+    private var compiledRegex: NSRegularExpression?
+    private var lastRegexPattern: String?
+    private var filteredRequestsCache: [NetworkRequest]?
+    private var filteredRequestsCacheKey: FilterCacheKey?
+    private var requestsVersion = 0
+    private var favoritesVersion = 0
+    private var bodySearchVersion = 0
+
+    // Load debouncing to prevent excessive reloads
+    private var loadTask: Task<Void, Never>?
+    private var activeLoadTask: Task<Void, Never>?
+    private var lastLoadTime: Date?
+    private let minLoadInterval: TimeInterval = 0.5 // Minimum 500ms between loads
+    private var notifiedRequestIds: Set<UUID> = []
+    private let notificationDedupLimit = 200
+    private var vpnStatusCancellable: AnyCancellable?
+    private var throttlingUpdateTask: Task<Void, Never>?
+    private var isLoadingThrottlingState = false
+
+    init() {
+        // Load saved grouping mode.
+        //
+        // IMPORTANT: Restore via `setGroupingMode(_:)` (not direct assignment) so we also
+        // restore the required invariants (grouping is HTTP-only) and avoid a UI mismatch
+        // where the picker shows "Hierarchical" but the list renders flat.
+        if let savedMode = UserDefaults.standard.string(forKey: "requestGroupingMode"),
+           let mode = RequestGroupingMode(rawValue: savedMode) {
+            setGroupingMode(mode)
+        }
+
+        // Load initial requests from storage
+        loadRequests()
+        loadSavedPresets()
+        loadSessions()
+        cleanupOrphanedSessions()
+        loadThrottlingState()
+
+        // Observe new requests from Network Extension with debouncing
+        storage.observeNewRequests { [weak self] in
+            Task { @MainActor in
+                self?.debouncedLoadRequests()
+            }
+        }
+
+        // Observe VPN status changes for session tracking
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name.NEVPNStatusDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleVPNStatusChange()
+        }
+
+        // Observe VPN connection state changes to sync isCapturing
+        vpnStatusCancellable = VPNManager.shared.$isConnected
+            .sink { [weak self] isConnected in
+                self?.isCapturing = isConnected
+            }
+
+        // Observe favorites updates to invalidate filter cache
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("com.trace.favoritesUpdated"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.favoritesVersion &+= 1
+            self?.filteredRequestsCache = nil
+        }
+    }
+
+    private func loadThrottlingState() {
+        isLoadingThrottlingState = true
+        let state = storage.loadThrottlingState()
+        throttlingEnabled = state.enabled
+        selectedNetworkCondition = state.condition ?? (state.enabled ? .wifi : nil)
+        isLoadingThrottlingState = false
+    }
+
+    private func handleThrottlingStateChange() {
+        guard !isLoadingThrottlingState else { return }
+
+        if throttlingEnabled, selectedNetworkCondition == nil {
+            selectedNetworkCondition = .wifi
+            return
+        }
+
+        throttlingUpdateTask?.cancel()
+        throttlingUpdateTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard let self else { return }
+            self.persistThrottlingState()
+        }
+    }
+
+    private func persistThrottlingState() {
+        let state = NetworkThrottlingState(
+            enabled: throttlingEnabled,
+            condition: selectedNetworkCondition
+        )
+
+        try? storage.saveThrottlingState(state)
+
+        Task {
+            await VPNManager.shared.updateThrottlingState(state)
+        }
+    }
+
+    private func debouncedLoadRequests() {
+        // Cancel any pending load task
+        loadTask?.cancel()
+
+        // Check if we should skip this load (too soon after last load)
+        if let lastLoad = lastLoadTime, Date().timeIntervalSince(lastLoad) < minLoadInterval {
+            // Schedule a delayed load instead
+            loadTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(500_000_000)) // 500ms
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.loadRequests(triggeredByNewRequest: true)
+                }
+            }
+            return
+        }
+
+        // Load immediately
+        loadRequests(triggeredByNewRequest: true)
+    }
+
+    private func loadRequests(triggeredByNewRequest: Bool = false) {
+        lastLoadTime = Date()
+        activeLoadTask?.cancel()
+        activeLoadTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                var loadedRequests = try await self.storage.loadAllRequestsAsync()
+
+                // Assign current session to requests without sessionId
+                let currentSessionId = await MainActor.run { self.currentSession?.id }
+                if let sessionId = currentSessionId {
+                    for i in 0 ..< loadedRequests.count where loadedRequests[i].sessionId == nil {
+                        loadedRequests[i].sessionId = sessionId
+                        // Save the updated request with sessionId
+                        try? self.storage.saveRequest(loadedRequests[i])
+                    }
+                }
+
+                guard !Task.isCancelled else { return }
+                self.requests = self.redirectChainResolver.enrich(loadedRequests)
+                self.invalidateGroupingCache()
+                CoreLog.storage.info(
+                    "event=storage.requests_load outcome=success count=\(self.requests.count)"
+                )
+                if let firstRequest = self.requests.first {
+                    CoreLog.storage.debug(
+                        "event=storage.requests_load_first outcome=success request_id=\(firstRequest.id.uuidString, privacy: .public) method=\(firstRequest.method.rawValue, privacy: .public) url=\(firstRequest.url, privacy: .private(mask: .hash))"
+                    )
+                }
+
+                // Note: When running in the simulator, you may see network errors in the console for
+                // URLs found in captured requests (e.g., "HTTP load failed" for external resources).
+                // This occurs when iOS system components (like link preview generators or data detectors)
+                // attempt to fetch metadata for URLs displayed in the UI. These errors are harmless and
+                // simulator-specific; they don't affect app functionality or occur on real devices.
+                self.debounceBodySearch()
+
+                // Update widget with latest data
+                self.updateWidget()
+
+                if triggeredByNewRequest {
+                    self.processNewRequestsForNotifications()
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                CoreLog.storage.error(
+                    "event=storage.requests_load outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                )
+                self.requests = []
+                self.debounceBodySearch()
+            }
+        }
+    }
+
+    private let redirectChainResolver = RedirectChainResolver()
+
+    func reloadRequests() async {
+        await MainActor.run {
+            loadRequests()
+        }
+        await activeLoadTask?.value
+    }
+
+    // Check if network event type filter is user-set (not auto-set by grouping)
+    private var hasUserSetNetworkEventTypeFilter: Bool {
+        // If grouping is active and filter is exactly [.http], it's auto-set by grouping
+        if groupingMode != .none && filterNetworkEventTypes == Set([.http]) {
+            return false
+        }
+        // Otherwise, if it's not all types, it's user-set
+        return filterNetworkEventTypes.count != NetworkEventType.allCases.count
+    }
+
+    var hasActiveFilters: Bool {
+        filterMethod != nil || filterStatusCode != nil || !filterDomains.isEmpty || filterFavoritesOnly ||
+            !filterContentTypes.isEmpty || hasUserSetNetworkEventTypeFilter ||
+            filterMinSize != nil || filterMaxSize != nil ||
+            filterMinDuration != nil || filterMaxDuration != nil || filterRegexPattern != nil ||
+            filterResponseTime != nil || filterShowDuplicatesOnly || filterShowErrorsOnly
+    }
+
+    var activeFilterCount: Int {
+        var count = 0
+        if filterMethod != nil { count += 1 }
+        if filterStatusCode != nil { count += 1 }
+        if filterFavoritesOnly { count += 1 }
+        count += filterDomains.count
+        count += filterContentTypes.count
+        if hasUserSetNetworkEventTypeFilter { count += 1 }
+        if filterMinSize != nil || filterMaxSize != nil { count += 1 }
+        if filterMinDuration != nil || filterMaxDuration != nil { count += 1 }
+        if filterRegexPattern != nil { count += 1 }
+        if filterResponseTime != nil { count += 1 }
+        if filterShowDuplicatesOnly { count += 1 }
+        if filterShowErrorsOnly { count += 1 }
+        return count
+    }
+
+    var hasAdvancedFilters: Bool {
+        !filterContentTypes.isEmpty || filterNetworkEventTypes.count != NetworkEventType.allCases.count ||
+            filterMinSize != nil || filterMaxSize != nil ||
+            filterMinDuration != nil || filterMaxDuration != nil || filterRegexPattern != nil ||
+            filterResponseTime != nil || filterShowDuplicatesOnly || filterShowErrorsOnly
+    }
+
+    var filteredRequests: [NetworkRequest] {
+        let cacheKey = FilterCacheKey(
+            requestsVersion: requestsVersion,
+            favoritesVersion: favoritesVersion,
+            bodySearchVersion: bodySearchVersion,
+            filterMethod: filterMethod?.rawValue,
+            filterStatusCode: filterStatusCode,
+            filterDomains: filterDomains.sorted(),
+            filterFavoritesOnly: filterFavoritesOnly,
+            filterContentTypes: filterContentTypes.map(\.rawValue).sorted(),
+            filterNetworkEventTypes: filterNetworkEventTypes.map(\.rawValue).sorted(),
+            filterMinSize: filterMinSize,
+            filterMaxSize: filterMaxSize,
+            filterMinDuration: filterMinDuration,
+            filterMaxDuration: filterMaxDuration,
+            filterRegexPattern: filterRegexPattern,
+            filterResponseTime: filterResponseTime?.rawValue,
+            filterShowDuplicatesOnly: filterShowDuplicatesOnly,
+            filterShowErrorsOnly: filterShowErrorsOnly,
+            searchText: searchText,
+            searchScope: searchScope
+        )
+
+        if let cached = filteredRequestsCache, filteredRequestsCacheKey == cacheKey {
+            return cached
+        }
+
+        if !filterNetworkEventTypes.contains(.http) {
+            filteredRequestsCache = []
+            filteredRequestsCacheKey = cacheKey
+            return []
+        }
+
+        var results: [NetworkRequest] = []
+        results.reserveCapacity(requests.count)
+        let favoritedIds = filterFavoritesOnly ? favoritesManager.favoritedRequestIds : nil
+
+        for request in requests {
+            if let method = filterMethod, request.method != method { continue }
+            if let statusCode = filterStatusCode, request.statusCode != statusCode { continue }
+
+            if !filterDomains.isEmpty {
+                let host = request.host
+                let matches = filterDomains.contains { domain in
+                    matchesDomain(host: host, pattern: domain)
+                }
+                if !matches { continue }
+            }
+
+            if let favoritedIds, !favoritedIds.contains(request.id) { continue }
+            if !filterContentTypes.isEmpty, !matchesContentType(request) { continue }
+
+            if filterMinSize != nil || filterMaxSize != nil {
+                let size = request.responseSize ?? 0
+                if let minSize = filterMinSize, size < minSize { continue }
+                if let maxSize = filterMaxSize, size > maxSize { continue }
+            }
+
+            if filterMinDuration != nil || filterMaxDuration != nil {
+                if let minDuration = filterMinDuration, request.duration < minDuration { continue }
+                if let maxDuration = filterMaxDuration, request.duration > maxDuration { continue }
+            }
+
+            if let responseTime = filterResponseTime, !responseTime.range.contains(request.duration) { continue }
+            if filterShowErrorsOnly, (request.statusCode ?? 0) < 400 { continue }
+            if filterShowDuplicatesOnly, !request.isDuplicate { continue }
+
+            if let pattern = filterRegexPattern, !pattern.isEmpty, !matchesRegex(request, pattern: pattern) {
+                continue
+            }
+
+            if !searchText.isEmpty {
+                let matchesSearch: Bool = switch searchScope {
+                case .all:
+                    request.url.localizedCaseInsensitiveContains(searchText) ||
+                        request.statusCodeText.contains(searchText) ||
+                        request.method.rawValue.localizedCaseInsensitiveContains(searchText) ||
+                        searchInHeaders(request, searchText) ||
+                        searchInBody(request, searchText)
+                case .url:
+                    request.url.localizedCaseInsensitiveContains(searchText)
+                case .headers:
+                    searchInHeaders(request, searchText)
+                case .body:
+                    searchInBody(request, searchText)
+                }
+                if !matchesSearch { continue }
+            }
+
+            results.append(request)
+        }
+
+        results.sort { $0.timestamp > $1.timestamp }
+        filteredRequestsCache = results
+        filteredRequestsCacheKey = cacheKey
+        return results
+    }
+
+    // MARK: - Content Type Matching
+
+    private func matchesContentType(_ request: NetworkRequest) -> Bool {
+        guard let contentTypeHeader = request.responseHeaders.first(where: { $0.key.lowercased() == "content-type" }) else {
+            return false
+        }
+
+        let contentType = contentTypeHeader.value.lowercased()
+        return filterContentTypes.contains { filter in
+            filter.mimeTypes.contains { mimeType in
+                contentType.contains(mimeType.lowercased())
+            }
+        }
+    }
+
+    // MARK: - Regex Matching
+
+    private func matchesRegex(_ request: NetworkRequest, pattern: String) -> Bool {
+        // Cache compiled regex for performance
+        if pattern != lastRegexPattern {
+            lastRegexPattern = pattern
+            compiledRegex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        }
+
+        guard let regex = compiledRegex else { return false }
+
+        // Check URL
+        let urlRange = NSRange(request.url.startIndex..., in: request.url)
+        if regex.firstMatch(in: request.url, options: [], range: urlRange) != nil {
+            return true
+        }
+
+        // Check headers
+        for header in request.requestHeaders + request.responseHeaders {
+            let headerString = "\(header.key): \(header.value)"
+            let headerRange = NSRange(headerString.startIndex..., in: headerString)
+            if regex.firstMatch(in: headerString, options: [], range: headerRange) != nil {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private func searchInHeaders(_ request: NetworkRequest, _ searchText: String) -> Bool {
+        for header in request.requestHeaders + request.responseHeaders {
+            if header.key.localizedCaseInsensitiveContains(searchText) ||
+                header.value.localizedCaseInsensitiveContains(searchText) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func searchInBody(_ request: NetworkRequest, _ searchText: String) -> Bool {
+        bodySearchMatches.contains(request.id)
+    }
+
+    // MARK: - Search Helpers
+
+    private func debounceBodySearch() {
+        searchTask?.cancel()
+
+        let currentText = searchText
+        let currentScope = searchScope
+
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms debounce
+            guard !Task.isCancelled else { return }
+            await self?.performBodySearch(text: currentText, scope: currentScope)
+        }
+    }
+
+    @MainActor
+    private func performBodySearch(text: String, scope: SearchScope) async {
+        guard !text.isEmpty, scope == .body || scope == .all else {
+            bodySearchMatches = []
+            return
+        }
+
+        let requestsSnapshot = requests
+        let maxBytes = maxSearchBodySize
+
+        let matches = await Task.detached(priority: .userInitiated) { () -> Set<UUID> in
+            var results: Set<UUID> = []
+            for request in requestsSnapshot {
+                if Task.isCancelled { return results }
+                if CaptureViewModel.bodyContains(searchText: text, request: request, maxBytes: maxBytes) {
+                    results.insert(request.id)
+                }
+            }
+            return results
+        }.value
+
+        bodySearchMatches = matches
+    }
+
+    private nonisolated static func bodyContains(searchText: String, request: NetworkRequest, maxBytes: Int) -> Bool {
+        if let requestBody = request.requestBody.getPreview(maxBytes: maxBytes),
+           let bodyString = String(data: requestBody, encoding: .utf8),
+           bodyString.localizedCaseInsensitiveContains(searchText) {
+            return true
+        }
+
+        if let responseBody = request.responseBody.getPreview(maxBytes: maxBytes),
+           let bodyString = String(data: responseBody, encoding: .utf8),
+           bodyString.localizedCaseInsensitiveContains(searchText) {
+            return true
+        }
+
+        return false
+    }
+
+    func clearRequests() {
+        // Remove any persisted body files tied to current requests
+        for request in requests {
+            request.requestBody.deleteFile()
+            request.responseBody.deleteFile()
+        }
+
+        do {
+            try storage.clearAllRequests()
+            requests = []
+        } catch {
+            CoreLog.storage.error(
+                "event=storage.requests_clear outcome=failure error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    func deleteRequest(_ request: NetworkRequest) {
+        // Remove any persisted body files tied to this request
+        request.requestBody.deleteFile()
+        request.responseBody.deleteFile()
+
+        do {
+            try storage.deleteRequest(request)
+            requests.removeAll { $0.id == request.id }
+        } catch {
+            CoreLog.storage.error(
+                "event=storage.request_delete outcome=failure request_id=\(request.id.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    func toggleCapture() {
+        if isCapturing {
+            isCapturing = false
+            VPNManager.shared.stop()
+        } else {
+            isCapturing = true
+            Task {
+                do {
+                    try await VPNManager.shared.start()
+                } catch {
+                    isCapturing = false
+                    FeatureLog.vpn.error(
+                        "event=vpn.start outcome=failure source=ui error=\(error.localizedDescription, privacy: .public)"
+                    )
+                }
+            }
+        }
+    }
+
+    func clearFilters() {
+        filterMethod = nil
+        filterStatusCode = nil
+        filterDomains = []
+        filterFavoritesOnly = false
+        // Clear advanced filters
+        filterContentTypes = []
+        filterNetworkEventTypes = Set(NetworkEventType.allCases)
+        filterMinSize = nil
+        filterMaxSize = nil
+        filterMinDuration = nil
+        filterMaxDuration = nil
+        filterRegexPattern = nil
+        filterResponseTime = nil
+        filterShowDuplicatesOnly = false
+        filterShowErrorsOnly = false
+        // Reset regex cache
+        compiledRegex = nil
+        lastRegexPattern = nil
+    }
+
+    func clearAdvancedFilters() {
+        filterContentTypes = []
+        filterNetworkEventTypes = Set(NetworkEventType.allCases)
+        filterMinSize = nil
+        filterMaxSize = nil
+        filterMinDuration = nil
+        filterMaxDuration = nil
+        filterRegexPattern = nil
+        filterResponseTime = nil
+        filterShowDuplicatesOnly = false
+        filterShowErrorsOnly = false
+        compiledRegex = nil
+        lastRegexPattern = nil
+    }
+
+    // MARK: - Saved Filter Presets
+
+    private func loadSavedPresets() {
+        guard let data = UserDefaults.standard.data(forKey: "savedFilterPresets") else { return }
+        savedFilterPresets = (try? JSONDecoder().decode([SavedFilterPreset].self, from: data)) ?? []
+    }
+
+    func saveCurrentFiltersAsPreset(name: String) {
+        let preset = SavedFilterPreset(
+            name: name,
+            filterMethod: filterMethod,
+            filterStatusCode: filterStatusCode,
+            filterDomains: filterDomains,
+            filterFavoritesOnly: filterFavoritesOnly,
+            filterContentTypes: Array(filterContentTypes),
+            filterNetworkEventTypes: Array(filterNetworkEventTypes),
+            filterMinSize: filterMinSize,
+            filterMaxSize: filterMaxSize,
+            filterMinDuration: filterMinDuration,
+            filterMaxDuration: filterMaxDuration,
+            filterRegexPattern: filterRegexPattern,
+            filterResponseTime: filterResponseTime,
+            filterShowDuplicatesOnly: filterShowDuplicatesOnly,
+            filterShowErrorsOnly: filterShowErrorsOnly
+        )
+        savedFilterPresets.append(preset)
+        persistSavedPresets()
+    }
+
+    func applyPreset(_ preset: SavedFilterPreset) {
+        filterMethod = preset.filterMethod.flatMap { HTTPMethod(rawValue: $0) }
+        filterStatusCode = preset.filterStatusCode
+        filterDomains = preset.filterDomains
+        filterFavoritesOnly = preset.filterFavoritesOnly
+        filterContentTypes = Set(preset.filterContentTypes.compactMap { ContentTypeFilter(rawValue: $0) })
+        filterNetworkEventTypes = preset.filterNetworkEventTypes.map { Set($0.compactMap { NetworkEventType(rawValue: $0) }) } ?? Set(NetworkEventType.allCases)
+        filterMinSize = preset.filterMinSize
+        filterMaxSize = preset.filterMaxSize
+        filterMinDuration = preset.filterMinDuration
+        filterMaxDuration = preset.filterMaxDuration
+        filterRegexPattern = preset.filterRegexPattern
+        filterResponseTime = preset.filterResponseTime.flatMap { ResponseTimeFilter(rawValue: $0) }
+        filterShowDuplicatesOnly = preset.filterShowDuplicatesOnly
+        filterShowErrorsOnly = preset.filterShowErrorsOnly
+    }
+
+    func deletePreset(_ preset: SavedFilterPreset) {
+        savedFilterPresets.removeAll { $0.id == preset.id }
+        persistSavedPresets()
+    }
+
+    private func persistSavedPresets() {
+        guard let data = try? JSONEncoder().encode(savedFilterPresets) else { return }
+        UserDefaults.standard.set(data, forKey: "savedFilterPresets")
+    }
+
+    // MARK: - Duplicate Detection
+
+    func detectDuplicates() {
+        duplicateRequestCache.removeAll()
+
+        // Sort requests by timestamp (oldest first) to properly identify originals
+        let sortedRequests = requests.sorted { $0.timestamp < $1.timestamp }
+
+        for i in 0 ..< sortedRequests.count {
+            var request = sortedRequests[i]
+            let key = "\(request.method.rawValue):\(request.url)"
+
+            if let originalId = duplicateRequestCache[key] {
+                // This is a duplicate
+                request.isDuplicate = true
+                request.duplicateOfRequestId = originalId
+                // Update in the main requests array
+                if let index = requests.firstIndex(where: { $0.id == request.id }) {
+                    requests[index].isDuplicate = true
+                    requests[index].duplicateOfRequestId = originalId
+                }
+            } else {
+                // First occurrence - mark as original
+                duplicateRequestCache[key] = request.id
+                if let index = requests.firstIndex(where: { $0.id == request.id }) {
+                    requests[index].isDuplicate = false
+                    requests[index].duplicateOfRequestId = nil
+                }
+            }
+        }
+    }
+
+    var duplicateCount: Int {
+        requests.filter(\.isDuplicate).count
+    }
+
+    func addDomainFilter(_ domain: String) {
+        let cleanedDomain = domain.trimmingCharacters(in: .whitespaces).lowercased()
+        if !cleanedDomain.isEmpty && !filterDomains.contains(cleanedDomain) {
+            filterDomains.append(cleanedDomain)
+        }
+    }
+
+    func removeDomainFilter(_ domain: String) {
+        filterDomains.removeAll { $0 == domain }
+    }
+
+    private func matchesDomain(host: String, pattern: String) -> Bool {
+        let lowercasedHost = host.lowercased()
+        let lowercasedPattern = pattern.lowercased()
+
+        // Exact match
+        if lowercasedHost == lowercasedPattern {
+            return true
+        }
+
+        // Wildcard match (*.example.com)
+        if lowercasedPattern.hasPrefix("*.") {
+            let domain = String(lowercasedPattern.dropFirst(2))
+            return lowercasedHost.hasSuffix(".\(domain)") || lowercasedHost == domain
+        }
+
+        // Subdomain match
+        if lowercasedHost.hasSuffix(".\(lowercasedPattern)") {
+            return true
+        }
+
+        return false
+    }
+
+    // MARK: - Session Management
+
+    private func loadSessions() {
+        do {
+            sessions = try storage.loadAllSessions()
+            // Find active session if any
+            currentSession = sessions.first(where: { $0.isActive })
+        } catch {
+            CoreLog.storage.error(
+                "event=storage.sessions_load outcome=failure error=\(error.localizedDescription, privacy: .public)"
+            )
+            sessions = []
+        }
+    }
+
+    private func cleanupOrphanedSessions() {
+        // Mark any orphaned active sessions as ended (e.g., from app crashes)
+        for session in sessions where session.isActive {
+            var updatedSession = session
+            updatedSession.endTime = Date()
+            do {
+                try storage.updateSession(updatedSession)
+                if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+                    sessions[index] = updatedSession
+                }
+            } catch {
+                CoreLog.storage.error(
+                    "event=storage.session_cleanup outcome=failure session_id=\(session.id.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+        currentSession = nil
+    }
+
+    func startNewSession() {
+        // End current session if active
+        if let current = currentSession {
+            endCurrentSession()
+        }
+
+        // Create new session
+        let newSession = CaptureSession(
+            startTime: Date(),
+            endTime: nil,
+            requestCount: 0,
+            totalDataTransferred: 0
+        )
+
+        do {
+            try storage.saveSession(newSession)
+            currentSession = newSession
+            sessions.insert(newSession, at: 0)
+            CoreLog.storage.info(
+                "event=storage.session_start outcome=success session_id=\(newSession.id.uuidString, privacy: .public)"
+            )
+        } catch {
+            CoreLog.storage.error(
+                "event=storage.session_start outcome=failure error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    func endCurrentSession() {
+        guard var session = currentSession else { return }
+
+        // Calculate statistics
+        let sessionRequests = requests.filter { $0.sessionId == session.id }
+        session.endTime = Date()
+        session.requestCount = sessionRequests.count
+        session.totalDataTransferred = sessionRequests.reduce(0) { $0 + Int64($1.responseSize ?? 0) }
+
+        do {
+            try storage.updateSession(session)
+            if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+                sessions[index] = session
+            }
+            currentSession = nil
+            CoreLog.storage.info(
+                "event=storage.session_end outcome=success session_id=\(session.id.uuidString, privacy: .public) request_count=\(session.requestCount)"
+            )
+        } catch {
+            CoreLog.storage.error(
+                "event=storage.session_end outcome=failure session_id=\(session.id.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    private func handleVPNStatusChange() {
+        // Sync capture state with VPN connection state
+        isCapturing = VPNManager.shared.isConnected
+
+        // Handle session management based on VPN state
+        if VPNManager.shared.isConnected {
+            // VPN connected - ensure we have an active session
+            if currentSession == nil {
+                startNewSession()
+            }
+        } else {
+            // VPN disconnected - end current session if any
+            if currentSession != nil {
+                endCurrentSession()
+            }
+        }
+    }
+
+    // MARK: - Grouping Logic
+
+    private func invalidateGroupingCache() {
+        cachedGroupedRequests = nil
+        lastGroupingTimestamp = nil
+    }
+
+    var groupedRequests: GroupedRequests {
+        // Check cache validity (500ms window)
+        if let cached = cachedGroupedRequests,
+           let timestamp = lastGroupingTimestamp,
+           Date().timeIntervalSince(timestamp) < 0.5 {
+            return cached
+        }
+
+        // Generate new grouped requests
+        let grouped: GroupedRequests
+        let requestsToGroup = filteredRequests
+
+        switch groupingMode {
+        case .none:
+            grouped = GroupedRequests(mode: .none)
+        case .byDomain:
+            grouped = groupByDomain(requests: requestsToGroup)
+        case .bySession:
+            grouped = groupBySession(requests: requestsToGroup)
+        case .hierarchical:
+            grouped = groupHierarchical(requests: requestsToGroup)
+        }
+
+        // Cache the result
+        cachedGroupedRequests = grouped
+        lastGroupingTimestamp = Date()
+
+        return grouped
+    }
+
+    private func groupByDomain(requests: [NetworkRequest]) -> GroupedRequests {
+        let grouped = Dictionary(grouping: requests) { $0.host }
+        let domainGroups = grouped.map { domain, reqs in
+            DomainGroup(domain: domain, requests: reqs.sorted { $0.timestamp > $1.timestamp })
+        }.sorted { $0.domain < $1.domain }
+
+        return GroupedRequests(mode: .byDomain, domainGroups: domainGroups)
+    }
+
+    private func groupBySession(requests: [NetworkRequest]) -> GroupedRequests {
+        // Group requests by session
+        var sessionMap: [UUID: [NetworkRequest]] = [:]
+        var orphanedRequests: [NetworkRequest] = []
+
+        for request in requests {
+            if let sessionId = request.sessionId {
+                sessionMap[sessionId, default: []].append(request)
+            } else {
+                orphanedRequests.append(request)
+            }
+        }
+
+        var sessionGroups: [SessionGroup] = []
+
+        // Add known sessions
+        for session in sessions {
+            if let requestsForSession = sessionMap[session.id], !requestsForSession.isEmpty {
+                let sorted = requestsForSession.sorted { $0.timestamp > $1.timestamp }
+                sessionGroups.append(SessionGroup(
+                    session: session,
+                    requests: sorted,
+                    domainGroups: []
+                ))
+            }
+        }
+
+        // Add orphaned requests as "Unknown Session"
+        if !orphanedRequests.isEmpty {
+            let unknownSession = CaptureSession(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!,
+                startTime: orphanedRequests.map(\.timestamp).min() ?? Date(),
+                endTime: orphanedRequests.map(\.timestamp).max(),
+                requestCount: orphanedRequests.count,
+                totalDataTransferred: orphanedRequests.reduce(0) { $0 + Int64($1.responseSize ?? 0) }
+            )
+            sessionGroups.append(SessionGroup(
+                session: unknownSession,
+                requests: orphanedRequests.sorted { $0.timestamp > $1.timestamp },
+                domainGroups: []
+            ))
+        }
+
+        return GroupedRequests(mode: .bySession, sessionGroups: sessionGroups)
+    }
+
+    private func groupHierarchical(requests: [NetworkRequest]) -> GroupedRequests {
+        // Group requests by session first
+        var sessionMap: [UUID: [NetworkRequest]] = [:]
+        var orphanedRequests: [NetworkRequest] = []
+
+        for request in requests {
+            if let sessionId = request.sessionId {
+                sessionMap[sessionId, default: []].append(request)
+            } else {
+                orphanedRequests.append(request)
+            }
+        }
+
+        var sessionGroups: [SessionGroup] = []
+
+        // Add known sessions with domain groups
+        for session in sessions {
+            if let requestsForSession = sessionMap[session.id], !requestsForSession.isEmpty {
+                let sorted = requestsForSession.sorted { $0.timestamp > $1.timestamp }
+
+                // Group by domain within this session
+                let domainGrouped = Dictionary(grouping: sorted) { $0.host }
+                let domainGroups = domainGrouped.map { domain, reqs in
+                    DomainGroup(domain: domain, requests: reqs)
+                }.sorted { $0.domain < $1.domain }
+
+                sessionGroups.append(SessionGroup(
+                    session: session,
+                    requests: sorted,
+                    domainGroups: domainGroups
+                ))
+            }
+        }
+
+        // Add orphaned requests as "Unknown Session"
+        if !orphanedRequests.isEmpty {
+            let unknownSession = CaptureSession(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!,
+                startTime: orphanedRequests.map(\.timestamp).min() ?? Date(),
+                endTime: orphanedRequests.map(\.timestamp).max(),
+                requestCount: orphanedRequests.count,
+                totalDataTransferred: orphanedRequests.reduce(0) { $0 + Int64($1.responseSize ?? 0) }
+            )
+
+            let domainGrouped = Dictionary(grouping: orphanedRequests) { $0.host }
+            let domainGroups = domainGrouped.map { domain, reqs in
+                DomainGroup(domain: domain, requests: reqs.sorted { $0.timestamp > $1.timestamp })
+            }.sorted { $0.domain < $1.domain }
+
+            sessionGroups.append(SessionGroup(
+                session: unknownSession,
+                requests: orphanedRequests.sorted { $0.timestamp > $1.timestamp },
+                domainGroups: domainGroups
+            ))
+        }
+
+        return GroupedRequests(mode: .hierarchical, sessionGroups: sessionGroups)
+    }
+
+    func setGroupingMode(_ mode: RequestGroupingMode) {
+        if mode != .none {
+            if filterNetworkEventTypes != Set([.http]) {
+                groupingRestoreEventTypes = filterNetworkEventTypes
+                filterNetworkEventTypes = Set([.http])
+            }
+        } else if let restore = groupingRestoreEventTypes, filterNetworkEventTypes == Set([.http]) {
+            filterNetworkEventTypes = restore
+            groupingRestoreEventTypes = nil
+        }
+
+        groupingMode = mode
+    }
+
+    // MARK: - Widget Updates
+
+    /// Update widget with current state
+    private func updateWidget() {
+        let isCapturing = VPNManager.shared.isConnected
+        let requestCount = requests.count
+
+        // Calculate total data transferred
+        let totalBytes = requests.reduce(Int64(0)) { sum, request in
+            sum + Int64(request.responseSize ?? 0) + Int64(request.requestSize ?? 0)
+        }
+        let dataTransferred = ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
+
+        // Get recent requests (last 5)
+        let recentRequests = requests.prefix(5).map { WidgetRecentRequest(from: $0) }
+
+        WidgetDataManager.shared.updateWidgetData(
+            isCapturing: isCapturing,
+            requestCount: requestCount,
+            dataTransferred: dataTransferred,
+            recentRequests: Array(recentRequests)
+        )
+    }
+
+    // MARK: - Notification Triggers
+
+    /// Check if a request should trigger a notification
+    private func checkNotificationTriggers(for request: NetworkRequest) {
+        let settings = NotificationSettings.shared
+
+        // Check for HTTP errors (4xx, 5xx)
+        if settings.enableErrorNotifications,
+           let statusCode = request.statusCode,
+           statusCode >= 400 {
+            NotificationManager.shared.notifyHTTPError(request: request)
+        }
+
+        // Check for slow requests
+        if settings.enableSlowRequestNotifications,
+           request.duration >= settings.slowRequestThreshold {
+            NotificationManager.shared.notifySlowRequest(request: request, duration: request.duration)
+        }
+
+        // Check for large data
+        if settings.enableLargeDataNotifications {
+            let totalSize = Int64(request.requestSize ?? 0) + Int64(request.responseSize ?? 0)
+            if totalSize >= settings.largeDataThreshold {
+                NotificationManager.shared.notifyLargeData(request: request, size: totalSize)
+            }
+        }
+    }
+
+    /// Process new requests for notification triggers
+    /// Call this when new requests are added to check if they should trigger notifications
+    func processNewRequestsForNotifications() {
+        guard VPNManager.shared.isConnected else { return }
+
+        // Only check the most recent requests (last 10)
+        let recentRequests = requests.prefix(10)
+
+        for request in recentRequests {
+            guard !notifiedRequestIds.contains(request.id) else { continue }
+            // Only notify for completed requests with responses
+            guard request.statusCode != nil else { continue }
+
+            checkNotificationTriggers(for: request)
+            notifiedRequestIds.insert(request.id)
+        }
+
+        if notifiedRequestIds.count > notificationDedupLimit {
+            let recentIds = Set(requests.prefix(notificationDedupLimit).map(\.id))
+            notifiedRequestIds = notifiedRequestIds.intersection(recentIds)
+        }
+    }
+}
+
+enum AppTheme: String, CaseIterable {
+    case system = "System"
+    case light = "Light"
+    case dark = "Dark"
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+}
