@@ -24,6 +24,7 @@ struct PCAPExportView: View {
     @State private var blockQUICEnabled = true
     @State private var shareItems: [URL] = []
     @State private var showingAllFilesShare = false
+    @State private var isRestoringSettings = false
     @ObservedObject private var vpnManager = VPNManager.shared
 
     struct PCAPFileInfo: Identifiable {
@@ -51,6 +52,7 @@ struct PCAPExportView: View {
             Section {
                 Toggle("Enable Raw Packet Capture", isOn: $rawCaptureEnabled)
                     .onChange(of: rawCaptureEnabled) { _ in
+                        guard !isRestoringSettings else { return }
                         updateRawCaptureSettings()
                     }
 
@@ -86,6 +88,7 @@ struct PCAPExportView: View {
             Section {
                 Toggle("Block QUIC (HTTP/3)", isOn: $blockQUICEnabled)
                     .onChange(of: blockQUICEnabled) { _ in
+                        guard !isRestoringSettings else { return }
                         updateQUICBlockingSettings()
                     }
             } header: {
@@ -221,10 +224,15 @@ struct PCAPExportView: View {
     private func loadSettings() {
         Task {
             let config = await HardeningConfig.shared
-            rawCaptureEnabled = config.enableRawCapture
             let limitBytes = config.maxRawCaptureSize
-            captureLimitMB = Int(limitBytes / 1_048_576)
-            blockQUICEnabled = config.blockQUIC
+            let captureLimit = Int(limitBytes / 1_048_576)
+            await MainActor.run {
+                isRestoringSettings = true
+                rawCaptureEnabled = config.enableRawCapture
+                captureLimitMB = captureLimit
+                blockQUICEnabled = config.blockQUIC
+                isRestoringSettings = false
+            }
         }
     }
 
