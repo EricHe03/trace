@@ -39,4 +39,31 @@ final class TraceUITests: XCTestCase {
             XCUIApplication().launch()
         }
     }
+
+    @MainActor
+    func testSettingsNavigation() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        let settingsTab = app.tabBars.buttons["Settings"]
+        XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
+        settingsTab.tap()
+
+        let captureOptions = app.tables.staticTexts["Capture Options"]
+        XCTAssertTrue(captureOptions.waitForExistence(timeout: 5))
+        captureOptions.tap()
+        XCTAssertTrue(app.navigationBars["Capture Options"].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        let domainFilters = app.tables.staticTexts["Domain Filters"]
+        XCTAssertTrue(domainFilters.waitForExistence(timeout: 5))
+        domainFilters.tap()
+        XCTAssertTrue(app.navigationBars["Domain Filters"].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        let advancedSettings = app.tables.staticTexts["Advanced Settings"]
+        XCTAssertTrue(advancedSettings.waitForExistence(timeout: 5))
+        advancedSettings.tap()
+        XCTAssertTrue(app.navigationBars["Advanced Settings"].waitForExistence(timeout: 5))
+    }
 }

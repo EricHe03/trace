@@ -30,6 +30,9 @@ public class AppGroupStorage: @unchecked Sendable {
     private let packetFlowsDirectory = "PacketFlows"
     private let udpFlowsDirectory = "UDPFlows"
     private let throttlingConfigFileName = "throttling.json"
+    private let captureOptionsFileName = "capture_options.json"
+    private let bodyStorageConfigFileName = "body_storage.json"
+    private let samplingConfigFileName = "sampling.json"
 
     /// Whether we're using fallback storage (local instead of App Group)
     private(set) var isUsingFallback = false
@@ -601,6 +604,71 @@ public class AppGroupStorage: @unchecked Sendable {
         return config
     }
 
+    // MARK: - Capture Options
+
+    public func saveCaptureOptions(_ options: CaptureOptions) throws {
+        let data = try JSONEncoder().encode(options.normalized())
+        try saveData(data, to: captureOptionsFileName)
+    }
+
+    public func loadCaptureOptions() -> CaptureOptions {
+        guard let data = try? loadData(from: captureOptionsFileName),
+              let options = try? JSONDecoder().decode(CaptureOptions.self, from: data) else {
+            try? saveCaptureOptions(.default)
+            return CaptureOptions.default
+        }
+        return options.normalized()
+    }
+
+    // MARK: - Body Storage Configuration
+
+    public func saveBodyStorageConfig(_ config: BodyStorageConfig) throws {
+        let data = try JSONEncoder().encode(config.normalized())
+        try saveData(data, to: bodyStorageConfigFileName)
+    }
+
+    public func loadBodyStorageConfig() -> BodyStorageConfig {
+        guard let data = try? loadData(from: bodyStorageConfigFileName),
+              let config = try? JSONDecoder().decode(BodyStorageConfig.self, from: data) else {
+            try? saveBodyStorageConfig(.default)
+            return BodyStorageConfig.default
+        }
+        return config.normalized()
+    }
+
+    // MARK: - Sampling Configuration
+
+    public func saveSamplingConfig(_ config: SamplingConfig) throws {
+        let data = try JSONEncoder().encode(config.normalized())
+        try saveData(data, to: samplingConfigFileName)
+    }
+
+    public func loadSamplingConfig() -> SamplingConfig {
+        guard let data = try? loadData(from: samplingConfigFileName),
+              let config = try? JSONDecoder().decode(SamplingConfig.self, from: data) else {
+            try? saveSamplingConfig(.default)
+            return SamplingConfig.default
+        }
+        return config.normalized()
+    }
+
+    // MARK: - MITM Allowlist
+
+    public func saveMITMAllowlist(_ allowlist: [String]) throws {
+        let sanitized = sanitizeDomainList(allowlist)
+        let data = try JSONEncoder().encode(sanitized)
+        try saveData(data, to: "mitm_allowlist.json")
+    }
+
+    public func loadMITMAllowlist() -> [String] {
+        guard let data = try? loadData(from: "mitm_allowlist.json"),
+              let list = try? JSONDecoder().decode([String].self, from: data) else {
+            try? saveMITMAllowlist(["*"])
+            return ["*"]
+        }
+        return sanitizeDomainList(list)
+    }
+
     // MARK: - Rewrite Rules Storage
 
     /// Saves rewrite rules to the shared container
@@ -1055,6 +1123,13 @@ public class AppGroupStorage: @unchecked Sendable {
         }
     }
 
+    private func sanitizeDomainList(_ list: [String]) -> [String] {
+        let cleaned = list
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+        return cleaned.isEmpty ? ["*"] : cleaned
+    }
+
     // MARK: - Session Storage
 
     /// Saves multiple sessions to the shared container (async)
@@ -1196,22 +1271,25 @@ public struct CaptureConfiguration: Codable, Sendable {
     public var fullTunnelSocks5Port: UInt16
     public var fullTunnelUDPForwardingMode: UDPForwardingMode
 
-    public static let `default` = CaptureConfiguration(
-        isEnabled: true,
-        filterMode: .all,
-        domainFilters: [],
-        captureHeaders: true,
-        captureBody: true,
-        // Default to 100 MB to support large download captures (stored on disk, not in memory).
-        maxBodySize: 100 * 1024 * 1024, // 100 MB
-        captureMode: .proxyOnly,
-        fullTunnelDNSServers: [],
-        fullTunnelSearchDomains: [],
-        fullTunnelIPv6Enabled: true,
-        fullTunnelSocks5Host: "",
-        fullTunnelSocks5Port: 0,
-        fullTunnelUDPForwardingMode: .hevOnly
-    )
+    public static let `default` = {
+        let captureDefaults = CaptureOptions.default
+        return CaptureConfiguration(
+            isEnabled: true,
+            filterMode: .all,
+            domainFilters: [],
+            captureHeaders: captureDefaults.captureHeaders,
+            captureBody: captureDefaults.captureBody,
+            // Default to 100 MB to support large download captures (stored on disk, not in memory).
+            maxBodySize: captureDefaults.maxBodySize,
+            captureMode: .proxyOnly,
+            fullTunnelDNSServers: [],
+            fullTunnelSearchDomains: [],
+            fullTunnelIPv6Enabled: true,
+            fullTunnelSocks5Host: "",
+            fullTunnelSocks5Port: 0,
+            fullTunnelUDPForwardingMode: .hevOnly
+        )
+    }()
 
     enum CodingKeys: String, CodingKey {
         case isEnabled

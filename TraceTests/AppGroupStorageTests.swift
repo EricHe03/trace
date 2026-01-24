@@ -194,6 +194,48 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(config.isEnabled, CaptureConfiguration.default.isEnabled)
     }
 
+    func testSaveAndLoadCaptureOptions() throws {
+        let options = CaptureOptions(captureHeaders: false, captureBody: true, maxBodySize: 5_000_000)
+        try storage.saveCaptureOptions(options)
+
+        let loaded = storage.loadCaptureOptions()
+
+        XCTAssertEqual(loaded.captureHeaders, options.captureHeaders)
+        XCTAssertEqual(loaded.captureBody, options.captureBody)
+        XCTAssertEqual(loaded.maxBodySize, options.maxBodySize)
+    }
+
+    func testSaveAndLoadBodyStorageConfig() throws {
+        let config = BodyStorageConfig(inlineThreshold: 512 * 1024, truncationThreshold: 5 * 1024 * 1024, previewSize: 256 * 1024)
+        try storage.saveBodyStorageConfig(config)
+
+        let loaded = storage.loadBodyStorageConfig()
+
+        XCTAssertEqual(loaded.inlineThreshold, config.inlineThreshold)
+        XCTAssertEqual(loaded.truncationThreshold, config.truncationThreshold)
+        XCTAssertEqual(loaded.previewSize, config.previewSize)
+    }
+
+    func testSaveAndLoadSamplingConfig() throws {
+        let config = SamplingConfig(enabled: true, sampleRate: 0.5, strategy: .periodic)
+        try storage.saveSamplingConfig(config)
+
+        let loaded = storage.loadSamplingConfig()
+
+        XCTAssertEqual(loaded.enabled, config.enabled)
+        XCTAssertEqual(loaded.sampleRate, config.sampleRate)
+        XCTAssertEqual(loaded.strategy, config.strategy)
+    }
+
+    func testSaveAndLoadMITMAllowlist() throws {
+        let list = ["example.com", "*.api.example.com"]
+        try storage.saveMITMAllowlist(list)
+
+        let loaded = storage.loadMITMAllowlist()
+
+        XCTAssertEqual(loaded, ["example.com", "*.api.example.com"])
+    }
+
     func testSaveAndLoadThrottlingState() throws {
         let state = NetworkThrottlingState(
             enabled: true,

@@ -224,13 +224,15 @@ struct PCAPExportView: View {
     private func loadSettings() {
         Task {
             let config = await HardeningConfig.shared
-            let limitBytes = config.maxRawCaptureSize
+            let limitBytes = await config.maxRawCaptureSize
             let captureLimit = Int(limitBytes / 1_048_576)
+            let rawCapture = await config.enableRawCapture
+            let blockQUIC = await config.blockQUIC
             await MainActor.run {
                 isRestoringSettings = true
-                rawCaptureEnabled = config.enableRawCapture
+                rawCaptureEnabled = rawCapture
                 captureLimitMB = captureLimit
-                blockQUICEnabled = config.blockQUIC
+                blockQUICEnabled = blockQUIC
                 isRestoringSettings = false
             }
         }

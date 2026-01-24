@@ -275,6 +275,18 @@ struct SettingsTabView: View {
                     }
 
                     NavigationLink {
+                        CaptureOptionsView()
+                    } label: {
+                        Label("Capture Options", systemImage: "square.and.pencil")
+                    }
+
+                    NavigationLink {
+                        DomainFiltersView()
+                    } label: {
+                        Label("Domain Filters", systemImage: "line.3.horizontal.decrease.circle")
+                    }
+
+                    NavigationLink {
                         NetworkConditionProfilesView(viewModel: viewModel)
                     } label: {
                         HStack {
@@ -302,6 +314,12 @@ struct SettingsTabView: View {
                         UDPFlowsView()
                     } label: {
                         Label("UDP Flows", systemImage: "arrow.up.arrow.down.circle")
+                    }
+
+                    NavigationLink {
+                        AdvancedSettingsView()
+                    } label: {
+                        Label("Advanced Settings", systemImage: "gearshape.2.fill")
                     }
                 }
 
