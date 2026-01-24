@@ -1053,7 +1053,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         do {
             let writer = try PCAPWriter(
                 appGroupID: AppGroupConfiguration.appGroupIdentifier,
-                fileName: "capture.pcap"
+                fileName: "capture_http2_proxy.pcap"
             )
             VPNLog.tunnel.info("event=vpn.pcap_writer_enabled outcome=success")
             return writer
@@ -1071,7 +1071,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         do {
             let writer = try PCAPWriter(
                 appGroupID: AppGroupConfiguration.appGroupIdentifier,
-                fileName: "packet_capture.pcap"
+                fileName: "capture_raw_packets.pcap"
             )
             VPNLog.tunnel.info("event=vpn.packet_capture_writer_enabled outcome=success")
             return writer
