@@ -43,6 +43,7 @@ public class MITMProxyServer: @unchecked Sendable {
     // Rule: Track bytes written to cap captures and avoid unbounded disk usage.
     private var rawCaptureBytes: UInt64 = 0
     private var logSampler = LogSampler()
+    private var samplingSequence: Int = 0
 
     /// Creates a local-only MITM proxy bound to loopback, with an optional shared event log sink.
     public init(port: UInt16, eventLog: NDJSONLogWriter? = nil) {
@@ -346,7 +347,9 @@ public class MITMProxyServer: @unchecked Sendable {
             }
             // Concurrency: Serialize storage writes to avoid cross-connection I/O races.
             self?.performOnQueue {
-                self?.saveCapturedRequest(request)
+                guard let self else { return }
+                guard self.shouldPersist(request, using: captureConfig) else { return }
+                self.saveCapturedRequest(request)
             }
         }
 
@@ -375,6 +378,8 @@ public class MITMProxyServer: @unchecked Sendable {
     }
 
     private func saveCapturedRequest(_ request: NetworkRequest) {
+        let samplingConfig = AppGroupStorage.shared.loadSamplingConfig()
+        guard shouldSample(using: samplingConfig) else { return }
         do {
             try AppGroupStorage.shared.saveRequest(request)
             if logSampler.shouldLog(key: "proxy.request_saved", first: 10, every: 200) {
@@ -388,6 +393,66 @@ public class MITMProxyServer: @unchecked Sendable {
             }
         } catch {
             ProxyLog.mitm.error("event=proxy.request_saved outcome=failure error=\(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func shouldPersist(_ request: NetworkRequest, using config: CaptureConfiguration) -> Bool {
+        switch config.filterMode {
+        case .all:
+            return true
+        case .whitelist:
+            guard !config.domainFilters.isEmpty else { return false }
+        case .blacklist:
+            break
+        }
+
+        guard let host = URL(string: request.url)?.host?.lowercased(), !host.isEmpty else {
+            return config.filterMode != .whitelist
+        }
+
+        let matches = config.domainFilters.contains { pattern in
+            domainFilterMatches(host: host, pattern: pattern)
+        }
+
+        switch config.filterMode {
+        case .all:
+            return true
+        case .whitelist:
+            return matches
+        case .blacklist:
+            return !matches
+        }
+    }
+
+    private func domainFilterMatches(host: String, pattern: String) -> Bool {
+        let trimmed = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let p = trimmed.lowercased()
+        if p == "*" { return true }
+        if p.contains("*") {
+            return StringMatcher(matchType: .wildcard, pattern: p, caseSensitive: false).matches(host)
+        }
+        return host == p || host.hasSuffix("." + p)
+    }
+
+    private func shouldSample(using config: SamplingConfig) -> Bool {
+        guard config.enabled else { return true }
+        let rate = max(0.0, min(1.0, config.sampleRate))
+        if rate <= 0 { return false }
+        if rate >= 1 { return true }
+
+        switch config.strategy {
+        case .random:
+            return Double.random(in: 0..<1) < rate
+        case .periodic:
+            samplingSequence &+= 1
+            let interval = max(1, Int((1.0 / rate).rounded()))
+            return samplingSequence % interval == 0
+        case .adaptive:
+            let activeConnections = max(1, connections.count)
+            let scale = 50.0 / Double(max(50, activeConnections))
+            let adjustedRate = min(rate, rate * scale)
+            return Double.random(in: 0..<1) < adjustedRate
         }
     }
 
@@ -507,6 +572,15 @@ public class ProxyConnection: @unchecked Sendable {
     private let captureConfig: CaptureConfiguration
     private let captureBodies: Bool
     private let maxCapturedBodyBytes: Int
+
+    private func capturedRequestHeaders(from headers: [String: String]) -> [TraceHTTPHeader] {
+        guard captureConfig.captureHeaders else { return [] }
+        return headers.map { TraceHTTPHeader(key: $0.key, value: $0.value) }
+    }
+
+    private func capturedResponseHeaders(_ headers: [TraceHTTPHeader]) -> [TraceHTTPHeader] {
+        captureConfig.captureHeaders ? headers : []
+    }
 
     // MARK: - Streaming body capture (disk spooling)
 
@@ -853,10 +927,12 @@ public class ProxyConnection: @unchecked Sendable {
         // Rationale: Emit a lightweight UI marker for HTTPS without exposing decrypted contents.
         let url = "https://\(host):\(port)/"
         let now = Date()
-        let requestHeaders: [TraceHTTPHeader] = [
-            TraceHTTPHeader(key: "Host", value: host),
-            TraceHTTPHeader(key: "X-Trace-Note", value: "TLS not decryptable (\(reason))")
-        ]
+        let requestHeaders: [TraceHTTPHeader] = captureConfig.captureHeaders
+            ? [
+                TraceHTTPHeader(key: "Host", value: host),
+                TraceHTTPHeader(key: "X-Trace-Note", value: "TLS not decryptable (\(reason))")
+            ]
+            : []
 
         let req = NetworkRequest(
             url: url,
@@ -1029,10 +1105,12 @@ public class ProxyConnection: @unchecked Sendable {
                 statusMessage: "CONNECT established",
                 timestamp: startTime,
                 duration: now.timeIntervalSince(startTime),
-                requestHeaders: [
-                    TraceHTTPHeader(key: "Host", value: host),
-                    TraceHTTPHeader(key: "X-Trace-Note", value: "CONNECT observed; awaiting decrypted HTTP")
-                ],
+                requestHeaders: captureConfig.captureHeaders
+                    ? [
+                        TraceHTTPHeader(key: "Host", value: host),
+                        TraceHTTPHeader(key: "X-Trace-Note", value: "CONNECT observed; awaiting decrypted HTTP")
+                    ]
+                    : [],
                 responseHeaders: [],
                 requestBody: .empty,
                 responseBody: .empty
@@ -1474,8 +1552,10 @@ public class ProxyConnection: @unchecked Sendable {
                         statusMessage: "Blocked",
                         timestamp: self.capturedRequest?.startTime ?? Date(),
                         duration: Date().timeIntervalSince(self.capturedRequest?.startTime ?? Date()),
-                        requestHeaders: parsedRequest.headers.map { TraceHTTPHeader(key: $0.key, value: $0.value) },
-                        responseHeaders: [TraceHTTPHeader(key: "X-Trace-Note", value: "Blocked by rule")],
+                        requestHeaders: self.capturedRequestHeaders(from: parsedRequest.headers),
+                        responseHeaders: self.captureConfig.captureHeaders
+                            ? [TraceHTTPHeader(key: "X-Trace-Note", value: "Blocked by rule")]
+                            : [],
                         requestBody: (self.captureBodies && self.maxCapturedBodyBytes > 0 && !blockedRequestBody.isEmpty)
                             ? BodyStorage.from(
                                 data: Data(blockedRequestBody.prefix(self.maxCapturedBodyBytes)),
@@ -2008,10 +2088,8 @@ public class ProxyConnection: @unchecked Sendable {
                     statusMessage: statusMessage,
                     timestamp: capturedRequest.startTime,
                     duration: Date().timeIntervalSince(capturedRequest.startTime),
-                    requestHeaders: capturedRequest.headers.map {
-                        TraceHTTPHeader(key: $0.key, value: $0.value)
-                    },
-                    responseHeaders: responseHeaders,
+                    requestHeaders: self.capturedRequestHeaders(from: capturedRequest.headers),
+                    responseHeaders: self.capturedResponseHeaders(responseHeaders),
                     requestBody: requestBodyStorage,
                     responseBody: responseBodyStorage
                 )
@@ -2070,10 +2148,8 @@ public class ProxyConnection: @unchecked Sendable {
                 statusMessage: statusMessage,
                 timestamp: capturedRequest.startTime,
                 duration: Date().timeIntervalSince(capturedRequest.startTime),
-                requestHeaders: capturedRequest.headers.map {
-                    TraceHTTPHeader(key: $0.key, value: $0.value)
-                },
-                responseHeaders: responseHeaders,
+                requestHeaders: capturedRequestHeaders(from: capturedRequest.headers),
+                responseHeaders: capturedResponseHeaders(responseHeaders),
                 requestBody: requestBodyStorage,
                 responseBody: responseBodyStorage
             )
@@ -2252,10 +2328,8 @@ public class ProxyConnection: @unchecked Sendable {
             statusMessage: statusMessage,
             timestamp: capturedRequest.startTime,
             duration: Date().timeIntervalSince(capturedRequest.startTime),
-            requestHeaders: capturedRequest.headers.map {
-                TraceHTTPHeader(key: $0.key, value: $0.value)
-            },
-            responseHeaders: headers.map { TraceHTTPHeader(key: $0.key, value: $0.value) },
+            requestHeaders: capturedRequestHeaders(from: capturedRequest.headers),
+            responseHeaders: capturedResponseHeaders(headers.map { TraceHTTPHeader(key: $0.key, value: $0.value) }),
             requestBody: requestBodyStorage,
             responseBody: responseBodyStorage
         )
@@ -2417,14 +2491,14 @@ public class ProxyConnection: @unchecked Sendable {
 
         let responseHeaders = parseResponseHeaders(headersString)
         let requestHeaders =
-            capturedRequest?.headers.map { TraceHTTPHeader(key: $0.key, value: $0.value) } ?? []
+            capturedRequest.map { capturedRequestHeaders(from: $0.headers) } ?? []
 
         let handler = SSEHandler(
             clientConnection: clientConnection,
             serverConnection: serverConnection,
             url: capturedRequest?.url ?? "",
             requestHeaders: requestHeaders,
-            responseHeaders: responseHeaders
+            responseHeaders: capturedResponseHeaders(responseHeaders)
         )
 
         handler.start(onUpdate: { _ in }, initialBodyData: initialBodyData)
@@ -2569,12 +2643,8 @@ public class ProxyConnection: @unchecked Sendable {
                         }
 
                         let responseHeaders = self.parseResponseHeaders(responseString)
-                        let requestHeaders = Dictionary(
-                            uniqueKeysWithValues: self.capturedRequest?.headers.map {
-                                ($0.key, $0.value)
-                            } ?? []
-                        )
-                        .map { TraceHTTPHeader(key: $0.key, value: $0.value) }
+                        let requestHeaders =
+                            self.capturedRequest.map { self.capturedRequestHeaders(from: $0.headers) } ?? []
 
                         ProxyLog.mitm.info("event=proxy.websocket_upgrade_complete outcome=success")
 
@@ -2586,7 +2656,7 @@ public class ProxyConnection: @unchecked Sendable {
                             serverConnection: self.serverConnection,
                             url: self.capturedRequest?.url ?? "",
                             requestHeaders: requestHeaders,
-                            responseHeaders: responseHeaders
+                            responseHeaders: self.capturedResponseHeaders(responseHeaders)
                         )
 
                         wsHandler.start(
