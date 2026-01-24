@@ -1,0 +1,86 @@
+name: "Bug report"
+description: "Report a reproducible problem"
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please provide as much detail as you can.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened and what did you expect to happen?
+      placeholder: "A short description of the problem."
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Provide numbered steps so we can reproduce the issue.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: "What should have happened?"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: "What actually happened? Include error messages, logs, or screenshots."
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: e.g. 1.2.3 (or commit SHA if built from source)
+      placeholder: "1.2.3"
+    validations:
+      required: false
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device type
+      options:
+        - iPhone
+        - iPad
+        - Mac
+        - Apple TV
+        - Other
+    validations:
+      required: false
+  - type: input
+    id: os
+    attributes:
+      label: OS version
+      placeholder: "iOS 17.2, iPadOS 17.2, macOS 14.2"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or crash report
+      description: Paste relevant logs or attach files.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Final checks
+      options:
+        - label: I searched existing issues and didn’t find a duplicate.
+          required: true
+        - label: I can reproduce this issue consistently.
+          required: false
