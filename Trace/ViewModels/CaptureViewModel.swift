@@ -12,6 +12,7 @@ import os
 import SwiftUI
 import TraceCore
 import TraceFeatures
+import TraceProxy
 
 // MARK: - Search Scope
 
@@ -342,6 +343,23 @@ final class CaptureViewModel: ObservableObject {
         didSet { handleThrottlingStateChange() }
     }
 
+    // Capture Settings
+    @Published var captureOptions: CaptureOptions = .default {
+        didSet { persistCaptureOptions() }
+    }
+    @Published var bodyStorageConfig: BodyStorageConfig = .default {
+        didSet { persistBodyStorageConfig() }
+    }
+    @Published var samplingConfig: SamplingConfig = .default {
+        didSet { persistSamplingConfig() }
+    }
+    @Published var mitmAllowlist: [String] = ["*"] {
+        didSet { persistHardeningConfig() }
+    }
+    @Published var blockQUICEnabled: Bool = true {
+        didSet { persistHardeningConfig() }
+    }
+
     // Grouping and Sessions
     @Published var groupingMode: RequestGroupingMode = .none {
         didSet {
@@ -393,6 +411,7 @@ final class CaptureViewModel: ObservableObject {
     private var vpnStatusCancellable: AnyCancellable?
     private var throttlingUpdateTask: Task<Void, Never>?
     private var isLoadingThrottlingState = false
+    private var isLoadingSettings = false
 
     init() {
         // Load saved grouping mode.
@@ -411,6 +430,7 @@ final class CaptureViewModel: ObservableObject {
         loadSessions()
         cleanupOrphanedSessions()
         loadThrottlingState()
+        loadSettings()
 
         // Observe new requests from Network Extension with debouncing
         storage.observeNewRequests { [weak self] in
@@ -442,6 +462,79 @@ final class CaptureViewModel: ObservableObject {
         ) { [weak self] _ in
             self?.favoritesVersion &+= 1
             self?.filteredRequestsCache = nil
+        }
+    }
+
+    private func loadSettings() {
+        isLoadingSettings = true
+        let config = storage.loadConfiguration()
+        captureOptions = CaptureOptions(
+            captureHeaders: config.captureHeaders,
+            captureBody: config.captureBody,
+            maxBodySize: config.maxBodySize
+        )
+        bodyStorageConfig = storage.loadBodyStorageConfig()
+        samplingConfig = storage.loadSamplingConfig()
+
+        Task { [weak self] in
+            guard let self else { return }
+            let hardening = HardeningConfig.shared
+            let allowlist = await hardening.mitmAllowlist
+            let blockQUIC = await hardening.blockQUIC
+            await MainActor.run {
+                self.mitmAllowlist = allowlist
+                self.blockQUICEnabled = blockQUIC
+                self.isLoadingSettings = false
+            }
+        }
+    }
+
+    private func persistCaptureOptions() {
+        guard !isLoadingSettings else { return }
+        var config = storage.loadConfiguration()
+        config.captureHeaders = captureOptions.captureHeaders
+        config.captureBody = captureOptions.captureBody
+        config.maxBodySize = captureOptions.maxBodySize
+        try? storage.saveConfiguration(config)
+        try? storage.saveCaptureOptions(captureOptions)
+        Task {
+            if VPNManager.shared.isConnected {
+                try? await VPNManager.shared.sendMessage(["command": "updateCaptureConfig"])
+            }
+        }
+    }
+
+    private func persistBodyStorageConfig() {
+        guard !isLoadingSettings else { return }
+        try? storage.saveBodyStorageConfig(bodyStorageConfig)
+    }
+
+    private func persistSamplingConfig() {
+        guard !isLoadingSettings else { return }
+        try? storage.saveSamplingConfig(samplingConfig)
+    }
+
+    private func persistHardeningConfig() {
+        guard !isLoadingSettings else { return }
+        let sanitized = mitmAllowlist
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+        let appliedAllowlist = sanitized.isEmpty ? ["*"] : sanitized
+
+        Task {
+            let hardening = HardeningConfig.shared
+            await hardening.setMitmAllowlist(appliedAllowlist)
+            await hardening.setBlockQUIC(blockQUICEnabled)
+            try? storage.saveMITMAllowlist(appliedAllowlist)
+            if VPNManager.shared.isConnected {
+                try? await VPNManager.shared.sendMessage([
+                    "command": "updateHardeningConfig",
+                    "hardeningConfig": [
+                        "mitmAllowlist": appliedAllowlist,
+                        "blockQUIC": blockQUICEnabled
+                    ]
+                ])
+            }
         }
     }
 

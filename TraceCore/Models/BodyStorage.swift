@@ -49,9 +49,15 @@ public enum BodyStorage: Codable, Equatable {
     case empty
 
     /// Default size thresholds
-    public static let inlineThreshold = 1024 * 1024 // 1MB
-    public static let truncationThreshold = 10 * 1024 * 1024 // 10MB
-    public static let previewSize = 1024 * 1024 // 1MB preview for truncated
+    public static var inlineThreshold: Int {
+        AppGroupStorage.shared.loadBodyStorageConfig().inlineThreshold
+    }
+    public static var truncationThreshold: Int {
+        AppGroupStorage.shared.loadBodyStorageConfig().truncationThreshold
+    }
+    public static var previewSize: Int {
+        AppGroupStorage.shared.loadBodyStorageConfig().previewSize
+    }
 
     // MARK: - Codable Implementation
 

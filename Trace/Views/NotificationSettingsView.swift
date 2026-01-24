@@ -11,10 +11,8 @@ import TraceFeatures
 struct NotificationSettingsView: View {
     @ObservedObject private var settings = NotificationSettings.shared
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
-    @State private var showingPermissionAlert = false
-
     var body: some View {
-        List {
+        Form {
             // Permission Status Section
             Section {
                 HStack {

@@ -48,6 +48,16 @@ struct CaptureSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                DomainListEditor(
+                    title: "DNS Servers",
+                    items: $config.fullTunnelDNSServers,
+                    addLabel: "Add DNS Server",
+                    placeholder: "8.8.8.8",
+                    helperText: "Leave empty to use the system default DNS servers.",
+                    emptyText: "No custom DNS servers",
+                    validate: validateDNSServer
+                )
+
                 Section("UDP Forwarding") {
                     Picker("Mode", selection: $config.fullTunnelUDPForwardingMode) {
                         Text("HEV Only").tag(UDPForwardingMode.hevOnly)
@@ -113,5 +123,12 @@ struct CaptureSettingsView: View {
             isSaving = false
             toastMessage = "Capture settings updated."
         }
+    }
+
+    private func validateDNSServer(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "DNS server cannot be empty" }
+        if Validation.isValidIPAddress(trimmed) { return nil }
+        return "Enter a valid IPv4 or IPv6 address"
     }
 }
