@@ -532,7 +532,7 @@ public class AppGroupStorage: @unchecked Sendable {
     }
 
     /// Returns packet capture files in the app group container.
-    public func packetCaptureFiles(prefixes: [String] = ["packet_capture", "capture"]) -> [URL] {
+    public func packetCaptureFiles(prefixes: [String] = ["capture_raw_packets", "capture_http2_proxy", "packet_capture", "capture"]) -> [URL] {
         guard let container = containerURL else { return [] }
         guard let fileURLs = try? FileManager.default.contentsOfDirectory(
             at: container,
