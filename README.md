@@ -7,7 +7,7 @@
 [![Release](https://img.shields.io/github/v/release/6639835/Trace)](https://github.com/6639835/Trace/releases)
 [![Downloads](https://img.shields.io/github/downloads/6639835/Trace/total)](https://github.com/6639835/Trace/releases)
 
-Trace is an iOS network debugger that captures HTTP(S), WebSocket, and SSE traffic via a Network Extension packet tunnel in **proxy-only mode** (apps must honor the VPN-provided system proxy settings). It performs on-device TLS MITM with a generated root CA, shares capture data with the main app using an App Group, and includes powerful tooling for inspection, modification, replay, and export.
+Trace is an iOS network debugger that captures HTTP(S), WebSocket, and SSE traffic via a Network Extension packet tunnel with **full-tunnel** and **proxy-only** modes. Full-tunnel routes device traffic through the tunnel, while proxy-only relies on the VPN-provided system proxy settings. It performs on-device TLS MITM with a generated root CA, shares capture data with the main app using an App Group, and includes powerful tooling for inspection, modification, replay, and export.
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ Trace is an iOS network debugger that captures HTTP(S), WebSocket, and SSE traff
 
 ## Features
 
-- Capture via a Packet Tunnel provider in **proxy-only (system proxy)** mode with on-device TLS MITM and an in-app root CA trust flow.
+- Capture via a Packet Tunnel provider in **full-tunnel** or **proxy-only (system proxy)** mode with on-device TLS MITM and an in-app root CA trust flow.
 - Unified Network view for HTTP(S), WebSockets, and SSE with search, filters, presets, grouping, and sorting.
 - Deep inspection: headers/body viewers (JSON, XML, images, SVG, multipart), timings, TLS chain details, HTTP/2 stream info + HPACK tables.
 - Traffic modification: rewrite rules, request maps, host overrides, breakpoints, JavaScript scripts, and network condition profiles.
@@ -105,11 +105,12 @@ Settings → Data → Import/Export HAR
 - Deployment target: update `Package.swift` and `Trace.xcodeproj` if you need a lower target.
 - Keychain access group: keep `$(AppIdentifierPrefix)com.justin.trace` aligned if you change bundle IDs.
 - VPN extension bundle ID: keep `protocolConfiguration.providerBundleIdentifier` in sync with `TraceVPN`.
+- Full-tunnel mode: configure a SOCKS5 host and port in Capture settings before starting a full-tunnel session.
 
 ## Limitations
 
-- Proxy-only mode: Trace relies on the system proxy settings from the VPN configuration, so apps that ignore proxy settings will not be captured.
-- QUIC/HTTP3: UDP/443 traffic bypasses the proxy in this mode and cannot be captured.
+- Proxy-only mode: Trace relies on the system proxy settings from the VPN configuration, so apps that ignore proxy settings will not be captured. Use full-tunnel mode for complete traffic coverage.
+- QUIC/HTTP3: Traffic is not decrypted. Depending on capture settings, it may be forwarded, blocked, or appear only as packet-level data.
 
 ## Contributing
 
