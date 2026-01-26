@@ -24,8 +24,12 @@ struct PCAPExportView: View {
     @State private var blockQUICEnabled = true
     @State private var shareItems: [URL] = []
     @State private var showingAllFilesShare = false
+    @State private var showingVPNLogShare = false
+    @State private var vpnLogURL: URL?
     @State private var isRestoringSettings = false
     @ObservedObject private var vpnManager = VPNManager.shared
+
+    private let vpnLogFileName = "vpn_events.ndjson"
 
     struct PCAPFileInfo: Identifiable {
         let id = UUID()
@@ -95,6 +99,18 @@ struct PCAPExportView: View {
                 Text("Network Hardening")
             } footer: {
                 Text("Blocks QUIC (UDP/443). Disable if apps rely on HTTP/3 for streaming.")
+            }
+
+            Section {
+                Button {
+                    exportVPNLogs()
+                } label: {
+                    Label("Export VPN Logs", systemImage: "square.and.arrow.up")
+                }
+            } header: {
+                Text("VPN Logs")
+            } footer: {
+                Text("Exports the VPN extension NDJSON log file (vpn_events.ndjson).")
             }
 
             // Statistics Section
@@ -196,6 +212,11 @@ struct PCAPExportView: View {
         }
         .sheet(isPresented: $showingAllFilesShare) {
             ShareSheet(items: shareItems)
+        }
+        .sheet(isPresented: $showingVPNLogShare) {
+            if let url = vpnLogURL {
+                ShareSheet(items: [url])
+            }
         }
         .alert("Delete Packet Capture", isPresented: $showingDeleteAlert) {
             Button("Cancel", role: .cancel) {}
@@ -332,6 +353,19 @@ struct PCAPExportView: View {
         } catch {
             toastMessage = "Failed to export files: \(error.localizedDescription)"
         }
+    }
+
+    private func exportVPNLogs() {
+        guard let url = AppGroupStorage.shared.appGroupFileURL(for: vpnLogFileName) else {
+            toastMessage = "VPN log file not found."
+            return
+        }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            toastMessage = "VPN log file not found."
+            return
+        }
+        vpnLogURL = url
+        showingVPNLogShare = true
     }
 
     private func deleteFile(_ file: PCAPFileInfo) {
