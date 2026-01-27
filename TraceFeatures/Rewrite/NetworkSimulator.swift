@@ -77,11 +77,10 @@ public actor NetworkSimulator {
         let jitter = randomInRange(jitterRange)
 
         let (sum, overflow) = baseDelay.addingReportingOverflow(jitter)
-        let safeSum: Int
-        if overflow {
-            safeSum = (baseDelay >= 0 && jitter >= 0) ? Int.max : Int.min
+        let safeSum: Int = if overflow {
+            (baseDelay >= 0 && jitter >= 0) ? Int.max : Int.min
         } else {
-            safeSum = sum
+            sum
         }
 
         return max(0, safeSum)

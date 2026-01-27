@@ -2,7 +2,7 @@
 //  RegexMatcherTests.swift
 //  TraceTests
 //
-//  Created by Claude on 2026/01/27.
+//  Created by Justin on 2026/01/27.
 //
 
 import XCTest

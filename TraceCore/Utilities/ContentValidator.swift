@@ -23,8 +23,21 @@ public struct ContentValidator {
     public init() {}
 
     public func validateJSON(_ data: Data) -> ValidationResult {
+        guard let text = String(data: data, encoding: .utf8) else {
+            return ValidationResult(isValid: false, errors: ["Invalid UTF-8 data"], canAutoFix: false)
+        }
+
+        let sanitized = text.hasPrefix("\u{FEFF}") ? String(text.dropFirst()) : text
+        if sanitized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return ValidationResult(isValid: false, errors: ["Empty JSON"], canAutoFix: false)
+        }
+
+        if containsTrailingComma(in: sanitized) {
+            return ValidationResult(isValid: false, errors: ["Trailing comma in JSON"], canAutoFix: false)
+        }
+
         do {
-            _ = try JSONSerialization.jsonObject(with: data, options: [])
+            _ = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
             return ValidationResult(isValid: true)
         } catch {
             return ValidationResult(isValid: false, errors: [error.localizedDescription], canAutoFix: false)
@@ -45,3 +58,52 @@ public struct ContentValidator {
 }
 
 private final class XMLValidationDelegate: NSObject, XMLParserDelegate {}
+
+private func containsTrailingComma(in text: String) -> Bool {
+    let bytes = Array(text.utf8)
+    var inString = false
+    var isEscaped = false
+    var index = 0
+
+    func isWhitespace(_ byte: UInt8) -> Bool {
+        byte == 0x20 || byte == 0x09 || byte == 0x0A || byte == 0x0D
+    }
+
+    while index < bytes.count {
+        let byte = bytes[index]
+        if inString {
+            if isEscaped {
+                isEscaped = false
+            } else if byte == 0x5C {
+                isEscaped = true
+            } else if byte == 0x22 {
+                inString = false
+            }
+            index += 1
+            continue
+        }
+
+        if byte == 0x22 {
+            inString = true
+            index += 1
+            continue
+        }
+
+        if byte == 0x2C {
+            var lookahead = index + 1
+            while lookahead < bytes.count, isWhitespace(bytes[lookahead]) {
+                lookahead += 1
+            }
+            if lookahead >= bytes.count {
+                return true
+            }
+            let next = bytes[lookahead]
+            if next == 0x7D || next == 0x5D {
+                return true
+            }
+        }
+
+        index += 1
+    }
+    return false
+}

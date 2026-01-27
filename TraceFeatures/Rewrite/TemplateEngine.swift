@@ -33,7 +33,7 @@ public final class TemplateEngine {
         for match in matches.reversed() {
             guard let tokenRange = Range(match.range(at: 1), in: result),
                   let fullRange = Range(match.range(at: 0), in: result) else { continue }
-            let token = String(result[tokenRange]).trimmingCharacters(in: .whitespaces)
+            let token = String(result[tokenRange]).trimmingCharacters(in: .whitespacesAndNewlines)
             let replacement = resolveToken(token, context: context)
             result.replaceSubrange(fullRange, with: replacement)
         }

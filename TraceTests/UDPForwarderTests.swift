@@ -2,7 +2,7 @@
 //  UDPForwarderTests.swift
 //  TraceTests
 //
-//  Created by Claude Code on 2026/01/27.
+//  Created by Justin on 2026/01/27.
 //
 
 import XCTest
@@ -60,7 +60,7 @@ final class UDPForwarderTests: XCTestCase {
             0x40, 0x00, // Flags, Fragment Offset
             0x40,       // TTL: 64
             0x11,       // Protocol: UDP
-            0xB8, 0x61, // Checksum (known correct value)
+            0x76, 0x37, // Checksum (known correct value)
             0xC0, 0xA8, 0x01, 0x01, // Source IP
             0xC0, 0xA8, 0x01, 0x02, // Dest IP
         ])
