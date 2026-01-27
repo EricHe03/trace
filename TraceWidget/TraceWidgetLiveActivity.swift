@@ -112,6 +112,8 @@ struct TraceWidgetLiveActivity: Widget {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.blue)
             }
+            // Deep link URL scheme for opening the app to the capture view.
+            // The host app should handle the "trace://capture" URL in its scene delegate.
             .widgetURL(URL(string: "trace://capture"))
             .keylineTint(Color.blue)
         }
