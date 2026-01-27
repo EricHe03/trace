@@ -1279,7 +1279,7 @@ public struct CaptureConfiguration: Codable, Sendable {
             domainFilters: [],
             captureHeaders: captureDefaults.captureHeaders,
             captureBody: captureDefaults.captureBody,
-            // Default to 100 MB to support large download captures (stored on disk, not in memory).
+            // Default to 10 MB; large bodies are stored on disk and can be increased in Settings.
             maxBodySize: captureDefaults.maxBodySize,
             captureMode: .proxyOnly,
             fullTunnelDNSServers: [],

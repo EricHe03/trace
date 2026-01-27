@@ -15,7 +15,7 @@ public struct CaptureOptions: Codable, Sendable, Equatable {
     public static let `default` = CaptureOptions(
         captureHeaders: true,
         captureBody: true,
-        maxBodySize: 100 * 1024 * 1024
+        maxBodySize: 10 * 1024 * 1024
     )
 
     public init(captureHeaders: Bool, captureBody: Bool, maxBodySize: Int) {

@@ -871,14 +871,21 @@ public class CurlParser {
     }
 
     private static func processDataValue(_ value: String, kind: DataPart.Kind) -> String {
-        switch kind {
+        let unescaped = unescapeBackslashQuotedString(value)
+        return switch kind {
         case .data, .dataAscii:
-            value
+            unescaped
         case .dataRaw, .dataBinary:
-            value
+            unescaped
         case .dataUrlEncode:
             encodeDataUrl(value)
         }
+    }
+
+    private static func unescapeBackslashQuotedString(_ value: String) -> String {
+        // When users paste cURL commands out of logs or string literals, JSON bodies are often
+        // double-escaped (e.g. `{\"key\":\"value\"}`). Normalise the common case.
+        return value.replacingOccurrences(of: "\\\"", with: "\"")
     }
 
     private static func encodeDataUrl(_ value: String) -> String {
@@ -924,14 +931,24 @@ public class CurlParser {
             return false
         }
 
-        return parts.contains { part in
+        // `-d/--data` defaults to `application/x-www-form-urlencoded` for form-like payloads,
+        // but it is also commonly used for JSON. Only add the content-type when the payload
+        // looks like a query/form body.
+        for part in parts {
             switch part.kind {
-            case .data, .dataAscii, .dataUrlEncode:
-                true
+            case .dataUrlEncode:
+                return true
+            case .data, .dataAscii:
+                let raw = part.value
+                if raw.contains("=") || raw.contains("&") {
+                    return true
+                }
             case .dataBinary, .dataRaw:
-                false
+                continue
             }
         }
+
+        return false
     }
 
     private static func buildMultipartBody(_ parts: [FormPart], boundary: String) -> String {
@@ -1246,6 +1263,10 @@ public class CurlParser {
             }
 
             do {
+                guard trimmed.lowercased().hasPrefix("curl") else {
+                    throw ParseError.invalidCommand
+                }
+
                 let requests = try parseAll(trimmed)
                 for request in requests {
                     results.append((request, nil))

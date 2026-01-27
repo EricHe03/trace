@@ -147,23 +147,24 @@ public actor BreakpointManager {
 
         pausedRequests[id] = pausedRequest
 
-        // Concurrency: UI notifications are sent on the MainActor.
-        let methodRawValue = method.rawValue
-        await MainActor.run {
-            NotificationCenter.default.post(
-                name: .breakpointTriggered,
-                object: nil,
-                userInfo: [
-                    BreakpointNotificationKey.requestId.rawValue: id,
-                    BreakpointNotificationKey.url.rawValue: url,
-                    BreakpointNotificationKey.method.rawValue: methodRawValue,
-                    BreakpointNotificationKey.breakpointType.rawValue: BreakpointType.request.rawValue
-                ]
-            )
-        }
-
         return await withCheckedContinuation { continuation in
             continuations[id] = continuation
+
+            // Concurrency: UI notifications are sent on the MainActor.
+            // Important: Do not `await` here; yielding before the continuation is registered can race with `resumeRequest`.
+            let methodRawValue = method.rawValue
+            Task { @MainActor in
+                NotificationCenter.default.post(
+                    name: .breakpointTriggered,
+                    object: nil,
+                    userInfo: [
+                        BreakpointNotificationKey.requestId.rawValue: id,
+                        BreakpointNotificationKey.url.rawValue: url,
+                        BreakpointNotificationKey.method.rawValue: methodRawValue,
+                        BreakpointNotificationKey.breakpointType.rawValue: BreakpointType.request.rawValue
+                    ]
+                )
+            }
         }
     }
 
@@ -200,23 +201,24 @@ public actor BreakpointManager {
 
         pausedRequests[id] = pausedRequest
 
-        // Concurrency: UI notifications are sent on the MainActor.
-        let methodRawValue = method.rawValue
-        await MainActor.run {
-            NotificationCenter.default.post(
-                name: .breakpointTriggered,
-                object: nil,
-                userInfo: [
-                    BreakpointNotificationKey.requestId.rawValue: id,
-                    BreakpointNotificationKey.url.rawValue: url,
-                    BreakpointNotificationKey.method.rawValue: methodRawValue,
-                    BreakpointNotificationKey.breakpointType.rawValue: BreakpointType.response.rawValue
-                ]
-            )
-        }
-
         return await withCheckedContinuation { continuation in
             continuations[id] = continuation
+
+            // Concurrency: UI notifications are sent on the MainActor.
+            // Important: Do not `await` here; yielding before the continuation is registered can race with `resumeRequest`.
+            let methodRawValue = method.rawValue
+            Task { @MainActor in
+                NotificationCenter.default.post(
+                    name: .breakpointTriggered,
+                    object: nil,
+                    userInfo: [
+                        BreakpointNotificationKey.requestId.rawValue: id,
+                        BreakpointNotificationKey.url.rawValue: url,
+                        BreakpointNotificationKey.method.rawValue: methodRawValue,
+                        BreakpointNotificationKey.breakpointType.rawValue: BreakpointType.response.rawValue
+                    ]
+                )
+            }
         }
     }
 
