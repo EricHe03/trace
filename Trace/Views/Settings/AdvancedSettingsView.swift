@@ -26,21 +26,21 @@ struct AdvancedSettingsView: View {
                 ThresholdStepper(
                     title: "Inline Threshold",
                     value: $bodyStorageConfig.inlineThreshold,
-                    range: 64 * 1024...50 * 1024 * 1024,
+                    range: 64 * 1024 ... 50 * 1024 * 1024,
                     step: 256 * 1024
                 )
 
                 ThresholdStepper(
                     title: "Truncation Threshold",
                     value: $bodyStorageConfig.truncationThreshold,
-                    range: 256 * 1024...200 * 1024 * 1024,
+                    range: 256 * 1024 ... 200 * 1024 * 1024,
                     step: 1024 * 1024
                 )
 
                 ThresholdStepper(
                     title: "Preview Size",
                     value: $bodyStorageConfig.previewSize,
-                    range: 64 * 1024...10 * 1024 * 1024,
+                    range: 64 * 1024 ... 10 * 1024 * 1024,
                     step: 256 * 1024
                 )
 
@@ -64,7 +64,7 @@ struct AdvancedSettingsView: View {
                         }
                         Slider(
                             value: $samplingConfig.sampleRate,
-                            in: 0.05...1.0,
+                            in: 0.05 ... 1.0,
                             step: 0.05
                         )
                     }

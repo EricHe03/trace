@@ -443,7 +443,7 @@ public class MITMProxyServer: @unchecked Sendable {
 
         switch config.strategy {
         case .random:
-            return Double.random(in: 0..<1) < rate
+            return Double.random(in: 0 ..< 1) < rate
         case .periodic:
             samplingSequence &+= 1
             let interval = max(1, Int((1.0 / rate).rounded()))
@@ -452,7 +452,7 @@ public class MITMProxyServer: @unchecked Sendable {
             let activeConnections = max(1, connections.count)
             let scale = 50.0 / Double(max(50, activeConnections))
             let adjustedRate = min(rate, rate * scale)
-            return Double.random(in: 0..<1) < adjustedRate
+            return Double.random(in: 0 ..< 1) < adjustedRate
         }
     }
 

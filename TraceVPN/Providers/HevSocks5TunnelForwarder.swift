@@ -23,11 +23,11 @@ extension Socks5UDPSupport {
     func isUsable(forIPv6 ipv6Enabled: Bool) -> Bool {
         switch self {
         case .unsupported:
-            return false
+            false
         case .ipv4Only:
-            return !ipv6Enabled
+            !ipv6Enabled
         case .ipv6:
-            return true
+            true
         }
     }
 }
@@ -372,22 +372,21 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         }
 
         connection.stateUpdateHandler = { state in
-            let stateLabel: String
-            switch state {
+            let stateLabel = switch state {
             case .setup:
-                stateLabel = "setup"
+                "setup"
             case .waiting:
-                stateLabel = "waiting"
+                "waiting"
             case .preparing:
-                stateLabel = "preparing"
+                "preparing"
             case .ready:
-                stateLabel = "ready"
+                "ready"
             case .failed:
-                stateLabel = "failed"
+                "failed"
             case .cancelled:
-                stateLabel = "cancelled"
+                "cancelled"
             @unknown default:
-                stateLabel = "unknown"
+                "unknown"
             }
             VPNLog.tunnel.debug("event=vpn.socks5_udp_probe_state state=\(stateLabel, privacy: .public)")
             self.eventLogHandler?("socks5_udp_probe", "state=\(stateLabel)")

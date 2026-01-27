@@ -59,7 +59,7 @@ struct PCAPExportView: View {
                     ByteSizeSlider(
                         title: "Capture Size Limit",
                         value: captureLimitBytesBinding,
-                        range: minRawCaptureSize...maxRawCaptureSize,
+                        range: minRawCaptureSize ... maxRawCaptureSize,
                         step: rawCaptureStep
                     )
                 }
@@ -355,7 +355,6 @@ struct PCAPExportView: View {
                     ]
                 ])
             }
-
         }
     }
 
