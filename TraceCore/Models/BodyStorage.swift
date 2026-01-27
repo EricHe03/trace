@@ -52,9 +52,11 @@ public enum BodyStorage: Codable, Equatable {
     public static var inlineThreshold: Int {
         AppGroupStorage.shared.loadBodyStorageConfig().inlineThreshold
     }
+
     public static var truncationThreshold: Int {
         AppGroupStorage.shared.loadBodyStorageConfig().truncationThreshold
     }
+
     public static var previewSize: Int {
         AppGroupStorage.shared.loadBodyStorageConfig().previewSize
     }

@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/01/24.
 //
 
-import Foundation
 import Darwin
+import Foundation
 
 public enum Validation {
     public static func isValidDomainPattern(_ value: String) -> Bool {

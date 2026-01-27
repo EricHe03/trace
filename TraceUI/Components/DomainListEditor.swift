@@ -114,4 +114,3 @@ public struct DomainListEditor: View {
         newItem = ""
     }
 }
-

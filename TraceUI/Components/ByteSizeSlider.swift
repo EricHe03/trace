@@ -44,7 +44,7 @@ public struct ByteSizeSlider: View {
                     get: { Double(value) },
                     set: { value = Int($0) }
                 ),
-                in: Double(range.lowerBound)...Double(range.upperBound),
+                in: Double(range.lowerBound) ... Double(range.upperBound),
                 step: Double(step)
             )
 

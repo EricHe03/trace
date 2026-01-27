@@ -31,4 +31,3 @@ public struct ThresholdStepper: View {
         }
     }
 }
-

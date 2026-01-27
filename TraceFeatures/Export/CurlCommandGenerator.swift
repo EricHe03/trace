@@ -24,7 +24,8 @@ public enum CurlCommandGenerator {
     /// - Parameter request: The network request to convert
     /// - Returns: A formatted cURL command string
     public static func generate(from request: NetworkRequest, options: CurlExportOptions = .init()) -> String {
-        var curl = "curl"
+        // Keep `curl -X <METHOD>` together to make the output stable and easy to match/copy.
+        var curl = "curl -X \(request.method.rawValue)"
         switch request.protocolVersion {
         case .http10:
             curl += " --http1.0"
@@ -42,8 +43,7 @@ public enum CurlCommandGenerator {
             curl += " -L"
         }
 
-        curl += " -X \(request.method.rawValue) \\\n"
-        curl += "  '\(shellEscape(request.url))'"
+        curl += " \\\n  '\(shellEscape(request.url))'"
 
         // Headers to exclude (browser-specific, automatic, or redundant)
         let excludedHeaders = [

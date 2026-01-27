@@ -126,8 +126,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     private let proxyPort: UInt16 = 8888
     private let proxyHost = "127.0.0.1"
-    private let tunnelLocalAddress = "198.18.0.2"      // Device's tunnel IP
-    private let tunnelRemoteAddress = "198.18.0.1"     // Gateway (hev-socks5-tunnel)
+    private let tunnelLocalAddress = "198.18.0.2" // Device's tunnel IP
+    private let tunnelRemoteAddress = "198.18.0.1" // Gateway (hev-socks5-tunnel)
     private let tunnelSubnetMask = "255.255.255.0"
     private let fullTunnelMTU: Int = 1400
     private var currentCaptureMode: CaptureMode = .proxyOnly
@@ -1431,15 +1431,15 @@ actor PacketTunnelRuntimeState {
         packetCapturePipeline = pipeline
         packetCaptureWriter = writer
 
-	        if !trimmedHost.isEmpty, socks5Port > 0 {
-	            let eventLogger: (String, String) -> Void = { [weak self] type, msg in
-	                Task { [weak self] in
-	                    await self?.appendEventLog(type: type, msg: msg)
-	                }
-	            }
-	            let forwarder = HevSocks5TunnelForwarder(
-	                packetFlow: packetFlow,
-	                socks5Host: trimmedHost,
+        if !trimmedHost.isEmpty, socks5Port > 0 {
+            let eventLogger: (String, String) -> Void = { [weak self] type, msg in
+                Task { [weak self] in
+                    await self?.appendEventLog(type: type, msg: msg)
+                }
+            }
+            let forwarder = HevSocks5TunnelForwarder(
+                packetFlow: packetFlow,
+                socks5Host: trimmedHost,
                 socks5Port: socks5Port,
                 mtu: mtu,
                 ipv6Enabled: ipv6Enabled,

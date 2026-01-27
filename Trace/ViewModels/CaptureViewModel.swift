@@ -347,15 +347,19 @@ final class CaptureViewModel: ObservableObject {
     @Published var captureOptions: CaptureOptions = .default {
         didSet { persistCaptureOptions() }
     }
+
     @Published var bodyStorageConfig: BodyStorageConfig = .default {
         didSet { persistBodyStorageConfig() }
     }
+
     @Published var samplingConfig: SamplingConfig = .default {
         didSet { persistSamplingConfig() }
     }
+
     @Published var mitmAllowlist: [String] = ["*"] {
         didSet { persistHardeningConfig() }
     }
+
     @Published var blockQUICEnabled: Bool = true {
         didSet { persistHardeningConfig() }
     }

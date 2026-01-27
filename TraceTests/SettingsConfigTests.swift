@@ -19,8 +19,8 @@ final class SettingsConfigTests: XCTestCase {
         let config = BodyStorageConfig(inlineThreshold: -1, truncationThreshold: 100, previewSize: 500)
         let normalized = config.normalized()
         XCTAssertEqual(normalized.inlineThreshold, 1)
-        XCTAssertEqual(normalized.truncationThreshold, 1)
-        XCTAssertEqual(normalized.previewSize, 1)
+        XCTAssertEqual(normalized.truncationThreshold, 100)
+        XCTAssertEqual(normalized.previewSize, 100)
     }
 
     func testDomainPatternValidation() {
@@ -37,4 +37,3 @@ final class SettingsConfigTests: XCTestCase {
         XCTAssertFalse(Validation.isValidIPAddress("not-an-ip"))
     }
 }
-

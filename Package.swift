@@ -291,7 +291,8 @@ let package = Package(
                 "TraceNetworking",
                 "TraceProxy",
                 "TraceFeatures",
-                "TraceVPN"
+                "TraceVPN",
+                "TraceWidget"
             ],
             path: "TraceTests"
         ),

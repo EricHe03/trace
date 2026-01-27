@@ -13,8 +13,8 @@ final class RedirectChainResolverTests: XCTestCase {
         let redirectResponse = makeNetworkRequest(
             url: "https://example.com/old",
             statusCode: 302,
-            responseHeaders: [TraceHTTPHeader(key: "Location", value: "/new")],
-            timestamp: Date()
+            timestamp: Date(),
+            responseHeaders: [TraceHTTPHeader(key: "Location", value: "/new")]
         )
 
         let followUp = makeNetworkRequest(
@@ -36,8 +36,8 @@ final class RedirectChainResolverTests: XCTestCase {
         let redirectResponse = makeNetworkRequest(
             url: "https://example.com/old",
             statusCode: 301,
-            responseHeaders: [TraceHTTPHeader(key: "Location", value: "https://example.com/new")],
-            timestamp: Date()
+            timestamp: Date(),
+            responseHeaders: [TraceHTTPHeader(key: "Location", value: "https://example.com/new")]
         )
 
         let followUp = makeNetworkRequest(
