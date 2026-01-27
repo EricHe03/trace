@@ -6,6 +6,7 @@
 //
 
 import XCTest
+import os
 @testable import Trace
 @testable import TraceCore
 @testable import TraceSecurity
@@ -80,22 +81,22 @@ final class SecurityLogTests: XCTestCase {
 
     func testLogEventTLS() {
         let event = LogEvent.tls("handshake_start")
-        XCTAssertEqual(event.action, "handshake_start")
+        XCTAssertTrue(event.description.hasPrefix("event=tls.handshake_start"))
     }
 
     func testLogEventKeychain() {
         let event = LogEvent.keychain("save")
-        XCTAssertEqual(event.action, "save")
+        XCTAssertTrue(event.description.hasPrefix("event=keychain.save"))
     }
 
     func testLogEventCrypto() {
         let event = LogEvent.crypto("encrypt")
-        XCTAssertEqual(event.action, "encrypt")
+        XCTAssertTrue(event.description.hasPrefix("event=crypto.encrypt"))
     }
 
     func testLogEventCert() {
         let event = LogEvent.cert("generate")
-        XCTAssertEqual(event.action, "generate")
+        XCTAssertTrue(event.description.hasPrefix("event=cert.generate"))
     }
 
     func testLogEventWithAttributes() {
@@ -103,7 +104,7 @@ final class SecurityLogTests: XCTestCase {
             .success()
             .with("domain", value: "example.com", privacy: .hash)
 
-        XCTAssertEqual(event.action, "handshake_complete")
+        XCTAssertTrue(event.description.hasPrefix("event=tls.handshake_complete"))
     }
 
     // MARK: - SecurityLog Logger Tests
@@ -140,7 +141,7 @@ final class SecurityLogTests: XCTestCase {
             .with("duration_ms", value: 100)
             .with("cipher", value: "TLS_AES_128_GCM_SHA256")
 
-        XCTAssertEqual(event.action, "handshake")
+        XCTAssertTrue(event.description.hasPrefix("event=tls.handshake"))
     }
 
     func testLogEventWithError() {
@@ -149,7 +150,7 @@ final class SecurityLogTests: XCTestCase {
             .failure()
             .error(error)
 
-        XCTAssertEqual(event.action, "handshake")
+        XCTAssertTrue(event.description.hasPrefix("event=tls.handshake"))
     }
 
     func testMultipleLoggersConcurrently() {
