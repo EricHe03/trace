@@ -27,7 +27,6 @@ struct PCAPExportView: View {
     @State private var showingAllFilesShare = false
     @State private var showingVPNLogShare = false
     @State private var vpnLogURL: URL?
-    @State private var isRestoringSettings = false
     @ObservedObject private var vpnManager = VPNManager.shared
 
     private let vpnLogFileName = "vpn_events.ndjson"
@@ -54,23 +53,15 @@ struct PCAPExportView: View {
     var body: some View {
         Form {
             Section("Packet Capture") {
-                Toggle("Enable Raw Packet Capture", isOn: $rawCaptureEnabled)
-                    .onChange(of: rawCaptureEnabled) { _ in
-                        guard !isRestoringSettings else { return }
-                        updateRawCaptureSettings(showToast: true)
-                    }
+                Toggle("Enable Raw Packet Capture", isOn: rawCaptureEnabledBinding)
 
                 if rawCaptureEnabled {
                     ByteSizeSlider(
                         title: "Capture Size Limit",
-                        value: $captureLimitBytes,
+                        value: captureLimitBytesBinding,
                         range: minRawCaptureSize...maxRawCaptureSize,
                         step: rawCaptureStep
                     )
-                    .onChange(of: captureLimitBytes) { _ in
-                        guard !isRestoringSettings else { return }
-                        scheduleRawCaptureSave()
-                    }
                 }
 
                 Text("Captures raw IP packets in PCAP format. Files can be analyzed with Wireshark. Capture stops when limit is reached.")
@@ -79,11 +70,7 @@ struct PCAPExportView: View {
             }
 
             Section("Network Hardening") {
-                Toggle("Block QUIC (HTTP/3)", isOn: $blockQUICEnabled)
-                    .onChange(of: blockQUICEnabled) { _ in
-                        guard !isRestoringSettings else { return }
-                        updateQUICBlockingSettings()
-                    }
+                Toggle("Block QUIC (HTTP/3)", isOn: blockQUICEnabledBinding)
 
                 Text("Blocks QUIC (UDP/443). Disable if apps rely on HTTP/3.")
                     .font(.caption)
@@ -242,6 +229,35 @@ struct PCAPExportView: View {
     private let minRawCaptureSize = 1_048_576
     private let maxRawCaptureSize = 500 * 1_048_576
     private let rawCaptureStep = 1_048_576
+    private var rawCaptureEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { rawCaptureEnabled },
+            set: { newValue in
+                rawCaptureEnabled = newValue
+                updateRawCaptureSettings()
+            }
+        )
+    }
+
+    private var captureLimitBytesBinding: Binding<Int> {
+        Binding(
+            get: { captureLimitBytes },
+            set: { newValue in
+                captureLimitBytes = newValue
+                scheduleRawCaptureSave()
+            }
+        )
+    }
+
+    private var blockQUICEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { blockQUICEnabled },
+            set: { newValue in
+                blockQUICEnabled = newValue
+                updateQUICBlockingSettings()
+            }
+        )
+    }
 
     private var totalSizeFormatted: String {
         let total = pcapFiles.reduce(0) { $0 + $1.size }
@@ -255,11 +271,9 @@ struct PCAPExportView: View {
             let rawCapture = await hardening.enableRawCapture
             let blockQUIC = await hardening.blockQUIC
             await MainActor.run {
-                isRestoringSettings = true
                 rawCaptureEnabled = rawCapture
                 captureLimitBytes = max(minRawCaptureSize, min(Int(limitBytes), maxRawCaptureSize))
                 blockQUICEnabled = blockQUIC
-                isRestoringSettings = false
             }
         }
     }
@@ -299,11 +313,11 @@ struct PCAPExportView: View {
                 return
             }
             guard !Task.isCancelled else { return }
-            updateRawCaptureSettings(showToast: false)
+            updateRawCaptureSettings()
         }
     }
 
-    private func updateRawCaptureSettings(showToast: Bool) {
+    private func updateRawCaptureSettings() {
         Task {
             let clampedBytes = UInt64(max(minRawCaptureSize, min(captureLimitBytes, maxRawCaptureSize)))
             let hardening = HardeningConfig.shared
@@ -324,8 +338,6 @@ struct PCAPExportView: View {
 
             await MainActor.run {
                 captureLimitBytes = Int(clampedBytes)
-                guard showToast else { return }
-                toastMessage = rawCaptureEnabled ? "Packet capture enabled" : "Packet capture disabled"
             }
         }
     }
@@ -344,9 +356,6 @@ struct PCAPExportView: View {
                 ])
             }
 
-            await MainActor.run {
-                toastMessage = blockQUICEnabled ? "QUIC blocked" : "QUIC allowed"
-            }
         }
     }
 
