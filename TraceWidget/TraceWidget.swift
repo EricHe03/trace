@@ -134,26 +134,31 @@ struct Provider: AppIntentTimelineProvider {
         let nextUpdate = nextUpdateDate(for: data, from: currentDate)
         return Timeline(entries: [entry], policy: .after(nextUpdate))
     }
-}
 
-struct LegacyProvider: TimelineProvider {
-    func placeholder(in context: Context) -> TraceEntry {
-        TraceEntry(date: Date(), configuration: ConfigurationAppIntent(), data: .placeholder)
-    }
-
-    func getSnapshot(in context: Context, completion: @escaping (TraceEntry) -> Void) {
-        let entry = TraceEntry(date: Date(), configuration: ConfigurationAppIntent(), data: fetchWidgetData())
-        completion(entry)
-    }
-
-    func getTimeline(in context: Context, completion: @escaping (Timeline<TraceEntry>) -> Void) {
-        let currentDate = Date()
+    /// Provides recommendations for Smart Stack to determine when to show this widget.
+    func recommendations() -> [AppIntentRecommendation<ConfigurationAppIntent>] {
         let data = fetchWidgetData()
-        let entry = TraceEntry(date: currentDate, configuration: ConfigurationAppIntent(), data: data)
-        let nextUpdate = nextUpdateDate(for: data, from: currentDate)
-        completion(Timeline(entries: [entry], policy: .after(nextUpdate)))
+
+        // Recommend showing widget when actively capturing
+        if data.isCapturing {
+            return [
+                AppIntentRecommendation(
+                    intent: ConfigurationAppIntent(),
+                    description: "Monitor active network traffic capture"
+                )
+            ]
+        }
+
+        // Default recommendation
+        return [
+            AppIntentRecommendation(
+                intent: ConfigurationAppIntent(),
+                description: "View network capture status"
+            )
+        ]
     }
 }
+
 
 /// Represents a timeline entry containing network capture data and configuration.
 struct TraceEntry: TimelineEntry {
@@ -566,18 +571,17 @@ struct AccessoryCircularView: View {
     let data: WidgetData
 
     var body: some View {
-        ZStack {
-            AccessoryWidgetBackground()
+        VStack(spacing: 2) {
+            Image(systemName: "network")
+                .font(.system(size: 16, weight: .semibold))
+                .widgetAccentable()
 
-            VStack(spacing: 2) {
-                Image(systemName: "network")
-                    .font(.system(size: 16, weight: .semibold))
-                    .widgetAccentable()
-
-                Text("\(data.requestCount)")
-                    .font(.system(size: 18, weight: .bold))
-                    .widgetAccentable()
-            }
+            Text("\(data.requestCount)")
+                .font(.system(size: 18, weight: .bold))
+                .widgetAccentable()
+        }
+        .containerBackground(for: .widget) {
+            Color.clear
         }
         .accessibilityLabel("Network capture, \(data.requestCount) requests")
     }
@@ -770,7 +774,11 @@ struct TraceWidget: Widget {
     let kind: String = "TraceWidget"
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: LegacyProvider()) { entry in
+        AppIntentConfiguration(
+            kind: kind,
+            intent: ConfigurationAppIntent.self,
+            provider: Provider()
+        ) { entry in
             TraceWidgetEntryView(entry: entry)
                 .traceWidgetContainerBackgroundIfAvailable()
         }
