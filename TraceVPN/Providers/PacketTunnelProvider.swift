@@ -126,7 +126,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     private let proxyPort: UInt16 = 8888
     private let proxyHost = "127.0.0.1"
-    private let tunnelIPAddress = "10.0.0.2"
+    private let tunnelLocalAddress = "198.18.0.2"      // Device's tunnel IP
+    private let tunnelRemoteAddress = "198.18.0.1"     // Gateway (hev-socks5-tunnel)
     private let tunnelSubnetMask = "255.255.255.0"
     private let fullTunnelMTU: Int = 1400
     private var currentCaptureMode: CaptureMode = .proxyOnly
@@ -553,7 +554,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     ///
     /// - Returns: Configured network settings ready to apply to the system
     private func buildNetworkSettings(using config: CaptureConfiguration) -> NEPacketTunnelNetworkSettings {
-        let networkSettings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: tunnelIPAddress)
+        let networkSettings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: tunnelRemoteAddress)
 
         switch config.captureMode {
         case .proxyOnly:
@@ -563,7 +564,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
             // Rule: Do not route packets through the tunnel in proxy-only mode.
             let ipv4Settings = NEIPv4Settings(
-                addresses: [tunnelIPAddress],
+                addresses: [tunnelLocalAddress],
                 subnetMasks: [tunnelSubnetMask]
             )
             ipv4Settings.includedRoutes = []
@@ -583,7 +584,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             }
 
             let ipv4Settings = NEIPv4Settings(
-                addresses: [tunnelIPAddress],
+                addresses: [tunnelLocalAddress],
                 subnetMasks: [tunnelSubnetMask]
             )
             ipv4Settings.includedRoutes = [NEIPv4Route.default()]

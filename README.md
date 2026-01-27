@@ -1,11 +1,11 @@
 # Trace
 
-[![Swift](https://img.shields.io/badge/Swift-6.0-orange)](https://swift.org)
+[![Swift](https://img.shields.io/badge/Swift-6.2-orange)](https://swift.org)
 [![Platform](https://img.shields.io/badge/platform-iOS-blue)](#)
 [![Xcode](https://img.shields.io/badge/Xcode-26.2-blue)](#)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/6639835/Trace)](https://github.com/6639835/Trace/releases)
-[![Downloads](https://img.shields.io/github/downloads/6639835/Trace/total)](https://github.com/6639835/Trace/releases)
+[![Release](https://img.shields.io/github/v/release/Trace-iOS/Trace)](https://github.com/Trace-iOS/Trace/releases)
+[![Downloads](https://img.shields.io/github/downloads/Trace-iOS/Trace/total)](https://github.com/Trace-iOS/Trace/releases)
 
 Trace is an iOS network debugger that captures HTTP(S), WebSocket, and SSE traffic via a Network Extension packet tunnel with **full-tunnel** and **proxy-only** modes. Full-tunnel routes device traffic through the tunnel, while proxy-only relies on the VPN-provided system proxy settings. It performs on-device TLS MITM with a generated root CA, shares capture data with the main app using an App Group, and includes powerful tooling for inspection, modification, replay, and export.
 
@@ -48,7 +48,7 @@ Trace is an iOS network debugger that captures HTTP(S), WebSocket, and SSE traff
 
 Prerequisites:
 
-- macOS with Xcode 26.2 (SwiftPM uses `swift-tools-version: 6.0`).
+- macOS with Xcode 26.2 (Swift 6.2; SwiftPM uses `swift-tools-version: 6.0`).
 - iOS 16.0 deployment target (matches Xcode project and SwiftPM settings).
 - Apple Developer Team with Network Extension entitlements.
 - Physical iOS device for end-to-end capture (packet tunnel is unavailable in the simulator).
@@ -110,6 +110,7 @@ Settings → Data → Import/Export HAR
 ## Limitations
 
 - Proxy-only mode: Trace relies on the system proxy settings from the VPN configuration, so apps that ignore proxy settings will not be captured. Use full-tunnel mode for complete traffic coverage.
+- Certificate pinning / custom trust: Apps that pin certificates or use custom TLS validation cannot be MITM’d, so their HTTPS traffic will not be decrypted.
 - QUIC/HTTP3: Traffic is not decrypted. Depending on capture settings, it may be forwarded, blocked, or appear only as packet-level data.
 
 ## Contributing
