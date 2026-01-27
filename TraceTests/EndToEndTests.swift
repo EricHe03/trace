@@ -1140,21 +1140,3 @@ private func httpStatusMessage(for code: Int) -> String {
     }
 }
 
-// MARK: - XCTest Async Error Assertion Helper
-
-extension XCTestCase {
-    func XCTAssertThrowsError<T>(
-        _ expression: @autoclosure () async throws -> T,
-        _ message: @autoclosure () -> String = "",
-        file: StaticString = #filePath,
-        line: UInt = #line
-    ) async {
-        do {
-            _ = try await expression()
-            XCTFail(message().isEmpty ? "Expected error but succeeded" : message(), file: file, line: line)
-        } catch {
-            // Expected error was thrown
-        }
-    }
-}
-

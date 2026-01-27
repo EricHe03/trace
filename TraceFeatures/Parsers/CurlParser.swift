@@ -885,7 +885,7 @@ public class CurlParser {
     private static func unescapeBackslashQuotedString(_ value: String) -> String {
         // When users paste cURL commands out of logs or string literals, JSON bodies are often
         // double-escaped (e.g. `{\"key\":\"value\"}`). Normalise the common case.
-        return value.replacingOccurrences(of: "\\\"", with: "\"")
+        value.replacingOccurrences(of: "\\\"", with: "\"")
     }
 
     private static func encodeDataUrl(_ value: String) -> String {
