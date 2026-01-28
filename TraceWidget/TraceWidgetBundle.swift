@@ -12,13 +12,6 @@ import WidgetKit
 @main
 struct TraceWidgetBundle: WidgetBundle {
     var body: some Widget {
-        TraceWidget()
-        if #available(iOS 18.0, *) {
-            TraceWidgetControl()
-        }
-
-        if #available(iOS 16.1, *) {
-            TraceWidgetLiveActivity()
-        }
+        LegacyTraceWidget()
     }
 }

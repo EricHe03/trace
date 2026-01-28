@@ -102,6 +102,36 @@ struct ToggleCaptureIntent: AppIntent {
     }
 }
 
+/// Configuration intent for the Control Center widget.
+@available(iOS 18.0, iOSApplicationExtension 18.0, *)
+struct CaptureControlConfigurationIntent: ControlConfigurationIntent {
+    static let title: LocalizedStringResource = "Capture Control Configuration"
+    static let description = IntentDescription("Configure the Trace capture control widget")
+}
+
+/// Sets network traffic capture on or off.
+///
+/// Used by Control Center to drive a toggle-style control.
+@available(iOS 18.0, iOSApplicationExtension 18.0, *)
+struct SetCaptureStateIntent: SetValueIntent {
+    static let title: LocalizedStringResource = "Set Network Capture"
+    static let description = IntentDescription("Set network traffic capture state")
+    static let openAppWhenRun: Bool = true
+
+    @Parameter(title: "Capture")
+    var value: Bool
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        if value {
+            recordWidgetAction(.startCapture)
+        } else {
+            recordWidgetAction(.stopCapture)
+        }
+        return .result()
+    }
+}
+
 /// Opens the Trace app to a specific view.
 ///
 /// Optionally navigates directly to a target view within the app.

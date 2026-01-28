@@ -15,7 +15,10 @@ import WidgetKit
 /// Provides the current capture state for the Control Widget.
 @available(iOS 18.0, *)
 struct CaptureStateProvider: AppIntentControlValueProvider {
-    func currentValue(configuration: ToggleCaptureIntent) async throws -> Bool {
+    typealias Value = Bool
+    typealias Configuration = CaptureControlConfigurationIntent
+
+    func currentValue(configuration: CaptureControlConfigurationIntent) async throws -> Bool {
         let appGroupIdentifier = AppGroupConfiguration.appGroupIdentifier
         guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else {
             return false
@@ -23,7 +26,7 @@ struct CaptureStateProvider: AppIntentControlValueProvider {
         return defaults.bool(forKey: "widget.isCapturing")
     }
 
-    func previewValue(configuration: ToggleCaptureIntent) -> Bool {
+    func previewValue(configuration: CaptureControlConfigurationIntent) -> Bool {
         false
     }
 }
@@ -45,12 +48,12 @@ struct TraceWidgetControl: ControlWidget {
         ) { isCapturing in
             ControlWidgetToggle(
                 isOn: isCapturing,
-                action: ToggleCaptureIntent()
-            ) { isOn in
+                action: SetCaptureStateIntent()
+            ) {
                 Label {
-                    Text(isOn ? "Capturing" : "Capture")
+                    Text(isCapturing ? "Capturing" : "Capture")
                 } icon: {
-                    Image(systemName: isOn ? "record.circle.fill" : "network")
+                    Image(systemName: isCapturing ? "record.circle.fill" : "network")
                 }
             }
             .tint(.blue)
