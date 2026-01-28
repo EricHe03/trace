@@ -41,6 +41,15 @@ struct DNSListView: View {
                 #else
                 .listStyle(.insetGrouped)
                 #endif
+                .overlay {
+                    if viewModel.messages.isEmpty {
+                        TraceContentUnavailableView(
+                            viewModel.searchText.isEmpty ? "No DNS Queries" : "No Results",
+                            systemImage: viewModel.searchText.isEmpty ? "network" : "magnifyingglass",
+                            description: Text(viewModel.searchText.isEmpty ? "DNS queries will appear here as they're captured" : "Try a different search term or filter")
+                        )
+                    }
+                }
             }
             .navigationTitle("DNS Queries")
             .toolbar {

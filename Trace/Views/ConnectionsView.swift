@@ -16,9 +16,21 @@ struct ConnectionsView: View {
     @State private var toastMessage: String?
 
     var body: some View {
-        List {
-            if !records.isEmpty {
-                Section {
+        Group {
+            if records.isEmpty {
+                TraceContentUnavailableView(
+                    "No Connections Yet",
+                    systemImage: "arrow.up.arrow.down.circle",
+                    description: Text("TCP/UDP connection summaries will appear here when capture is active")
+                )
+            } else if filteredRecords.isEmpty {
+                TraceContentUnavailableView(
+                    "No Results",
+                    systemImage: "magnifyingglass",
+                    description: Text("Try a different search term")
+                )
+            } else {
+                List {
                     ForEach(filteredRecords) { record in
                         NavigationLink {
                             ConnectionDetailView(record: record)
@@ -39,9 +51,9 @@ struct ConnectionsView: View {
                         }
                     }
                 }
+                .listStyle(.insetGrouped)
             }
         }
-        .listStyle(.insetGrouped)
         .navigationTitle("Connections")
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic))
         .toolbar {
@@ -52,21 +64,6 @@ struct ConnectionsView: View {
                     Label("Clear", systemImage: "trash")
                 }
                 .disabled(records.isEmpty)
-            }
-        }
-        .overlay {
-            if records.isEmpty {
-                TraceContentUnavailableView(
-                    "No Connections",
-                    systemImage: "network.slash",
-                    description: Text("Connection summaries will appear here")
-                )
-            } else if filteredRecords.isEmpty {
-                TraceContentUnavailableView(
-                    "No Results",
-                    systemImage: "magnifyingglass",
-                    description: Text("No connections match your search")
-                )
             }
         }
         .refreshable {

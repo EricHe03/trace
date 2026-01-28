@@ -219,12 +219,12 @@ struct ScriptListView: View {
     }
 
     private var emptyStateContent: some View {
-        EmptyStateView(
-            icon: "doc.text.fill.badge.ellipsis",
-            title: "No Scripts",
-            description: "Create JavaScript scripts to modify requests and responses",
-            action: { showingAddScript = true },
-            actionLabel: "New Script"
+        TraceContentUnavailableView(
+            "No Scripts",
+            systemImage: "chevron.left.forwardslash.chevron.right",
+            description: Text("Create JavaScript scripts to modify requests and responses"),
+            actionTitle: "New Script",
+            action: { showingAddScript = true }
         )
     }
 

@@ -24,12 +24,11 @@ struct HeadersSection: View {
                     }
                 }
             } else {
-                InfoCard(title: "Headers") {
-                    Text("No headers")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding()
-                }
+                TraceContentUnavailableView(
+                    "No Headers",
+                    systemImage: "list.bullet.rectangle",
+                    description: Text("This request has no headers")
+                )
             }
         }
         .padding()

@@ -12,6 +12,69 @@ import XCTest
 
 final class UDPFlowManagerTests: XCTestCase {
 
+    // MARK: - Recording + Persistence Tests
+
+    func testRecordDatagramPersistsAndAggregatesBidirectionalFlow() throws {
+        let storage = AppGroupStorage.shared
+        try storage.clearAllUDPFlowMetadata()
+
+        let manager = UDPFlowManager(idleTimeout: 120, flowLimit: 100)
+
+        let dnsQueryPayload = makeDNSQueryExampleDotCom()
+        let clientIP = ipv4(192, 168, 1, 100)
+        let serverIP = ipv4(8, 8, 8, 8)
+
+        let clientToServerIP = IPPacket(
+            version: 4,
+            headerLength: 20,
+            totalLength: 20 + 8 + dnsQueryPayload.count,
+            protocolNumber: TransportProtocol.udp.rawValue,
+            source: clientIP,
+            destination: serverIP,
+            payload: Data()
+        )
+        let clientToServerUDP = UDPPacket(
+            sourcePort: 54321,
+            destinationPort: 53,
+            length: UInt16(8 + dnsQueryPayload.count),
+            payload: dnsQueryPayload
+        )
+        manager.recordDatagram(ipPacket: clientToServerIP, udpPacket: clientToServerUDP)
+
+        let serverToClientIP = IPPacket(
+            version: 4,
+            headerLength: 20,
+            totalLength: 20 + 8 + dnsQueryPayload.count,
+            protocolNumber: TransportProtocol.udp.rawValue,
+            source: serverIP,
+            destination: clientIP,
+            payload: Data()
+        )
+        let serverToClientUDP = UDPPacket(
+            sourcePort: 53,
+            destinationPort: 54321,
+            length: UInt16(8 + dnsQueryPayload.count),
+            payload: dnsQueryPayload
+        )
+        manager.recordDatagram(ipPacket: serverToClientIP, udpPacket: serverToClientUDP)
+
+        manager.flush()
+
+        let flows = try storage.loadAllUDPFlowMetadata()
+        XCTAssertEqual(flows.count, 1, "Bidirectional traffic should aggregate into a single normalized flow")
+
+        guard let flow = flows.first else {
+            XCTFail("Expected one UDP flow")
+            return
+        }
+
+        XCTAssertEqual(flow.detectedProtocol, .dns, "Port 53 + valid DNS payload should detect DNS")
+        XCTAssertEqual(flow.datagramsFromSource + flow.datagramsToSource, 2)
+        XCTAssertEqual(flow.bytesFromSource + flow.bytesToSource, UInt64(dnsQueryPayload.count * 2))
+        XCTAssertTrue(flow.isBidirectional)
+        XCTAssertLessThanOrEqual(flow.recentDatagrams.count, 10)
+    }
+
     // MARK: - Protocol Detection Tests
 
     func testDetectDNSProtocol() {
@@ -454,5 +517,33 @@ final class UDPFlowManagerTests: XCTestCase {
         if isNTPPort(port) { return "NTP" }
         if isSNMPPort(port) { return "SNMP" }
         return "Unknown"
+    }
+
+    private func ipv4(_ a: UInt8, _ b: UInt8, _ c: UInt8, _ d: UInt8) -> IPAddress {
+        .v4(
+            (UInt32(a) << 24) |
+                (UInt32(b) << 16) |
+                (UInt32(c) << 8) |
+                UInt32(d)
+        )
+    }
+
+    private func makeDNSQueryExampleDotCom() -> Data {
+        var data = Data()
+        data.append(contentsOf: [0x12, 0x34]) // Transaction ID
+        data.append(contentsOf: [0x01, 0x00]) // Flags: Standard query, RD=1
+        data.append(contentsOf: [0x00, 0x01]) // Questions: 1
+        data.append(contentsOf: [0x00, 0x00]) // Answers: 0
+        data.append(contentsOf: [0x00, 0x00]) // Authority: 0
+        data.append(contentsOf: [0x00, 0x00]) // Additional: 0
+
+        data.append(contentsOf: [0x07]) // Length of "example"
+        data.append("example".data(using: .utf8)!)
+        data.append(contentsOf: [0x03]) // Length of "com"
+        data.append("com".data(using: .utf8)!)
+        data.append(contentsOf: [0x00]) // End of name
+        data.append(contentsOf: [0x00, 0x01]) // Type: A
+        data.append(contentsOf: [0x00, 0x01]) // Class: IN
+        return data
     }
 }
