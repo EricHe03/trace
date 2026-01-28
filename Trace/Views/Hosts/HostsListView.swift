@@ -18,8 +18,7 @@ struct HostsListView: View {
     @State private var searchText = ""
     @State private var filterStatus: FilterStatus = .all
     @State private var showingImport = false
-    @State private var showingShareSheet = false
-    @State private var shareItems: [Any] = []
+    @State private var shareSheetItem: ShareSheetItem?
     @State private var toastMessage: String?
 
     enum FilterStatus: String, CaseIterable {
@@ -185,8 +184,8 @@ struct HostsListView: View {
             ) { result in
                 handleImport(result: result)
             }
-            .sheet(isPresented: $showingShareSheet) {
-                ShareSheet(items: shareItems)
+            .sheet(item: $shareSheetItem) { item in
+                ShareSheetContainer(items: item.items)
             }
             .toast(message: $toastMessage)
         }
@@ -297,8 +296,7 @@ struct HostsListView: View {
             return
         }
 
-        shareItems = [fileURL]
-        showingShareSheet = true
+        shareSheetItem = ShareSheetItem([fileURL])
         showToast(message: "Exporting entries...")
     }
 

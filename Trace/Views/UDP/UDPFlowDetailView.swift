@@ -14,8 +14,7 @@ struct UDPFlowDetailView: View {
     let viewModel: UDPFlowsViewModel
 
     @State private var showingExport = false
-    @State private var showingShareSheet = false
-    @State private var shareItems: [Any] = []
+    @State private var shareSheetItem: ShareSheetItem?
     @State private var toastMessage: String?
 
     var body: some View {
@@ -140,8 +139,8 @@ struct UDPFlowDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
-        .sheet(isPresented: $showingShareSheet) {
-            ShareSheet(items: shareItems)
+        .sheet(item: $shareSheetItem) { item in
+            ShareSheetContainer(items: item.items)
         }
         .toast(message: $toastMessage)
     }
@@ -165,8 +164,7 @@ struct UDPFlowDetailView: View {
             encoder.dateEncodingStrategy = .iso8601
             let data = try encoder.encode(flow)
             let url = try writeExport(data: data, fileName: "udp_flow_\(flow.id.uuidString).json")
-            shareItems = [url]
-            showingShareSheet = true
+            shareSheetItem = ShareSheetItem([url])
         } catch {
             toastMessage = "Export failed: \(error.localizedDescription)"
         }
@@ -201,8 +199,7 @@ struct UDPFlowDetailView: View {
 
         do {
             let url = try writeExport(data: Data(text.utf8), fileName: "udp_flow_\(flow.id.uuidString).txt")
-            shareItems = [url]
-            showingShareSheet = true
+            shareSheetItem = ShareSheetItem([url])
         } catch {
             toastMessage = "Export failed: \(error.localizedDescription)"
         }

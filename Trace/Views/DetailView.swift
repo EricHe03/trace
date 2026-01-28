@@ -174,7 +174,7 @@ struct DetailView: View {
             }
         }
         .sheet(isPresented: $showingShareSheet) {
-            ShareSheet(
+            ShareSheetContainer(
                 items: [
                     formatRequestForSharing(),
                     CurlCommandGenerator.generate(from: request)
@@ -203,12 +203,12 @@ struct DetailView: View {
         }
         .toast(message: $toastMessage)
         .sheet(isPresented: $showingShareResponseBody) {
-            ShareSheet(
+            ShareSheetContainer(
                 items: ShareHelper.shareItemsForResponseBody(from: request)
             )
         }
         .sheet(isPresented: $showingShareRequestBody) {
-            ShareSheet(
+            ShareSheetContainer(
                 items: ShareHelper.shareItemsForRequestBody(from: request)
             )
         }
