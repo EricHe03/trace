@@ -14,18 +14,17 @@ import TraceUI
 struct PCAPExportView: View {
     @State private var pcapFiles: [PCAPFileInfo] = []
     @State private var isLoading = true
-    @State private var showingShareSheet = false
-    @State private var selectedFile: PCAPFileInfo?
+    @State private var shareSheetItem: ShareSheetItem?
     @State private var showingDeleteAlert = false
     @State private var fileToDelete: PCAPFileInfo?
     @State private var toastMessage: String?
     @State private var rawCaptureEnabled = false
-    @State private var captureLimitMB = 10
+    @State private var captureLimitBytes = 10_485_760
+    @State private var captureSaveTask: Task<Void, Never>?
     @State private var blockQUICEnabled = true
-    @State private var shareItems: [URL] = []
-    @State private var showingAllFilesShare = false
-    @State private var isRestoringSettings = false
     @ObservedObject private var vpnManager = VPNManager.shared
+
+    private let vpnLogFileName = "vpn_events.ndjson"
 
     struct PCAPFileInfo: Identifiable {
         let id = UUID()
@@ -47,75 +46,61 @@ struct PCAPExportView: View {
     }
 
     var body: some View {
-        List {
-            // Configuration Section
-            Section {
-                Toggle("Enable Raw Packet Capture", isOn: $rawCaptureEnabled)
-                    .onChange(of: rawCaptureEnabled) { _ in
-                        guard !isRestoringSettings else { return }
-                        updateRawCaptureSettings()
-                    }
+        Form {
+            Section("Packet Capture") {
+                Toggle("Enable Raw Packet Capture", isOn: rawCaptureEnabledBinding)
 
                 if rawCaptureEnabled {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Capture Size Limit")
-                            .font(.subheadline)
-
-                        HStack {
-                            TextField("Size", value: $captureLimitMB, format: .number)
-                                .keyboardType(.numberPad)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 80)
-
-                            Text("MB")
-                                .foregroundStyle(.secondary)
-
-                            Spacer()
-
-                            Button("Apply") {
-                                updateRawCaptureSettings()
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
+                    ByteSizeSlider(
+                        title: "Capture Size Limit",
+                        value: captureLimitBytesBinding,
+                        range: minRawCaptureSize ... maxRawCaptureSize,
+                        step: rawCaptureStep
+                    )
                 }
-            } header: {
-                Text("Packet Capture Settings")
-            } footer: {
+
                 Text("Captures raw IP packets in PCAP format. Files can be analyzed with Wireshark. Capture stops when limit is reached.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            Section {
-                Toggle("Block QUIC (HTTP/3)", isOn: $blockQUICEnabled)
-                    .onChange(of: blockQUICEnabled) { _ in
-                        guard !isRestoringSettings else { return }
-                        updateQUICBlockingSettings()
-                    }
-            } header: {
-                Text("Network Hardening")
-            } footer: {
-                Text("Blocks QUIC (UDP/443). Disable if apps rely on HTTP/3 for streaming.")
+            Section("Network Hardening") {
+                Toggle("Block QUIC (HTTP/3)", isOn: blockQUICEnabledBinding)
+
+                Text("Blocks QUIC (UDP/443). Disable if apps rely on HTTP/3.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            // Statistics Section
+            Section("VPN Logs") {
+                Button {
+                    exportVPNLogs()
+                } label: {
+                    Label("Export VPN Logs", systemImage: "square.and.arrow.up")
+                }
+
+                Text("Exports the VPN extension NDJSON log file (vpn_events.ndjson).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Statistics") {
                 HStack {
-                    Label("Total Files", systemImage: "doc.fill")
+                    Text("Total Files")
                     Spacer()
                     Text("\(pcapFiles.count)")
                         .foregroundStyle(.secondary)
                 }
 
                 HStack {
-                    Label("Total Size", systemImage: "internaldrive.fill")
+                    Text("Total Size")
                     Spacer()
                     Text(totalSizeFormatted)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            // Files Section
-            Section {
+            Section("Packet Capture Files") {
                 if isLoading {
                     HStack {
                         Spacer()
@@ -124,48 +109,49 @@ struct PCAPExportView: View {
                     }
                     .listRowBackground(Color.clear)
                 } else if pcapFiles.isEmpty {
-                    HStack {
-                        Image(systemName: "tray.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.title2)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("No Packet Captures")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                            Text("Enable capture and start VPN to collect packets")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
-                    .padding(.vertical, 8)
+                    TraceContentUnavailableView(
+                        "No Packet Captures",
+                        systemImage: "tray",
+                        description: Text("Enable capture and start VPN to collect packets")
+                    )
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
                 } else {
                     ForEach(pcapFiles) { file in
-                        PCAPFileRow(file: file, onShare: {
-                            selectedFile = file
-                            showingShareSheet = true
-                        }, onDelete: {
-                            fileToDelete = file
-                            showingDeleteAlert = true
-                        })
-                    }
-                }
-            } header: {
-                HStack {
-                    Text("Packet Capture Files")
-                    Spacer()
-                    if !pcapFiles.isEmpty {
-                        Button {
-                            loadFiles()
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.caption)
-                        }
+                        PCAPFileRow(file: file)
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                Button {
+                                    shareSheetItem = ShareSheetItem([file.url])
+                                } label: {
+                                    Label("Share", systemImage: "square.and.arrow.up")
+                                }
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    fileToDelete = file
+                                    showingDeleteAlert = true
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                            .contextMenu {
+                                Button {
+                                    shareSheetItem = ShareSheetItem([file.url])
+                                } label: {
+                                    Label("Share", systemImage: "square.and.arrow.up")
+                                }
+
+                                Button(role: .destructive) {
+                                    fileToDelete = file
+                                    showingDeleteAlert = true
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                     }
                 }
             }
 
-            // Actions Section
             if !pcapFiles.isEmpty {
                 Section {
                     Button {
@@ -185,17 +171,24 @@ struct PCAPExportView: View {
         }
         .navigationTitle("Packet Captures")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    loadFiles()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+            }
+        }
         .onAppear {
             loadSettings()
             loadFiles()
         }
-        .sheet(isPresented: $showingShareSheet) {
-            if let file = selectedFile {
-                ShareSheet(items: [file.url])
-            }
+        .refreshable {
+            loadFiles()
         }
-        .sheet(isPresented: $showingAllFilesShare) {
-            ShareSheet(items: shareItems)
+        .sheet(item: $shareSheetItem) { item in
+            ShareSheetContainer(items: item.items)
         }
         .alert("Delete Packet Capture", isPresented: $showingDeleteAlert) {
             Button("Cancel", role: .cancel) {}
@@ -216,6 +209,39 @@ struct PCAPExportView: View {
         .toast(message: $toastMessage)
     }
 
+    private let minRawCaptureSize = 1_048_576
+    private let maxRawCaptureSize = 500 * 1_048_576
+    private let rawCaptureStep = 1_048_576
+    private var rawCaptureEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { rawCaptureEnabled },
+            set: { newValue in
+                rawCaptureEnabled = newValue
+                updateRawCaptureSettings()
+            }
+        )
+    }
+
+    private var captureLimitBytesBinding: Binding<Int> {
+        Binding(
+            get: { captureLimitBytes },
+            set: { newValue in
+                captureLimitBytes = newValue
+                scheduleRawCaptureSave()
+            }
+        )
+    }
+
+    private var blockQUICEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { blockQUICEnabled },
+            set: { newValue in
+                blockQUICEnabled = newValue
+                updateQUICBlockingSettings()
+            }
+        )
+    }
+
     private var totalSizeFormatted: String {
         let total = pcapFiles.reduce(0) { $0 + $1.size }
         return ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
@@ -223,17 +249,14 @@ struct PCAPExportView: View {
 
     private func loadSettings() {
         Task {
-            let config = await HardeningConfig.shared
-            let limitBytes = await config.maxRawCaptureSize
-            let captureLimit = Int(limitBytes / 1_048_576)
-            let rawCapture = await config.enableRawCapture
-            let blockQUIC = await config.blockQUIC
+            let hardening = HardeningConfig.shared
+            let limitBytes = await hardening.maxRawCaptureSize
+            let rawCapture = await hardening.enableRawCapture
+            let blockQUIC = await hardening.blockQUIC
             await MainActor.run {
-                isRestoringSettings = true
                 rawCaptureEnabled = rawCapture
-                captureLimitMB = captureLimit
+                captureLimitBytes = max(minRawCaptureSize, min(Int(limitBytes), maxRawCaptureSize))
                 blockQUICEnabled = blockQUIC
-                isRestoringSettings = false
             }
         }
     }
@@ -258,41 +281,54 @@ struct PCAPExportView: View {
             }
 
             await MainActor.run {
-                pcapFiles = fileInfos
+                pcapFiles = fileInfos.sorted { $0.modificationDate > $1.modificationDate }
                 isLoading = false
             }
         }
     }
 
+    private func scheduleRawCaptureSave() {
+        captureSaveTask?.cancel()
+        captureSaveTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: 200_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            updateRawCaptureSettings()
+        }
+    }
+
     private func updateRawCaptureSettings() {
         Task {
-            let limitBytes = UInt64(max(1, captureLimitMB)) * 1_048_576
-            let config = await HardeningConfig.shared
+            let clampedBytes = UInt64(max(minRawCaptureSize, min(captureLimitBytes, maxRawCaptureSize)))
+            let hardening = HardeningConfig.shared
 
-            config.setEnableRawCapture(rawCaptureEnabled)
-            config.setMaxRawCaptureSize(limitBytes)
+            await hardening.setEnableRawCapture(rawCaptureEnabled)
+            await hardening.setMaxRawCaptureSize(clampedBytes)
 
             // Notify VPN extension if connected
             if vpnManager.isConnected {
                 try? await vpnManager.sendMessage([
                     "command": "updateHardeningConfig",
-                    "enableRawCapture": rawCaptureEnabled,
-                    "maxRawCaptureSize": limitBytes
+                    "hardeningConfig": [
+                        "enableRawCapture": rawCaptureEnabled,
+                        "maxRawCaptureSize": clampedBytes
+                    ]
                 ])
             }
 
             await MainActor.run {
-                toastMessage = rawCaptureEnabled
-                    ? "Packet capture enabled (\(captureLimitMB) MB limit)"
-                    : "Packet capture disabled"
+                captureLimitBytes = Int(clampedBytes)
             }
         }
     }
 
     private func updateQUICBlockingSettings() {
         Task {
-            let config = await HardeningConfig.shared
-            config.setBlockQUIC(blockQUICEnabled)
+            let hardening = HardeningConfig.shared
+            await hardening.setBlockQUIC(blockQUICEnabled)
 
             if vpnManager.isConnected {
                 try? await vpnManager.sendMessage([
@@ -302,16 +338,10 @@ struct PCAPExportView: View {
                     ]
                 ])
             }
-
-            await MainActor.run {
-                toastMessage = blockQUICEnabled ? "QUIC blocked" : "QUIC allowed"
-            }
         }
     }
 
     private func shareAllFiles() {
-        selectedFile = nil
-
         // Create a temporary directory with all PCAP files
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("PCAPExport-\(Date().timeIntervalSince1970)")
@@ -326,12 +356,23 @@ struct PCAPExportView: View {
                 copiedURLs.append(destURL)
             }
 
-            // ✅ Use SwiftUI sheet with ShareSheet wrapper (proper iPad popover support)
-            shareItems = copiedURLs
-            showingAllFilesShare = true
+            // Use SwiftUI sheet with ShareSheet wrapper (proper iPad popover support).
+            shareSheetItem = ShareSheetItem(copiedURLs.map { $0 as Any })
         } catch {
             toastMessage = "Failed to export files: \(error.localizedDescription)"
         }
+    }
+
+    private func exportVPNLogs() {
+        guard let url = AppGroupStorage.shared.appGroupFileURL(for: vpnLogFileName) else {
+            toastMessage = "VPN log file not found."
+            return
+        }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            toastMessage = "VPN log file not found."
+            return
+        }
+        shareSheetItem = ShareSheetItem([url])
     }
 
     private func deleteFile(_ file: PCAPFileInfo) {
@@ -363,56 +404,29 @@ struct PCAPExportView: View {
 
 private struct PCAPFileRow: View {
     let file: PCAPExportView.PCAPFileInfo
-    let onShare: () -> Void
-    let onDelete: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: "doc.fill")
-                    .foregroundStyle(.blue)
-                    .font(.title3)
+        HStack {
+            VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
+                Text(file.name)
+                    .font(.body)
+                    .lineLimit(1)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(file.name)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
+                HStack(spacing: DesignSystem.Spacing.md) {
+                    Text(file.sizeFormatted)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                    HStack(spacing: 12) {
-                        Label(file.sizeFormatted, systemImage: "internaldrive")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        Label(file.dateFormatted, systemImage: "clock")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text(file.dateFormatted)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-
-                Spacer()
             }
 
-            HStack(spacing: 12) {
-                Button {
-                    onShare()
-                } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                        .font(.caption)
-                }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-
-                Button(role: .destructive) {
-                    onDelete()
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                        .font(.caption)
-                }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-            }
+            Spacer()
         }
-        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(file.name), \(file.sizeFormatted), \(file.dateFormatted)")
     }
 }
 

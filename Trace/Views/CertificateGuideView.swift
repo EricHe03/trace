@@ -14,8 +14,7 @@ import TraceUI
 
 struct CertificateGuideView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var certificateURL: URL?
-    @State private var showingShareSheet = false
+    @State private var shareSheetItem: ShareSheetItem?
     @State private var errorMessage: String?
     @State private var currentStep = 0
     @State private var isCertificateTrusted = false
@@ -83,9 +82,10 @@ struct CertificateGuideView: View {
             }
             .navigationTitle(showReinstallWizard ? "Re-install Certificate" : "HTTPS Certificate")
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showingShareSheet) {
-                if let url = certificateURL {
-                    ShareSheet(items: [url])
+            .onChange(of: shareSheetItem?.id) { _ in
+                guard let item = shareSheetItem else { return }
+                ShareHelper.presentShareSheet(items: item.items) {
+                    shareSheetItem = nil
                 }
             }
             .onAppear {
@@ -548,11 +548,9 @@ struct CertificateGuideView: View {
                 )
             }
 
-            certificateURL = url
-
             // Small delay to ensure file system is ready
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                showingShareSheet = true
+                shareSheetItem = ShareSheetItem([url])
                 SecurityLog.certificate.debug("event=cert.export_share_sheet outcome=presented")
             }
 

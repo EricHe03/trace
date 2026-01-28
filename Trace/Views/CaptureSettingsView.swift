@@ -58,6 +58,14 @@ struct CaptureSettingsView: View {
                     validate: validateDNSServer
                 )
 
+                Section("IP Version") {
+                    Toggle("Enable IPv6", isOn: $config.fullTunnelIPv6Enabled)
+
+                    Text("Disable only if your SOCKS5 server or upstream network does not support IPv6.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("UDP Forwarding") {
                     Picker("Mode", selection: $config.fullTunnelUDPForwardingMode) {
                         Text("HEV Only").tag(UDPForwardingMode.hevOnly)

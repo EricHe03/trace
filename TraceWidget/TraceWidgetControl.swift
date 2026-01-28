@@ -10,37 +10,56 @@ import SwiftUI
 import TraceCore
 import WidgetKit
 
+// MARK: - Control Value Provider
+
+/// Provides the current capture state for the Control Widget.
+@available(iOS 18.0, *)
+struct CaptureStateProvider: AppIntentControlValueProvider {
+    typealias Value = Bool
+    typealias Configuration = CaptureControlConfigurationIntent
+
+    func currentValue(configuration: CaptureControlConfigurationIntent) async throws -> Bool {
+        let appGroupIdentifier = AppGroupConfiguration.appGroupIdentifier
+        guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return false
+        }
+        return defaults.bool(forKey: "widget.isCapturing")
+    }
+
+    func previewValue(configuration: CaptureControlConfigurationIntent) -> Bool {
+        false
+    }
+}
+
+// MARK: - Control Widget
+
 /// Provides a Control Center widget for quick network capture toggling.
+///
+/// This control allows users to toggle network capture directly from Control Center,
+/// the Lock Screen, or the Action Button without opening the app.
 @available(iOS 18.0, *)
 struct TraceWidgetControl: ControlWidget {
     static let kind: String = "Justin.Trace.TraceWidgetControl"
 
     var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(kind: Self.kind) {
-            ControlWidgetButton(action: ToggleCaptureIntent()) {
+        AppIntentControlConfiguration(
+            kind: Self.kind,
+            provider: CaptureStateProvider()
+        ) { isCapturing in
+            ControlWidgetToggle(
+                isOn: isCapturing,
+                action: SetCaptureStateIntent()
+            ) {
                 Label {
-                    Text("Capture")
+                    Text(isCapturing ? "Capturing" : "Capture")
                 } icon: {
-                    Image(systemName: "network")
+                    Image(systemName: isCapturing ? "record.circle.fill" : "network")
                 }
             }
+            .tint(.blue)
         }
         .displayName("Network Capture")
-        .description("Quickly toggle network traffic capture on or off.")
-    }
-}
-
-/// Toggles network traffic capture on or off.
-///
-/// This intent opens the app and records a toggle action for the capture state.
-struct ToggleCaptureIntent: AppIntent {
-    static let title: LocalizedStringResource = "Toggle Network Capture"
-    static let description = IntentDescription("Start or stop network traffic capture")
-    static let openAppWhenRun: Bool = true
-
-    @MainActor
-    func perform() async throws -> some IntentResult {
-        recordWidgetAction(.toggleCapture)
-        return .result()
+        .description("Toggle network traffic capture on or off.")
+        .promptsForUserConfiguration()
     }
 }

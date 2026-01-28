@@ -47,7 +47,7 @@ public struct FilterChip: View {
                     .font(.subheadline)
                     .fontWeight(.medium)
 
-                if count != 0 {
+                if !count.isZero {
                     Text("\(count)")
                         .font(.caption)
                         .padding(.horizontal, DesignSystem.Spacing.sm)
@@ -67,7 +67,7 @@ public struct FilterChip: View {
             .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.xl))
             .contentShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.xl))
         }
-        .accessibilityLabel("\(title)\(count == 0 ? "" : ", \(count) items")")
+        .accessibilityLabel("\(title)\(count.isZero ? "" : ", \(count) items")")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }

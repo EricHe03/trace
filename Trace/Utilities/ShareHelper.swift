@@ -15,6 +15,8 @@
 //     - Empty `activityItems` array
 //     - Missing iPad popover anchor configuration
 //     - Presenting from wrong view controller
+//     - Presenting `UIActivityViewController` from inside a SwiftUI `.sheet`,
+//       which leaves the host sheet's background visible behind the share panel
 //  2. **"View not in window hierarchy" errors** - Caused by:
 //     - Presenting before view is added to window
 //     - Presenting from dismissed view controller
@@ -27,6 +29,7 @@
 //  - Uses `UIViewControllerRepresentable` wrapper
 //  - Presented via SwiftUI `.sheet` modifier
 //  - Automatically handles iPad popover configuration
+//  - Clears the host view background to avoid a white "canvas" above the share panel
 //  - Thread-safe (all operations on main thread)
 //  - Example:
 //    ```swift
@@ -45,14 +48,15 @@
 //  - Still thread-safe (Task @MainActor + DispatchQueue.main)
 //
 //  ### Key Implementation Details:
-//  - ✅ All presentations on main thread
-//  - ✅ Empty items array replaced with fallback message
-//  - ✅ iPad popover always configured (centered, no arrow)
-//  - ✅ Proper view hierarchy checks before presentation
-//  - ✅ Completion handlers dismiss sheets properly
+//  - All presentations on main thread
+//  - Empty items array replaced with fallback message
+//  - iPad popover always configured (centered, no arrow)
+//  - Proper view hierarchy checks before presentation
+//  - Completion handlers dismiss sheets properly
 //
 
 import Foundation
+import LinkPresentation
 import os
 import TraceCore
 import TraceFeatures
@@ -615,6 +619,59 @@ enum ShareHelper {
     static func generateCurlCommand(_ request: NetworkRequest) -> String {
         CurlCommandGenerator.generate(from: request)
     }
+
+    /// Presents a standard share sheet directly from the topmost view controller.
+    /// Use this to avoid an extra SwiftUI sheet host behind the share sheet.
+    @MainActor
+    static func presentShareSheet(
+        items: [Any],
+        excludedActivityTypes: [UIActivity.ActivityType]? = nil,
+        applicationActivities: [UIActivity]? = nil,
+        onComplete: (() -> Void)? = nil
+    ) {
+        let safeItems = items.isEmpty ? [fallbackShareMessage] : items
+
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = windowScene.windows.first,
+              let rootViewController = window.rootViewController else {
+            return
+        }
+
+        var presenter = rootViewController
+        while let presented = presenter.presentedViewController {
+            presenter = presented
+        }
+
+        let activityItems: [Any] = safeItems.map { item -> Any in
+            if let url = item as? URL {
+                return ShareURLItemSource(url: url)
+            }
+            return item
+        }
+
+        let controller = UIActivityViewController(
+            activityItems: activityItems,
+            applicationActivities: applicationActivities
+        )
+        controller.excludedActivityTypes = excludedActivityTypes ?? ActivityHelper.defaultExcludedActivityTypes()
+
+        if UIDevice.current.userInterfaceIdiom == .pad,
+           let popover = controller.popoverPresentationController {
+            popover.sourceView = window
+            popover.sourceRect = CGRect(x: window.bounds.midX, y: window.bounds.midY, width: 0, height: 0)
+            popover.permittedArrowDirections = []
+        }
+
+        controller.completionWithItemsHandler = { _, _, _, _ in
+            if let onComplete {
+                Task { @MainActor in
+                    onComplete()
+                }
+            }
+        }
+
+        presenter.present(controller, animated: true)
+    }
 }
 
 // MARK: - SwiftUI View Extension
@@ -623,14 +680,25 @@ import SwiftUI
 
 // MARK: - Share Sheet
 
+/// A simple share payload that drives item-based SwiftUI sheet presentation.
+struct ShareSheetItem: Identifiable {
+    let id = UUID()
+    let items: [Any]
+
+    init(_ items: [Any]) {
+        self.items = items
+    }
+}
+
 /// A standard SwiftUI wrapper for `UIActivityViewController` (iOS Share Sheet).
 ///
 /// ## Implementation follows iOS best practices:
-/// - ✅ Wraps UIKit's `UIActivityViewController` using `UIViewControllerRepresentable`
-/// - ✅ Automatically configures iPad popover anchor (prevents blank white screen)
-/// - ✅ Presents on main thread
-/// - ✅ Handles empty `activityItems` gracefully with fallback message
-/// - ✅ Uses `.sheet` presentation (recommended over manual `present()`)
+/// - Wraps UIKit's `UIActivityViewController` using `UIViewControllerRepresentable`
+/// - Automatically configures iPad popover anchor (prevents blank white screen)
+/// - Clears host background to avoid a blank white sheet behind the share panel
+/// - Presents on main thread
+/// - Handles empty `activityItems` gracefully with fallback message
+/// - Uses `.sheet` presentation (recommended over manual `present()`)
 ///
 /// ## Usage:
 /// ```swift
@@ -644,8 +712,9 @@ import SwiftUI
 /// ```
 ///
 /// ## Common Issues & Fixes:
-/// 1. **Blank white screen**: Usually caused by empty `activityItems` or missing iPad popover anchor
-///    - Fix: This implementation handles both automatically
+/// 1. **Blank white screen**: Usually caused by empty `activityItems`, missing iPad popover anchor,
+///    or a SwiftUI sheet host showing a default background
+///    - Fix: This implementation handles items/popover automatically and uses a clear host background
 /// 2. **Not in window hierarchy**: Occurs when presenting from wrong view controller
 ///    - Fix: Use SwiftUI `.sheet` modifier (this implementation)
 /// 3. **iPad presentation failure**: Missing popover anchor
@@ -668,7 +737,7 @@ struct ShareSheet: UIViewControllerRepresentable {
         excludedActivityTypes: [UIActivity.ActivityType]? = nil,
         applicationActivities: [UIActivity]? = nil
     ) {
-        // ✅ Prevent blank screen: ensure items array is never empty
+        // Prevent blank screen: ensure items array is never empty.
         if items.isEmpty {
             self.items = [ShareHelper.fallbackShareMessage]
         } else {
@@ -695,14 +764,39 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
 }
 
+/// A SwiftUI wrapper that applies presentation background fixes for the share sheet.
+@MainActor
+struct ShareSheetContainer: View {
+    let items: [Any]
+    var excludedActivityTypes: [UIActivity.ActivityType]?
+    var applicationActivities: [UIActivity]?
+
+    var body: some View {
+        if #available(iOS 16.4, *) {
+            ShareSheet(
+                items: items,
+                excludedActivityTypes: excludedActivityTypes,
+                applicationActivities: applicationActivities
+            )
+            .presentationBackground(.clear)
+        } else {
+            ShareSheet(
+                items: items,
+                excludedActivityTypes: excludedActivityTypes,
+                applicationActivities: applicationActivities
+            )
+        }
+    }
+}
+
 /// Presents `UIActivityViewController` and ensures proper iPad popover configuration.
 ///
 /// This view controller handles the actual presentation of the iOS Share Sheet.
 /// It ensures:
-/// - ✅ Presentation only occurs when view is in window hierarchy
-/// - ✅ iPad popover anchor is set (centered, no arrow)
-/// - ✅ Completion handler dismisses the SwiftUI sheet
-/// - ✅ Thread-safe execution on main thread
+/// - Presentation only occurs when view is in window hierarchy
+/// - iPad popover anchor is set (centered, no arrow)
+/// - Completion handler dismisses the SwiftUI sheet
+/// - Thread-safe execution on main thread
 ///
 @MainActor
 final class ShareSheetPresenterViewController: UIViewController {
@@ -737,26 +831,34 @@ final class ShareSheetPresenterViewController: UIViewController {
     }
 
     private func presentIfNeeded() {
-        // ✅ Prevent duplicate presentations
+        // Prevent duplicate presentations.
         guard !hasPresented else { return }
 
-        // ✅ Ensure view is loaded and in window hierarchy (prevents "not in window hierarchy" error)
+        // Ensure view is loaded and in window hierarchy (prevents "not in window hierarchy" error).
         guard isViewLoaded, view.window != nil else { return }
 
-        // ✅ Ensure configuration is set
+        // Ensure configuration is set.
         guard let configuration else { return }
 
         hasPresented = true
 
-        // ✅ Create UIActivityViewController on main thread
+        // Create UIActivityViewController on main thread.
+        let activityItems: [Any] = configuration.items.map { item -> Any in
+            if let url = item as? URL {
+                return ShareURLItemSource(url: url)
+            }
+            return item
+        }
+
         let controller = UIActivityViewController(
-            activityItems: configuration.items,
+            activityItems: activityItems,
             applicationActivities: configuration.applicationActivities
         )
         controller.excludedActivityTypes = configuration.excludedActivityTypes
 
-        // ✅ REQUIRED on iPad: Set popover anchor to prevent blank screen or crash
-        if let popover = controller.popoverPresentationController {
+        // Required on iPad: Set popover anchor to prevent blank screen or crash.
+        if UIDevice.current.userInterfaceIdiom == .pad,
+           let popover = controller.popoverPresentationController {
             popover.sourceView = view
             // Center the popover with no arrow (common iOS pattern for centered modals)
             popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
@@ -765,16 +867,52 @@ final class ShareSheetPresenterViewController: UIViewController {
 
         let onComplete = configuration.onComplete
         controller.completionWithItemsHandler = { _, _, _, _ in
-            // ✅ Dismiss on main thread
+            // Dismiss on main thread.
             Task { @MainActor in
                 onComplete()
             }
         }
 
-        // ✅ Present on main thread
+        // Present on main thread.
         DispatchQueue.main.async { [weak self] in
             self?.present(controller, animated: true)
         }
+    }
+}
+
+/// Provides LinkPresentation metadata so the share sheet shows a header/preview.
+final class ShareURLItemSource: NSObject, UIActivityItemSource {
+    private let url: URL
+    private let title: String
+
+    init(url: URL, title: String? = nil) {
+        self.url = url
+        let fallbackTitle = url.lastPathComponent.isEmpty
+            ? (url.host ?? url.absoluteString)
+            : url.lastPathComponent
+        self.title = (title?.isEmpty == false ? title! : fallbackTitle)
+        super.init()
+    }
+
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
+        url
+    }
+
+    func activityViewController(
+        _ activityViewController: UIActivityViewController,
+        itemForActivityType activityType: UIActivity.ActivityType?
+    ) -> Any {
+        url
+    }
+
+    func activityViewControllerLinkMetadata(
+        _ activityViewController: UIActivityViewController
+    ) -> LPLinkMetadata? {
+        let metadata = LPLinkMetadata()
+        metadata.title = title
+        metadata.originalURL = url
+        metadata.url = url
+        return metadata
     }
 }
 
@@ -805,7 +943,7 @@ extension View {
         applicationActivities: [UIActivity]? = nil
     ) -> some View {
         self.sheet(isPresented: isPresented) {
-            ShareSheet(
+            ShareSheetContainer(
                 items: items,
                 applicationActivities: applicationActivities
             )

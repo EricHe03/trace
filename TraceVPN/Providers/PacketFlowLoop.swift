@@ -154,6 +154,7 @@ final class PacketFlowLoop {
     private let logSampler = LogSampler()
     private var udpForwardedPackets: UInt64 = 0
     private var udpForwardedPackets443: UInt64 = 0
+    private var quicBlockedPackets: UInt64 = 0
 
     init(
         packetFlow: NEPacketTunnelFlow,
@@ -202,6 +203,7 @@ final class PacketFlowLoop {
         }
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     private func readOnce() {
         guard !isStopping else {
             isRunning = false
@@ -241,6 +243,7 @@ final class PacketFlowLoop {
                                 if self.logSampler.shouldLog(event: "vpn.packet_forward", key: "quic_blocked", first: 3, every: 200) {
                                     VPNLog.tunnel.info("event=vpn.packet_forward outcome=skipped reason=quic_blocked")
                                 }
+                                self.quicBlockedPackets &+= 1
                                 continue
                             }
 
@@ -284,6 +287,7 @@ final class PacketFlowLoop {
                                 if self.logSampler.shouldLog(event: "vpn.packet_forward", key: "quic_blocked", first: 3, every: 200) {
                                     VPNLog.tunnel.info("event=vpn.packet_forward outcome=skipped reason=quic_blocked")
                                 }
+                                self.quicBlockedPackets &+= 1
                                 continue
                             }
                             self.udpForwardedPackets &+= 1
@@ -309,9 +313,9 @@ final class PacketFlowLoop {
     }
 
     private func logUDPForwardSummary(reason: String) {
-        guard self.udpForwardedPackets > 0 || self.udpForwardedPackets443 > 0 else { return }
+        guard self.udpForwardedPackets > 0 || self.udpForwardedPackets443 > 0 || self.quicBlockedPackets > 0 else { return }
         VPNLog.tunnel.info(
-            "event=vpn.udp_forward_summary reason=\(reason) udp_out_packets=\(self.udpForwardedPackets) udp_out_443=\(self.udpForwardedPackets443)"
+            "event=vpn.udp_forward_summary reason=\(reason) udp_out_packets=\(self.udpForwardedPackets) udp_out_443=\(self.udpForwardedPackets443) quic_blocked=\(self.quicBlockedPackets)"
         )
     }
 }

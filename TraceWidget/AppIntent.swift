@@ -85,6 +85,53 @@ struct ClearRequestsIntent: AppIntent {
     }
 }
 
+/// Toggles network traffic capture on or off.
+///
+/// Opens the app and records a toggle action for the capture state.
+@available(iOS 16.0, iOSApplicationExtension 16.0, *)
+struct ToggleCaptureIntent: AppIntent {
+    static let title: LocalizedStringResource = "Toggle Network Capture"
+    static let description = IntentDescription("Start or stop network traffic capture")
+    static let openAppWhenRun: Bool = true
+
+    @MainActor
+    @available(iOS 16.0, iOSApplicationExtension 16.0, *)
+    func perform() async throws -> some IntentResult {
+        recordWidgetAction(.toggleCapture)
+        return .result()
+    }
+}
+
+/// Configuration intent for the Control Center widget.
+@available(iOS 18.0, iOSApplicationExtension 18.0, *)
+struct CaptureControlConfigurationIntent: ControlConfigurationIntent {
+    static let title: LocalizedStringResource = "Capture Control Configuration"
+    static let description = IntentDescription("Configure the Trace capture control widget")
+}
+
+/// Sets network traffic capture on or off.
+///
+/// Used by Control Center to drive a toggle-style control.
+@available(iOS 18.0, iOSApplicationExtension 18.0, *)
+struct SetCaptureStateIntent: SetValueIntent {
+    static let title: LocalizedStringResource = "Set Network Capture"
+    static let description = IntentDescription("Set network traffic capture state")
+    static let openAppWhenRun: Bool = true
+
+    @Parameter(title: "Capture")
+    var value: Bool
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        if value {
+            recordWidgetAction(.startCapture)
+        } else {
+            recordWidgetAction(.stopCapture)
+        }
+        return .result()
+    }
+}
+
 /// Opens the Trace app to a specific view.
 ///
 /// Optionally navigates directly to a target view within the app.
@@ -120,4 +167,67 @@ enum TraceAppView: String, AppEnum {
         .settings: "Settings",
         .tools: "Tools"
     ]
+}
+
+// MARK: - App Shortcuts Provider
+
+/// Registers app intents with Siri and the Shortcuts app for system-wide discoverability.
+@available(iOS 16.0, iOSApplicationExtension 16.0, *)
+struct TraceAppShortcuts: AppShortcutsProvider {
+    static var appShortcuts: [AppShortcut] {
+        AppShortcut(
+            intent: StartCaptureIntent(),
+            phrases: [
+                "Start capture in \(.applicationName)",
+                "Begin network capture in \(.applicationName)",
+                "Start \(.applicationName) capture"
+            ],
+            shortTitle: "Start Capture",
+            systemImageName: "play.circle"
+        )
+
+        AppShortcut(
+            intent: StopCaptureIntent(),
+            phrases: [
+                "Stop capture in \(.applicationName)",
+                "End network capture in \(.applicationName)",
+                "Stop \(.applicationName) capture"
+            ],
+            shortTitle: "Stop Capture",
+            systemImageName: "stop.circle"
+        )
+
+        AppShortcut(
+            intent: ToggleCaptureIntent(),
+            phrases: [
+                "Toggle capture in \(.applicationName)",
+                "Toggle network capture in \(.applicationName)"
+            ],
+            shortTitle: "Toggle Capture",
+            systemImageName: "network"
+        )
+
+        AppShortcut(
+            intent: ClearRequestsIntent(),
+            phrases: [
+                "Clear requests in \(.applicationName)",
+                "Clear captured requests in \(.applicationName)"
+            ],
+            shortTitle: "Clear Requests",
+            systemImageName: "trash"
+        )
+
+        AppShortcut(
+            intent: OpenTraceAppIntent(),
+            phrases: [
+                "Open \(.applicationName)"
+            ],
+            shortTitle: "Open Trace",
+            systemImageName: "app"
+        )
+    }
+
+    static var shortcutTileColor: ShortcutTileColor {
+        .blue
+    }
 }

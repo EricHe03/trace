@@ -13,6 +13,25 @@ import NetworkExtension
 import OSLog
 import TraceCore
 
+enum Socks5UDPSupport: String {
+    case unsupported
+    case ipv4Only
+    case ipv6
+}
+
+extension Socks5UDPSupport {
+    func isUsable(forIPv6 ipv6Enabled: Bool) -> Bool {
+        switch self {
+        case .unsupported:
+            false
+        case .ipv4Only:
+            !ipv6Enabled
+        case .ipv6:
+            true
+        }
+    }
+}
+
 final class HevSocks5TunnelForwarder: PacketForwardingEngine {
     private let packetFlow: NEPacketTunnelFlow
     private let tunnelQueue = DispatchQueue(label: "com.trace.vpn.socks5_tunnel", qos: .userInitiated)
@@ -23,7 +42,9 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
     private let socks5Host: String
     private let socks5Port: UInt16
     private let maxInputPending: Int
-    private let udpAssociateProbeHandler: (@Sendable (Bool) -> Void)?
+    private let ipv6Enabled: Bool
+    private let eventLogHandler: (@Sendable (String, String) -> Void)?
+    private let udpAssociateProbeHandler: (@Sendable (Socks5UDPSupport) -> Void)?
     private var inputPending = 0
     private var isRunning = false
     private var tunFD: Int32 = -1
@@ -35,14 +56,18 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         socks5Host: String,
         socks5Port: UInt16,
         mtu: Int,
+        ipv6Enabled: Bool,
         maxInputPending: Int = 8192,
-        udpAssociateProbeHandler: (@Sendable (Bool) -> Void)? = nil
+        eventLogHandler: (@Sendable (String, String) -> Void)? = nil,
+        udpAssociateProbeHandler: (@Sendable (Socks5UDPSupport) -> Void)? = nil
     ) {
         self.packetFlow = packetFlow
         self.socks5Host = socks5Host
         self.socks5Port = socks5Port
         self.mtu = max(576, mtu)
+        self.ipv6Enabled = ipv6Enabled
         self.maxInputPending = max(1, maxInputPending)
+        self.eventLogHandler = eventLogHandler
         self.udpAssociateProbeHandler = udpAssociateProbeHandler
     }
 
@@ -50,6 +75,7 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         guard !isRunning else { return }
         guard setupTunnelSockets() else {
             VPNLog.tunnel.error("event=vpn.socks5_tunnel_start outcome=failure reason=socketpair_failed")
+            eventLogHandler?("socks5_tunnel_start", "outcome=failure reason=socketpair_failed")
             return
         }
 
@@ -58,6 +84,10 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
 
         VPNLog.tunnel.info(
             "event=vpn.socks5_tunnel_config host=\(self.socks5Host, privacy: .public) port=\(self.socks5Port) mtu=\(self.mtu)"
+        )
+        eventLogHandler?(
+            "socks5_tunnel_config",
+            "host=\(self.socks5Host) port=\(self.socks5Port) mtu=\(self.mtu) ipv6=\(self.ipv6Enabled)"
         )
 
         if let udpAssociateProbeHandler {
@@ -74,12 +104,15 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
             }
             if result == 0 {
                 VPNLog.tunnel.info("event=vpn.socks5_tunnel_exit outcome=success")
+                self.eventLogHandler?("socks5_tunnel_exit", "outcome=success")
             } else {
                 VPNLog.tunnel.error("event=vpn.socks5_tunnel_exit outcome=failure code=\(result)")
+                self.eventLogHandler?("socks5_tunnel_exit", "outcome=failure code=\(result)")
             }
         }
 
         VPNLog.tunnel.info("event=vpn.socks5_tunnel_start outcome=success")
+        eventLogHandler?("socks5_tunnel_start", "outcome=success")
     }
 
     func stop() {
@@ -95,6 +128,7 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         closeFDs()
 
         VPNLog.tunnel.info("event=vpn.socks5_tunnel_stop outcome=success")
+        eventLogHandler?("socks5_tunnel_stop", "outcome=success")
     }
 
     func enqueue(packets: [Data], protocols: [NSNumber]) {
@@ -220,14 +254,14 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
     }
 
     private func buildConfig() -> Data {
+        let ipv6Line = ipv6Enabled ? "ipv6: 'fc00::1'\n" : ""
         let config = """
         tunnel:
           name: tun0
           mtu: \(mtu)
           multi-queue: false
           ipv4: 198.18.0.1
-          ipv6: 'fc00::1'
-
+          \(ipv6Line)
         socks5:
           address: '\(socks5Host)'
           port: \(socks5Port)
@@ -246,11 +280,27 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         return Data(config.utf8)
     }
 
-    private func probeSocks5UDPAssociate(completion: @Sendable @escaping (Bool) -> Void) {
+    private enum Socks5AddressType: UInt8 {
+        case ipv4 = 0x01
+        case domain = 0x03
+        case ipv6 = 0x04
+    }
+
+    // swiftlint:disable:next cyclomatic_complexity
+    private func probeSocks5UDPAssociate(completion: @Sendable @escaping (Socks5UDPSupport) -> Void) {
         guard let port = NWEndpoint.Port(rawValue: socks5Port) else {
-            completion(false)
+            eventLogHandler?("socks5_udp_probe", "outcome=failure reason=invalid_port")
+            completion(.unsupported)
             return
         }
+
+        VPNLog.tunnel.info(
+            "event=vpn.socks5_udp_probe_begin host=\(self.socks5Host, privacy: .public) port=\(self.socks5Port) ipv6_enabled=\(self.ipv6Enabled)"
+        )
+        eventLogHandler?(
+            "socks5_udp_probe",
+            "outcome=begin host=\(self.socks5Host) port=\(self.socks5Port) ipv6_enabled=\(self.ipv6Enabled)"
+        )
 
         let host = NWEndpoint.Host(socks5Host)
         let parameters = NWParameters.tcp
@@ -258,53 +308,144 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         let queue = tunnelQueue
         let timeout = DispatchSource.makeTimerSource(queue: queue)
         var completed = false
-        let finish: @Sendable (Bool) -> Void = { supported in
+        let finish: @Sendable (Socks5UDPSupport) -> Void = { supported in
             queue.async {
                 guard !completed else { return }
                 completed = true
                 timeout.cancel()
+                VPNLog.tunnel.info(
+                    "event=vpn.socks5_udp_probe_done support=\(supported.rawValue, privacy: .public)"
+                )
+                self.eventLogHandler?("socks5_udp_probe", "outcome=done support=\(supported.rawValue)")
                 completion(supported)
                 connection.cancel()
             }
         }
         timeout.schedule(deadline: .now() + 5)
         timeout.setEventHandler {
-            finish(false)
+            VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=timeout")
+            self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=timeout")
+            finish(.unsupported)
         }
         timeout.resume()
 
+        let parseReply: (Data?) -> Socks5UDPSupport = { reply in
+            guard let reply, reply.count >= 4 else { return .unsupported }
+            guard reply[0] == 0x05, reply[1] == 0x00 else { return .unsupported }
+            switch reply[3] {
+            case Socks5AddressType.ipv6.rawValue:
+                return .ipv6
+            case Socks5AddressType.ipv4.rawValue, Socks5AddressType.domain.rawValue:
+                return .ipv4Only
+            default:
+                return .unsupported
+            }
+        }
+
+        let sendAssociate: (Socks5AddressType, @escaping (Socks5UDPSupport) -> Void) -> Void = { addressType, handler in
+            var request = Data([0x05, 0x03, 0x00, addressType.rawValue])
+            self.eventLogHandler?("socks5_udp_probe", "associate_send addr_type=\(addressType.rawValue)")
+            switch addressType {
+            case .ipv4:
+                request.append(contentsOf: [0, 0, 0, 0])
+            case .ipv6:
+                request.append(contentsOf: Array(repeating: 0, count: 16))
+            case .domain:
+                request.append(0)
+            }
+            request.append(contentsOf: [0, 0])
+
+            connection.send(content: request, completion: .contentProcessed { error in
+                if error != nil {
+                    VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=associate_send_failed")
+                    self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=associate_send_failed")
+                    handler(.unsupported)
+                    return
+                }
+                connection.receive(minimumIncompleteLength: 4, maximumLength: 64) { reply, _, _, _ in
+                    if let reply {
+                        VPNLog.tunnel.debug("event=vpn.socks5_udp_probe associate_reply_bytes=\(reply.count)")
+                        self.eventLogHandler?("socks5_udp_probe", "associate_reply_bytes=\(reply.count)")
+                    }
+                    handler(parseReply(reply))
+                }
+            })
+        }
+
         connection.stateUpdateHandler = { state in
+            let stateLabel = switch state {
+            case .setup:
+                "setup"
+            case .waiting:
+                "waiting"
+            case .preparing:
+                "preparing"
+            case .ready:
+                "ready"
+            case .failed:
+                "failed"
+            case .cancelled:
+                "cancelled"
+            @unknown default:
+                "unknown"
+            }
+            VPNLog.tunnel.debug("event=vpn.socks5_udp_probe_state state=\(stateLabel, privacy: .public)")
+            self.eventLogHandler?("socks5_udp_probe", "state=\(stateLabel)")
             switch state {
             case .ready:
                 let greeting = Data([0x05, 0x01, 0x00])
                 connection.send(content: greeting, completion: .contentProcessed { error in
                     if error != nil {
-                        finish(false)
+                        VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=greeting_send_failed")
+                        self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=greeting_send_failed")
+                        finish(.unsupported)
                         return
                     }
                     connection.receive(minimumIncompleteLength: 2, maximumLength: 2) { data, _, _, _ in
                         guard let data, data.count == 2, data[0] == 0x05, data[1] == 0x00 else {
-                            finish(false)
+                            VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=greeting_reply_invalid")
+                            self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=greeting_reply_invalid")
+                            finish(.unsupported)
                             return
                         }
-                        let request = Data([0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
-                        connection.send(content: request, completion: .contentProcessed { error in
-                            if error != nil {
-                                finish(false)
-                                return
-                            }
-                            connection.receive(minimumIncompleteLength: 2, maximumLength: 32) { reply, _, _, _ in
-                                guard let reply, reply.count >= 2 else {
-                                    finish(false)
-                                    return
+                        VPNLog.tunnel.debug("event=vpn.socks5_udp_probe greeting_reply_ok")
+                        self.eventLogHandler?("socks5_udp_probe", "greeting_reply_ok")
+                        if self.ipv6Enabled {
+                            sendAssociate(.ipv6) { support in
+                                if support == .unsupported {
+                                    VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=partial reason=ipv6_unavailable")
+                                    self.eventLogHandler?("socks5_udp_probe", "outcome=partial reason=ipv6_unavailable")
+                                    sendAssociate(.ipv4) { fallback in
+                                        if fallback == .unsupported {
+                                            VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=associate_reply_invalid")
+                                            self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=associate_reply_invalid")
+                                        }
+                                        finish(fallback)
+                                    }
+                                } else {
+                                    VPNLog.tunnel.info("event=vpn.socks5_udp_probe outcome=success support=\(support.rawValue)")
+                                    self.eventLogHandler?("socks5_udp_probe", "outcome=success support=\(support.rawValue)")
+                                    finish(support)
                                 }
-                                finish(reply[0] == 0x05 && reply[1] == 0x00)
                             }
-                        })
+                        } else {
+                            sendAssociate(.ipv4) { support in
+                                if support == .unsupported {
+                                    VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=associate_reply_invalid")
+                                    self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=associate_reply_invalid")
+                                } else {
+                                    VPNLog.tunnel.info("event=vpn.socks5_udp_probe outcome=success support=\(support.rawValue)")
+                                    self.eventLogHandler?("socks5_udp_probe", "outcome=success support=\(support.rawValue)")
+                                }
+                                finish(support)
+                            }
+                        }
                     }
                 })
             case .failed, .cancelled:
-                finish(false)
+                VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=connection_failed")
+                self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=connection_failed")
+                finish(.unsupported)
             default:
                 break
             }

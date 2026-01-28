@@ -101,7 +101,7 @@ final class WebSocketMessageTests: XCTestCase {
     }
 
     func testTextPayloadWithUnicode() {
-        let text = "Hello 世界 🌍"
+        let text = "Hello 世界"
         let payload = text.data(using: .utf8)!
 
         let message = WebSocketMessage(

@@ -13,8 +13,7 @@ struct UDPFlowsView: View {
     @StateObject private var viewModel = UDPFlowsViewModel()
     @State private var showingFilters = false
     @State private var showingExport = false
-    @State private var showingShareSheet = false
-    @State private var shareItems: [Any] = []
+    @State private var shareSheetItem: ShareSheetItem?
     @State private var toastMessage: String?
 
     var body: some View {
@@ -92,8 +91,8 @@ struct UDPFlowsView: View {
                 UDPFlowFiltersView(viewModel: viewModel)
             }
         }
-        .sheet(isPresented: $showingShareSheet) {
-            ShareSheet(items: shareItems)
+        .sheet(item: $shareSheetItem) { item in
+            ShareSheetContainer(items: item.items)
         }
         .confirmationDialog("Export UDP Flows", isPresented: $showingExport, titleVisibility: .visible) {
             Button("Export CSV") {
@@ -149,8 +148,7 @@ struct UDPFlowsView: View {
     private func exportCSV() {
         do {
             let url = try viewModel.exportCSV()
-            shareItems = [url]
-            showingShareSheet = true
+            shareSheetItem = ShareSheetItem([url])
         } catch {
             toastMessage = "Export failed: \(error.localizedDescription)"
         }
@@ -159,8 +157,7 @@ struct UDPFlowsView: View {
     private func exportJSON() {
         do {
             let url = try viewModel.exportJSON()
-            shareItems = [url]
-            showingShareSheet = true
+            shareSheetItem = ShareSheetItem([url])
         } catch {
             toastMessage = "Export failed: \(error.localizedDescription)"
         }

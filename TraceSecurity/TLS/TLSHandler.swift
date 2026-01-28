@@ -568,6 +568,7 @@ public class TLSHandler {
 
     // MARK: - Helper Methods
 
+    // swiftlint:disable cyclomatic_complexity
     /// Creates a sec_identity_t from a certificate and private key.
     /// - Important: Uses the keychain to construct a valid identity.
     private static func createIdentityFromCertificateAndKey(
@@ -762,6 +763,7 @@ public class TLSHandler {
         let identity = unsafeBitCast(matchRef, to: SecIdentity.self)
         return sec_identity_create(identity)
     }
+    // swiftlint:enable cyclomatic_complexity
 
     private static func deleteKeychainIdentity(for domain: String) {
         if TLSLog.verboseEnabled {

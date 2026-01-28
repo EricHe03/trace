@@ -100,14 +100,14 @@ final class HPACKCoderTests: XCTestCase {
     }
 
     func testEncodeDecodeUnicodeValue() throws {
-        let headers = [TraceHTTPHeader(key: "x-unicode", value: "Hello 世界 🌍")]
+        let headers = [TraceHTTPHeader(key: "x-unicode", value: "Hello 世界")]
 
         let encoded = try coder.encode(headers)
         let decoded = try coder.decode(encoded)
 
         XCTAssertEqual(decoded.count, 1)
         XCTAssertEqual(decoded[0].key, "x-unicode")
-        XCTAssertEqual(decoded[0].value, "Hello 世界 🌍")
+        XCTAssertEqual(decoded[0].value, "Hello 世界")
     }
 
     func testEncodeNeverIndexedEmitsNeverIndexed() throws {

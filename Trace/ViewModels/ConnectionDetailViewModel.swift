@@ -128,6 +128,7 @@ private final class PCAPFlowAnalyzer {
         self.record = record
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     func analyze(url: URL) throws -> ConnectionPCAPAnalysis {
         let reader = try PCAPReader(url: url)
         let reassembler = TCPReassembler()
@@ -211,16 +212,19 @@ private final class PCAPFlowAnalyzer {
                 connectionState = .reset
             }
 
-            updateMetrics(
-                metrics: &metrics,
-                endpointTrackers: &endpointTrackers,
-                windowScaleByEndpoint: &windowScaleByEndpoint,
+            let context = MetricsUpdateContext(
                 src: src,
                 dst: dst,
                 tcpPacket: tcpPacket,
                 timestamp: packet.timestamp,
                 client: clientEndpoint,
                 server: serverEndpoint
+            )
+            updateMetrics(
+                metrics: &metrics,
+                endpointTrackers: &endpointTrackers,
+                windowScaleByEndpoint: &windowScaleByEndpoint,
+                context: context
             )
 
             if packets.count < maxPacketSummaries {
@@ -283,17 +287,28 @@ private final class PCAPFlowAnalyzer {
         )
     }
 
+    private struct MetricsUpdateContext {
+        let src: EndpointKey
+        let dst: EndpointKey
+        let tcpPacket: TCPPacket
+        let timestamp: Date
+        let client: FlowEndpoint?
+        let server: FlowEndpoint?
+    }
+
     private func updateMetrics(
         metrics: inout TCPFlowMetrics,
         endpointTrackers: inout [EndpointKey: EndpointTracker],
         windowScaleByEndpoint: inout [EndpointKey: UInt8],
-        src: EndpointKey,
-        dst: EndpointKey,
-        tcpPacket: TCPPacket,
-        timestamp: Date,
-        client: FlowEndpoint?,
-        server: FlowEndpoint?
+        context: MetricsUpdateContext
     ) {
+        let src = context.src
+        let dst = context.dst
+        let tcpPacket = context.tcpPacket
+        let timestamp = context.timestamp
+        let client = context.client
+        let server = context.server
+
         var sender = endpointTrackers[src] ?? EndpointTracker()
         var receiver = endpointTrackers[dst] ?? EndpointTracker()
         let payloadBytes = UInt64(tcpPacket.payload.count)

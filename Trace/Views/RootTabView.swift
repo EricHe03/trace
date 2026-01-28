@@ -435,7 +435,7 @@ struct SettingsTabView: View {
                 Text("Are you sure you want to clear all captured requests? This action cannot be undone.")
             }
             .sheet(item: $harShareItem) { item in
-                ShareSheet(items: [item.url])
+                ShareSheetContainer(items: [item.url])
             }
             .fileImporter(
                 isPresented: $showingHARImport,

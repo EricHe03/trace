@@ -33,7 +33,7 @@ struct CaptureOptionsView: View {
                 ByteSizeSlider(
                     title: "Max Body Size",
                     value: $options.maxBodySize,
-                    range: minBodySize...maxBodySize,
+                    range: minBodySize ... maxBodySize,
                     step: bodyStep
                 )
 

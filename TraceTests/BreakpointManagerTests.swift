@@ -76,7 +76,9 @@ final class BreakpointManagerTests: XCTestCase {
 
         let shouldBreak = await manager.shouldBreakOnRequest(
             url: "https://example.com",
-            method: .get
+            method: .get,
+            headers: [],
+            body: nil
         )
 
         XCTAssertTrue(shouldBreak)
@@ -90,7 +92,9 @@ final class BreakpointManagerTests: XCTestCase {
 
         let shouldBreak = await manager.shouldBreakOnRequest(
             url: "https://example.com",
-            method: .get
+            method: .get,
+            headers: [],
+            body: nil
         )
 
         XCTAssertFalse(shouldBreak)
@@ -104,7 +108,9 @@ final class BreakpointManagerTests: XCTestCase {
 
         let shouldBreak = await manager.shouldBreakOnResponse(
             url: "https://example.com",
-            statusCode: 200
+            statusCode: 200,
+            headers: [],
+            body: nil
         )
 
         XCTAssertTrue(shouldBreak)

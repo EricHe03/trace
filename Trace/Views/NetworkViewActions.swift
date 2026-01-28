@@ -59,42 +59,42 @@ struct NetworkViewActions {
     /// Presents the iOS Share Sheet following best practices.
     ///
     /// ## Implementation Notes:
-    /// - ✅ Validates items array (prevents blank white screen from empty items)
-    /// - ✅ Presents on main thread using Task @MainActor
-    /// - ✅ Finds topmost view controller (prevents "not in window hierarchy" error)
-    /// - ✅ Configures iPad popover anchor (required for iPad, prevents blank screen)
-    /// - ✅ Uses centered popover with no arrow (standard iOS pattern)
+    /// - Validates items array (prevents blank white screen from empty items)
+    /// - Presents on main thread using Task @MainActor
+    /// - Finds topmost view controller (prevents "not in window hierarchy" error)
+    /// - Configures iPad popover anchor (required for iPad, prevents blank screen)
+    /// - Uses centered popover with no arrow (standard iOS pattern)
     ///
     /// ## Note:
     /// This is a UIKit-based approach used for non-View contexts.
     /// For SwiftUI views, prefer using the `ShareSheet` wrapper with `.sheet` modifier.
     ///
     private func presentShareSheet(items: [Any]) {
-        // ✅ Prevent blank screen: ensure items array is never empty
+        // Prevent blank screen: ensure items array is never empty.
         let safeItems = items.isEmpty ? [ShareHelper.fallbackShareMessage] : items
 
         Task { @MainActor in
-            // ✅ Find the window and root view controller
+            // Find the window and root view controller.
             guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                   let window = windowScene.windows.first,
                   let rootViewController = window.rootViewController else {
                 return
             }
 
-            // ✅ Find topmost presented view controller (prevents "not in window hierarchy" error)
+            // Find topmost presented view controller (prevents "not in window hierarchy" error).
             var presenter = rootViewController
             while let presented = presenter.presentedViewController {
                 presenter = presented
             }
 
-            // ✅ Create UIActivityViewController with custom activities
+            // Create UIActivityViewController with custom activities.
             let activityVC = UIActivityViewController(
                 activityItems: safeItems,
                 applicationActivities: ActivityHelper.customActivitiesForRequest()
             )
             activityVC.excludedActivityTypes = ActivityHelper.defaultExcludedActivityTypes()
 
-            // ✅ REQUIRED on iPad: Set popover anchor to prevent blank screen or crash
+            // Required on iPad: Set popover anchor to prevent blank screen or crash.
             if let popover = activityVC.popoverPresentationController {
                 popover.sourceView = window
                 // Center the popover with no arrow (common iOS pattern for centered modals)
@@ -102,7 +102,7 @@ struct NetworkViewActions {
                 popover.permittedArrowDirections = []
             }
 
-            // ✅ Present on main thread
+            // Present on main thread.
             DispatchQueue.main.async {
                 presenter.present(activityVC, animated: true)
             }

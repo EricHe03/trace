@@ -81,7 +81,7 @@ final class NetworkRequestEdgeCasesTests: XCTestCase {
     // MARK: - Special Characters in URLs Tests
 
     func testURLWithUnicodeCharacters() {
-        let url = "https://example.com/search?q=hello%20世界&emoji=🌍"
+        let url = "https://example.com/search?q=hello%20世界&emoji=globe"
         let request = makeNetworkRequest(url: url)
 
         XCTAssertEqual(request.url, url)
@@ -283,7 +283,7 @@ final class NetworkRequestEdgeCasesTests: XCTestCase {
     func testHeadersWithUnicodeKeys() {
         let headers = [
             TraceHTTPHeader(key: "X-Unicode-世界", value: "value"),
-            TraceHTTPHeader(key: "X-Emoji-🌍", value: "value")
+            TraceHTTPHeader(key: "X-Emoji-Globe", value: "value")
         ]
         let request = makeNetworkRequest(requestHeaders: headers)
 

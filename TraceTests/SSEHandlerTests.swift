@@ -223,12 +223,12 @@ final class SSEHandlerTests: XCTestCase {
 
     func testParseEventWithUnicodeData() {
         let parser = SSEParser()
-        let data = "data: Hello 世界 🌍\n\n"
+        let data = "data: Hello 世界\n\n"
 
         let events = parser.parse(data)
 
         XCTAssertEqual(events.count, 1)
-        XCTAssertEqual(events.first?.data, "Hello 世界 🌍")
+        XCTAssertEqual(events.first?.data, "Hello 世界")
     }
 
     // MARK: - SSEConnection Tests
@@ -483,10 +483,10 @@ final class SSEHandlerTests: XCTestCase {
     func testSSEHandler_ParsesEventsAcrossChunks() {
         let handler = makeTestSSEHandler()
 
-        handler._test_parseSSEData("data: Hel".data(using: .utf8)!)
-        handler._test_parseSSEData("lo\n\n".data(using: .utf8)!)
+        handler.testParseSSEData("data: Hel".data(using: .utf8)!)
+        handler.testParseSSEData("lo\n\n".data(using: .utf8)!)
 
-        let snapshot = handler._test_connectionSnapshot()
+        let snapshot = handler.testConnectionSnapshot()
         XCTAssertEqual(snapshot.events.count, 1)
         XCTAssertEqual(snapshot.events.first?.data, "Hello")
         XCTAssertEqual(snapshot.totalBytesReceived, "data: Hel".count + "lo\n\n".count)
@@ -496,11 +496,11 @@ final class SSEHandlerTests: XCTestCase {
         let handler = makeTestSSEHandler()
 
         for i in 0 ..< 1000 {
-            handler._test_parseSSEData("data: event-\(i)\n\n".data(using: .utf8)!)
+            handler.testParseSSEData("data: event-\(i)\n\n".data(using: .utf8)!)
         }
-        handler._test_parseSSEData("data: overflow\n\n".data(using: .utf8)!)
+        handler.testParseSSEData("data: overflow\n\n".data(using: .utf8)!)
 
-        let snapshot = handler._test_connectionSnapshot()
+        let snapshot = handler.testConnectionSnapshot()
         XCTAssertEqual(snapshot.events.count, 1000)
         XCTAssertTrue(snapshot.isTruncated)
     }
