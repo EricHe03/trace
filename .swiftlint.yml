@@ -5,6 +5,7 @@ excluded:
   - Pods
   - build
   - .build
+  - .derivedData
   - DerivedData
   - TraceTests
   - TraceUITests

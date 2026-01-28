@@ -529,14 +529,14 @@ public class WebSocketHandler {
 
     #if DEBUG
     /// Test-only hook to parse frames without starting network reads.
-    func _test_process(_ data: Data, direction: WebSocketDirection) {
+    func testProcess(_ data: Data, direction: WebSocketDirection) {
         withState {
             self.parseWebSocketFrame(data, direction: direction)
         }
     }
 
     /// Test-only hook to inspect the current connection snapshot.
-    func _test_connectionSnapshot() -> WebSocketConnection {
+    func testConnectionSnapshot() -> WebSocketConnection {
         var snapshot: WebSocketConnection?
         withState {
             snapshot = self.connection
