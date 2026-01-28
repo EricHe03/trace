@@ -134,7 +134,7 @@ public final class VPNManager: ObservableObject, VPNManaging {
     /// Loads existing VPN configuration or creates a new one
     /// This triggers the iOS permission prompt if no configuration exists
     private func loadOrCreateVPNConfiguration() async throws {
-        // ✅ Step 1: Load all existing VPN configurations from system preferences
+        // Step 1: Load all existing VPN configurations from system preferences.
         let managers = try await NETunnelProviderManager.loadAllFromPreferences()
 
         if let existing = managers.first(where: { $0.localizedDescription == "Trace Network Debugger" }) {
@@ -192,7 +192,7 @@ public final class VPNManager: ObservableObject, VPNManaging {
         // This is required for the VPN configuration to be active
         manager.isEnabled = true
 
-        // ✅ THIS LINE triggers the iOS permission popup on first save:
+        // This line triggers the iOS permission popup on first save:
         // "Trace would like to add VPN configurations"
         // Allow / Don't Allow
         try await manager.saveToPreferences()
@@ -282,7 +282,7 @@ public final class VPNManager: ObservableObject, VPNManaging {
 
     /// Requests VPN permission by creating and saving VPN configuration
     ///
-    /// ✅ This triggers the iOS system permission prompt:
+    /// This triggers the iOS system permission prompt:
     /// "Trace would like to add VPN configurations"
     /// Allow / Don't Allow
     ///
@@ -303,7 +303,7 @@ public final class VPNManager: ObservableObject, VPNManaging {
             return
         }
 
-        // ✅ Create and save the configuration - this triggers the system permission prompt
+        // Create and save the configuration - this triggers the system permission prompt.
         try await createVPNConfiguration()
     }
 
@@ -353,7 +353,7 @@ public final class VPNManager: ObservableObject, VPNManaging {
         }
 
         FeatureLog.vpn.info("event=vpn.start_load_preferences")
-        // ✅ Always load from preferences before starting
+        // Always load from preferences before starting.
         // This ensures we have the latest configuration from system preferences
         try await manager.loadFromPreferences()
         FeatureLog.vpn.info("event=vpn.start_preferences_loaded is_enabled=\(manager.isEnabled)")
@@ -375,7 +375,7 @@ public final class VPNManager: ObservableObject, VPNManaging {
             }
         }
 
-        // ✅ Start the VPN tunnel
+        // Start the VPN tunnel.
         // This will call startTunnel() in PacketTunnelProvider
         FeatureLog.vpn.info("event=vpn.start_tunnel_begin")
         do {

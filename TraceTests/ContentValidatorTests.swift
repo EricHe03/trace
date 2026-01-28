@@ -159,7 +159,7 @@ final class ContentValidatorTests: XCTestCase {
         let json = """
         {
           "greeting": "Hello 世界",
-          "emoji": "🚀🎉",
+          "emoji": "rocket party",
           "unicode": "\\u0048\\u0065\\u006C\\u006C\\u006F"
         }
         """.data(using: .utf8)!

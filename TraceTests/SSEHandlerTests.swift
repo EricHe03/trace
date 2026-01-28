@@ -223,12 +223,12 @@ final class SSEHandlerTests: XCTestCase {
 
     func testParseEventWithUnicodeData() {
         let parser = SSEParser()
-        let data = "data: Hello 世界 🌍\n\n"
+        let data = "data: Hello 世界\n\n"
 
         let events = parser.parse(data)
 
         XCTAssertEqual(events.count, 1)
-        XCTAssertEqual(events.first?.data, "Hello 世界 🌍")
+        XCTAssertEqual(events.first?.data, "Hello 世界")
     }
 
     // MARK: - SSEConnection Tests

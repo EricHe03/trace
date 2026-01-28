@@ -511,7 +511,7 @@ final class ScriptEngineTests: XCTestCase {
 
     func testScriptWithUnicodeCharacters() throws {
         let script = """
-        request.body = 'Hello 世界 🌍';
+        request.body = 'Hello 世界';
         """
 
         let original = NetworkRequest(
@@ -524,7 +524,7 @@ final class ScriptEngineTests: XCTestCase {
         let modified = try engine.executeRequestScript(script, request: original)
 
         let bodyString = modified.requestBody.getString()
-        XCTAssertEqual(bodyString, "Hello 世界 🌍")
+        XCTAssertEqual(bodyString, "Hello 世界")
     }
 
     func testScriptPreservesOriginalProperties() throws {

@@ -25,11 +25,11 @@ public extension OSLogType {
 
     var emoji: String {
         switch self {
-        case .debug: "🔍"
-        case .info: "ℹ️"
-        case .error: "❌"
-        case .fault: "🔥"
-        default: "⚠️"
+        case .debug: "DBG"
+        case .info: "INF"
+        case .error: "ERR"
+        case .fault: "FLT"
+        default: "WRN"
         }
     }
 
@@ -67,19 +67,19 @@ public enum LegacyLogCategory: String, Codable, Sendable {
 
     public var emoji: String {
         switch self {
-        case .vpn: "🚀"
-        case .proxy: "🔗"
-        case .tls: "🔐"
-        case .certificate: "📜"
-        case .rewrite: "✏️"
-        case .script: "📝"
-        case .websocket: "🔌"
-        case .storage: "💾"
-        case .network: "🌐"
-        case .ui: "📱"
-        case .app: "📲"
-        case .general: "📌"
-        case .http2: "⚡"
+        case .vpn: "VPN"
+        case .proxy: "PRX"
+        case .tls: "TLS"
+        case .certificate: "CRT"
+        case .rewrite: "RWR"
+        case .script: "SCR"
+        case .websocket: "WS"
+        case .storage: "STO"
+        case .network: "NET"
+        case .ui: "UI"
+        case .app: "APP"
+        case .general: "GEN"
+        case .http2: "H2"
         }
     }
 

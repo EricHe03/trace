@@ -756,7 +756,7 @@ final class HTTPParserTests: XCTestCase {
 
     func testParseRequest_UTF8Body_ParsesCorrectly() {
         // Given
-        let utf8Body = "Hello 世界 🌍".data(using: .utf8)!
+        let utf8Body = "Hello 世界".data(using: .utf8)!
         let requestData = makeHTTPRequest(
             method: "POST",
             path: "/",
