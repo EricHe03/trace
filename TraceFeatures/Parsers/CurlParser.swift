@@ -354,6 +354,7 @@ public class CurlParser {
         return true
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     private static func applyOption(
         _ optionToken: String,
         value: String?,

@@ -1560,6 +1560,7 @@ public class TLSProxyConnection: @unchecked Sendable {
         }
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     private func handleHTTP1ServerData(forceComplete: Bool) {
         let headerSeparator = Data([0x0D, 0x0A, 0x0D, 0x0A]) // \r\n\r\n
         let previewLimit = min(maxCapturedBodyBytes, BodyStorage.inlineThreshold)
@@ -2168,6 +2169,18 @@ public class TLSProxyConnection: @unchecked Sendable {
         let data: Data
     }
 
+    private struct HTTP1InterceptionContext {
+        let flowId: UUID
+        let requestStartTime: Date
+        let originalAbsoluteURL: String
+        let originalMethod: String
+        let originalHeaders: [String: String]
+        let originalHeaderList: [TraceHTTPHeader]
+        let originalBody: Data
+        let responsePipeline: ResponsePipeline
+        let isWebSocketUpgrade: Bool
+    }
+
     private func buildHTTP1Data(requestLine: String, headers: [TraceHTTPHeader], body: Data) -> Data {
         var headerString = requestLine + "\r\n"
         for header in headers {
@@ -2248,15 +2261,7 @@ public class TLSProxyConnection: @unchecked Sendable {
 
     private func applyHTTP1InterceptionResult(
         _ result: InterceptionResult,
-        flowId: UUID,
-        requestStartTime: Date,
-        originalAbsoluteURL: String,
-        originalMethod: String,
-        originalHeaders: [String: String],
-        originalHeaderList: [TraceHTTPHeader],
-        originalBody: Data,
-        responsePipeline: ResponsePipeline,
-        isWebSocketUpgrade: Bool
+        context: HTTP1InterceptionContext
     ) {
         defer { http1InterceptionInFlight = false }
 
@@ -2267,21 +2272,21 @@ public class TLSProxyConnection: @unchecked Sendable {
                 forwardHTTP1ToClient(responseData)
             }
 
-            let charset = BodyStorage.extractCharset(from: originalHeaders)
-            let requestContentEncoding = originalHeaders.first { $0.key.lowercased() == "content-encoding" }?.value
+            let charset = BodyStorage.extractCharset(from: context.originalHeaders)
+            let requestContentEncoding = context.originalHeaders.first { $0.key.lowercased() == "content-encoding" }?.value
             var blockedRequest = NetworkRequest(
-                id: flowId,
-                url: originalAbsoluteURL,
-                method: HTTPMethod(rawValue: originalMethod) ?? .get,
+                id: context.flowId,
+                url: context.originalAbsoluteURL,
+                method: HTTPMethod(rawValue: context.originalMethod) ?? .get,
                 statusCode: 403,
                 statusMessage: "Blocked",
-                timestamp: requestStartTime,
-                duration: Date().timeIntervalSince(requestStartTime),
-                requestHeaders: originalHeaderList,
+                timestamp: context.requestStartTime,
+                duration: Date().timeIntervalSince(context.requestStartTime),
+                requestHeaders: context.originalHeaderList,
                 responseHeaders: [TraceHTTPHeader(key: "X-Trace-Note", value: "Blocked by rule")],
-                requestBody: (self.captureBodies && self.maxCapturedBodyBytes > 0 && !originalBody.isEmpty)
+                requestBody: (self.captureBodies && self.maxCapturedBodyBytes > 0 && !context.originalBody.isEmpty)
                     ? BodyStorage.from(
-                        data: Data(originalBody.prefix(self.maxCapturedBodyBytes)),
+                        data: Data(context.originalBody.prefix(self.maxCapturedBodyBytes)),
                         charset: charset,
                         maxSize: self.maxCapturedBodyBytes,
                         contentEncoding: requestContentEncoding
@@ -2300,7 +2305,7 @@ public class TLSProxyConnection: @unchecked Sendable {
 
             // Continue parsing buffered client data (if any).
             handleHTTP1ClientData()
-            if isWebSocketUpgrade {
+            if context.isWebSocketUpgrade {
                 pauseClientReads = false
                 readDecryptedFromClient()
             }
@@ -2345,7 +2350,7 @@ public class TLSProxyConnection: @unchecked Sendable {
 
             // Continue parsing buffered client data (if any).
             handleHTTP1ClientData()
-            if isWebSocketUpgrade {
+            if context.isWebSocketUpgrade {
                 pauseClientReads = false
                 readDecryptedFromClient()
             }
@@ -2367,18 +2372,18 @@ public class TLSProxyConnection: @unchecked Sendable {
                 }
 
                 var redirected = NetworkRequest(
-                    id: flowId,
-                    url: originalAbsoluteURL,
-                    method: HTTPMethod(rawValue: originalMethod) ?? .get,
+                    id: context.flowId,
+                    url: context.originalAbsoluteURL,
+                    method: HTTPMethod(rawValue: context.originalMethod) ?? .get,
                     statusCode: 307,
                     statusMessage: "Temporary Redirect",
-                    timestamp: requestStartTime,
-                    duration: Date().timeIntervalSince(requestStartTime),
-                    requestHeaders: originalHeaderList,
+                    timestamp: context.requestStartTime,
+                    duration: Date().timeIntervalSince(context.requestStartTime),
+                    requestHeaders: context.originalHeaderList,
                     responseHeaders: [TraceHTTPHeader(key: "Location", value: modifiedRequest.url)],
-                    requestBody: (self.captureBodies && self.maxCapturedBodyBytes > 0 && !originalBody.isEmpty)
+                    requestBody: (self.captureBodies && self.maxCapturedBodyBytes > 0 && !context.originalBody.isEmpty)
                         ? BodyStorage.from(
-                            data: Data(originalBody.prefix(self.maxCapturedBodyBytes)),
+                            data: Data(context.originalBody.prefix(self.maxCapturedBodyBytes)),
                             maxSize: self.maxCapturedBodyBytes
                         )
                         : .empty,
@@ -2394,7 +2399,7 @@ public class TLSProxyConnection: @unchecked Sendable {
                 }
 
                 handleHTTP1ClientData()
-                if isWebSocketUpgrade {
+                if context.isWebSocketUpgrade {
                     pauseClientReads = false
                     readDecryptedFromClient()
                 }
@@ -2404,21 +2409,21 @@ public class TLSProxyConnection: @unchecked Sendable {
             // Track this request so we can pair the next response.
             pendingHTTP1Requests.append(
                 CapturedHTTP1Request(
-                    id: flowId,
+                    id: context.flowId,
                     url: forward.absoluteURL,
                     method: method,
                     headers: forward.forwardHeaders,
                     body: modifiedRequest.requestBody.getString(),
                     bodyData: modifiedRequest.requestBody.getData(),
-                    startTime: requestStartTime,
+                    startTime: context.requestStartTime,
                     wasRewritten: modifiedRequest.wasRewritten,
                     isMocked: modifiedRequest.isMocked,
                     isReplayed: modifiedRequest.isReplayed,
                     appliedScriptName: modifiedRequest.appliedScriptName,
                     hitBreakpoint: modifiedRequest.hitBreakpoint,
                     retryAttempts: modifiedRequest.retryAttempts,
-                    responsePipeline: responsePipeline,
-                    isWebSocketUpgrade: isWebSocketUpgrade
+                    responsePipeline: context.responsePipeline,
+                    isWebSocketUpgrade: context.isWebSocketUpgrade
                 )
             )
 
@@ -2527,8 +2532,7 @@ public class TLSProxyConnection: @unchecked Sendable {
                 }
 
             self.executeOnQueue { [weak self] in
-                self?.applyHTTP1InterceptionResult(
-                    result,
+                let context = HTTP1InterceptionContext(
                     flowId: flowId,
                     requestStartTime: requestStartTime,
                     originalAbsoluteURL: absoluteURL,
@@ -2539,6 +2543,7 @@ public class TLSProxyConnection: @unchecked Sendable {
                     responsePipeline: pipeline,
                     isWebSocketUpgrade: isWebSocket
                 )
+                self?.applyHTTP1InterceptionResult(result, context: context)
             }
         }
     }
@@ -2801,30 +2806,45 @@ public class TLSProxyConnection: @unchecked Sendable {
         return HeaderMetadata(contentLength: contentLength, isChunked: isChunked, expectsContinue: expectsContinue)
     }
 
+    private struct ParsedHTTPRequest {
+        let method: String
+        let path: String
+        let headers: [TraceHTTPHeader]
+        let body: String?
+        let bodyData: Data
+    }
+
+    private struct ParsedHTTPResponse {
+        let statusCode: Int
+        let statusMessage: String?
+        let headers: [TraceHTTPHeader]
+        let bodyData: Data?
+    }
+
     private func parseHTTPRequestLine(
         _ requestLine: String,
         headers: [TraceHTTPHeader],
         bodyData: Data
-    ) -> (method: String, path: String, headers: [TraceHTTPHeader], body: String?, bodyData: Data)? {
+    ) -> ParsedHTTPRequest? {
         let parts = requestLine.split(separator: " ", maxSplits: 2)
         guard parts.count >= 2 else { return nil }
 
         let method = String(parts[0])
         let path = String(parts[1])
         let body = bodyData.isEmpty ? nil : String(data: bodyData, encoding: .utf8)
-        return (method: method, path: path, headers: headers, body: body, bodyData: bodyData)
+        return ParsedHTTPRequest(method: method, path: path, headers: headers, body: body, bodyData: bodyData)
     }
 
     private func parseHTTPResponseLine(
         _ statusLine: String,
         headers: [TraceHTTPHeader],
         bodyData: Data
-    ) -> (statusCode: Int, statusMessage: String?, headers: [TraceHTTPHeader], bodyData: Data?)? {
+    ) -> ParsedHTTPResponse? {
         let parts = statusLine.split(separator: " ", maxSplits: 2)
         guard parts.count >= 2, let statusCode = Int(parts[1]) else { return nil }
         let statusMessage = parts.count >= 3 ? String(parts[2]) : nil
         let body = bodyData.isEmpty ? nil : bodyData
-        return (statusCode: statusCode, statusMessage: statusMessage, headers: headers, bodyData: body)
+        return ParsedHTTPResponse(statusCode: statusCode, statusMessage: statusMessage, headers: headers, bodyData: body)
     }
 
     private func parseStatusCode(from statusLine: String) -> Int? {

@@ -948,6 +948,7 @@ public class ProxyConnection: @unchecked Sendable {
         onRequestCaptured?(req)
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     private func parseTLSSNI(from data: Data) -> String? {
         // Rationale: Parse only the minimal ClientHello SNI fields with defensive bounds checks.
         func u16(_ i: Int) -> Int? {
@@ -1413,6 +1414,7 @@ public class ProxyConnection: @unchecked Sendable {
 
     // MARK: - HTTP Handling
 
+    // swiftlint:disable:next cyclomatic_complexity
     private func handleHTTPRequest() {
         let headerEndMarker = "\r\n\r\n".data(using: .utf8)!
         guard let headerEndRange = requestBuffer.range(of: headerEndMarker) else {
@@ -1771,6 +1773,7 @@ public class ProxyConnection: @unchecked Sendable {
         })
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     private func readFromServer() {
         serverConnection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
             guard let self else { return }

@@ -226,6 +226,7 @@ public final class RewriteManager: ObservableObject {
     }
 
     /// Apply a single action to a request
+    // swiftlint:disable:next cyclomatic_complexity
     private func applyAction(_ action: RewriteAction, to request: inout NetworkRequest, target: ActionTarget) {
         switch action.actionType {
         case .setHeader:
