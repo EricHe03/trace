@@ -208,20 +208,20 @@ struct SettingsTabView: View {
                     NavigationLink {
                         CaptureRulesView()
                     } label: {
-                        Label("Capture Rules", systemImage: "slider.horizontal.3")
+                        Label("Capture Rules", systemImage: "line.3.horizontal.decrease.circle")
                     }
 
                     NavigationLink {
                         CaptureSettingsView(vpnManager: vpnManager)
                     } label: {
-                        Label("Capture Mode", systemImage: "arrow.triangle.2.circlepath")
+                        Label("Capture Mode", systemImage: "record.circle")
                     }
 
                     NavigationLink {
                         NetworkConditionProfilesView(viewModel: viewModel)
                     } label: {
                         HStack {
-                            Label("Network Conditions", systemImage: "gauge.with.dots.needle.67percent")
+                            Label("Network Conditions", systemImage: "speedometer")
                             Spacer()
                             if viewModel.throttlingEnabled, let condition = viewModel.selectedNetworkCondition {
                                 Text(condition.displayName)
@@ -241,7 +241,7 @@ struct SettingsTabView: View {
                         Label("Connections", systemImage: "network")
                     }
                 } header: {
-                    Label("Capture Configuration", systemImage: "antenna.radiowaves.left.and.right")
+                    Text("Capture Configuration")
                         .font(.headline)
                 }
 
@@ -249,22 +249,22 @@ struct SettingsTabView: View {
                     NavigationLink {
                         CertificateGuideView()
                     } label: {
-                        Label("HTTPS Certificate", systemImage: "checkmark.shield.fill")
+                        Label("HTTPS Certificate", systemImage: "checkmark.seal")
                     }
 
                     NavigationLink {
                         MITMSecurityView()
                     } label: {
-                        Label("MITM & Security", systemImage: "lock.shield.fill")
+                        Label("MITM & Security", systemImage: "shield")
                     }
 
                     NavigationLink {
                         NotificationSettingsView()
                     } label: {
-                        Label("Notifications", systemImage: "bell.fill")
+                        Label("Notifications", systemImage: "bell")
                     }
                 } header: {
-                    Label("Security & Certificates", systemImage: "lock.shield")
+                    Text("Security & Certificates")
                         .font(.headline)
                 }
 
@@ -272,30 +272,30 @@ struct SettingsTabView: View {
                     Button {
                         exportToHAR()
                     } label: {
-                        Label("Export HAR", systemImage: "square.and.arrow.up.fill")
+                        Label("Export HAR", systemImage: "square.and.arrow.up")
                     }
                     .disabled(viewModel.requests.isEmpty)
 
                     Button {
                         showingHARImport = true
                     } label: {
-                        Label("Import HAR", systemImage: "square.and.arrow.down.fill")
+                        Label("Import HAR", systemImage: "square.and.arrow.down")
                     }
 
                     NavigationLink {
                         PCAPExportView()
                     } label: {
-                        Label("Packet Captures", systemImage: "network.badge.shield.half.filled")
+                        Label("Packet Captures", systemImage: "doc")
                     }
 
                     NavigationLink {
                         StorageSettingsView()
                     } label: {
-                        Label("Storage & Cleanup", systemImage: "externaldrive.fill")
+                        Label("Storage & Cleanup", systemImage: "externaldrive")
                     }
 
                     HStack {
-                        Label("Total Requests", systemImage: "number")
+                        Label("Total Requests", systemImage: "chart.bar")
                         Spacer()
                         Text("\(viewModel.requests.count)")
                             .foregroundStyle(.secondary)
@@ -321,11 +321,11 @@ struct SettingsTabView: View {
                         Button(role: .destructive) {
                             showingClearAlert = true
                         } label: {
-                            Label("Clear All Requests", systemImage: "trash.fill")
+                            Label("Clear All Requests", systemImage: "trash")
                         }
                     }
                 } header: {
-                    Label("Data Management", systemImage: "externaldrive.badge.checkmark")
+                    Text("Data Management")
                         .font(.headline)
                 }
 
@@ -333,16 +333,16 @@ struct SettingsTabView: View {
                     NavigationLink {
                         AdvancedSettingsView()
                     } label: {
-                        Label("Advanced", systemImage: "gearshape.2.fill")
+                        Label("Advanced", systemImage: "wrench.and.screwdriver")
                     }
                 } header: {
-                    Label("General", systemImage: "gear")
+                    Text("General")
                         .font(.headline)
                 }
 
                 Section {
                     HStack {
-                        Label("Version", systemImage: "info.circle.fill")
+                        Label("Version", systemImage: "tag")
                         Spacer()
                         Text(AppVersion.fullVersion)
                             .foregroundStyle(.secondary)
@@ -361,17 +361,17 @@ struct SettingsTabView: View {
                     NavigationLink {
                         PrivacyPolicyView()
                     } label: {
-                        Label("Privacy Policy", systemImage: "hand.raised.fill")
+                        Label("Privacy Policy", systemImage: "hand.raised")
                     }
 
                     Button {
                         UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
                         showingOnboarding = true
                     } label: {
-                        Label("Show Onboarding", systemImage: "info.circle.fill")
+                        Label("Show Onboarding", systemImage: "arrow.counterclockwise")
                     }
                 } header: {
-                    Label("About", systemImage: "info.circle")
+                    Text("About")
                         .font(.headline)
                 }
             }
