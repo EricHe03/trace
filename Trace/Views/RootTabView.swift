@@ -191,7 +191,6 @@ struct SettingsTabView: View {
     @ObservedObject var viewModel: CaptureViewModel
     @Binding var showingOnboarding: Bool
     @State private var showingClearAlert = false
-    @State private var showingCertificateGuide = false
     @State private var showingHARImport = false
     @State private var harShareItem: ShareURLItem?
     @State private var toastMessage: String?
@@ -205,67 +204,11 @@ struct SettingsTabView: View {
     var body: some View {
         NavigationStack {
             Form {
-                // VPN Status Section
                 Section {
-                    HStack {
-                        VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
-                            Text("VPN Status")
-                                .font(.headline)
-                            Text(vpnManager.statusText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        Spacer()
-
-                        Circle()
-                            .fill(statusColor)
-                            .frame(width: 12, height: 12)
-                    }
-
-                    if vpnManager.isConnected {
-                        Button(role: .destructive) {
-                            vpnManager.stop()
-                        } label: {
-                            Label("Stop Capture", systemImage: "stop.circle.fill")
-                        }
-                    } else {
-                        Button {
-                            Task {
-                                do {
-                                    try await vpnManager.start()
-                                } catch {
-                                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                                        if let vpnError = error as? VPNError, vpnError == .notConfigured {
-                                            toastMessage = "VPN configuration not installed. Open Settings → Show Onboarding to add it."
-                                        } else {
-                                            toastMessage = "VPN error: \(error.localizedDescription)"
-                                        }
-                                    }
-                                }
-                            }
-                        } label: {
-                            Label("Start Capture", systemImage: "play.circle.fill")
-                        }
-                    }
-                } header: {
-                    Text("Capture")
-                } footer: {
-                    Text("Captures HTTP/HTTPS via VPN System Proxy (apps must honor proxy settings)")
-                }
-
-                // Configuration Section
-                Section("Configuration") {
                     NavigationLink {
-                        CertificateGuideView()
+                        CaptureRulesView()
                     } label: {
-                        Label("HTTPS Certificate", systemImage: "checkmark.shield.fill")
-                    }
-
-                    NavigationLink {
-                        NotificationSettingsView()
-                    } label: {
-                        Label("Notifications", systemImage: "bell.fill")
+                        Label("Capture Rules", systemImage: "slider.horizontal.3")
                     }
 
                     NavigationLink {
@@ -275,22 +218,10 @@ struct SettingsTabView: View {
                     }
 
                     NavigationLink {
-                        CaptureOptionsView()
-                    } label: {
-                        Label("Capture Options", systemImage: "square.and.pencil")
-                    }
-
-                    NavigationLink {
-                        DomainFiltersView()
-                    } label: {
-                        Label("Domain Filters", systemImage: "line.3.horizontal.decrease.circle")
-                    }
-
-                    NavigationLink {
                         NetworkConditionProfilesView(viewModel: viewModel)
                     } label: {
                         HStack {
-                            Label("Network Throttling", systemImage: "gauge.with.dots.needle.67percent")
+                            Label("Network Conditions", systemImage: "gauge.with.dots.needle.67percent")
                             Spacer()
                             if viewModel.throttlingEnabled, let condition = viewModel.selectedNetworkCondition {
                                 Text(condition.displayName)
@@ -305,26 +236,39 @@ struct SettingsTabView: View {
                     }
 
                     NavigationLink {
-                        ConnectionsView()
+                        ConnectionSettingsView()
                     } label: {
-                        Label("Connections", systemImage: "arrow.left.arrow.right")
+                        Label("Connections", systemImage: "network")
                     }
-
-                    NavigationLink {
-                        UDPFlowsView()
-                    } label: {
-                        Label("UDP Flows", systemImage: "arrow.up.arrow.down.circle")
-                    }
-
-                    NavigationLink {
-                        AdvancedSettingsView()
-                    } label: {
-                        Label("Advanced Settings", systemImage: "gearshape.2.fill")
-                    }
+                } header: {
+                    Label("Capture Configuration", systemImage: "antenna.radiowaves.left.and.right")
+                        .font(.headline)
                 }
 
-                // Data Management Section
-                Section("Data") {
+                Section {
+                    NavigationLink {
+                        CertificateGuideView()
+                    } label: {
+                        Label("HTTPS Certificate", systemImage: "checkmark.shield.fill")
+                    }
+
+                    NavigationLink {
+                        MITMSecurityView()
+                    } label: {
+                        Label("MITM & Security", systemImage: "lock.shield.fill")
+                    }
+
+                    NavigationLink {
+                        NotificationSettingsView()
+                    } label: {
+                        Label("Notifications", systemImage: "bell.fill")
+                    }
+                } header: {
+                    Label("Security & Certificates", systemImage: "lock.shield")
+                        .font(.headline)
+                }
+
+                Section {
                     Button {
                         exportToHAR()
                     } label: {
@@ -380,20 +324,23 @@ struct SettingsTabView: View {
                             Label("Clear All Requests", systemImage: "trash.fill")
                         }
                     }
+                } header: {
+                    Label("Data Management", systemImage: "externaldrive.badge.checkmark")
+                        .font(.headline)
                 }
 
-                // Appearance Section
-                Section("Appearance") {
-                    Picker("Theme", selection: $viewModel.selectedTheme) {
-                        ForEach(AppTheme.allCases, id: \.self) { theme in
-                            Label(theme.rawValue, systemImage: themeIcon(for: theme))
-                                .tag(theme)
-                        }
+                Section {
+                    NavigationLink {
+                        AdvancedSettingsView()
+                    } label: {
+                        Label("Advanced", systemImage: "gearshape.2.fill")
                     }
+                } header: {
+                    Label("General", systemImage: "gear")
+                        .font(.headline)
                 }
 
-                // About Section
-                Section("About") {
+                Section {
                     HStack {
                         Label("Version", systemImage: "info.circle.fill")
                         Spacer()
@@ -423,6 +370,9 @@ struct SettingsTabView: View {
                     } label: {
                         Label("Show Onboarding", systemImage: "info.circle.fill")
                     }
+                } header: {
+                    Label("About", systemImage: "info.circle")
+                        .font(.headline)
                 }
             }
             .navigationTitle("Settings")
@@ -451,23 +401,6 @@ struct SettingsTabView: View {
                 handleHARImport(result)
             }
             .toast(message: $toastMessage)
-        }
-    }
-
-    private func themeIcon(for theme: AppTheme) -> String {
-        switch theme {
-        case .system: "circle.lefthalf.filled"
-        case .light: "sun.max.fill"
-        case .dark: "moon.fill"
-        }
-    }
-
-    private var statusColor: Color {
-        switch vpnManager.statusColor {
-        case "green": DesignSystem.Colors.success
-        case "yellow": DesignSystem.Colors.favorite
-        case "red": DesignSystem.Colors.danger
-        default: DesignSystem.Colors.muted
         }
     }
 

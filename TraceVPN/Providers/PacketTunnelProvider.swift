@@ -255,7 +255,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             let packetCaptureWriter = createPacketCaptureWriterIfNeeded(
                 enabled: rawCaptureEnabled && captureConfig.captureMode == .fullTunnel
             )
-            let flowConfig = PacketFlowConfig(
+            let flowConfig = PacketTunnelRuntimeState.PacketFlowConfig(
                 packetFlow: self.packetFlow,
                 mode: captureConfig.captureMode,
                 mtu: self.fullTunnelMTU,
@@ -929,7 +929,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let packetCaptureWriter = createPacketCaptureWriterIfNeeded(
             enabled: rawCaptureEnabled && config.captureMode == .fullTunnel
         )
-        let flowConfig = PacketFlowConfig(
+        let flowConfig = PacketTunnelRuntimeState.PacketFlowConfig(
             packetFlow: packetFlow,
             mode: config.captureMode,
             mtu: fullTunnelMTU,
