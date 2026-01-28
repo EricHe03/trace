@@ -16,6 +16,12 @@ actor DataCleanupManager {
     static let shared = DataCleanupManager()
 
     private var cleanupTask: Task<Void, Never>?
+    private let defaults = UserDefaults.standard
+
+    private enum DefaultsKey {
+        static let cleanupConfiguration = "trace.settings.storage.cleanupConfiguration"
+        static let cleanupStats = "trace.settings.storage.cleanupStats"
+    }
 
     private enum DirectoryName {
         static let requests = "CapturedRequests"
@@ -26,7 +32,7 @@ actor DataCleanupManager {
 
     private var config = CleanupConfiguration()
 
-    struct CleanupConfiguration: Equatable {
+    struct CleanupConfiguration: Codable, Equatable {
         var enabled: Bool = true
         var requestRetentionDays: Int = 7
         var bodyFileRetentionDays: Int = 7
@@ -35,7 +41,7 @@ actor DataCleanupManager {
         var cleanupInterval: TimeInterval = 3600
     }
 
-    struct CleanupStats {
+    struct CleanupStats: Codable {
         var lastCleanup: Date?
         var requestsDeleted: Int = 0
         var bodyFilesDeleted: Int = 0
@@ -46,8 +52,11 @@ actor DataCleanupManager {
     private var stats = CleanupStats()
 
     private init() {
-        // Rule: Start the cleanup task after actor initialization to avoid escaping self.
-        Task { await self.startAutoCleanup() }
+        config = Self.loadPersistedConfiguration(from: defaults) ?? CleanupConfiguration()
+        stats = Self.loadPersistedStats(from: defaults) ?? CleanupStats()
+        if config.enabled {
+            Task { await self.startAutoCleanup() }
+        }
     }
 
     // MARK: - Configuration
@@ -60,6 +69,7 @@ actor DataCleanupManager {
             startAutoCleanup()
         }
 
+        persistConfiguration()
         FeatureLog.storage.info("event=storage.config_update outcome=success")
     }
 
@@ -122,6 +132,7 @@ actor DataCleanupManager {
         stats.bodyFilesDeleted += deletedBodies
         stats.logsDeleted += deletedLogs
         stats.bytesFreed += bytesFreed
+        persistStats()
 
         FeatureLog.storage.info("event=storage.cleanup_complete outcome=success requests_deleted=\(deletedRequests) bodies_deleted=\(deletedBodies) logs_deleted=\(deletedLogs) bytes_freed=\(bytesFreed)")
     }
@@ -624,5 +635,39 @@ public struct StorageSettingsView: View {
 #Preview {
     NavigationStack {
         StorageSettingsView()
+    }
+}
+
+// MARK: - Persistence
+
+extension DataCleanupManager {
+    private static func loadPersistedConfiguration(from defaults: UserDefaults) -> CleanupConfiguration? {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = defaults.data(forKey: DefaultsKey.cleanupConfiguration) else { return nil }
+        return try? decoder.decode(CleanupConfiguration.self, from: data)
+    }
+
+    private static func loadPersistedStats(from defaults: UserDefaults) -> CleanupStats? {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = defaults.data(forKey: DefaultsKey.cleanupStats) else { return nil }
+        return try? decoder.decode(CleanupStats.self, from: data)
+    }
+
+    private func persistConfiguration() {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        if let data = try? encoder.encode(config) {
+            defaults.set(data, forKey: DefaultsKey.cleanupConfiguration)
+        }
+    }
+
+    private func persistStats() {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        if let data = try? encoder.encode(stats) {
+            defaults.set(data, forKey: DefaultsKey.cleanupStats)
+        }
     }
 }
