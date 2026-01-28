@@ -212,12 +212,12 @@ struct RequestMapView: View {
     }
 
     private var emptyStateContent: some View {
-        EmptyStateView(
-            icon: "map",
-            title: "No Request Maps",
-            description: "Create maps to return mock responses without hitting real servers",
-            action: { showingAddMap = true },
-            actionLabel: "Add Your First Map"
+        TraceContentUnavailableView(
+            "No Request Maps",
+            systemImage: "map",
+            description: Text("Create maps to return mock responses without hitting real servers"),
+            actionTitle: "Add Your First Map",
+            action: { showingAddMap = true }
         )
     }
 

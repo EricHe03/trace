@@ -97,8 +97,15 @@ struct UDPFlowDetailView: View {
                 Text("Traffic Stats")
             }
 
-            if !flow.recentDatagrams.isEmpty {
-                Section("Recent Packets") {
+            Section("Recent Packets") {
+                if flow.recentDatagrams.isEmpty {
+                    TraceContentUnavailableView(
+                        "No Packets Captured",
+                        systemImage: "arrow.up.arrow.down",
+                        description: Text("Packet details are not available for this flow")
+                    )
+                    .listRowBackground(Color.clear)
+                } else {
                     ForEach(flow.recentDatagrams) { datagram in
                         HStack {
                             Image(systemName: datagram.direction == .sourceToDestination ? "arrow.up.right" : "arrow.down.left")

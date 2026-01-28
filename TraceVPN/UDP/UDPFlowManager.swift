@@ -48,6 +48,7 @@ final class UDPFlowManager {
     }
 
     private let queue = DispatchQueue(label: "com.trace.vpn.udp_flow_manager", qos: .utility, attributes: .concurrent)
+    private let queueKey = DispatchSpecificKey<Void>()
     private var flows: [FlowKey: FlowState] = [:]
     private var dirtyFlows: Set<FlowKey> = []
     private var cleanupTimer: DispatchSourceTimer?
@@ -59,6 +60,7 @@ final class UDPFlowManager {
     init(idleTimeout: TimeInterval = 120, flowLimit: Int = 5000) {
         self.idleTimeout = idleTimeout
         self.flowLimit = max(1, flowLimit)
+        queue.setSpecific(key: queueKey, value: ())
         startTimers()
     }
 
@@ -130,6 +132,16 @@ final class UDPFlowManager {
 
             self.flows[key] = state
             self.dirtyFlows.insert(key)
+        }
+    }
+
+    func flush() {
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            persistDirtyFlows()
+            return
+        }
+        queue.sync(flags: .barrier) {
+            persistDirtyFlows()
         }
     }
 

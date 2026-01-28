@@ -33,7 +33,6 @@ struct TraceApp: App {
     var body: some Scene {
         WindowGroup {
             RootTabView(viewModel: viewModel)
-                .preferredColorScheme(viewModel.selectedTheme.colorScheme)
                 .onOpenURL { url in
                     handleDeepLink(url)
                 }

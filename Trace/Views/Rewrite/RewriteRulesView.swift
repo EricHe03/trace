@@ -219,12 +219,12 @@ struct RewriteRulesView: View {
     }
 
     private var emptyStateContent: some View {
-        EmptyStateView(
-            icon: "arrow.triangle.branch",
-            title: "No Rewrite Rules",
-            description: "Create rules to modify requests and responses on the fly",
-            action: { showingAddRule = true },
-            actionLabel: "Add Your First Rule"
+        TraceContentUnavailableView(
+            "No Rewrite Rules",
+            systemImage: "arrow.triangle.branch",
+            description: Text("Create rules to modify requests and responses on the fly"),
+            actionTitle: "Add Your First Rule",
+            action: { showingAddRule = true }
         )
     }
 

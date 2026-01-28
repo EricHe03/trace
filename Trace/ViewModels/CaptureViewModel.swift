@@ -293,7 +293,6 @@ final class CaptureViewModel: ObservableObject {
     @Published var filterStatusCode: Int?
     @Published var filterDomains: [String] = []
     @Published var filterFavoritesOnly: Bool = false
-    @Published var selectedTheme: AppTheme = .system
 
     // Advanced filters
     @Published var filterContentTypes: Set<ContentTypeFilter> = []
@@ -1472,20 +1471,6 @@ final class CaptureViewModel: ObservableObject {
         if notifiedRequestIds.count > notificationDedupLimit {
             let recentIds = Set(requests.prefix(notificationDedupLimit).map(\.id))
             notifiedRequestIds = notifiedRequestIds.intersection(recentIds)
-        }
-    }
-}
-
-enum AppTheme: String, CaseIterable {
-    case system = "System"
-    case light = "Light"
-    case dark = "Dark"
-
-    var colorScheme: ColorScheme? {
-        switch self {
-        case .system: nil
-        case .light: .light
-        case .dark: .dark
         }
     }
 }

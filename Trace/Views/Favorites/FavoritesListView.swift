@@ -89,13 +89,21 @@ struct FavoritesListView: View {
     }
 
     private var emptyStateView: some View {
-        EmptyStateView(
-            icon: searchText.isEmpty ? "star" : "magnifyingglass",
-            title: searchText.isEmpty ? "No Favorites" : "No Results",
-            description: searchText.isEmpty
-                ? "Star requests to add them to your favorites"
-                : "Try a different search term"
-        )
+        Group {
+            if searchText.isEmpty {
+                TraceContentUnavailableView(
+                    "No Favorites Yet",
+                    systemImage: "star",
+                    description: Text("Star requests to add them to your favorites")
+                )
+            } else {
+                TraceContentUnavailableView(
+                    "No Results",
+                    systemImage: "magnifyingglass",
+                    description: Text("Try a different search term")
+                )
+            }
+        }
         .listRowBackground(Color.clear)
     }
 

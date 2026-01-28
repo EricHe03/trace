@@ -183,11 +183,7 @@ struct NetworkView: View {
         }
         .overlay {
             if shouldShowEmptyState {
-                TraceContentUnavailableView(
-                    viewModel.searchText.isEmpty ? "No Network Activity" : "No Results",
-                    systemImage: viewModel.searchText.isEmpty ? "network.slash" : "magnifyingglass",
-                    description: Text(viewModel.searchText.isEmpty ? "Network events will appear here when capture is active" : "Try a different search term or filter")
-                )
+                emptyStateView
             }
         }
         .refreshable {
@@ -285,6 +281,32 @@ struct NetworkView: View {
             viewModel.groupedRequests.domainGroups.isEmpty
         case .bySession, .hierarchical:
             viewModel.groupedRequests.sessionGroups.isEmpty
+        }
+    }
+
+    @ViewBuilder
+    private var emptyStateView: some View {
+        if !viewModel.searchText.isEmpty || viewModel.hasActiveFilters {
+            // Search or filter resulted in no results
+            TraceContentUnavailableView(
+                "No Results",
+                systemImage: "magnifyingglass",
+                description: Text("Try adjusting your search or filters")
+            )
+        } else if !vpnManager.isConnected {
+            // Capture is not active
+            TraceContentUnavailableView(
+                "No Requests Yet",
+                systemImage: "network.slash",
+                description: Text("Start capture to see network traffic here")
+            )
+        } else {
+            // Capture is active but no requests yet
+            TraceContentUnavailableView(
+                "No Network Activity",
+                systemImage: "network",
+                description: Text("Network requests will appear here as they're captured")
+            )
         }
     }
 

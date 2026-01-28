@@ -239,15 +239,23 @@ struct HostsListView: View {
     // MARK: - Empty State
 
     private var emptyStateContent: some View {
-        EmptyStateView(
-            icon: searchText.isEmpty ? "network" : "magnifyingglass",
-            title: searchText.isEmpty ? "No Host Entries" : "No Results",
-            description: searchText.isEmpty
-                ? "Create host entries to override DNS resolution"
-                : "Try a different search term",
-            action: searchText.isEmpty ? { showingAddEntry = true } : nil,
-            actionLabel: searchText.isEmpty ? "Add Entry" : nil
-        )
+        Group {
+            if searchText.isEmpty {
+                TraceContentUnavailableView(
+                    "No Host Entries",
+                    systemImage: "network",
+                    description: Text("Create host entries to override DNS resolution"),
+                    actionTitle: "Add Entry",
+                    action: { showingAddEntry = true }
+                )
+            } else {
+                TraceContentUnavailableView(
+                    "No Results",
+                    systemImage: "magnifyingglass",
+                    description: Text("Try a different search term")
+                )
+            }
+        }
     }
 
     // MARK: - Import/Export
