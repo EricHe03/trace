@@ -21,11 +21,13 @@ final class AppGroupStorageTests: XCTestCase {
 
         // Clean up any existing test data
         try? storage.clearAllRequests()
+        storage.resetStoredSettings()
     }
 
     override func tearDown() {
         // Clean up test data
         try? storage.clearAllRequests()
+        storage.resetStoredSettings()
         super.tearDown()
     }
 
