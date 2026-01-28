@@ -36,7 +36,6 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
     private let packetFlow: NEPacketTunnelFlow
     private let tunnelQueue = DispatchQueue(label: "com.trace.vpn.socks5_tunnel", qos: .userInitiated)
     private let ioQueue = DispatchQueue(label: "com.trace.vpn.socks5_tunnel.io", qos: .userInitiated)
-    private let inputLock = NSLock()
     private let logSampler = LogSampler()
     private let mtu: Int
     private let socks5Host: String
@@ -72,22 +71,35 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
     }
 
     func start() {
-        guard !isRunning else { return }
-        guard setupTunnelSockets() else {
+        var shouldStart = false
+        var alreadyRunning = false
+        var tunFD: Int32 = -1
+        ioQueue.sync {
+            guard !self.isRunning else {
+                alreadyRunning = true
+                return
+            }
+            guard self.setupTunnelSockets() else { return }
+            self.isRunning = true
+            tunFD = self.tunFD
+            self.startReadLoop()
+            shouldStart = true
+        }
+
+        guard !alreadyRunning else { return }
+        guard shouldStart else {
             VPNLog.tunnel.error("event=vpn.socks5_tunnel_start outcome=failure reason=socketpair_failed")
             eventLogHandler?("socks5_tunnel_start", "outcome=failure reason=socketpair_failed")
             return
         }
 
-        isRunning = true
-        startReadLoop()
-
+        let hostHash = LogRedaction.hash(self.socks5Host)
         VPNLog.tunnel.info(
-            "event=vpn.socks5_tunnel_config host=\(self.socks5Host, privacy: .public) port=\(self.socks5Port) mtu=\(self.mtu)"
+            "event=vpn.socks5_tunnel_config host_hash=\(hostHash) host_len=\(self.socks5Host.count) port=\(self.socks5Port) mtu=\(self.mtu)"
         )
         eventLogHandler?(
             "socks5_tunnel_config",
-            "host=\(self.socks5Host) port=\(self.socks5Port) mtu=\(self.mtu) ipv6=\(self.ipv6Enabled)"
+            "host_hash=\(hostHash) host_len=\(self.socks5Host.count) port=\(self.socks5Port) mtu=\(self.mtu) ipv6=\(self.ipv6Enabled)"
         )
 
         if let udpAssociateProbeHandler {
@@ -95,7 +107,6 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         }
 
         let config = buildConfig()
-        let tunFD = self.tunFD
         tunnelQueue.async { [weak self] in
             guard let self else { return }
             let result = config.withUnsafeBytes { bytes -> Int32 in
@@ -116,46 +127,53 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
     }
 
     func stop() {
-        guard isRunning else { return }
-        isRunning = false
+        var shouldStop = false
+        ioQueue.sync {
+            guard self.isRunning else { return }
+            self.isRunning = false
+            shouldStop = true
+        }
+        guard shouldStop else { return }
 
         tunnelQueue.async {
             hev_socks5_tunnel_quit()
         }
 
-        readSource?.cancel()
-        readSource = nil
-        closeFDs()
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            self.readSource?.cancel()
+            self.readSource = nil
+            self.closeFDs()
+            self.inputPending = 0
+        }
 
         VPNLog.tunnel.info("event=vpn.socks5_tunnel_stop outcome=success")
         eventLogHandler?("socks5_tunnel_stop", "outcome=success")
     }
 
     func enqueue(packets: [Data], protocols: [NSNumber]) {
-        guard isRunning else { return }
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            guard self.isRunning else { return }
 
-        for (index, packet) in packets.enumerated() {
-            guard let proto = protocols[safe: index]?.int32Value else { continue }
-            guard proto == AF_INET || proto == AF_INET6 else { continue }
+            for (index, packet) in packets.enumerated() {
+                guard let proto = protocols[safe: index]?.int32Value else { continue }
+                guard proto == AF_INET || proto == AF_INET6 else { continue }
 
-            inputLock.lock()
-            let hasCapacity = inputPending < maxInputPending
-            if hasCapacity { inputPending += 1 }
-            inputLock.unlock()
-
-            guard hasCapacity else {
-                if logSampler.shouldLog(event: "vpn.socks5_tunnel_input", key: "pending_full", first: 5, every: 200) {
-                    VPNLog.tunnel.warning("event=vpn.socks5_tunnel_input outcome=skipped reason=pending_full")
+                let hasCapacity = self.inputPending < self.maxInputPending
+                if hasCapacity {
+                    self.inputPending += 1
                 }
-                continue
-            }
 
-            ioQueue.async { [weak self] in
-                guard let self else { return }
+                guard hasCapacity else {
+                    if self.logSampler.shouldLog(event: "vpn.socks5_tunnel_input", key: "pending_full", first: 5, every: 200) {
+                        VPNLog.tunnel.warning("event=vpn.socks5_tunnel_input outcome=skipped reason=pending_full")
+                    }
+                    continue
+                }
+
                 self.writePacket(packet, proto: proto)
-                self.inputLock.lock()
                 self.inputPending = max(0, self.inputPending - 1)
-                self.inputLock.unlock()
             }
         }
     }
@@ -195,9 +213,7 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
             self?.drainOutput()
         }
         source.setCancelHandler { [weak self] in
-            self?.inputLock.lock()
             self?.inputPending = 0
-            self?.inputLock.unlock()
         }
         readSource = source
         source.resume()
@@ -294,12 +310,13 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
             return
         }
 
+        let hostHash = LogRedaction.hash(self.socks5Host)
         VPNLog.tunnel.info(
-            "event=vpn.socks5_udp_probe_begin host=\(self.socks5Host, privacy: .public) port=\(self.socks5Port) ipv6_enabled=\(self.ipv6Enabled)"
+            "event=vpn.socks5_udp_probe_begin host_hash=\(hostHash) host_len=\(self.socks5Host.count) port=\(self.socks5Port) ipv6_enabled=\(self.ipv6Enabled)"
         )
         eventLogHandler?(
             "socks5_udp_probe",
-            "outcome=begin host=\(self.socks5Host) port=\(self.socks5Port) ipv6_enabled=\(self.ipv6Enabled)"
+            "outcome=begin host_hash=\(hostHash) host_len=\(self.socks5Host.count) port=\(self.socks5Port) ipv6_enabled=\(self.ipv6Enabled)"
         )
 
         let host = NWEndpoint.Host(socks5Host)

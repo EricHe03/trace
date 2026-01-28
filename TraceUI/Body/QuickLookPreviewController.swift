@@ -90,4 +90,3 @@ private final class PreviewItem: NSObject, QLPreviewItem {
     var previewItemURL: URL? { previewURL }
     var previewItemTitle: String? { previewTitle }
 }
-
