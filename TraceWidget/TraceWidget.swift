@@ -173,7 +173,6 @@ extension View {
     }
 }
 
-
 /// Represents a timeline entry containing network capture data and configuration.
 struct TraceEntry: TimelineEntry {
     let date: Date

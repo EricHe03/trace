@@ -62,7 +62,7 @@ final class UDPFlowsViewModel: ObservableObject {
     @Published var flows: [UDPFlowMetadata] = []
     @Published var searchText = ""
     @Published var activeOnly = false
-    @Published var selectedProtocol: UDPFlowProtocol? = nil
+    @Published var selectedProtocol: UDPFlowProtocol?
     @Published var portFilter = ""
     @Published var sortOrder: SortOrder = .startTimeDescending
     @Published var lastError: String?

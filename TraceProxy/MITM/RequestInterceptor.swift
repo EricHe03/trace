@@ -896,6 +896,7 @@ public actor RequestInterceptor {
     }
 
     /// Applies a single action to a request.
+    // swiftlint:disable:next cyclomatic_complexity
     private func applyAction(_ action: RewriteAction, to request: inout NetworkRequest, target: ActionTarget) -> Bool {
         switch action.actionType {
         case .setHeader:

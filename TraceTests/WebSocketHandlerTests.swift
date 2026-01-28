@@ -517,9 +517,9 @@ final class WebSocketHandlerTests: XCTestCase {
             isMasked: true
         )
 
-        handler._test_process(frameData, direction: .sent)
+        handler.testProcess(frameData, direction: .sent)
 
-        let snapshot = handler._test_connectionSnapshot()
+        let snapshot = handler.testConnectionSnapshot()
         XCTAssertEqual(snapshot.messages.count, 1)
         XCTAssertEqual(snapshot.messages.first?.messageType, .text)
         XCTAssertEqual(snapshot.messages.first?.payload, payload)
@@ -546,10 +546,10 @@ final class WebSocketHandlerTests: XCTestCase {
             isMasked: true
         )
 
-        handler._test_process(frame1, direction: .received)
-        handler._test_process(frame2, direction: .received)
+        handler.testProcess(frame1, direction: .received)
+        handler.testProcess(frame2, direction: .received)
 
-        let snapshot = handler._test_connectionSnapshot()
+        let snapshot = handler.testConnectionSnapshot()
         XCTAssertEqual(snapshot.messages.count, 1)
         XCTAssertEqual(snapshot.messages.first?.messageType, .text)
         XCTAssertEqual(snapshot.messages.first?.payload, "Hello".data(using: .utf8))
@@ -573,16 +573,16 @@ final class WebSocketHandlerTests: XCTestCase {
             isMasked: false
         )
 
-        handler._test_process(frameData, direction: .received)
+        handler.testProcess(frameData, direction: .received)
 
-        let snapshot = handler._test_connectionSnapshot()
+        let snapshot = handler.testConnectionSnapshot()
         XCTAssertEqual(snapshot.status, .closing)
         XCTAssertEqual(snapshot.closeCode, 1000)
         XCTAssertEqual(snapshot.closeReason, "Bye")
 
         let expectation = expectation(description: "Close finalized")
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) {
-            let finalSnapshot = handler._test_connectionSnapshot()
+            let finalSnapshot = handler.testConnectionSnapshot()
             if finalSnapshot.status == .closed {
                 expectation.fulfill()
             }
@@ -603,7 +603,7 @@ final class WebSocketHandlerTests: XCTestCase {
             requestHeaders: [],
             responseHeaders: []
         )
-        let snapshot = handler._test_connectionSnapshot()
+        let snapshot = handler.testConnectionSnapshot()
         XCTAssertEqual(snapshot.url, "wss://example.com/socket")
     }
 #endif

@@ -56,10 +56,10 @@
 //
 
 import Foundation
+import LinkPresentation
 import os
 import TraceCore
 import TraceFeatures
-import LinkPresentation
 import UIKit
 
 enum ShareHelper {
@@ -672,7 +672,6 @@ enum ShareHelper {
 
         presenter.present(controller, animated: true)
     }
-
 }
 
 // MARK: - SwiftUI View Extension

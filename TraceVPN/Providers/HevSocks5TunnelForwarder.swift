@@ -286,6 +286,7 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         case ipv6 = 0x04
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     private func probeSocks5UDPAssociate(completion: @Sendable @escaping (Socks5UDPSupport) -> Void) {
         guard let port = NWEndpoint.Port(rawValue: socks5Port) else {
             eventLogHandler?("socks5_udp_probe", "outcome=failure reason=invalid_port")

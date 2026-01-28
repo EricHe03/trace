@@ -196,12 +196,12 @@ public class SSEHandler {
 
     #if DEBUG
     /// Test-only hook to feed SSE bytes without starting network reads.
-    func _test_parseSSEData(_ data: Data) {
+    func testParseSSEData(_ data: Data) {
         parseSSEData(data)
     }
 
     /// Test-only hook to inspect the current connection snapshot.
-    func _test_connectionSnapshot() -> SSEConnection {
+    func testConnectionSnapshot() -> SSEConnection {
         connection
     }
     #endif

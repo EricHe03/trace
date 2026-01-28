@@ -223,20 +223,35 @@ public extension NetworkRequest {
     /// Returns all tags applicable to the request.
     func getAllTags() -> [TagType] {
         var tags: [TagType] = []
+        appendProtocolTags(to: &tags)
+        appendRealtimeTags(to: &tags)
+        appendSecurityTags(to: &tags)
+        appendReliabilityTags(to: &tags)
+        appendPerformanceTags(to: &tags)
+        appendCachingTags(to: &tags)
+        appendSourceTags(to: &tags)
+        appendAnalysisTags(to: &tags)
 
+        return tags
+    }
+
+    private func appendProtocolTags(to tags: inout [TagType]) {
         // Protocol tags (only one is added).
         if isHTTP3 {
             tags.append(.h3)
         } else if isHTTP2 {
             tags.append(.h2)
         }
+    }
 
+    private func appendRealtimeTags(to tags: inout [TagType]) {
         if isWebSocket { tags.append(.ws) }
         if isSSE { tags.append(.sse) }
         if isGRPC { tags.append(.grpc) }
         if isGraphQL { tags.append(.graphql) }
+    }
 
-        // TLS/Security - these are critical tags
+    private func appendSecurityTags(to tags: inout [TagType]) {
         if isTLSPassthrough {
             if isPinningLikely {
                 tags.append(.pinned)
@@ -244,37 +259,40 @@ public extension NetworkRequest {
                 tags.append(.tlsPassthrough(reason: tlsPassthroughReason))
             }
         }
+    }
 
-        // Reliability
+    private func appendReliabilityTags(to tags: inout [TagType]) {
         if isFailed { tags.append(.failed) }
         if didTimeout { tags.append(.timeout) }
         if wasBlocked { tags.append(.blocked) }
         if wasCancelled { tags.append(.cancelled) }
         if retryAttempts > 0 { tags.append(.retry(count: retryAttempts)) }
+    }
 
-        // Performance
+    private func appendPerformanceTags(to tags: inout [TagType]) {
         if duration > 5.0 { tags.append(.slow(duration: duration)) }
         if wasThrottled { tags.append(.throttled(profile: throttlingProfile)) }
         if let stall = stallDuration, stall > 2.0 { tags.append(.stalled(duration: stall)) }
+    }
 
-        // Caching
+    private func appendCachingTags(to tags: inout [TagType]) {
         if isCached { tags.append(.cached(source: cacheSource)) }
         if isStale { tags.append(.stale) }
         if redirectCount > 0 { tags.append(.redirected(count: redirectCount)) }
         if wasRewritten { tags.append(.rewritten) }
+    }
 
-        // Source
+    private func appendSourceTags(to tags: inout [TagType]) {
         if isManual { tags.append(.manual) }
         if isReplayed { tags.append(.replayed) }
         if let scriptName = appliedScriptName { tags.append(.script(name: scriptName)) }
         if isMocked { tags.append(.mock) }
+    }
 
-        // Analysis
+    private func appendAnalysisTags(to tags: inout [TagType]) {
         if let size = responseSize, size > 10_000_000 { tags.append(.large(size: size)) }
         if isBinary { tags.append(.binary) }
         if hitBreakpoint { tags.append(.breakpoint) }
-
-        return tags
     }
 
     /// Returns the visible tags and overflow count for display.

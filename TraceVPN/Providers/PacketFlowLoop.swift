@@ -203,6 +203,7 @@ final class PacketFlowLoop {
         }
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     private func readOnce() {
         guard !isStopping else {
             isRunning = false
