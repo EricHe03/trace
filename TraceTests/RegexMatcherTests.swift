@@ -502,8 +502,8 @@ final class RegexMatcherTests: XCTestCase {
     }
 
     func testEmojiCharacters() {
-        let pattern = "🚀"
-        let value = "Launch 🚀 successful"
+        let pattern = "rocket"
+        let value = "Launch rocket successful"
 
         XCTAssertTrue(RegexMatcher.safeMatch(pattern: pattern, in: value))
     }

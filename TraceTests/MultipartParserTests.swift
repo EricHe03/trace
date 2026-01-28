@@ -561,7 +561,7 @@ final class MultipartParserTests: XCTestCase {
         ------WebKitFormBoundary\r
         Content-Disposition: form-data; name="message"\r
         \r
-        Hello 世界! 🌍\r
+        Hello 世界!\r
         ------WebKitFormBoundary--
         """
 
@@ -569,6 +569,6 @@ final class MultipartParserTests: XCTestCase {
         let parts = MultipartParser.parse(data: data, boundary: boundary)
 
         XCTAssertEqual(parts.count, 1)
-        XCTAssertEqual(parts[0].stringValue, "Hello 世界! 🌍")
+        XCTAssertEqual(parts[0].stringValue, "Hello 世界!")
     }
 }

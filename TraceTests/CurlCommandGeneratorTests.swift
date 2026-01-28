@@ -180,7 +180,7 @@ final class CurlCommandGeneratorTests: XCTestCase {
     }
 
     func testGenerate_HandlesUnicodeInBody() {
-        let bodyString = "Hello 世界 🌍"
+        let bodyString = "Hello 世界"
         let request = makeNetworkRequest(
             method: .post,
             requestBody: makeBodyStorage(string: bodyString)

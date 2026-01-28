@@ -94,7 +94,7 @@ struct NetworkView: View {
     }
 
     private func shareSheet(for request: NetworkRequest) -> some View {
-        ShareSheet(items: actions.shareItems(for: request))
+        ShareSheetContainer(items: actions.shareItems(for: request))
     }
 
     private struct RequestNavigationDestinationModifier: ViewModifier {

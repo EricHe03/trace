@@ -136,6 +136,7 @@ struct Provider: AppIntentTimelineProvider {
     }
 
     /// Provides recommendations for Smart Stack to determine when to show this widget.
+    @available(iOS 17.0, iOSApplicationExtension 17.0, *)
     func recommendations() -> [AppIntentRecommendation<ConfigurationAppIntent>] {
         let data = fetchWidgetData()
 
@@ -159,12 +160,48 @@ struct Provider: AppIntentTimelineProvider {
     }
 }
 
+// MARK: - Widget Background Helper
+
+extension View {
+    @ViewBuilder
+    func traceWidgetContainerBackground(@ViewBuilder _ content: () -> some View) -> some View {
+        if #available(iOS 17.0, iOSApplicationExtension 17.0, *) {
+            self.containerBackground(for: .widget, content: content)
+        } else {
+            self.background(content())
+        }
+    }
+}
+
 
 /// Represents a timeline entry containing network capture data and configuration.
 struct TraceEntry: TimelineEntry {
     let date: Date
     let configuration: ConfigurationAppIntent
     let data: WidgetData
+}
+
+// MARK: - Legacy Provider (iOS 16)
+
+private struct LegacyProvider: TimelineProvider {
+    private let defaultConfiguration = ConfigurationAppIntent()
+
+    func placeholder(in context: Context) -> TraceEntry {
+        TraceEntry(date: Date(), configuration: defaultConfiguration, data: .placeholder)
+    }
+
+    func getSnapshot(in context: Context, completion: @escaping (TraceEntry) -> Void) {
+        let entry = TraceEntry(date: Date(), configuration: defaultConfiguration, data: fetchWidgetData())
+        completion(entry)
+    }
+
+    func getTimeline(in context: Context, completion: @escaping (Timeline<TraceEntry>) -> Void) {
+        let currentDate = Date()
+        let data = fetchWidgetData()
+        let entry = TraceEntry(date: currentDate, configuration: defaultConfiguration, data: data)
+        let nextUpdate = nextUpdateDate(for: data, from: currentDate)
+        completion(Timeline(entries: [entry], policy: .after(nextUpdate)))
+    }
 }
 
 // MARK: - Widget Views
@@ -580,7 +617,7 @@ struct AccessoryCircularView: View {
                 .font(.system(size: 18, weight: .bold))
                 .widgetAccentable()
         }
-        .containerBackground(for: .widget) {
+        .traceWidgetContainerBackground {
             Color.clear
         }
         .accessibilityLabel("Network capture, \(data.requestCount) requests")
@@ -770,6 +807,7 @@ struct RequestRowDetailed: View {
 // MARK: - Widget Configuration
 
 /// Defines the main network monitor widget with multiple families and configurations.
+@available(iOS 17.0, iOSApplicationExtension 17.0, *)
 struct TraceWidget: Widget {
     let kind: String = "TraceWidget"
 
@@ -778,6 +816,32 @@ struct TraceWidget: Widget {
             kind: kind,
             intent: ConfigurationAppIntent.self,
             provider: Provider()
+        ) { entry in
+            TraceWidgetEntryView(entry: entry)
+                .traceWidgetContainerBackgroundIfAvailable()
+        }
+        .configurationDisplayName("Network Monitor")
+        .description("View captured network requests and monitor traffic activity.")
+        .supportedFamilies([
+            .systemSmall,
+            .systemMedium,
+            .systemLarge,
+            .systemExtraLarge,
+            .accessoryCircular,
+            .accessoryRectangular,
+            .accessoryInline
+        ])
+    }
+}
+
+/// Legacy widget configuration for iOS 16.
+struct LegacyTraceWidget: Widget {
+    let kind: String = "TraceWidget"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(
+            kind: kind,
+            provider: LegacyProvider()
         ) { entry in
             TraceWidgetEntryView(entry: entry)
                 .traceWidgetContainerBackgroundIfAvailable()

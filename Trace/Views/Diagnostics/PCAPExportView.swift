@@ -14,8 +14,7 @@ import TraceUI
 struct PCAPExportView: View {
     @State private var pcapFiles: [PCAPFileInfo] = []
     @State private var isLoading = true
-    @State private var showingShareSheet = false
-    @State private var selectedFile: PCAPFileInfo?
+    @State private var shareSheetItem: ShareSheetItem?
     @State private var showingDeleteAlert = false
     @State private var fileToDelete: PCAPFileInfo?
     @State private var toastMessage: String?
@@ -23,10 +22,6 @@ struct PCAPExportView: View {
     @State private var captureLimitBytes = 10_485_760
     @State private var captureSaveTask: Task<Void, Never>?
     @State private var blockQUICEnabled = true
-    @State private var shareItems: [URL] = []
-    @State private var showingAllFilesShare = false
-    @State private var showingVPNLogShare = false
-    @State private var vpnLogURL: URL?
     @ObservedObject private var vpnManager = VPNManager.shared
 
     private let vpnLogFileName = "vpn_events.ndjson"
@@ -126,8 +121,7 @@ struct PCAPExportView: View {
                         PCAPFileRow(file: file)
                             .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                 Button {
-                                    selectedFile = file
-                                    showingShareSheet = true
+                                    shareSheetItem = ShareSheetItem([file.url])
                                 } label: {
                                     Label("Share", systemImage: "square.and.arrow.up")
                                 }
@@ -142,8 +136,7 @@ struct PCAPExportView: View {
                             }
                             .contextMenu {
                                 Button {
-                                    selectedFile = file
-                                    showingShareSheet = true
+                                    shareSheetItem = ShareSheetItem([file.url])
                                 } label: {
                                     Label("Share", systemImage: "square.and.arrow.up")
                                 }
@@ -194,18 +187,8 @@ struct PCAPExportView: View {
         .refreshable {
             loadFiles()
         }
-        .sheet(isPresented: $showingShareSheet) {
-            if let file = selectedFile {
-                ShareSheet(items: [file.url])
-            }
-        }
-        .sheet(isPresented: $showingAllFilesShare) {
-            ShareSheet(items: shareItems)
-        }
-        .sheet(isPresented: $showingVPNLogShare) {
-            if let url = vpnLogURL {
-                ShareSheet(items: [url])
-            }
+        .sheet(item: $shareSheetItem) { item in
+            ShareSheetContainer(items: item.items)
         }
         .alert("Delete Packet Capture", isPresented: $showingDeleteAlert) {
             Button("Cancel", role: .cancel) {}
@@ -359,8 +342,6 @@ struct PCAPExportView: View {
     }
 
     private func shareAllFiles() {
-        selectedFile = nil
-
         // Create a temporary directory with all PCAP files
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("PCAPExport-\(Date().timeIntervalSince1970)")
@@ -375,9 +356,8 @@ struct PCAPExportView: View {
                 copiedURLs.append(destURL)
             }
 
-            // ✅ Use SwiftUI sheet with ShareSheet wrapper (proper iPad popover support)
-            shareItems = copiedURLs
-            showingAllFilesShare = true
+            // Use SwiftUI sheet with ShareSheet wrapper (proper iPad popover support).
+            shareSheetItem = ShareSheetItem(copiedURLs.map { $0 as Any })
         } catch {
             toastMessage = "Failed to export files: \(error.localizedDescription)"
         }
@@ -392,8 +372,7 @@ struct PCAPExportView: View {
             toastMessage = "VPN log file not found."
             return
         }
-        vpnLogURL = url
-        showingVPNLogShare = true
+        shareSheetItem = ShareSheetItem([url])
     }
 
     private func deleteFile(_ file: PCAPFileInfo) {
