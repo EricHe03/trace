@@ -747,8 +747,7 @@ public class ProxyConnection: @unchecked Sendable {
     // MARK: - Client Communication
 
     private func readFromClient() {
-        clientConnection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
-            [weak self] data, _, isComplete, error in
+        clientConnection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
             guard let self else { return }
 
             if let error {
@@ -1773,8 +1772,7 @@ public class ProxyConnection: @unchecked Sendable {
     }
 
     private func readFromServer() {
-        serverConnection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
-            [weak self] data, _, isComplete, error in
+        serverConnection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
             guard let self else { return }
 
             if let error {
@@ -2599,8 +2597,7 @@ public class ProxyConnection: @unchecked Sendable {
     }
 
     private func readWebSocketUpgradeResponse() {
-        serverConnection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
-            [weak self] data, _, _, error in
+        serverConnection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, _, error in
             guard let self else { return }
 
             if let error {

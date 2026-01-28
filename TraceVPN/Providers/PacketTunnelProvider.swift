@@ -6,7 +6,6 @@
 //
 
 import Darwin
-import Darwin.Mach
 import Foundation
 import Network
 import NetworkExtension
