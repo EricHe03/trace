@@ -133,6 +133,22 @@ final class CertificateManagerTests: XCTestCase {
         }
     }
 
+    func testDomainKeychainIdentifiersAreCanonicalAndStable() {
+        let ids1 = CertificateManager.keychainIdentifiers(forDomain: "Example.COM.")
+        let ids2 = CertificateManager.keychainIdentifiers(forDomain: "example.com")
+
+        XCTAssertEqual(ids1.keyApplicationTag, ids2.keyApplicationTag)
+        XCTAssertEqual(ids1.certificateLabel, ids2.certificateLabel)
+        XCTAssertTrue(ids1.certificateLabel.hasPrefix("Trace - "))
+    }
+
+    func testDomainKeychainIdentifiersLabelIsBoundedForLongDomains() {
+        let veryLongDomain = String(repeating: "a", count: 400) + ".example.com"
+        let ids = CertificateManager.keychainIdentifiers(forDomain: veryLongDomain)
+        XCTAssertLessThan(ids.certificateLabel.count, 200)
+        XCTAssertTrue(ids.certificateLabel.hasPrefix("Trace - "))
+    }
+
     // MARK: - Certificate Extension Tests
 
     func testSecCertificateCommonName() throws {

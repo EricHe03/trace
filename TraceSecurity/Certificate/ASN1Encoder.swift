@@ -156,11 +156,10 @@ public class ASN1Encoder {
 
     /// Encodes a UTCTime value.
     public static func encodeUTCTime(_ date: Date) -> Data {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyMMddHHmmss'Z'"
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        let timeString = formatter.string(from: date)
+        // DateFormatter is not thread-safe; keep a shared instance behind a lock to avoid per-call allocations.
+        utcTimeFormatterLock.lock()
+        let timeString = utcTimeFormatter.string(from: date)
+        utcTimeFormatterLock.unlock()
 
         guard let data = timeString.data(using: .ascii) else { return Data() }
         return encodeTagLength(Tag.utcTime.rawValue, data)
@@ -613,25 +612,9 @@ public class X509CertificateBuilder {
             ])
         }
 
+        // Rule: Use an exact DNSName SAN matching the requested host; do not widen scope with wildcards.
         let dnsName = ASN1Encoder.encodeContextSpecific(2, subjectData, constructed: false)
-
-        // Rationale: Add a wildcard SAN when the subject is not already a wildcard.
-        var names = [dnsName]
-        if !subject.hasPrefix("*.") {
-            let wildcardSubject = "*.\(subject)"
-            let encodedWildcard: String = if wildcardSubject.allSatisfy(\.isASCII) {
-                wildcardSubject
-            } else {
-                Punycode.encodeDomain(wildcardSubject)
-            }
-
-            if let wildcardData = encodedWildcard.data(using: .ascii) {
-                let wildcardName = ASN1Encoder.encodeContextSpecific(2, wildcardData, constructed: false)
-                names.append(wildcardName)
-            }
-        }
-
-        let san = ASN1Encoder.encodeSequence(names)
+        let san = ASN1Encoder.encodeSequence([dnsName])
 
         return ASN1Encoder.encodeSequence([
             ASN1Encoder.encodeObjectIdentifier(OID.subjectAltName),
@@ -714,4 +697,17 @@ public class X509CertificateBuilder {
 
         return signature
     }
+}
+
+// MARK: - Shared Formatters
+
+extension ASN1Encoder {
+    private static let utcTimeFormatterLock = NSLock()
+    private static let utcTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyMMddHHmmss'Z'"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
 }

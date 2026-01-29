@@ -34,6 +34,54 @@ public class CertificateManager {
     /// Posts when the Root CA fingerprint changes.
     public static let rootCAMismatchNotification = Notification.Name("TraceRootCAMismatchNotification")
 
+    // MARK: - Keychain identifiers (per-domain leafs)
+
+    internal struct DomainKeychainIdentifiers: Sendable {
+        let keyApplicationTag: Data
+        let certificateLabel: String
+        let legacyKeyApplicationTag: Data
+        let legacyCertificateLabel: String
+    }
+
+    private static let domainKeyTagPrefix = "com.trace.domain."
+    private static let domainCertLabelPrefix = "Trace - "
+
+    private static func canonicalDomainKey(_ domain: String) -> String {
+        var value = domain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        while value.hasSuffix(".") {
+            value.removeLast()
+        }
+        return value
+    }
+
+    private static func sha256Hex(_ string: String) -> String {
+        let digest = SHA256.hash(data: Data(string.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    internal static func keychainIdentifiers(forDomain domain: String) -> DomainKeychainIdentifiers {
+        let canonical = canonicalDomainKey(domain)
+        let hash = sha256Hex(canonical)
+        let idPrefix = String(hash.prefix(16))
+
+        let display: String = {
+            guard !canonical.isEmpty else { return "<empty>" }
+            if canonical.count <= 120 { return canonical }
+            let head = canonical.prefix(72)
+            let tail = canonical.suffix(24)
+            return "\(head)…\(tail)"
+        }()
+
+        let label = "\(domainCertLabelPrefix)\(display) (\(idPrefix))"
+
+        return DomainKeychainIdentifiers(
+            keyApplicationTag: Data("\(domainKeyTagPrefix)\(hash)".utf8),
+            certificateLabel: label,
+            legacyKeyApplicationTag: Data("\(domainKeyTagPrefix)\(domain)".utf8),
+            legacyCertificateLabel: "\(domainCertLabelPrefix)\(domain)"
+        )
+    }
+
     /// Provides the shared keychain access group used by the app and VPN extension.
     public static let keychainAccessGroup: String? = {
         // Rationale: App and VPN extension must share keychain items to avoid divergent Root CAs.
@@ -286,9 +334,20 @@ public class CertificateManager {
     public func generateCertificateForDomain(_ domain: String) throws -> (certificate: SecCertificate, privateKey: SecKey) {
         SecurityLog.certificate.debug("event=cert.generate_domain outcome=pending domain=\(domain, privacy: .private(mask: .hash))")
 
-        if let cached = try? loadCertificateForDomain(domain) {
+        do {
+            let cached = try loadCertificateForDomain(domain)
             SecurityLog.certificate.debug("event=cert.cache_hit outcome=success domain=\(domain, privacy: .private(mask: .hash))")
             return cached
+        } catch let error as CertificateError {
+            switch error {
+            case .certificateNotFound, .privateKeyNotFound:
+                // Rationale: Partial keychain state can happen after crashes or failed writes; clean up to avoid permanent errSecDuplicateItem failures.
+                try? deleteKeychainMaterialForDomain(domain)
+            default:
+                throw error
+            }
+        } catch {
+            throw error
         }
         SecurityLog.certificate.debug("event=cert.cache_miss outcome=pending domain=\(domain, privacy: .private(mask: .hash))")
 
@@ -297,13 +356,14 @@ public class CertificateManager {
         SecurityLog.certificate.debug("event=cert.get_root_ca outcome=success")
 
         let accessGroup = try requireKeychainAccessGroup()
+        let identifiers = Self.keychainIdentifiers(forDomain: domain)
         var keyAttributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
             kSecAttrKeySizeInBits as String: 2048,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
-                kSecAttrApplicationTag as String: Data("com.trace.domain.\(domain)".utf8),
-                kSecAttrLabel as String: "Trace - \(domain)",
+                kSecAttrApplicationTag as String: identifiers.keyApplicationTag,
+                kSecAttrLabel as String: identifiers.certificateLabel,
                 kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             ]
         ]
@@ -335,53 +395,123 @@ public class CertificateManager {
         SecurityLog.certificate.debug("event=cert.sign outcome=success domain=\(domain, privacy: .private(mask: .hash))")
 
         SecurityLog.keychain.debug("event=keychain.store_cert outcome=pending domain=\(domain, privacy: .private(mask: .hash))")
-        try storeCertificateInKeychain(certificate, label: "Trace - \(domain)")
+        try storeCertificateInKeychain(certificate, label: identifiers.certificateLabel)
         SecurityLog.keychain.debug("event=keychain.store_cert outcome=success domain=\(domain, privacy: .private(mask: .hash))")
 
         return (certificate, privateKey)
     }
 
+    /// Deletes per-domain certificate/key material for a single domain (both current and legacy keychain identifiers).
+    private func deleteKeychainMaterialForDomain(_ domain: String) throws {
+        let accessGroup = try requireKeychainAccessGroup()
+        let identifiers = Self.keychainIdentifiers(forDomain: domain)
+
+        let variants: [(label: String, tag: Data)] = [
+            (identifiers.certificateLabel, identifiers.keyApplicationTag),
+            (identifiers.legacyCertificateLabel, identifiers.legacyKeyApplicationTag)
+        ]
+
+        for variant in variants {
+            var keyDelete: [String: Any] = [
+                kSecClass as String: kSecClassKey,
+                kSecAttrApplicationTag as String: variant.tag,
+                kSecAttrAccessGroup as String: accessGroup
+            ]
+            SecItemDelete(keyDelete as CFDictionary)
+
+            var certDelete: [String: Any] = [
+                kSecClass as String: kSecClassCertificate,
+                kSecAttrLabel as String: variant.label,
+                kSecAttrAccessGroup as String: accessGroup
+            ]
+            SecItemDelete(certDelete as CFDictionary)
+
+            var identityDelete: [String: Any] = [
+                kSecClass as String: kSecClassIdentity,
+                kSecAttrLabel as String: variant.label,
+                kSecAttrAccessGroup as String: accessGroup
+            ]
+            SecItemDelete(identityDelete as CFDictionary)
+        }
+    }
+
     /// Loads a cached certificate for a domain.
     private func loadCertificateForDomain(_ domain: String) throws -> (certificate: SecCertificate, privateKey: SecKey) {
         let accessGroup = try requireKeychainAccessGroup()
-        var certQuery: [String: Any] = [
-            kSecClass as String: kSecClassCertificate,
-            kSecAttrLabel as String: "Trace - \(domain)",
-            kSecAttrAccessGroup as String: accessGroup,
-            kSecReturnRef as String: true
+        let identifiers = Self.keychainIdentifiers(forDomain: domain)
+
+        func loadCertificate(label: String) -> (certificate: SecCertificate?, status: OSStatus) {
+            let certQuery: [String: Any] = [
+                kSecClass as String: kSecClassCertificate,
+                kSecAttrLabel as String: label,
+                kSecAttrAccessGroup as String: accessGroup,
+                kSecReturnRef as String: true
+            ]
+
+            var certificate: SecCertificate?
+            let certStatus = withUnsafeMutablePointer(to: &certificate) { pointer in
+                pointer.withMemoryRebound(to: CFTypeRef?.self, capacity: 1) {
+                    SecItemCopyMatching(certQuery as CFDictionary, $0)
+                }
+            }
+
+            guard certStatus == errSecSuccess else { return (nil, certStatus) }
+            return (certificate, certStatus)
+        }
+
+        func loadKey(tag: Data) -> (key: SecKey?, status: OSStatus) {
+            let keyQuery: [String: Any] = [
+                kSecClass as String: kSecClassKey,
+                kSecAttrApplicationTag as String: tag,
+                kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+                kSecAttrAccessGroup as String: accessGroup,
+                kSecReturnRef as String: true
+            ]
+
+            var privateKey: SecKey?
+            let keyStatus = withUnsafeMutablePointer(to: &privateKey) { pointer in
+                pointer.withMemoryRebound(to: CFTypeRef?.self, capacity: 1) {
+                    SecItemCopyMatching(keyQuery as CFDictionary, $0)
+                }
+            }
+
+            guard keyStatus == errSecSuccess else { return (nil, keyStatus) }
+            return (privateKey, keyStatus)
+        }
+
+        let variants: [(label: String, tag: Data)] = [
+            (identifiers.certificateLabel, identifiers.keyApplicationTag),
+            (identifiers.legacyCertificateLabel, identifiers.legacyKeyApplicationTag)
         ]
 
-        var certificate: SecCertificate?
-        let certStatus = withUnsafeMutablePointer(to: &certificate) { pointer in
-            pointer.withMemoryRebound(to: CFTypeRef?.self, capacity: 1) {
-                SecItemCopyMatching(certQuery as CFDictionary, $0)
+        for variant in variants {
+            let cert = loadCertificate(label: variant.label)
+            let key = loadKey(tag: variant.tag)
+
+            if cert.status == errSecItemNotFound, key.status == errSecItemNotFound {
+                continue
             }
-        }
 
-        guard certStatus == errSecSuccess, let certificate else {
-            throw CertificateError.certificateNotFound
-        }
-
-        var keyQuery: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: Data("com.trace.domain.\(domain)".utf8),
-            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
-            kSecAttrAccessGroup as String: accessGroup,
-            kSecReturnRef as String: true
-        ]
-
-        var privateKey: SecKey?
-        let keyStatus = withUnsafeMutablePointer(to: &privateKey) { pointer in
-            pointer.withMemoryRebound(to: CFTypeRef?.self, capacity: 1) {
-                SecItemCopyMatching(keyQuery as CFDictionary, $0)
+            if cert.status == errSecSuccess, let certificate = cert.certificate,
+               key.status == errSecSuccess, let privateKey = key.key {
+                return (certificate, privateKey)
             }
-        }
 
-        guard keyStatus == errSecSuccess, let privateKey else {
+            if cert.status != errSecSuccess, cert.status != errSecItemNotFound {
+                throw CertificateError.keychainStorageFailed(cert.status)
+            }
+            if key.status != errSecSuccess, key.status != errSecItemNotFound {
+                throw CertificateError.keychainStorageFailed(key.status)
+            }
+
+            // Rule: Treat partial presence as an error so callers can clean up and regenerate.
+            if cert.status == errSecItemNotFound {
+                throw CertificateError.certificateNotFound
+            }
             throw CertificateError.privateKeyNotFound
         }
 
-        return (certificate, privateKey)
+        throw CertificateError.certificateNotFound
     }
 
     // MARK: - Certificate Creation Helpers
