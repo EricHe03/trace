@@ -1201,28 +1201,8 @@ public class TLSProxyConnection: @unchecked Sendable {
                 // We have the full ClientHello handshake message (might include extra bytes after it).
                 let hello = Data(handshakeBytes.prefix(expectedHandshakeTotal))
 
-                // Build a synthetic TLS record containing the full ClientHello so `TLSHandler.extractALPN`
-                // can parse it using its existing record-based offsets.
-                let recordPayloadLen = hello.count
-                if recordPayloadLen > 0xFFFF {
-                    // We cap at maxBytes (32KB default), so this should never happen, but be defensive.
-                    if logThrottle.shouldLog(key: "tls.client_hello_buffer.payload_len_overflow", minInterval: 10) {
-                        SecurityLog.tls.warning(
-                            "event=tls.client_hello_buffer outcome=failure reason=payload_len_overflow bytes=\(recordPayloadLen)"
-                        )
-                    }
-                    return (true, nil)
-                }
-
-                var synthetic = Data(capacity: 5 + recordPayloadLen)
-                synthetic.append(0x16)
-                synthetic.append(tlsVersionMajor)
-                synthetic.append(tlsVersionMinor)
-                synthetic.append(UInt8((recordPayloadLen >> 8) & 0xFF))
-                synthetic.append(UInt8(recordPayloadLen & 0xFF))
-                synthetic.append(hello)
-
-                let offered = TLSHandler.extractALPN(from: synthetic)
+                // TLSHandler can parse a raw ClientHello handshake message directly.
+                let offered = TLSHandler.extractALPN(from: hello)
                 return (true, offered)
             }
 

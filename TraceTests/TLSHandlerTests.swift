@@ -126,11 +126,33 @@ final class TLSHandlerTests: XCTestCase {
     }
 
     func testExtractSNIFromInvalidHandshakeType() {
-        var invalidData = Data(repeating: 0x00, count: 100)
-        invalidData[0] = 0x16 // Record type: handshake
-        invalidData[5] = 0x02 // Handshake type: ServerHello (not ClientHello)
+        // A single TLS handshake record containing a non-ClientHello handshake header.
+        // Record length is 4 bytes (handshake header only).
+        let invalidData = Data([
+            0x16, 0x03, 0x03, 0x00, 0x04, // TLS record header (handshake, TLS1.2, len=4)
+            0x02, 0x00, 0x00, 0x00 // Handshake header: ServerHello, len=0
+        ])
 
         XCTAssertNil(TLSHandler.extractSNI(from: invalidData))
+    }
+
+    func testExtractSNIFromClientHelloSplitAcrossTLSRecords() {
+        let sniHostname = "example.com"
+        let record = makeClientHelloRecord(sniHostname: sniHostname, alpnProtocols: nil)
+        let split = splitClientHelloHandshakeAcrossTwoRecords(record: record, firstPayloadBytes: 12)
+
+        XCTAssertEqual(TLSHandler.extractSNI(from: split), sniHostname)
+    }
+
+    func testExtractSNIRequiresCompleteRecords() {
+        let sniHostname = "example.com"
+        let record = makeClientHelloRecord(sniHostname: sniHostname, alpnProtocols: nil)
+        let split = splitClientHelloHandshakeAcrossTwoRecords(record: record, firstPayloadBytes: 12)
+
+        // Simulate a partial read that ends mid-record.
+        let partial = Data(split.prefix(10))
+        XCTAssertNil(TLSHandler.extractSNI(from: partial))
+        XCTAssertEqual(TLSHandler.extractSNI(from: split), sniHostname)
     }
 
     func testExtractSNIFromClientHelloWithoutSNI() {
@@ -279,6 +301,14 @@ final class TLSHandlerTests: XCTestCase {
         clientHello.append(contentsOf: [0x00, 0x00]) // No extensions
 
         XCTAssertNil(TLSHandler.extractALPN(from: clientHello))
+    }
+
+    func testExtractALPNFromClientHelloSplitAcrossTLSRecords() {
+        let protocols = ["h2", "http/1.1"]
+        let record = makeClientHelloRecord(sniHostname: "example.com", alpnProtocols: protocols)
+        let split = splitClientHelloHandshakeAcrossTwoRecords(record: record, firstPayloadBytes: 15)
+
+        XCTAssertEqual(TLSHandler.extractALPN(from: split), protocols)
     }
 
     // MARK: - Certificate Caching Tests
@@ -492,5 +522,130 @@ final class TLSHandlerTests: XCTestCase {
 
         XCTAssertEqual(extractedSNI, sniHostname)
         XCTAssertEqual(extractedALPN, alpnProtocols)
+    }
+
+    // MARK: - Test Helpers
+
+    private func makeClientHelloRecord(sniHostname: String?, alpnProtocols: [String]?) -> Data {
+        var extensions = Data()
+
+        if let sniHostname {
+            let sniData = sniHostname.data(using: .ascii)!
+            var sniExtension = Data()
+            sniExtension.append(contentsOf: [0x00, 0x00]) // Extension type: SNI
+
+            var sniExtensionContent = Data()
+            let nameListLength = UInt16(sniData.count + 3)
+            sniExtensionContent.append(UInt8(nameListLength >> 8))
+            sniExtensionContent.append(UInt8(nameListLength & 0xFF))
+            sniExtensionContent.append(0x00) // Name type: hostname
+            let nameLength = UInt16(sniData.count)
+            sniExtensionContent.append(UInt8(nameLength >> 8))
+            sniExtensionContent.append(UInt8(nameLength & 0xFF))
+            sniExtensionContent.append(sniData)
+
+            let extensionLength = UInt16(sniExtensionContent.count)
+            sniExtension.append(UInt8(extensionLength >> 8))
+            sniExtension.append(UInt8(extensionLength & 0xFF))
+            sniExtension.append(sniExtensionContent)
+            extensions.append(sniExtension)
+        }
+
+        if let alpnProtocols {
+            var alpnExtension = Data()
+            alpnExtension.append(contentsOf: [0x00, 0x10]) // Extension type: ALPN
+
+            var protocolList = Data()
+            for proto in alpnProtocols {
+                let protoData = proto.data(using: .ascii)!
+                protocolList.append(UInt8(protoData.count))
+                protocolList.append(protoData)
+            }
+
+            var alpnContent = Data()
+            let listLength = UInt16(protocolList.count)
+            alpnContent.append(UInt8(listLength >> 8))
+            alpnContent.append(UInt8(listLength & 0xFF))
+            alpnContent.append(protocolList)
+
+            let extLength = UInt16(alpnContent.count)
+            alpnExtension.append(UInt8(extLength >> 8))
+            alpnExtension.append(UInt8(extLength & 0xFF))
+            alpnExtension.append(alpnContent)
+            extensions.append(alpnExtension)
+        }
+
+        var clientHello = Data()
+
+        // Record header
+        clientHello.append(0x16) // Handshake
+        clientHello.append(contentsOf: [0x03, 0x03]) // TLS 1.2
+        let recordLengthOffset = clientHello.count
+        clientHello.append(contentsOf: [0x00, 0x00]) // placeholder
+
+        // Handshake header
+        clientHello.append(0x01) // ClientHello
+        let handshakeLengthOffset = clientHello.count
+        clientHello.append(contentsOf: [0x00, 0x00, 0x00]) // placeholder
+
+        // Client version + random
+        clientHello.append(contentsOf: [0x03, 0x03])
+        clientHello.append(Data(repeating: 0x00, count: 32))
+
+        // Session ID
+        clientHello.append(0x00)
+
+        // Cipher suites
+        clientHello.append(contentsOf: [0x00, 0x02, 0xC0, 0x2F])
+
+        // Compression methods
+        clientHello.append(contentsOf: [0x01, 0x00])
+
+        // Extensions length + extensions
+        let extensionsLength = UInt16(extensions.count)
+        clientHello.append(UInt8(extensionsLength >> 8))
+        clientHello.append(UInt8(extensionsLength & 0xFF))
+        clientHello.append(extensions)
+
+        // Fill lengths
+        let handshakePayloadLength = clientHello.count - handshakeLengthOffset - 3
+        clientHello[handshakeLengthOffset] = UInt8((handshakePayloadLength >> 16) & 0xFF)
+        clientHello[handshakeLengthOffset + 1] = UInt8((handshakePayloadLength >> 8) & 0xFF)
+        clientHello[handshakeLengthOffset + 2] = UInt8(handshakePayloadLength & 0xFF)
+
+        let recordPayloadLength = clientHello.count - recordLengthOffset - 2
+        clientHello[recordLengthOffset] = UInt8((recordPayloadLength >> 8) & 0xFF)
+        clientHello[recordLengthOffset + 1] = UInt8(recordPayloadLength & 0xFF)
+
+        return clientHello
+    }
+
+    private func splitClientHelloHandshakeAcrossTwoRecords(record: Data, firstPayloadBytes: Int) -> Data {
+        precondition(record.count >= 5)
+        precondition(record[0] == 0x16)
+
+        let versionMajor = record[1]
+        let versionMinor = record[2]
+
+        let payload = record.dropFirst(5)
+        let splitIndex = min(max(0, firstPayloadBytes), payload.count)
+        let first = payload.prefix(splitIndex)
+        let second = payload.dropFirst(splitIndex)
+
+        func makeRecord(payload: Data.SubSequence) -> Data {
+            var out = Data(capacity: 5 + payload.count)
+            out.append(0x16)
+            out.append(versionMajor)
+            out.append(versionMinor)
+            out.append(UInt8((payload.count >> 8) & 0xFF))
+            out.append(UInt8(payload.count & 0xFF))
+            out.append(contentsOf: payload)
+            return out
+        }
+
+        var combined = Data()
+        combined.append(makeRecord(payload: first))
+        combined.append(makeRecord(payload: second))
+        return combined
     }
 }
