@@ -141,6 +141,38 @@ protocol PacketForwardingEngine: AnyObject {
 }
 
 final class PacketFlowLoop {
+    enum UDPForwardDecision: Equatable {
+        case dropQUIC
+        case forwardDirect
+        case forwardTunnel
+    }
+
+    static func decideUDPForwarding(
+        udpForwarderAvailable: Bool,
+        mode: UDPForwardingMode,
+        sourcePort: UInt16,
+        destinationPort: UInt16,
+        blockQUICEnabled: Bool
+    ) -> (decision: UDPForwardDecision, isQUIC: Bool) {
+        let isQUIC = destinationPort == 443 || sourcePort == 443
+        if blockQUICEnabled, isQUIC {
+            return (.dropQUIC, true)
+        }
+
+        if udpForwarderAvailable {
+            switch mode {
+            case .direct:
+                return (.forwardDirect, isQUIC)
+            case .split:
+                return (isQUIC ? .forwardTunnel : .forwardDirect, isQUIC)
+            case .hevOnly:
+                return (.forwardTunnel, isQUIC)
+            }
+        }
+
+        return (.forwardTunnel, isQUIC)
+    }
+
     private let packetFlow: NEPacketTunnelFlow
     private let capturePipeline: PacketCapturePipeline
     private weak var forwarder: PacketForwardingEngine?
@@ -238,8 +270,15 @@ final class PacketFlowLoop {
                     for (index, packet) in packets.enumerated() {
                         if let ipPacket = IPPacketParser.parse(packet), ipPacket.transport == .udp,
                            let udpPacket = UDPParser.parse(ipPacket.payload) {
-                            let isQUIC = udpPacket.destinationPort == 443 || udpPacket.sourcePort == 443
-                            if self.blockQUICEnabled, isQUIC {
+                            let decision = Self.decideUDPForwarding(
+                                udpForwarderAvailable: true,
+                                mode: self.udpForwardingMode,
+                                sourcePort: udpPacket.sourcePort,
+                                destinationPort: udpPacket.destinationPort,
+                                blockQUICEnabled: self.blockQUICEnabled
+                            )
+
+                            if decision.decision == .dropQUIC {
                                 if self.logSampler.shouldLog(event: "vpn.packet_forward", key: "quic_blocked", first: 3, every: 200) {
                                     VPNLog.tunnel.info("event=vpn.packet_forward outcome=skipped reason=quic_blocked")
                                 }
@@ -247,20 +286,20 @@ final class PacketFlowLoop {
                                 continue
                             }
 
-                            switch self.udpForwardingMode {
-                            case .direct:
+                            switch decision.decision {
+                            case .forwardDirect:
                                 udpForwarder.enqueue(packet: packet, ipPacket: ipPacket)
-                            case .split where isQUIC:
+                            case .forwardTunnel:
                                 forwardPackets.append(packet)
                                 if protocols.indices.contains(index) {
                                     forwardProtocols.append(protocols[index])
                                 }
                                 self.udpForwardedPackets &+= 1
-                                if isQUIC {
+                                if decision.isQUIC {
                                     self.udpForwardedPackets443 &+= 1
                                 }
-                            case .split, .hevOnly:
-                                udpForwarder.enqueue(packet: packet, ipPacket: ipPacket)
+                            case .dropQUIC:
+                                break
                             }
                         } else {
                             forwardPackets.append(packet)
@@ -282,8 +321,14 @@ final class PacketFlowLoop {
                     for (index, packet) in packets.enumerated() {
                         if let ipPacket = IPPacketParser.parse(packet), ipPacket.transport == .udp,
                            let udpPacket = UDPParser.parse(ipPacket.payload) {
-                            let isQUIC = udpPacket.destinationPort == 443 || udpPacket.sourcePort == 443
-                            if self.blockQUICEnabled, isQUIC {
+                            let decision = Self.decideUDPForwarding(
+                                udpForwarderAvailable: false,
+                                mode: self.udpForwardingMode,
+                                sourcePort: udpPacket.sourcePort,
+                                destinationPort: udpPacket.destinationPort,
+                                blockQUICEnabled: self.blockQUICEnabled
+                            )
+                            if decision.decision == .dropQUIC {
                                 if self.logSampler.shouldLog(event: "vpn.packet_forward", key: "quic_blocked", first: 3, every: 200) {
                                     VPNLog.tunnel.info("event=vpn.packet_forward outcome=skipped reason=quic_blocked")
                                 }
@@ -291,7 +336,7 @@ final class PacketFlowLoop {
                                 continue
                             }
                             self.udpForwardedPackets &+= 1
-                            if isQUIC {
+                            if decision.isQUIC {
                                 self.udpForwardedPackets443 &+= 1
                             }
                         }

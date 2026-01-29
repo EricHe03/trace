@@ -1,0 +1,22 @@
+name: Format Check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+
+jobs:
+  swiftformat:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install SwiftFormat
+        run: brew install swiftformat
+
+      - name: Run SwiftFormat Check
+        run: swiftformat --lint . --reporter github-actions-log

@@ -763,6 +763,7 @@ public class TLSHandler {
         let identity = unsafeBitCast(matchRef, to: SecIdentity.self)
         return sec_identity_create(identity)
     }
+
     // swiftlint:enable cyclomatic_complexity
 
     private static func deleteKeychainIdentity(for domain: String) {

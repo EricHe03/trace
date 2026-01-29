@@ -97,17 +97,21 @@ struct AppMessage {
 ///
 /// Thread safety:
 /// - This class is `@unchecked Sendable` to satisfy Swift concurrency checks.
-/// - Uses `actor` types (`StartCompletionGate`, `PacketTunnelRuntimeState`) for safe concurrency.
+/// - Uses `actor` types (`TunnelLifecycle`, `PacketTunnelRuntimeState`) for safe concurrency.
 /// - Background tasks (`certificateCleanupTask`, etc.) are isolated to avoid races.
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let extensionStartTime = Date()
 
-    /// Prevents duplicate `startTunnel` completion handler calls.
-    private let startGate = StartCompletionGate()
+    /// Serializes tunnel lifecycle across concurrent NE callbacks.
+    private let lifecycle = TunnelLifecycle()
 
     /// Encapsulates mutable runtime state (proxy server, raw capture, throttling).
     private let runtimeState = PacketTunnelRuntimeState()
     private let completionQueue = DispatchQueue(label: "com.trace.vpn.completion")
+    private let eventLogQueue = DispatchQueue(label: "com.trace.vpn.eventlog")
+    private let addressResolutionQueue = DispatchQueue(label: "com.trace.vpn.address_resolution", qos: .utility)
+    private let addressResolutionLock = NSLock()
+    private var addressResolutionCache: [String: (ipv4: [String], ipv6: [String])] = [:]
 
     /// NDJSON event log writer (shared App Group file).
     ///
@@ -179,8 +183,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let startWall = Date()
 
         // Rule: Call the completion handler exactly once per invocation.
-        // Note: We intentionally do not "dedupe" across invocations. Each `startTunnel` call
-        // must invoke its own completion handler, or iOS will watchdog-terminate the extension.
+        // Note: iOS may invoke `startTunnel` concurrently. We dedupe the underlying start work,
+        // but still complete each invocation's completion handler.
         let completionBox = CompletionHandlerBox(completionHandler)
         let completion = StartTunnelCompletion(
             invocationID: invocationID,
@@ -191,99 +195,104 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         VPNLog.tunnel.info("event=vpn.tunnel_start_begin id=\(invocationID, privacy: .public)")
 
-        Task { [weak self, startGate, runtimeState] in
-            await startGate.begin(invocationID: invocationID)
-            await runtimeState.setStopping(false)
-
-            // Safety: Exit early if the provider is deallocated during startup.
+        Task { [weak self] in
             guard let self else {
                 await completion.complete(PacketTunnelProviderError.providerUnavailable)
                 return
             }
 
-            VPNLog.tunnel.debug(
-                "event=vpn.tunnel_task_begin id=\(invocationID, privacy: .public)"
-            )
-
-            let captureConfig = AppGroupStorage.shared.loadConfiguration()
-            self.currentCaptureMode = captureConfig.captureMode
-
-            if captureConfig.captureMode == .fullTunnel {
-                let host = captureConfig.fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
-                if host.isEmpty || captureConfig.fullTunnelSocks5Port == 0 {
-                    VPNLog.tunnel.error("event=vpn.full_tunnel_config outcome=failure reason=missing_socks5")
-                    await completion.complete(PacketTunnelProviderError.missingSocks5Configuration)
-                    return
+            do {
+                try await self.lifecycle.start(invocationID: invocationID) { [weak self] in
+                    guard let self else { throw PacketTunnelProviderError.providerUnavailable }
+                    await self.runtimeState.setStopping(false)
+                    try await self.performStart(invocationID: invocationID)
                 }
-            }
-
-            await HardeningConfig.shared.logCurrentConfig()
-
-            await configureCaptureSettings()
-            await initializeEventLog(mode: captureConfig.captureMode)
-
-            await preloadRootCertificate()
-
-            do {
-                VPNLog.proxy.info("event=vpn.proxy_start_begin port=\(self.proxyPort)")
-                try await startProxyServer()
-                VPNLog.proxy.info("event=vpn.proxy_start outcome=success port=\(self.proxyPort)")
+                await completion.complete(nil)
             } catch {
-                VPNLog.proxy.error(
-                    "event=vpn.proxy_start outcome=failure port=\(self.proxyPort) error=\(String(describing: error), privacy: .public)"
-                )
                 await completion.complete(error)
-                return
             }
-
-            do {
-                // Rule: Apply proxy settings only after the proxy is listening, to avoid
-                // transient "connection refused" from clients during tunnel startup.
-                try await configureNetworkSettings(using: captureConfig)
-                VPNLog.tunnel.info("event=vpn.network_settings outcome=success")
-            } catch {
-                VPNLog.tunnel.error(
-                    "event=vpn.network_settings outcome=failure error=\(String(describing: error), privacy: .public)"
-                )
-                await runtimeState.stopProxyServer()
-                await completion.complete(error)
-                return
-            }
-
-            let rawCaptureEnabled = await HardeningConfig.shared.enableRawCapture
-            let rawCaptureLimit = await HardeningConfig.shared.maxRawCaptureSize
-            let packetCaptureWriter = createPacketCaptureWriterIfNeeded(
-                enabled: rawCaptureEnabled && captureConfig.captureMode == .fullTunnel
-            )
-            let flowConfig = PacketTunnelRuntimeState.PacketFlowConfig(
-                packetFlow: self.packetFlow,
-                mode: captureConfig.captureMode,
-                mtu: self.fullTunnelMTU,
-                captureEnabled: rawCaptureEnabled,
-                captureLimit: rawCaptureLimit,
-                writer: packetCaptureWriter,
-                socks5Host: captureConfig.fullTunnelSocks5Host,
-                socks5Port: captureConfig.fullTunnelSocks5Port,
-                udpForwardingMode: captureConfig.fullTunnelUDPForwardingMode,
-                ipv6Enabled: captureConfig.fullTunnelIPv6Enabled
-            )
-            await runtimeState.configurePacketFlow(flowConfig)
-
-            startCertificateCleanupTask()
-
-            if await HardeningConfig.shared.enableMetrics {
-                startMetricsTask()
-            }
-
-            let debugLoggingEnabled = await HardeningConfig.shared.enableDebugLogging
-            TLSLog.setVerboseEnabled(debugLoggingEnabled)
-            if debugLoggingEnabled {
-                startHeartbeatTask()
-            }
-
-            loadInitialThrottlingState()
-            await completion.complete(nil)
         }
+    }
+
+    private func performStart(invocationID: String) async throws {
+        VPNLog.tunnel.debug(
+            "event=vpn.tunnel_task_begin id=\(invocationID, privacy: .public)"
+        )
+
+        let captureConfig = AppGroupStorage.shared.loadConfiguration()
+        self.currentCaptureMode = captureConfig.captureMode
+
+        if captureConfig.captureMode == .fullTunnel {
+            let host = captureConfig.fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
+            if host.isEmpty || captureConfig.fullTunnelSocks5Port == 0 {
+                VPNLog.tunnel.error("event=vpn.full_tunnel_config outcome=failure reason=missing_socks5")
+                throw PacketTunnelProviderError.missingSocks5Configuration
+            }
+        }
+
+        await HardeningConfig.shared.logCurrentConfig()
+
+        await configureCaptureSettings()
+        await initializeEventLog(mode: captureConfig.captureMode)
+
+        await preloadRootCertificate()
+
+        do {
+            VPNLog.proxy.info("event=vpn.proxy_start_begin port=\(self.proxyPort)")
+            try await startProxyServer()
+            VPNLog.proxy.info("event=vpn.proxy_start outcome=success port=\(self.proxyPort)")
+        } catch {
+            VPNLog.proxy.error(
+                "event=vpn.proxy_start outcome=failure port=\(self.proxyPort) error=\(String(describing: error), privacy: .public)"
+            )
+            throw error
+        }
+
+        do {
+            // Rule: Apply proxy settings only after the proxy is listening, to avoid
+            // transient "connection refused" from clients during tunnel startup.
+            try await configureNetworkSettings(using: captureConfig)
+            VPNLog.tunnel.info("event=vpn.network_settings outcome=success")
+        } catch {
+            VPNLog.tunnel.error(
+                "event=vpn.network_settings outcome=failure error=\(String(describing: error), privacy: .public)"
+            )
+            await runtimeState.stopProxyServer()
+            throw error
+        }
+
+        let rawCaptureEnabled = await HardeningConfig.shared.enableRawCapture
+        let rawCaptureLimit = await HardeningConfig.shared.maxRawCaptureSize
+        let packetCaptureWriter = createPacketCaptureWriterIfNeeded(
+            enabled: rawCaptureEnabled && captureConfig.captureMode == .fullTunnel
+        )
+        let flowConfig = PacketTunnelRuntimeState.PacketFlowConfig(
+            packetFlow: self.packetFlow,
+            mode: captureConfig.captureMode,
+            mtu: self.fullTunnelMTU,
+            captureEnabled: rawCaptureEnabled,
+            captureLimit: rawCaptureLimit,
+            writer: packetCaptureWriter,
+            socks5Host: captureConfig.fullTunnelSocks5Host,
+            socks5Port: captureConfig.fullTunnelSocks5Port,
+            udpForwardingMode: captureConfig.fullTunnelUDPForwardingMode,
+            ipv6Enabled: captureConfig.fullTunnelIPv6Enabled
+        )
+        await runtimeState.configurePacketFlow(flowConfig)
+
+        startCertificateCleanupTask()
+
+        if await HardeningConfig.shared.enableMetrics {
+            startMetricsTask()
+        }
+
+        let debugLoggingEnabled = await HardeningConfig.shared.enableDebugLogging
+        TLSLog.setVerboseEnabled(debugLoggingEnabled)
+        if debugLoggingEnabled {
+            startHeartbeatTask()
+        }
+
+        loadInitialThrottlingState()
     }
 
     /// Stops the VPN tunnel when the system deactivates the VPN.
@@ -306,10 +315,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         // Best-effort: synchronously persist the stop reason before any async cleanup.
         let stopMem = Self.currentMemorySnapshot()
-        eventLogWriter?.appendSync(
-            type: "vpn_stop_begin",
-            msg: "reason=\(reasonName) reason_code=\(reason.rawValue) phys=\(stopMem?.physFootprintBytes ?? 0) resident=\(stopMem?.residentBytes ?? 0)"
-        )
+        eventLogQueue.sync {
+            eventLogWriter?.appendSync(
+                type: "vpn_stop_begin",
+                msg: "reason=\(reasonName) reason_code=\(reason.rawValue) phys=\(stopMem?.physFootprintBytes ?? 0) resident=\(stopMem?.residentBytes ?? 0)"
+            )
+        }
 
         certificateCleanupTask?.cancel()
         certificateCleanupTask = nil
@@ -320,19 +331,24 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         let stopCompletionBox = CompletionHandlerBox<Void> { _ in completionHandler() }
         let stopCompletion = CompletionOnce(handler: stopCompletionBox, queue: completionQueue)
-        Task {
-            await runtimeState.setStopping(true)
-            let connectionCount = await runtimeState.proxyConnectionCount()
-            let mem = Self.currentMemorySnapshot()
-            await runtimeState.appendEventLog(
-                type: "vpn_stop",
-                msg: "reason=\(reasonName) reason_code=\(reason.rawValue) connections=\(connectionCount) phys=\(mem?.physFootprintBytes ?? 0) resident=\(mem?.residentBytes ?? 0)"
-            )
-            await runtimeState.stopPacketFlow()
-            await runtimeState.stopProxyServer()
-            await runtimeState.closeEventLog()
-            self.eventLogWriter = nil
-            await startGate.reset()
+        Task { [weak self] in
+            guard let self else { return }
+            await self.lifecycle.stop { [weak self] in
+                guard let self else { return }
+                await self.runtimeState.setStopping(true)
+                let connectionCount = await self.runtimeState.proxyConnectionCount()
+                let mem = Self.currentMemorySnapshot()
+                await self.runtimeState.appendEventLog(
+                    type: "vpn_stop",
+                    msg: "reason=\(reasonName) reason_code=\(reason.rawValue) connections=\(connectionCount) phys=\(mem?.physFootprintBytes ?? 0) resident=\(mem?.residentBytes ?? 0)"
+                )
+                await self.runtimeState.stopPacketFlow()
+                await self.runtimeState.stopProxyServer()
+                await self.runtimeState.closeEventLog()
+                self.eventLogQueue.sync {
+                    self.eventLogWriter = nil
+                }
+            }
 
             VPNLog.tunnel.info(
                 LogEvent.vpnTunnel("stop")
@@ -358,10 +374,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
             // Best-effort: synchronously persist cancellation details, since the system may
             // terminate the extension immediately after this callback returns.
-            eventLogWriter?.appendSync(
-                type: "vpn_cancel",
-                msg: "error=\(String(describing: error)) uptime_seconds=\(Int(uptime)) phys=\(mem?.physFootprintBytes ?? 0) resident=\(mem?.residentBytes ?? 0)"
-            )
+            eventLogQueue.sync {
+                eventLogWriter?.appendSync(
+                    type: "vpn_cancel",
+                    msg: "error=\(String(describing: error)) uptime_seconds=\(Int(uptime)) phys=\(mem?.physFootprintBytes ?? 0) resident=\(mem?.residentBytes ?? 0)"
+                )
+            }
             Task {
                 let connectionCount = await runtimeState.proxyConnectionCount()
                 await runtimeState.appendEventLog(
@@ -369,17 +387,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     msg: "error=\(String(describing: error)) uptime_seconds=\(Int(uptime)) connections=\(connectionCount) phys=\(mem?.physFootprintBytes ?? 0) resident=\(mem?.residentBytes ?? 0)"
                 )
                 await runtimeState.stopPacketFlow()
-                eventLogWriter?.close()
+                eventLogQueue.sync {
+                    eventLogWriter?.close()
+                    eventLogWriter = nil
+                }
                 await runtimeState.closeEventLog()
-                self.eventLogWriter = nil
             }
         } else {
             VPNLog.tunnel.info("event=vpn.tunnel_cancel uptime_seconds=\(Int(uptime))")
 
-            eventLogWriter?.appendSync(
-                type: "vpn_cancel",
-                msg: "uptime_seconds=\(Int(uptime)) phys=\(mem?.physFootprintBytes ?? 0) resident=\(mem?.residentBytes ?? 0)"
-            )
+            eventLogQueue.sync {
+                eventLogWriter?.appendSync(
+                    type: "vpn_cancel",
+                    msg: "uptime_seconds=\(Int(uptime)) phys=\(mem?.physFootprintBytes ?? 0) resident=\(mem?.residentBytes ?? 0)"
+                )
+            }
 
             Task {
                 let connectionCount = await runtimeState.proxyConnectionCount()
@@ -388,9 +410,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     msg: "uptime_seconds=\(Int(uptime)) connections=\(connectionCount) phys=\(mem?.physFootprintBytes ?? 0) resident=\(mem?.residentBytes ?? 0)"
                 )
                 await runtimeState.stopPacketFlow()
-                eventLogWriter?.close()
+                eventLogQueue.sync {
+                    eventLogWriter?.close()
+                    eventLogWriter = nil
+                }
                 await runtimeState.closeEventLog()
-                self.eventLogWriter = nil
             }
         }
         super.cancelTunnelWithError(error)
@@ -454,14 +478,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// - Note: Runs every 30 seconds.
     private func startHeartbeatTask() {
         let runtimeState = runtimeState
-        let startGate = startGate
+        let lifecycle = lifecycle
         heartbeatTask?.cancel()
         heartbeatTask = Task {
             let interval = Duration.seconds(30)
             while !Task.isCancelled {
                 try? await Task.sleep(for: interval)
                 if Task.isCancelled { break }
-                let invocationID = await startGate.invocationID()
+                let invocationID = await lifecycle.currentInvocationID()
                 let snapshot = await runtimeState.heartbeatSnapshot(invocationID: invocationID)
                 let heartbeatEvent = LogEvent.vpnTunnel("heartbeat")
                     .with("id", value: snapshot.invocationID ?? "none")
@@ -702,6 +726,49 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     }
 
     private func resolveIPAddresses(for host: String) -> (ipv4: [String], ipv6: [String]) {
+        // Avoid repeated getaddrinfo calls when building settings multiple times (e.g. updates).
+        addressResolutionLock.lock()
+        if let cached = addressResolutionCache[host] {
+            addressResolutionLock.unlock()
+            return cached
+        }
+        addressResolutionLock.unlock()
+
+        let result = resolveIPAddressesWithTimeout(for: host, timeoutSeconds: 1.0)
+
+        addressResolutionLock.lock()
+        addressResolutionCache[host] = result
+        addressResolutionLock.unlock()
+        return result
+    }
+
+    private func resolveIPAddressesWithTimeout(
+        for host: String,
+        timeoutSeconds: TimeInterval
+    ) -> (ipv4: [String], ipv6: [String]) {
+        final class Box: @unchecked Sendable {
+            var value: (ipv4: [String], ipv6: [String]) = ([], [])
+        }
+
+        let box = Box()
+        let semaphore = DispatchSemaphore(value: 0)
+
+        addressResolutionQueue.async {
+            box.value = self.resolveIPAddressesBlocking(for: host)
+            semaphore.signal()
+        }
+
+        let waited = semaphore.wait(timeout: .now() + timeoutSeconds)
+        if waited == .timedOut {
+            let hostHash = LogRedaction.hash(host)
+            VPNLog.config.warning("event=vpn.host_resolution outcome=timeout host_hash=\(hostHash) timeout_s=\(timeoutSeconds)")
+            return ([], [])
+        }
+
+        return box.value
+    }
+
+    private func resolveIPAddressesBlocking(for host: String) -> (ipv4: [String], ipv6: [String]) {
         var hints = addrinfo(
             ai_flags: AI_ADDRCONFIG,
             ai_family: AF_UNSPEC,
@@ -900,12 +967,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let config = AppGroupStorage.shared.loadConfiguration()
         currentCaptureMode = config.captureMode
         let trimmedHost = config.fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let socksHostHash = LogRedaction.hash(trimmedHost)
         VPNLog.tunnel.info(
-            "event=vpn.capture_config mode=\(config.captureMode.rawValue, privacy: .public) socks_host=\(trimmedHost, privacy: .public) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue, privacy: .public) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count)"
+            "event=vpn.capture_config mode=\(config.captureMode.rawValue, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue, privacy: .public) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count)"
         )
         await runtimeState.appendEventLog(
             type: "capture_config",
-            msg: "mode=\(config.captureMode.rawValue) socks_host=\(trimmedHost) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count)"
+            msg: "mode=\(config.captureMode.rawValue) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count)"
         )
         if config.captureMode == .fullTunnel {
             if trimmedHost.isEmpty || config.fullTunnelSocks5Port == 0 {
@@ -1132,7 +1200,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 appGroupID: AppGroupConfiguration.appGroupIdentifier,
                 fileName: "vpn_events.ndjson"
             )
-            self.eventLogWriter = logWriter
+            eventLogQueue.sync {
+                self.eventLogWriter = logWriter
+            }
             await runtimeState.setEventLog(logWriter)
             await runtimeState.appendEventLog(type: "startup", msg: "Tunnel started mode=\(mode.rawValue)")
         } catch {
@@ -1191,46 +1261,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 "event=vpn.capture_clear outcome=failure error=\(String(describing: error), privacy: .public)"
             )
         }
-    }
-}
-
-/// Ensures `startTunnel` completes at most once per invocation.
-///
-/// Discussion: iOS can invoke `startTunnel` concurrently before the first
-/// invocation finishes, which can corrupt VPN state if multiple completion
-/// handlers are called.
-///
-/// - Important: Actor isolation serializes completion decisions across calls.
-actor StartCompletionGate {
-    private var currentInvocationID: String?
-    private var completionCalled = false
-
-    /// Registers a new tunnel start invocation.
-    func begin(invocationID: String) {
-        currentInvocationID = invocationID
-        completionCalled = false
-    }
-
-    /// Indicates whether the completion handler should be called.
-    ///
-    /// - Returns: `true` only once per invocation ID.
-    func shouldComplete(invocationID: String) -> Bool {
-        guard currentInvocationID == invocationID, !completionCalled else {
-            return false
-        }
-        completionCalled = true
-        return true
-    }
-
-    /// Returns the current invocation ID for heartbeat logging.
-    func invocationID() -> String? {
-        currentInvocationID
-    }
-
-    /// Resets gate state when the tunnel stops.
-    func reset() {
-        currentInvocationID = nil
-        completionCalled = false
     }
 }
 
@@ -1421,12 +1451,13 @@ actor PacketTunnelRuntimeState {
         }
 
         let trimmedHost = config.socks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let socksHostHash = LogRedaction.hash(trimmedHost)
         VPNLog.tunnel.info(
-            "event=vpn.packet_flow_config mode=\(config.mode.rawValue, privacy: .public) socks_host=\(trimmedHost, privacy: .public) socks_port=\(config.socks5Port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue, privacy: .public) block_quic=\(self.blockQUICEnabled)"
+            "event=vpn.packet_flow_config mode=\(config.mode.rawValue, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.socks5Port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue, privacy: .public) block_quic=\(self.blockQUICEnabled)"
         )
         appendEventLog(
             type: "packet_flow_config",
-            msg: "mode=\(config.mode.rawValue) socks_host=\(trimmedHost) socks_port=\(config.socks5Port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue) block_quic=\(blockQUICEnabled)"
+            msg: "mode=\(config.mode.rawValue) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.socks5Port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue) block_quic=\(blockQUICEnabled)"
         )
 
         let pipeline = PacketCapturePipeline(maxPending: 4096)
