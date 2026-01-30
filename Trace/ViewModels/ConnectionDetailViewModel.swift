@@ -54,9 +54,16 @@ final class ConnectionDetailViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var loadError: String?
     @Published var analysis: ConnectionPCAPAnalysis?
+    private var analysisTask: Task<Void, Never>?
+    private var analysisWorkTask: Task<ConnectionPCAPAnalysis, Error>?
 
     init(record: PacketFlowRecord) {
         self.record = record
+    }
+
+    deinit {
+        analysisTask?.cancel()
+        analysisWorkTask?.cancel()
     }
 
     func refreshPCAPFiles() {
@@ -70,22 +77,27 @@ final class ConnectionDetailViewModel: ObservableObject {
     }
 
     func loadFromPCAP(_ file: PCAPFileItem) {
+        analysisTask?.cancel()
+        analysisWorkTask?.cancel()
         isLoading = true
         loadError = nil
 
-        Task.detached(priority: .utility) { [record] in
+        analysisTask = Task { [record, url = file.url] in
             do {
-                let analyzer = try PCAPFlowAnalyzer(record: record)
-                let analysis = try analyzer.analyze(url: file.url)
-                await MainActor.run {
-                    self.analysis = analysis
-                    self.isLoading = false
+                let work = Task.detached(priority: .utility) {
+                    let analyzer = try PCAPFlowAnalyzer(record: record)
+                    return try analyzer.analyze(url: url)
                 }
+                analysisWorkTask = work
+                let analysis = try await work.value
+                guard !Task.isCancelled else { return }
+                self.analysis = analysis
+                self.isLoading = false
+            } catch is CancellationError {
+                self.isLoading = false
             } catch {
-                await MainActor.run {
-                    self.loadError = error.localizedDescription
-                    self.isLoading = false
-                }
+                self.loadError = error.localizedDescription
+                self.isLoading = false
             }
         }
     }
@@ -150,7 +162,10 @@ private final class PCAPFlowAnalyzer {
         let endpointA = EndpointKey(ip: record.sourceIP, port: record.sourcePort)
         let endpointB = EndpointKey(ip: record.destinationIP, port: record.destinationPort)
 
-        try reader.forEachPacket { packet in
+        try reader.forEachPacket(throwing: { packet in
+            if Task.isCancelled {
+                throw CancellationError()
+            }
             guard let ipPacket = IPPacketParser.parse(packet.data) else { return }
             guard ipPacket.transport == .tcp else { return }
             guard let tcpPacket = TCPParser.parse(ipPacket.payload) else { return }
@@ -254,7 +269,7 @@ private final class PCAPFlowAnalyzer {
                     }
                 }
             }
-        }
+        })
 
         if connectionState == .unknown {
             if !rstSeen.isEmpty {

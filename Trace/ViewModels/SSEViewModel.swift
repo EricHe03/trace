@@ -13,40 +13,42 @@ import TraceCore
 import TraceNetworking
 
 @MainActor
-class SSEViewModel: ObservableObject {
+final class SSEViewModel: ObservableObject {
     private let storage = AppGroupStorage.shared
+    private var loadTask: Task<Void, Never>?
 
     @Published var connections: [SSEConnection] = []
     @Published var searchText: String = ""
     @Published var filterStatus: SSEConnectionStatus?
 
     init() {
-        Task {
-            await loadConnections()
-        }
+        scheduleLoad()
 
         // Observe new SSE connections from Network Extension
         storage.observeNewSSE { [weak self] in
-            Task { @MainActor in
-                await self?.loadConnections()
+            Task { @MainActor [weak self] in
+                self?.scheduleLoad()
             }
+        }
+    }
+
+    deinit {
+        loadTask?.cancel()
+        storage.stopObservingNewSSE()
+    }
+
+    private func scheduleLoad() {
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in
+            await self?.loadConnections()
         }
     }
 
     func loadConnections() async {
         do {
-            connections = try storage.loadAllSSEConnections()
-        } catch {
-            NetworkLog.sse.error(
-                "event=sse.load outcome=failure error=\(error.localizedDescription, privacy: .public)"
-            )
-            connections = []
-        }
-    }
-
-    private func loadConnections() {
-        do {
-            connections = try storage.loadAllSSEConnections()
+            var loaded = try storage.loadAllSSEConnections()
+            loaded.sort { $0.startTime > $1.startTime }
+            connections = loaded
         } catch {
             NetworkLog.sse.error(
                 "event=sse.load outcome=failure error=\(error.localizedDescription, privacy: .public)"
@@ -71,7 +73,7 @@ class SSEViewModel: ObservableObject {
             }
         }
 
-        return filtered.sorted { $0.startTime > $1.startTime }
+        return filtered
     }
 
     func clearConnections() {

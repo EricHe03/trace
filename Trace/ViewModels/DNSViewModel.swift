@@ -11,52 +11,52 @@ import SwiftUI
 import TraceCore
 
 /// View model for DNS queries and responses.
+@MainActor
 final class DNSViewModel: ObservableObject {
     // MARK: - Properties
 
     private let repository = DNSRepository.shared
-    private var updateTimer: Timer?
+    private var repositoryObserver: NSObjectProtocol?
 
     // Filters
-    @Published var searchText = ""
-    @Published var selectedRecordTypes: Set<DNSRecordType> = []
-    @Published var selectedResponseCodes: Set<DNSResponseCode> = []
-    @Published var showQueriesOnly = false
-    @Published var showResponsesOnly = false
-    @Published var showUnansweredOnly = false
-    @Published var showFailedOnly = false
+    @Published var searchText = "" { didSet { reloadMessages() } }
+    @Published var selectedRecordTypes: Set<DNSRecordType> = [] { didSet { reloadMessages() } }
+    @Published var selectedResponseCodes: Set<DNSResponseCode> = [] { didSet { reloadMessages() } }
+    @Published var showQueriesOnly = false { didSet { reloadMessages() } }
+    @Published var showResponsesOnly = false { didSet { reloadMessages() } }
+    @Published var showUnansweredOnly = false { didSet { reloadMessages() } }
+    @Published var showFailedOnly = false { didSet { reloadMessages() } }
 
     // Sorting
-    @Published var sortOrder: SortOrder = .newestFirst
+    @Published var sortOrder: SortOrder = .newestFirst { didSet { reloadMessages() } }
 
     // Statistics
     @Published var statistics: DNSStatistics?
 
+    @Published private(set) var messages: [DNSMessage] = []
+
     // MARK: - Initialization
 
     init() {
-        startAutoRefresh()
+        repositoryObserver = NotificationCenter.default.addObserver(
+            forName: DNSRepository.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshStatistics()
+            self?.reloadMessages()
+        }
+        reloadMessages()
         refreshStatistics()
     }
 
     deinit {
-        stopAutoRefresh()
+        if let repositoryObserver {
+            NotificationCenter.default.removeObserver(repositoryObserver)
+        }
     }
 
     // MARK: - Data Access
-
-    /// Returns all filtered and sorted DNS messages.
-    var messages: [DNSMessage] {
-        var result = repository.getAllMessages()
-
-        // Apply filters
-        result = applyFilters(to: result)
-
-        // Apply sorting
-        result = applySorting(to: result)
-
-        return result
-    }
 
     /// Returns paired query and response messages.
     var pairedMessages: [(query: DNSMessage, response: DNSMessage)] {
@@ -171,11 +171,13 @@ final class DNSViewModel: ObservableObject {
     func deleteMessage(_ message: DNSMessage) {
         repository.delete(message.id)
         refreshStatistics()
+        reloadMessages()
     }
 
     func clearAll() {
         repository.clearAll()
         refreshStatistics()
+        reloadMessages()
     }
 
     /// Deletes messages older than the provided number of days.
@@ -185,6 +187,7 @@ final class DNSViewModel: ObservableObject {
         let cutoffDate = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
         repository.deleteOlderThan(cutoffDate)
         refreshStatistics()
+        reloadMessages()
     }
 
     // MARK: - Statistics
@@ -192,6 +195,13 @@ final class DNSViewModel: ObservableObject {
     /// Refreshes cached DNS statistics.
     func refreshStatistics() {
         statistics = repository.getStatistics()
+    }
+
+    func reloadMessages() {
+        var result = repository.getAllMessages()
+        result = applyFilters(to: result)
+        result = applySorting(to: result)
+        messages = result
     }
 
     // MARK: - Export
@@ -224,19 +234,6 @@ final class DNSViewModel: ObservableObject {
     func exportToJSON() -> Data? {
         let messages = self.messages
         return try? JSONEncoder().encode(messages)
-    }
-
-    // MARK: - Auto Refresh
-
-    private func startAutoRefresh() {
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            self?.refreshStatistics()
-        }
-    }
-
-    private func stopAutoRefresh() {
-        updateTimer?.invalidate()
-        updateTimer = nil
     }
 
     // MARK: - Sort Order
