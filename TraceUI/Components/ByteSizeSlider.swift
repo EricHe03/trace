@@ -47,6 +47,9 @@ public struct ByteSizeSlider: View {
                 in: Double(range.lowerBound) ... Double(range.upperBound),
                 step: Double(step)
             )
+            .accessibilityLabel(title)
+            .accessibilityValue(DesignSystem.formattedBytes(value))
+            .accessibilityHint("Swipe up or down to adjust")
 
             if showBounds {
                 HStack {
@@ -61,7 +64,6 @@ public struct ByteSizeSlider: View {
             }
         }
         .padding(.vertical, DesignSystem.Spacing.xs)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title), \(DesignSystem.formattedBytes(value))")
+        .accessibilityElement(children: .contain)
     }
 }

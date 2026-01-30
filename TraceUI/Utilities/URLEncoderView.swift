@@ -107,7 +107,7 @@ public struct URLEncoderView: View {
 
                         Button {
                             UIPasteboard.general.string = outputText
-                            withAnimation {
+                            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                 toastMessage = "Copied to clipboard"
                             }
                         } label: {

@@ -16,6 +16,25 @@ public struct RequestTimelineView: View {
         self.request = request
     }
 
+    private func phaseSymbolName(_ phaseName: String) -> String {
+        switch phaseName {
+        case "DNS Lookup":
+            "globe"
+        case "TCP Connection":
+            "network"
+        case "TLS Handshake":
+            "lock.fill"
+        case "Waiting (TTFB)":
+            "hourglass"
+        case "Content Download":
+            "arrow.down.circle"
+        case "Redirects":
+            "arrow.triangle.branch"
+        default:
+            "timer"
+        }
+    }
+
     private var timingPhases: [(String, Color, TimeInterval)] {
         guard let timing = request.timingPhases else {
             return []
@@ -89,12 +108,16 @@ public struct RequestTimelineView: View {
                 TimelineBarChart(phases: timingPhases, totalTime: totalTime)
                     .frame(height: 60)
                     .padding(.bottom, DesignSystem.Spacing.md)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Request timeline bar chart")
+                    .accessibilityValue("Total \(String(format: "%.2f milliseconds", totalTime * 1000))")
 
                 VStack(spacing: DesignSystem.Spacing.md) {
                     ForEach(Array(timingPhases.enumerated()), id: \.offset) { _, phase in
                         TimingPhaseRow(
                             name: phase.0,
                             color: phase.1,
+                            symbolName: phaseSymbolName(phase.0),
                             duration: phase.2,
                             percentage: (phase.2 / totalTime) * 100
                         )
@@ -116,6 +139,9 @@ public struct RequestTimelineView: View {
                     y: DesignSystem.Shadow.sm.y
                 )
         )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Request timeline")
+        .accessibilityValue("Total \(String(format: "%.2f milliseconds", totalTime * 1000))")
     }
 
     private func formatDate(_ date: Date) -> String {
@@ -130,6 +156,7 @@ public struct RequestTimelineView: View {
 public struct TimelineBarChart: View {
     public let phases: [(String, Color, TimeInterval)]
     public let totalTime: TimeInterval
+    private let minVisibleWidth: CGFloat = 2
 
     public var body: some View {
         GeometryReader { geometry in
@@ -140,19 +167,51 @@ public struct TimelineBarChart: View {
                     Rectangle()
                         .fill(phase.1)
                         // Rule: Enforce a minimum width to keep narrow phases visible.
-                        .frame(width: max(width, 2))
+                        .frame(width: max(width, minVisibleWidth))
                         .overlay(
                             Group {
-                                if width > 30 {
-                                    Text(String(format: "%.0fms", phase.2 * 1000))
-                                        .font(.system(size: 9, weight: .medium))
-                                        .foregroundColor(.white)
+                                if width > 18 {
+                                    HStack(spacing: 4) {
+                                        if width > 26 {
+                                            Image(systemName: phaseSymbolName(phase.0))
+                                                .font(.caption2.weight(.semibold))
+                                        }
+                                        if width > 44 {
+                                            Text(String(format: "%.0fms", phase.2 * 1000))
+                                                .font(.caption2.weight(.semibold))
+                                        }
+                                    }
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
                                 }
                             }
                         )
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(phase.0)
+                        .accessibilityValue("\(String(format: "%.2f milliseconds", phase.2 * 1000)), \(String(format: "%.1f percent", (phase.2 / totalTime) * 100))")
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
+        }
+    }
+
+    private func phaseSymbolName(_ phaseName: String) -> String {
+        switch phaseName {
+        case "DNS Lookup":
+            "globe"
+        case "TCP Connection":
+            "network"
+        case "TLS Handshake":
+            "lock.fill"
+        case "Waiting (TTFB)":
+            "hourglass"
+        case "Content Download":
+            "arrow.down.circle"
+        case "Redirects":
+            "arrow.triangle.branch"
+        default:
+            "timer"
         }
     }
 }
@@ -162,14 +221,22 @@ public struct TimelineBarChart: View {
 public struct TimingPhaseRow: View {
     public let name: String
     public let color: Color
+    public let symbolName: String
     public let duration: TimeInterval
     public let percentage: Double
 
     public var body: some View {
         HStack(spacing: DesignSystem.Spacing.md) {
-            Circle()
-                .fill(color)
-                .frame(width: 12, height: 12)
+            HStack(spacing: DesignSystem.Spacing.xs) {
+                Image(systemName: symbolName)
+                    .foregroundStyle(color)
+                    .accessibilityHidden(true)
+
+                Circle()
+                    .fill(color)
+                    .frame(width: 10, height: 10)
+                    .accessibilityHidden(true)
+            }
 
             Text(name)
                 .font(.subheadline)
@@ -188,6 +255,9 @@ public struct TimingPhaseRow: View {
             }
         }
         .padding(.vertical, DesignSystem.Spacing.xs)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(name)
+        .accessibilityValue("\(String(format: "%.2f milliseconds", duration * 1000)), \(String(format: "%.1f percent", percentage))")
     }
 }
 

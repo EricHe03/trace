@@ -258,7 +258,7 @@ public struct TimestampToolView: View {
 
     private func copyToClipboard(_ text: String) {
         UIPasteboard.general.string = text
-        withAnimation {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
             toastMessage = "Copied: \(String(text.prefix(20)))"
         }
     }

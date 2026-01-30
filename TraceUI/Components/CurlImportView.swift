@@ -93,12 +93,12 @@ public struct CurlImportView: View {
     private func parseCommand() {
         do {
             parsedRequest = try CurlParser.parse(curlCommand)
-            withAnimation {
+            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                 toastMessage = "Parsed successfully"
             }
         } catch {
             parsedRequest = nil
-            withAnimation {
+            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                 toastMessage = "Parse error: \(error.localizedDescription)"
             }
         }

@@ -34,6 +34,7 @@ public struct CodeViewerView: View {
 
     @State private var showLineNumbers = true
     @State private var viewMode: ViewMode = .formatted
+    private let maxHighlightedLines = 2_000
 
     public enum ViewMode: String, CaseIterable {
         case formatted = "Formatted"
@@ -63,6 +64,14 @@ public struct CodeViewerView: View {
 
             Divider()
 
+            if estimatedLineCount > 1_000 {
+                Label("Large content detected. Rendering may be slower.", systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+                    .padding(.top, DesignSystem.Spacing.xs)
+            }
+
             ScrollView([.horizontal, .vertical]) {
                 Group {
                     switch viewMode {
@@ -80,24 +89,36 @@ public struct CodeViewerView: View {
     // MARK: - Formatted View
 
     private var formattedView: some View {
-        let lines = code.components(separatedBy: .newlines)
+        let lines = code.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
         let lineNumberWidth = "\(lines.count)".count
 
-        return VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
-                HStack(alignment: .top, spacing: DesignSystem.Spacing.md) {
-                    if showLineNumbers {
-                        Text("\(index + 1)")
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .frame(width: CGFloat(lineNumberWidth) * 8 + 8, alignment: .trailing)
-                    }
-
-                    Text(highlightLine(line))
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
+        return Group {
+            if lines.count > maxHighlightedLines {
+                VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
+                    Text("Too many lines to syntax highlight. Showing raw text.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    rawLinesView(lines: lines, lineNumberWidth: lineNumberWidth)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                        HStack(alignment: .top, spacing: DesignSystem.Spacing.md) {
+                            if showLineNumbers {
+                                Text("\(index + 1)")
+                                    .font(DesignSystem.Typography.monospacedCaption2Font)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: CGFloat(lineNumberWidth) * 8 + 8, alignment: .trailing)
+                                    .accessibilityHidden(true)
+                            }
+
+                            Text(highlightLine(line))
+                                .font(.system(.callout, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
             }
         }
     }
@@ -105,26 +126,10 @@ public struct CodeViewerView: View {
     // MARK: - Raw View
 
     private var rawView: some View {
-        let lines = code.components(separatedBy: .newlines)
+        let lines = code.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
         let lineNumberWidth = "\(lines.count)".count
 
-        return VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
-                HStack(alignment: .top, spacing: DesignSystem.Spacing.md) {
-                    if showLineNumbers {
-                        Text("\(index + 1)")
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .frame(width: CGFloat(lineNumberWidth) * 8 + 8, alignment: .trailing)
-                    }
-
-                    Text(line)
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
+        return rawLinesView(lines: lines, lineNumberWidth: lineNumberWidth)
     }
 
     // MARK: - Syntax Highlighting
@@ -228,7 +233,7 @@ public struct CodeViewerView: View {
             if let range = Range(match.range, in: text) {
                 text[range].foregroundColor = color
                 if bold || italic {
-                    var font: Font = .system(.caption, design: .monospaced)
+                    var font: Font = .system(.callout, design: .monospaced)
                     if bold {
                         font = font.weight(.bold)
                     }
@@ -239,6 +244,31 @@ public struct CodeViewerView: View {
                 }
             }
         }
+    }
+
+    private func rawLinesView(lines: [String], lineNumberWidth: Int) -> some View {
+        LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                HStack(alignment: .top, spacing: DesignSystem.Spacing.md) {
+                    if showLineNumbers {
+                        Text("\(index + 1)")
+                            .font(DesignSystem.Typography.monospacedCaption2Font)
+                            .foregroundStyle(.secondary)
+                            .frame(width: CGFloat(lineNumberWidth) * 8 + 8, alignment: .trailing)
+                            .accessibilityHidden(true)
+                    }
+
+                    Text(line)
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var estimatedLineCount: Int {
+        code.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count
     }
 }
 

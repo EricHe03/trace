@@ -53,7 +53,7 @@ public struct DomainListEditor: View {
                             .textSelection(.enabled)
                         Spacer()
                         Button {
-                            withAnimation {
+                            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                 items.removeAll { $0 == item }
                             }
                         } label: {
@@ -70,12 +70,16 @@ public struct DomainListEditor: View {
                 TextField(placeholder, text: $newItem)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .accessibilityLabel("\(title) entry")
+                    .accessibilityHint(helperText ?? "Enter a domain pattern, then tap Add")
 
                 Button(addLabel) {
                     addItem()
                 }
                 .buttonStyle(.bordered)
                 .disabled(newItem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel(addLabel)
+                .accessibilityHint("Adds the entered item")
             }
         } header: {
             Text(title)
@@ -87,6 +91,8 @@ public struct DomainListEditor: View {
                 if let errorMessage {
                     Text(errorMessage)
                         .foregroundStyle(DesignSystem.Colors.danger)
+                        .accessibilityLabel("Error")
+                        .accessibilityValue(errorMessage)
                 }
             }
         }
@@ -108,7 +114,7 @@ public struct DomainListEditor: View {
         }
 
         errorMessage = nil
-        withAnimation {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
             items.append(normalized)
         }
         newItem = ""
