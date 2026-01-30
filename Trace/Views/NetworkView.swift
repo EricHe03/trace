@@ -404,31 +404,58 @@ struct NetworkView: View {
         let enabledTypes = viewModel.filterNetworkEventTypes
 
         let results = await Task.detached(priority: .userInitiated) {
-            var events: [NetworkEvent] = []
-            events.reserveCapacity(httpRequests.count + webSockets.count + sseConnections.count)
-            events.append(contentsOf: httpRequests.map { .httpRequest($0) })
-            events.append(contentsOf: webSockets.map { .webSocket($0) })
-            events.append(contentsOf: sseConnections.map { .sse($0) })
+            let httpEvents: [NetworkEvent] = httpRequests.map { .httpRequest($0) }
+            let webSocketEvents: [NetworkEvent] = webSockets.map { .webSocket($0) }
+            let sseEvents: [NetworkEvent] = sseConnections.map { .sse($0) }
+
+            func mergeSortedByTimestampDescending(_ arrays: [[NetworkEvent]]) -> [NetworkEvent] {
+                var indices = Array(repeating: 0, count: arrays.count)
+                let totalCount = arrays.reduce(0) { $0 + $1.count }
+                var merged: [NetworkEvent] = []
+                merged.reserveCapacity(totalCount)
+
+                while merged.count < totalCount {
+                    var selectedArrayIndex: Int?
+                    var selectedEvent: NetworkEvent?
+
+                    for arrayIndex in arrays.indices {
+                        let elementIndex = indices[arrayIndex]
+                        guard elementIndex < arrays[arrayIndex].count else { continue }
+                        let candidate = arrays[arrayIndex][elementIndex]
+
+                        if selectedEvent == nil || candidate.timestamp > selectedEvent!.timestamp {
+                            selectedEvent = candidate
+                            selectedArrayIndex = arrayIndex
+                        }
+                    }
+
+                    guard let selectedArrayIndex, let selectedEvent else { break }
+                    merged.append(selectedEvent)
+                    indices[selectedArrayIndex] += 1
+                }
+
+                return merged
+            }
+
+            let events = mergeSortedByTimestampDescending([httpEvents, webSocketEvents, sseEvents])
 
             var counts: [NetworkEventType: Int] = [:]
             for event in events {
                 counts[event.type, default: 0] += 1
             }
 
-            var filtered = events.filter { enabledTypes.contains($0.type) }
-            if !searchText.isEmpty {
-                filtered = filtered.filter { event in
-                    switch event {
-                    case .httpRequest:
-                        true
-                    case let .webSocket(connection):
-                        connection.url.localizedCaseInsensitiveContains(searchText)
-                    case let .sse(connection):
-                        connection.url.localizedCaseInsensitiveContains(searchText)
-                    }
+            let filtered = events.filter { event in
+                guard enabledTypes.contains(event.type) else { return false }
+                guard !searchText.isEmpty else { return true }
+                switch event {
+                case .httpRequest:
+                    return true
+                case let .webSocket(connection):
+                    return connection.url.localizedCaseInsensitiveContains(searchText)
+                case let .sse(connection):
+                    return connection.url.localizedCaseInsensitiveContains(searchText)
                 }
             }
-            filtered.sort { $0.timestamp > $1.timestamp }
 
             return (events, filtered, counts)
         }.value

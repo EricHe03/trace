@@ -23,6 +23,16 @@ struct MITMSecurityView: View {
 
     var body: some View {
         Form {
+            Section {
+                Label {
+                    Text("HTTPS interception requires installing the Trace root certificate. Only allowlisted domains are decrypted; everything stays on-device. Use a narrow allowlist to avoid capturing sensitive traffic.")
+                } icon: {
+                    Image(systemName: "exclamationmark.shield.fill")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
             DomainListEditor(
                 title: "MITM Allowlist",
                 items: $mitmAllowlist,
@@ -49,6 +59,16 @@ struct MITMSecurityView: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(DesignSystem.Colors.warning)
                         Text("Allowlist is empty. HTTPS interception will be disabled.")
+                            .font(.subheadline)
+                    }
+                }
+            }
+            if mitmAllowlist.count == 1, mitmAllowlist.first == "*" {
+                Section {
+                    HStack(spacing: DesignSystem.Spacing.md) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(DesignSystem.Colors.warning)
+                        Text("Allowlist is set to *. HTTPS interception will apply to all domains.")
                             .font(.subheadline)
                     }
                 }
@@ -88,29 +108,37 @@ struct MITMSecurityView: View {
         let sanitized = mitmAllowlist
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { !$0.isEmpty }
-        let appliedAllowlist = sanitized.isEmpty ? ["*"] : sanitized
-
+        let appliedAllowlist = sanitized
         if sanitized.isEmpty {
-            toastMessage = "Allowlist was empty. Using * to allow all."
-            if mitmAllowlist != appliedAllowlist {
-                mitmAllowlist = appliedAllowlist
-            }
+            toastMessage = "HTTPS interception disabled (allowlist empty)."
         }
 
         Task {
             let hardening = HardeningConfig.shared
             await hardening.setMitmAllowlist(appliedAllowlist)
             await hardening.setBlockQUIC(blockQUICEnabled)
-            try? AppGroupStorage.shared.saveMITMAllowlist(appliedAllowlist)
+            do {
+                try AppGroupStorage.shared.saveMITMAllowlist(appliedAllowlist)
+            } catch {
+                await MainActor.run {
+                    toastMessage = "Failed to save allowlist: \(error.localizedDescription)"
+                }
+            }
 
             if vpnManager.isConnected {
-                try? await vpnManager.sendMessage([
-                    "command": "updateHardeningConfig",
-                    "hardeningConfig": [
-                        "mitmAllowlist": appliedAllowlist,
-                        "blockQUIC": blockQUICEnabled
-                    ]
-                ])
+                do {
+                    try await vpnManager.sendMessage([
+                        "command": "updateHardeningConfig",
+                        "hardeningConfig": [
+                            "mitmAllowlist": appliedAllowlist,
+                            "blockQUIC": blockQUICEnabled
+                        ]
+                    ])
+                } catch {
+                    await MainActor.run {
+                        toastMessage = "Saved locally, but failed to notify VPN: \(error.localizedDescription)"
+                    }
+                }
             }
         }
     }

@@ -27,7 +27,7 @@ struct RequestSelectionModifier: ViewModifier {
         if let request = viewModel.requests.first(where: { $0.id == requestId }) {
             requestToOpen = request
         } else {
-            withAnimation {
+            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                 toastMessage = "Request not found"
             }
         }

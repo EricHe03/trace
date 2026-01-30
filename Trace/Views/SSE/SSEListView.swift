@@ -96,17 +96,18 @@ struct SSEConnectionRow: View {
                 if connection.isTruncated {
                     Text("TRUNCATED")
                         .font(.caption)
-                        .foregroundColor(.orange)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(Color.orange.opacity(0.2))
-                        .cornerRadius(4)
+                        .foregroundColor(.primary)
+                        .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
+                        .padding(.vertical, DesignSystem.Badge.verticalPadding)
+                        .frame(minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget)
+                        .background(DesignSystem.Colors.warning.opacity(0.15))
+                        .cornerRadius(DesignSystem.Badge.cornerRadius)
                 }
 
                 Spacer()
 
                 if let duration = connection.duration {
-                    Text(formattedDuration(duration))
+                    Text(DesignSystem.formattedDuration(duration))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -137,17 +138,6 @@ struct SSEConnectionRow: View {
         DesignSystem.Colors.statusColor(for: connection.status.color)
     }
 
-    private func formattedDuration(_ duration: TimeInterval) -> String {
-        if duration < 1 {
-            return String(format: "%.0f ms", duration * 1000)
-        } else if duration < 60 {
-            return String(format: "%.2f s", duration)
-        } else {
-            let minutes = Int(duration / 60)
-            let seconds = Int(duration.truncatingRemainder(dividingBy: 60))
-            return "\(minutes)m \(seconds)s"
-        }
-    }
 }
 
 struct SSEFiltersView: View {

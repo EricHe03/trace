@@ -73,7 +73,7 @@ struct CaptureRulesView: View {
                 Toggle("Enable Sampling", isOn: $samplingConfig.enabled)
 
                 if samplingConfig.enabled {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
                         HStack {
                             Text("Sample Rate")
                                 .font(.subheadline)
@@ -83,8 +83,10 @@ struct CaptureRulesView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Slider(value: $samplingConfig.sampleRate, in: 0.05 ... 1.0, step: 0.05)
+                            .accessibilityLabel("Sample rate")
+                            .accessibilityValue("\(Int(samplingConfig.sampleRate * 100)) percent")
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, DesignSystem.Spacing.xs)
 
                     Picker("Strategy", selection: $samplingConfig.strategy) {
                         Text("Random").tag(SamplingStrategy.random)
@@ -159,7 +161,13 @@ struct CaptureRulesView: View {
 
         Task {
             if vpnManager.isConnected {
-                try? await vpnManager.sendMessage(["command": "updateCaptureConfig"])
+                do {
+                    try await vpnManager.sendMessage(["command": "updateCaptureConfig"])
+                } catch {
+                    await MainActor.run {
+                        toastMessage = "Saved locally, but failed to notify VPN: \(error.localizedDescription)"
+                    }
+                }
             }
         }
     }

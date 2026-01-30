@@ -174,7 +174,7 @@ struct CertificateGuideView: View {
                             .foregroundStyle(.secondary)
 
                         Text(fingerprint)
-                            .font(.system(.caption2, design: .monospaced))
+                            .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .lineLimit(4)
                             .fixedSize(horizontal: false, vertical: true)
@@ -322,6 +322,9 @@ struct CertificateGuideView: View {
                     .frame(width: 10, height: 10)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Setup progress")
+        .accessibilityValue("Step \(safeCurrentStep + 1) of \(steps.count)")
     }
 
     private func stepCard(_ step: Step) -> some View {
@@ -460,7 +463,7 @@ struct CertificateGuideView: View {
         HStack(spacing: DesignSystem.Spacing.lg) {
             if safeCurrentStep > 0 {
                 Button {
-                    withAnimation {
+                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                         currentStep = max(0, currentStep - 1)
                     }
                 } label: {
@@ -469,11 +472,13 @@ struct CertificateGuideView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
+                .accessibilityLabel("Previous step")
+                .accessibilityHint("Moves to the previous setup step")
             }
 
             if safeCurrentStep < steps.count - 1 {
                 Button {
-                    withAnimation {
+                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                         currentStep = min(steps.count - 1, currentStep + 1)
                     }
                 } label: {
@@ -482,6 +487,8 @@ struct CertificateGuideView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .accessibilityLabel("Next step")
+                .accessibilityHint("Moves to the next setup step")
             } else {
                 Button {
                     handleDone()
@@ -491,6 +498,8 @@ struct CertificateGuideView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .accessibilityLabel("Done")
+                .accessibilityHint("Closes the certificate guide")
             }
         }
     }
@@ -552,13 +561,6 @@ struct CertificateGuideView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 shareSheetItem = ShareSheetItem([url])
                 SecurityLog.certificate.debug("event=cert.export_share_sheet outcome=presented")
-            }
-
-            // Auto-advance to next step after a delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                withAnimation {
-                    currentStep = min(1, steps.count - 1)
-                }
             }
         } catch {
             SecurityLog.certificate.error(

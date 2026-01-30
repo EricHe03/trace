@@ -7,6 +7,7 @@
 
 import SwiftUI
 import TraceCore
+import TraceFeatures
 import TraceUI
 
 /// Reusable components for displaying HTTP request rows in lists
@@ -53,7 +54,10 @@ public enum HTTPRequestRowComponents {
     private static func requestRowContent(
         for request: NetworkRequest
     ) -> some View {
-        RequestListRow(request: request)
+        RequestListRow(
+            request: request,
+            isFavorited: FavoritesManager.shared.isFavorited(requestId: request.id)
+        )
     }
 
     // MARK: - Swipe Action Buttons

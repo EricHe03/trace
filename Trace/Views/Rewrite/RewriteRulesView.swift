@@ -66,7 +66,7 @@ struct RewriteRulesView: View {
                                 }
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     Button(role: .destructive) {
-                                        withAnimation {
+                                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                             rewriteManager.deleteRule(rule)
                                             showToast(message: "Rule deleted")
                                         }
@@ -77,7 +77,7 @@ struct RewriteRulesView: View {
                                 }
                                 .swipeActions(edge: .leading) {
                                     Button {
-                                        withAnimation {
+                                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                             rewriteManager.toggleRule(rule)
                                         }
                                     } label: {
@@ -264,17 +264,21 @@ struct RewriteRulesView: View {
                     }
                 } catch {
                     await MainActor.run {
-                        showToast(message: "Failed to import rules")
+                        if error is DecodingError {
+                            showToast(message: "Failed to import rules: invalid file format")
+                        } else {
+                            showToast(message: "Failed to import rules: \(error.localizedDescription)")
+                        }
                     }
                 }
             }
-        case .failure:
-            showToast(message: "Failed to import rules")
+        case let .failure(error):
+            showToast(message: "Failed to import rules: \(error.localizedDescription)")
         }
     }
 
     private func showToast(message: String) {
-        withAnimation {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
             toastMessage = message
         }
     }
@@ -288,9 +292,9 @@ struct RuleRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
             HStack {
-                Circle()
-                    .fill(rule.enabled ? DesignSystem.Colors.success : DesignSystem.Colors.muted)
-                    .frame(width: 8, height: 8)
+                Image(systemName: rule.enabled ? "checkmark.circle.fill" : "slash.circle.fill")
+                    .foregroundStyle(rule.enabled ? DesignSystem.Colors.success : DesignSystem.Colors.muted)
+                    .accessibilityHidden(true)
 
                 Text(rule.name)
                     .font(.headline)
@@ -330,8 +334,11 @@ struct RuleTypeBadge: View {
     let type: RuleType
 
     var body: some View {
-        Text(type.displayName)
+        Label(type.displayName, systemImage: iconName)
+            .labelStyle(.titleAndIcon)
+            .imageScale(.small)
             .badgeStyle(backgroundColor: backgroundColor)
+            .accessibilityLabel(type.displayName)
     }
 
     private var backgroundColor: Color {
@@ -341,6 +348,21 @@ struct RuleTypeBadge: View {
         case .modifyResponse: DesignSystem.Colors.accentAlt
         case .block: DesignSystem.Colors.danger
         case .map: DesignSystem.Colors.success
+        }
+    }
+
+    private var iconName: String {
+        switch type {
+        case .redirect:
+            "arrowshape.turn.up.right"
+        case .modifyRequest:
+            "square.and.pencil"
+        case .modifyResponse:
+            "arrow.triangle.2.circlepath"
+        case .block:
+            "hand.raised.fill"
+        case .map:
+            "link"
         }
     }
 }

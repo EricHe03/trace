@@ -8,6 +8,9 @@
 import SwiftUI
 import TraceCore
 import TraceUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct RewriteRuleEditorView: View {
     @Environment(\.dismiss) private var dismiss
@@ -24,6 +27,9 @@ struct RewriteRuleEditorView: View {
     @State private var stopProcessing: Bool
     @State private var matchingStrategy: MatchingStrategy
     @State private var showingAddAction = false
+    @State private var matchPatternError: String?
+    @State private var matchPatternAnnouncementTask: Task<Void, Never>?
+    @State private var lastAnnouncedMatchPatternError: String?
 
     init(rule: RewriteRule?, onSave: @escaping (RewriteRule) -> Void) {
         self.rule = rule
@@ -41,7 +47,7 @@ struct RewriteRuleEditorView: View {
     }
 
     var isValid: Bool {
-        !name.isEmpty && !matchPattern.isEmpty
+        !name.isEmpty && !matchPattern.isEmpty && matchPatternError == nil
     }
 
     var body: some View {
@@ -80,10 +86,25 @@ struct RewriteRuleEditorView: View {
                         TextField("Match Pattern", text: $matchPattern)
                             .autocapitalization(.none)
                             .autocorrectionDisabled()
+                            .accessibilityLabel("Match pattern")
+                            .onChange(of: matchPattern) { _ in
+                                validateMatchPattern(announceIfError: true)
+                            }
+                            .onChange(of: matchType) { _ in
+                                validateMatchPattern(announceIfError: true)
+                            }
 
                         Text(matchTypeHint)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+
+                        if let matchPatternError {
+                            Text(matchPatternError)
+                                .font(.caption)
+                                .foregroundStyle(DesignSystem.Colors.danger)
+                                .accessibilityLabel("Match pattern error")
+                                .accessibilityValue(matchPatternError)
+                        }
                     }
                 }
 
@@ -133,6 +154,12 @@ struct RewriteRuleEditorView: View {
                     actions.append(newAction)
                 }
             }
+            .onAppear {
+                validateMatchPattern(announceIfError: false)
+            }
+            .onDisappear {
+                matchPatternAnnouncementTask?.cancel()
+            }
         }
     }
 
@@ -169,6 +196,54 @@ struct RewriteRuleEditorView: View {
 
         onSave(newRule)
         dismiss()
+    }
+
+    private func validateMatchPattern(announceIfError: Bool) {
+        let trimmed = matchPattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            matchPatternError = nil
+            lastAnnouncedMatchPatternError = nil
+            return
+        }
+
+        switch matchType {
+        case .regex:
+            do {
+                _ = try NSRegularExpression(pattern: trimmed, options: [])
+                matchPatternError = nil
+                lastAnnouncedMatchPatternError = nil
+            } catch {
+                let message = "Invalid regex: \(error.localizedDescription)"
+                matchPatternError = message
+                if announceIfError {
+                    scheduleMatchPatternAnnouncement(message)
+                }
+            }
+        default:
+            matchPatternError = nil
+            lastAnnouncedMatchPatternError = nil
+        }
+    }
+
+    private func scheduleMatchPatternAnnouncement(_ message: String) {
+#if canImport(UIKit)
+        guard UIAccessibility.isVoiceOverRunning else { return }
+        guard lastAnnouncedMatchPatternError != message else { return }
+
+        lastAnnouncedMatchPatternError = message
+        matchPatternAnnouncementTask?.cancel()
+        matchPatternAnnouncementTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 300_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            UIAccessibility.post(notification: .announcement, argument: message)
+        }
+#else
+        _ = message
+#endif
     }
 }
 
@@ -207,6 +282,7 @@ struct ActionEditorView: View {
 
     @State private var actionType: RewriteAction.ActionType = .setHeader
     @State private var parameters: [String: String] = [:]
+    @ScaledMetric(relativeTo: .body) private var textEditorHeight: CGFloat = 150
 
     var body: some View {
         NavigationStack {
@@ -216,6 +292,8 @@ struct ActionEditorView: View {
                         Text(type.displayName).tag(type)
                     }
                 }
+                .accessibilityLabel("Action type")
+                .accessibilityHint("Select the type of rewrite action to add")
                 .onChange(of: actionType) { newValue in
                     parameters.removeAll()
                     initializeParameters(for: newValue)
@@ -239,6 +317,7 @@ struct ActionEditorView: View {
                     Button("Add") {
                         saveAction()
                     }
+                    .accessibilityLabel("Add action")
                 }
             }
             .onAppear {
@@ -253,85 +332,112 @@ struct ActionEditorView: View {
         case .setHeader:
             TextField("Header Name", text: binding(for: "key"))
                 .autocapitalization(.none)
+                .accessibilityLabel("Header name")
             TextField("Header Value", text: binding(for: "value"))
+                .accessibilityLabel("Header value")
 
         case .removeHeader:
             TextField("Header Name", text: binding(for: "key"))
                 .autocapitalization(.none)
+                .accessibilityLabel("Header name")
 
         case .replaceBody:
             TextField("Pattern (regex)", text: binding(for: "pattern"))
                 .autocapitalization(.none)
+                .accessibilityLabel("Pattern")
+                .accessibilityHint("Regular expression to match in the body")
             TextField("Replacement", text: binding(for: "replacement"))
+                .accessibilityLabel("Replacement")
 
         case .setBody:
             TextEditor(text: binding(for: "content"))
-                .frame(height: 150)
+                .frame(minHeight: textEditorHeight)
                 .font(.system(.body, design: .monospaced))
+                .formTextEditorStyle()
+                .accessibilityLabel("Body content")
 
         case .setStatusCode:
             TextField("Status Code", text: binding(for: "code"))
                 .keyboardType(.numberPad)
+                .accessibilityLabel("Status code")
 
         case .addDelay:
             TextField("Delay (milliseconds)", text: binding(for: "milliseconds"))
                 .keyboardType(.numberPad)
+                .accessibilityLabel("Delay in milliseconds")
 
         case .redirectTo:
             TextField("Redirect URL", text: binding(for: "url"))
                 .autocapitalization(.none)
                 .autocorrectionDisabled()
+                .accessibilityLabel("Redirect URL")
 
         case .setQueryParam:
             TextField("Param Name", text: binding(for: "name"))
                 .autocapitalization(.none)
+                .accessibilityLabel("Query parameter name")
             TextField("Param Value", text: binding(for: "value"))
+                .accessibilityLabel("Query parameter value")
 
         case .removeQueryParam:
             TextField("Param Name", text: binding(for: "name"))
                 .autocapitalization(.none)
+                .accessibilityLabel("Query parameter name")
 
         case .setCookie:
             TextField("Cookie Name", text: binding(for: "name"))
                 .autocapitalization(.none)
+                .accessibilityLabel("Cookie name")
             TextField("Cookie Value", text: binding(for: "value"))
+                .accessibilityLabel("Cookie value")
 
         case .removeCookie:
             TextField("Cookie Name", text: binding(for: "name"))
                 .autocapitalization(.none)
+                .accessibilityLabel("Cookie name")
 
         case .base64Encode, .base64Decode, .urlEncode, .urlDecode, .jsonToXml, .xmlToJson,
              .dropConnection, .resetConnection, .corruptData, .timeout, .packetLoss:
             Text("No parameters required")
                 .foregroundStyle(.secondary)
+                .accessibilityLabel("No parameters required")
 
         case .compress, .decompress:
             TextField("Algorithm (gzip, deflate, br)", text: binding(for: "algorithm"))
                 .autocapitalization(.none)
+                .accessibilityLabel("Compression algorithm")
 
         case .jsonPathSet:
             TextField("JSONPath", text: binding(for: "path"))
                 .autocapitalization(.none)
+                .accessibilityLabel("JSONPath")
             TextField("Value (JSON)", text: binding(for: "value"))
+                .accessibilityLabel("Value")
 
         case .jsonPathDelete:
             TextField("JSONPath", text: binding(for: "path"))
                 .autocapitalization(.none)
+                .accessibilityLabel("JSONPath")
 
         case .throttle:
             TextField("Bandwidth (bytes/sec)", text: binding(for: "bandwidth"))
                 .keyboardType(.numberPad)
+                .accessibilityLabel("Bandwidth in bytes per second")
 
         case .addJitter:
             TextField("Base Delay (ms)", text: binding(for: "baseDelay"))
                 .keyboardType(.numberPad)
+                .accessibilityLabel("Base delay in milliseconds")
             TextField("Variance (ms)", text: binding(for: "variance"))
                 .keyboardType(.numberPad)
+                .accessibilityLabel("Variance in milliseconds")
 
         case .setBodyFromTemplate:
             TextEditor(text: binding(for: "template"))
-                .frame(height: 150)
+                .frame(minHeight: textEditorHeight)
                 .font(.system(.body, design: .monospaced))
+                .formTextEditorStyle()
+                .accessibilityLabel("Body template")
         }
     }
 

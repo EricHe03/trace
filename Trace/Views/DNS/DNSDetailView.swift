@@ -7,6 +7,7 @@
 
 import SwiftUI
 import TraceCore
+import TraceUI
 #if os(macOS)
 import AppKit
 #elseif canImport(UIKit)
@@ -106,16 +107,16 @@ struct DNSDetailView: View {
                             .foregroundStyle(.secondary)
                         HStack(spacing: 8) {
                             if message.isAuthoritative {
-                                flagBadge("AA", color: .blue)
+                                flagBadge("AA", label: "Authoritative answer", color: DesignSystem.Colors.info)
                             }
                             if message.isTruncated {
-                                flagBadge("TC", color: .orange)
+                                flagBadge("TC", label: "Truncated", color: DesignSystem.Colors.warning)
                             }
                             if message.recursionDesired {
-                                flagBadge("RD", color: .green)
+                                flagBadge("RD", label: "Recursion desired", color: DesignSystem.Colors.success)
                             }
                             if message.recursionAvailable {
-                                flagBadge("RA", color: .green)
+                                flagBadge("RA", label: "Recursion available", color: DesignSystem.Colors.success)
                             }
                         }
                     }
@@ -147,10 +148,10 @@ struct DNSDetailView: View {
                             Text("Type:")
                                 .foregroundStyle(.secondary)
                             Text(question.type.displayName)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
+                                .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
+                                .padding(.vertical, DesignSystem.Badge.verticalPadding)
                                 .background(Color.blue.opacity(0.2))
-                                .cornerRadius(4)
+                                .cornerRadius(DesignSystem.Badge.cornerRadius)
 
                             Text("Class:")
                                 .foregroundStyle(.secondary)
@@ -161,7 +162,7 @@ struct DNSDetailView: View {
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(cardBackgroundColor)
-                    .cornerRadius(6)
+                    .cornerRadius(DesignSystem.CornerRadius.md)
                 }
             }
             .padding(8)
@@ -262,23 +263,23 @@ struct DNSDetailView: View {
                         Text("Fast")
                             .font(.caption)
                             .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
+                            .padding(.vertical, DesignSystem.Spacing.xs)
                             .background(Color.green.opacity(0.2))
-                            .cornerRadius(4)
+                            .cornerRadius(DesignSystem.CornerRadius.sm)
                     } else if responseTime < 0.200 {
                         Text("Normal")
                             .font(.caption)
                             .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
+                            .padding(.vertical, DesignSystem.Spacing.xs)
                             .background(Color.orange.opacity(0.2))
-                            .cornerRadius(4)
+                            .cornerRadius(DesignSystem.CornerRadius.sm)
                     } else {
                         Text("Slow")
                             .font(.caption)
                             .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
+                            .padding(.vertical, DesignSystem.Spacing.xs)
                             .background(Color.red.opacity(0.2))
-                            .cornerRadius(4)
+                            .cornerRadius(DesignSystem.CornerRadius.sm)
                     }
                 }
                 .padding(8)
@@ -306,10 +307,10 @@ struct DNSDetailView: View {
             HStack {
                 Text(record.type.displayName)
                     .font(.caption)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
+                    .padding(.vertical, DesignSystem.Badge.verticalPadding)
                     .background(recordTypeColor(record.type))
-                    .cornerRadius(4)
+                    .cornerRadius(DesignSystem.Badge.cornerRadius)
 
                 Text(record.class.displayName)
                     .font(.caption)
@@ -324,7 +325,7 @@ struct DNSDetailView: View {
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(cardBackgroundColor)
-        .cornerRadius(6)
+        .cornerRadius(DesignSystem.CornerRadius.md)
     }
 
     // MARK: - Toolbar
@@ -354,35 +355,36 @@ struct DNSDetailView: View {
 
     private var statusColor: Color {
         if !message.isResponse {
-            return .blue
+            return DesignSystem.Colors.info
         }
-        return message.isSuccessful ? .green : .red
+        return message.isSuccessful ? DesignSystem.Colors.success : DesignSystem.Colors.danger
     }
 
-    private func flagBadge(_ text: String, color: Color) -> some View {
+    private func flagBadge(_ text: String, label: String, color: Color) -> some View {
         Text(text)
-            .font(.caption2)
-            .fontWeight(.semibold)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
+            .font(DesignSystem.Badge.font)
+            .fontWeight(DesignSystem.Badge.fontWeight)
+            .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
+            .padding(.vertical, DesignSystem.Badge.verticalPadding)
             .background(color.opacity(0.2))
-            .cornerRadius(4)
+            .cornerRadius(DesignSystem.Badge.cornerRadius)
+            .accessibilityLabel(label)
     }
 
     private func recordTypeColor(_ type: DNSRecordType) -> Color {
         switch type {
         case .a, .aaaa:
-            Color.green.opacity(0.2)
+            DesignSystem.Colors.success.opacity(0.2)
         case .cname:
-            Color.blue.opacity(0.2)
+            DesignSystem.Colors.info.opacity(0.2)
         case .mx:
-            Color.purple.opacity(0.2)
+            DesignSystem.Colors.favorite.opacity(0.2)
         case .ns:
-            Color.orange.opacity(0.2)
+            DesignSystem.Colors.warning.opacity(0.2)
         case .txt:
-            Color.yellow.opacity(0.2)
+            DesignSystem.Colors.accentAlt.opacity(0.2)
         default:
-            Color.gray.opacity(0.2)
+            DesignSystem.Colors.muted.opacity(0.2)
         }
     }
 

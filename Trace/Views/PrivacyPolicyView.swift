@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import TraceCore
 import TraceUI
 
 struct PrivacyPolicyView: View {
@@ -41,7 +42,7 @@ struct PrivacyPolicyView: View {
                 .padding(.vertical, DesignSystem.Spacing.md)
             } footer: {
                 VStack(spacing: DesignSystem.Spacing.sm) {
-                    Text("Effective Date: January 14, 2026")
+                    Text("Effective Date: \(LegalConfig.privacyPolicyEffectiveDate)")
                     Text("Developer: Justin")
                     Text("Contact: epa6643@gmail.com")
                 }

@@ -9,6 +9,7 @@ import SwiftUI
 import TraceCore
 import TraceUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct RequestMapEditorView: View {
     @Environment(\.dismiss) private var dismiss
@@ -30,6 +31,8 @@ struct RequestMapEditorView: View {
     @State private var showingAddHeader = false
     @State private var showingFilePicker = false
     @State private var scriptValidationError: String?
+    @State private var toastMessage: String?
+    @ScaledMetric(relativeTo: .body) private var textEditorHeight: CGFloat = 200
 
     init(map: RequestMap?, onSave: @escaping (RequestMap) -> Void) {
         self.map = map
@@ -213,6 +216,7 @@ struct RequestMapEditorView: View {
                 }
             }
         }
+        .toast(message: $toastMessage)
     }
 
     private var matchTypeHint: String {
@@ -239,11 +243,12 @@ struct RequestMapEditorView: View {
 
             TextEditor(text: $bodyContent)
                 .font(.system(.body, design: .monospaced))
-                .frame(height: 200)
+                .frame(minHeight: textEditorHeight)
                 .overlay(
                     RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
                         .stroke(DesignSystem.Colors.muted.opacity(0.2), lineWidth: 1)
                 )
+                .formTextEditorStyle()
         }
 
         HStack {
@@ -309,13 +314,13 @@ struct RequestMapEditorView: View {
         // Check if file exists
         if bodyFilePath.hasPrefix("/") {
             if FileManager.default.fileExists(atPath: bodyFilePath) {
-                ("checkmark.circle.fill", .green, "File found")
+                ("checkmark.circle.fill", DesignSystem.Colors.success, "File found")
             } else {
-                ("xmark.circle.fill", .red, "File not found")
+                ("xmark.circle.fill", DesignSystem.Colors.danger, "File not found")
             }
         } else {
             // Relative path - will be resolved at runtime
-            ("info.circle", .blue, "Will be resolved from MockFiles folder")
+            ("info.circle", DesignSystem.Colors.info, "Will be resolved from MockFiles folder")
         }
     }
 
@@ -342,8 +347,10 @@ struct RequestMapEditorView: View {
             try FileManager.default.copyItem(at: sourceURL, to: destURL)
             bodyFilePath = sourceURL.lastPathComponent
         } catch {
-            // Handle error silently for now
             bodyFilePath = sourceURL.path
+            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+                toastMessage = "Failed to copy file: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -365,11 +372,12 @@ struct RequestMapEditorView: View {
 
             TextEditor(text: $scriptContent)
                 .font(.system(.body, design: .monospaced))
-                .frame(height: 200)
+                .frame(minHeight: textEditorHeight)
                 .overlay(
                     RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
                         .stroke(DesignSystem.Colors.muted.opacity(0.2), lineWidth: 1)
                 )
+                .formTextEditorStyle()
                 .onChange(of: scriptContent) { _ in
                     validateScript()
                 }
@@ -377,7 +385,7 @@ struct RequestMapEditorView: View {
             if let error = scriptValidationError {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.yellow)
+                        .foregroundStyle(DesignSystem.Colors.warning)
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -405,6 +413,10 @@ struct RequestMapEditorView: View {
             scriptValidationError = "Unbalanced braces"
         } else if parenCount != 0 {
             scriptValidationError = "Unbalanced parentheses"
+        }
+
+        if let scriptValidationError {
+            UIAccessibility.post(notification: .announcement, argument: scriptValidationError)
         }
     }
 

@@ -83,37 +83,37 @@ struct DNSListView: View {
             StatItem(
                 title: "Total",
                 value: "\(stats.totalMessages)",
-                color: .blue
+                color: DesignSystem.Colors.info
             )
 
             StatItem(
                 title: "Queries",
                 value: "\(stats.totalQueries)",
-                color: .orange
+                color: DesignSystem.Colors.warning
             )
 
             StatItem(
                 title: "Responses",
                 value: "\(stats.totalResponses)",
-                color: .green
+                color: DesignSystem.Colors.success
             )
 
             StatItem(
                 title: "Success Rate",
                 value: String(format: "%.1f%%", stats.successRate * 100),
-                color: .green
+                color: DesignSystem.Colors.success
             )
 
             StatItem(
                 title: "Avg Response",
                 value: String(format: "%.0fms", stats.averageResponseTime * 1000),
-                color: .purple
+                color: DesignSystem.Colors.accentAlt
             )
 
             StatItem(
                 title: "Unanswered",
                 value: "\(stats.unansweredQueries)",
-                color: .red
+                color: DesignSystem.Colors.danger
             )
         }
         .padding()
@@ -222,9 +222,10 @@ struct DNSMessageRow: View {
             Image(systemName: message.statusIcon)
                 .foregroundStyle(statusColor)
                 .frame(width: 20)
+                .accessibilityHidden(true)
 
             // Domain and Type
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DesignSystem.Spacing.xxs) {
                 if let domain = message.queryDomain {
                     Text(domain)
                         .font(.system(.body, design: .monospaced))
@@ -238,19 +239,19 @@ struct DNSMessageRow: View {
                     if let type = message.queryType {
                         Text(type.displayName)
                             .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.blue.opacity(0.2))
-                            .cornerRadius(4)
+                            .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
+                            .padding(.vertical, DesignSystem.Badge.verticalPadding)
+                            .background(DesignSystem.Colors.info.opacity(0.2))
+                            .cornerRadius(DesignSystem.Badge.cornerRadius)
                     }
 
                     if message.isResponse {
                         Text(message.responseCode.displayName)
                             .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(message.isSuccessful ? Color.green.opacity(0.2) : Color.red.opacity(0.2))
-                            .cornerRadius(4)
+                            .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
+                            .padding(.vertical, DesignSystem.Badge.verticalPadding)
+                            .background((message.isSuccessful ? DesignSystem.Colors.success : DesignSystem.Colors.danger).opacity(0.2))
+                            .cornerRadius(DesignSystem.Badge.cornerRadius)
                     }
                 }
             }
@@ -258,7 +259,7 @@ struct DNSMessageRow: View {
             Spacer()
 
             // Response details or source info.
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: DesignSystem.Spacing.xxs) {
                 if message.isResponse {
                     if !message.resolvedIPs.isEmpty {
                         Text(message.resolvedIPs.first ?? "")
@@ -282,14 +283,34 @@ struct DNSMessageRow: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, DesignSystem.Spacing.xs)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(message.isResponse ? "DNS response" : "DNS query")
+        .accessibilityValue(accessibilityValue)
     }
 
     private var statusColor: Color {
         if !message.isResponse {
-            return .blue
+            return DesignSystem.Colors.info
         }
-        return message.isSuccessful ? .green : .red
+        return message.isSuccessful ? DesignSystem.Colors.success : DesignSystem.Colors.danger
+    }
+
+    private var accessibilityValue: String {
+        var parts: [String] = []
+        if let domain = message.queryDomain {
+            parts.append(domain)
+        }
+        if let type = message.queryType {
+            parts.append(type.displayName)
+        }
+        if message.isResponse {
+            parts.append(message.responseCode.displayName)
+            if let responseTime = message.responseTime {
+                parts.append(String(format: "%.0f milliseconds", responseTime * 1000))
+            }
+        }
+        return parts.joined(separator: ", ")
     }
 }
 

@@ -62,6 +62,7 @@ struct WebSocketDetailView: View {
                             WebSocketMessageRow(message: message)
                         }
                         .foregroundStyle(.primary)
+                        .accessibilityHint("Double tap to view message details")
                     }
                 }
             } header: {

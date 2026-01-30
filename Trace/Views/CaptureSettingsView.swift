@@ -25,6 +25,7 @@ struct CaptureSettingsView: View {
                     Text("Full Tunnel").tag(CaptureMode.fullTunnel)
                 }
                 .pickerStyle(.segmented)
+                .accessibilityLabel("Capture mode")
 
                 Button {
                     saveConfiguration()
@@ -32,6 +33,9 @@ struct CaptureSettingsView: View {
                     Label("Apply Capture Mode", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .disabled(isSaving)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .accessibilityLabel("Apply capture mode")
+                .accessibilityHint("Applies the selected capture mode")
             }
 
             if config.captureMode == .fullTunnel {
@@ -39,13 +43,19 @@ struct CaptureSettingsView: View {
                     TextField("Host", text: $config.fullTunnelSocks5Host)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .accessibilityLabel("SOCKS5 host")
 
                     TextField("Port", text: $socksPortText)
                         .keyboardType(.numberPad)
+                        .accessibilityLabel("SOCKS5 port")
 
-                    Text("Full-tunnel mode forwards traffic to the configured SOCKS5 server.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Label {
+                        Text("Full-tunnel mode forwards all device traffic to the configured SOCKS5 server. Only use a server you trust.")
+                    } icon: {
+                        Image(systemName: "exclamationmark.shield.fill")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
 
                 DomainListEditor(
@@ -60,6 +70,7 @@ struct CaptureSettingsView: View {
 
                 Section("IP Version") {
                     Toggle("Enable IPv6", isOn: $config.fullTunnelIPv6Enabled)
+                        .accessibilityLabel("Enable IPv6")
 
                     Text("Disable only if your SOCKS5 server or upstream network does not support IPv6.")
                         .font(.caption)
@@ -73,6 +84,7 @@ struct CaptureSettingsView: View {
                         Text("Split (UDP/443 via HEV)").tag(UDPForwardingMode.split)
                     }
                     .pickerStyle(.segmented)
+                    .accessibilityLabel("UDP forwarding mode")
 
                     Text("HEV-only sends all UDP through the SOCKS5 tunnel. Split forwards UDP/443 via HEV and other UDP directly.")
                         .font(.caption)
@@ -126,10 +138,18 @@ struct CaptureSettingsView: View {
         Task {
             await vpnManager.refreshRoutingDefaultsIfNeeded()
             if vpnManager.isConnected {
-                try? await vpnManager.sendMessage(["command": "updateCaptureConfig"])
+                do {
+                    try await vpnManager.sendMessage(["command": "updateCaptureConfig"])
+                } catch {
+                    await MainActor.run {
+                        toastMessage = "Saved locally, but failed to notify VPN: \(error.localizedDescription)"
+                    }
+                }
             }
-            isSaving = false
-            toastMessage = "Capture settings updated."
+            await MainActor.run {
+                isSaving = false
+                toastMessage = "Capture settings updated."
+            }
         }
     }
 

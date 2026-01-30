@@ -275,12 +275,12 @@ public class MITMProxyServer: @unchecked Sendable {
     /// Updates the allowlist used to decide which hosts may be MITM'd.
     public func setMitmAllowlist(_ list: [String]) {
         performOnQueue {
-            // Rule: Trim, lowercase, and never allow an empty list to disable MITM.
+            // Rule: Trim and lowercase. An empty list disables MITM for all hosts.
             let sanitized = list
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
                 .filter { !$0.isEmpty }
 
-            self.mitmAllowlist = sanitized.isEmpty ? ["*"] : sanitized
+            self.mitmAllowlist = sanitized
 
             ProxyLog.mitm.info("event=proxy.allowlist_update outcome=success count=\(self.mitmAllowlist.count)")
             self.eventLog?.append(type: "mitm_allowlist", msg: "size=\(self.mitmAllowlist.count)")

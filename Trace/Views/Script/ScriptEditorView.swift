@@ -9,6 +9,7 @@ import SwiftUI
 import TraceCore
 import TraceFeatures
 import TraceUI
+import UIKit
 
 struct ScriptEditorView: View {
     @Environment(\.dismiss) private var dismiss
@@ -115,6 +116,8 @@ struct ScriptEditorView: View {
                         }
                         .buttonStyle(.bordered)
                         .padding(.horizontal)
+                        .accessibilityLabel("Validate script")
+                        .accessibilityHint("Checks script syntax and shows the result")
                     }
                     .padding(.top, DesignSystem.Spacing.sm)
 
@@ -135,6 +138,7 @@ struct ScriptEditorView: View {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundStyle(DesignSystem.Colors.muted)
                             }
+                            .accessibilityLabel("Dismiss validation result")
                         }
                         .padding(.horizontal)
                         .padding(.vertical, DesignSystem.Spacing.sm)
@@ -149,6 +153,8 @@ struct ScriptEditorView: View {
                             RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
                                 .stroke(DesignSystem.Colors.muted.opacity(0.2), lineWidth: 1)
                         )
+                        .formTextEditorStyle()
+                        .accessibilityLabel("JavaScript code")
                 }
             }
             .navigationTitle(script == nil ? "New Script" : "Edit Script")
@@ -203,6 +209,7 @@ struct ScriptEditorView: View {
     private func validateCode() {
         validationResult = scriptManager.validateScript(code)
         showValidation = true
+        UIAccessibility.post(notification: .announcement, argument: validationMessage)
     }
 
     private func saveScript() {

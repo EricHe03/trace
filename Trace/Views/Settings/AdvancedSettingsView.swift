@@ -62,6 +62,8 @@ struct AdvancedSettingsView: View {
                             in: 0.05 ... 1.0,
                             step: 0.05
                         )
+                        .accessibilityLabel("Sample rate")
+                        .accessibilityValue("\(Int(samplingConfig.sampleRate * 100)) percent")
                     }
                     .padding(.vertical, 4)
 
@@ -104,8 +106,13 @@ struct AdvancedSettingsView: View {
         let normalized = bodyStorageConfig.normalized()
         if normalized != bodyStorageConfig {
             bodyStorageConfig = normalized
+            toastMessage = "Adjusted thresholds to keep Inline ≤ Truncation and Preview ≤ Truncation."
         }
-        try? AppGroupStorage.shared.saveBodyStorageConfig(normalized)
+        do {
+            try AppGroupStorage.shared.saveBodyStorageConfig(normalized)
+        } catch {
+            toastMessage = "Failed to save body storage settings: \(error.localizedDescription)"
+        }
     }
 
     private func persistSamplingConfig() {
@@ -114,7 +121,11 @@ struct AdvancedSettingsView: View {
         if normalized != samplingConfig {
             samplingConfig = normalized
         }
-        try? AppGroupStorage.shared.saveSamplingConfig(normalized)
+        do {
+            try AppGroupStorage.shared.saveSamplingConfig(normalized)
+        } catch {
+            toastMessage = "Failed to save sampling settings: \(error.localizedDescription)"
+        }
     }
 
     private func resetToDefaults() {

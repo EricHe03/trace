@@ -38,7 +38,7 @@ struct FavoritesListView: View {
                             }
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button(role: .destructive) {
-                                    withAnimation {
+                                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                         favoritesManager.deleteFavorite(favorite)
                                         showToast(message: "Favorite removed")
                                     }
@@ -51,7 +51,7 @@ struct FavoritesListView: View {
                             .accessibilityHint("Double tap to edit favorite")
                     }
                 }
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowInsets(EdgeInsets(top: DesignSystem.Spacing.sm, leading: DesignSystem.Spacing.sectionHorizontal, bottom: DesignSystem.Spacing.sm, trailing: DesignSystem.Spacing.sectionHorizontal))
             }
         }
         .searchable(text: $searchText, prompt: "Search favorites")
@@ -67,7 +67,7 @@ struct FavoritesListView: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
                     Button(role: .destructive) {
-                        withAnimation {
+                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                             favoritesManager.clearAll()
                             showToast(message: "All favorites cleared")
                         }
@@ -108,7 +108,7 @@ struct FavoritesListView: View {
     }
 
     private func showToast(message: String) {
-        withAnimation {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
             toastMessage = message
         }
     }
