@@ -308,12 +308,18 @@ final class CaptureViewModel: ObservableObject {
     @Published var filterMaxSize: Int?
     @Published var filterMinDuration: TimeInterval?
     @Published var filterMaxDuration: TimeInterval?
-    @Published var filterRegexPattern: String?
+    @Published var filterRegexPattern: String? {
+        didSet {
+            validateRegexPattern(pattern: filterRegexPattern)
+        }
+    }
+
+    @Published private(set) var regexFilterError: String?
     @Published var filterResponseTime: ResponseTimeFilter?
     @Published var filterShowDuplicatesOnly: Bool = false
     @Published var filterShowErrorsOnly: Bool = false
 
-    // Filter convenience properties for UI
+    /// Filter convenience properties for UI
     var minResponseTime: Int? {
         get { filterMinDuration.map { Int($0 * 1000) } }
         set { filterMinDuration = newValue.map { TimeInterval($0) / 1000.0 } }
@@ -324,16 +330,30 @@ final class CaptureViewModel: ObservableObject {
         set { filterMaxDuration = newValue.map { TimeInterval($0) / 1000.0 } }
     }
 
-    var minResponseSize: Int? { get { filterMinSize } set { filterMinSize = newValue } }
-    var maxResponseSize: Int? { get { filterMaxSize } set { filterMaxSize = newValue } }
-    var minDuration: TimeInterval? { get { filterMinDuration } set { filterMinDuration = newValue } }
-    var maxDuration: TimeInterval? { get { filterMaxDuration } set { filterMaxDuration = newValue } }
-    var regexFilter: String { get { filterRegexPattern ?? "" } set { filterRegexPattern = newValue.isEmpty ? nil : newValue } }
+    var minResponseSize: Int? {
+        get { filterMinSize } set { filterMinSize = newValue }
+    }
 
-    // Saved filter presets
+    var maxResponseSize: Int? {
+        get { filterMaxSize } set { filterMaxSize = newValue }
+    }
+
+    var minDuration: TimeInterval? {
+        get { filterMinDuration } set { filterMinDuration = newValue }
+    }
+
+    var maxDuration: TimeInterval? {
+        get { filterMaxDuration } set { filterMaxDuration = newValue }
+    }
+
+    var regexFilter: String {
+        get { filterRegexPattern ?? "" } set { filterRegexPattern = newValue.isEmpty ? nil : newValue }
+    }
+
+    /// Saved filter presets
     @Published var savedFilterPresets: [SavedFilterPreset] = []
 
-    // Network Throttling
+    /// Network Throttling
     @Published var throttlingEnabled: Bool = false {
         didSet { handleThrottlingStateChange() }
     }
@@ -342,7 +362,7 @@ final class CaptureViewModel: ObservableObject {
         didSet { handleThrottlingStateChange() }
     }
 
-    // Capture Settings
+    /// Capture Settings
     @Published var captureOptions: CaptureOptions = .default {
         didSet { persistCaptureOptions() }
     }
@@ -363,7 +383,7 @@ final class CaptureViewModel: ObservableObject {
         didSet { persistHardeningConfig() }
     }
 
-    // Grouping and Sessions
+    /// Grouping and Sessions
     @Published var groupingMode: RequestGroupingMode = .none {
         didSet {
             UserDefaults.standard.set(groupingMode.rawValue, forKey: "requestGroupingMode")
@@ -379,10 +399,10 @@ final class CaptureViewModel: ObservableObject {
     private var lastGroupingTimestamp: Date?
     private var groupingRestoreEventTypes: Set<NetworkEventType>?
 
-    // Duplicate detection cache
+    /// Duplicate detection cache
     private var duplicateRequestCache: [String: UUID] = [:] // URL+Method -> First Request ID
 
-    // Favorites manager
+    /// Favorites manager
     private let favoritesManager = FavoritesManager.shared
 
     // Search optimization
@@ -411,7 +431,9 @@ final class CaptureViewModel: ObservableObject {
     private let minLoadInterval: TimeInterval = 0.5 // Minimum 500ms between loads
     private var notifiedRequestIds: Set<UUID> = []
     private let notificationDedupLimit = 200
-    private var vpnStatusCancellable: AnyCancellable?
+    private var cancellables = Set<AnyCancellable>()
+    private var notificationObservers: [NSObjectProtocol] = []
+    private var newRequestsObserverToken: AppGroupStorageObserverToken?
     private var throttlingUpdateTask: Task<Void, Never>?
     private var isLoadingThrottlingState = false
     private var isLoadingSettings = false
@@ -436,29 +458,31 @@ final class CaptureViewModel: ObservableObject {
         loadSettings()
 
         // Observe new requests from Network Extension with debouncing
-        storage.observeNewRequests { [weak self] in
-            Task { @MainActor in
+        newRequestsObserverToken = storage.observeNewRequests { [weak self] in
+            Task { @MainActor [weak self] in
                 self?.debouncedLoadRequests()
             }
         }
 
         // Observe VPN status changes for session tracking
-        NotificationCenter.default.addObserver(
+        let vpnStatusObserver = NotificationCenter.default.addObserver(
             forName: NSNotification.Name.NEVPNStatusDidChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             self?.handleVPNStatusChange()
         }
+        notificationObservers.append(vpnStatusObserver)
 
         // Observe VPN connection state changes to sync isCapturing
-        vpnStatusCancellable = VPNManager.shared.$isConnected
+        VPNManager.shared.$isConnected
             .sink { [weak self] isConnected in
                 self?.isCapturing = isConnected
             }
+            .store(in: &cancellables)
 
         // Observe favorites updates to invalidate filter cache
-        NotificationCenter.default.addObserver(
+        let favoritesObserver = NotificationCenter.default.addObserver(
             forName: Notification.Name("com.trace.favoritesUpdated"),
             object: nil,
             queue: .main
@@ -466,6 +490,24 @@ final class CaptureViewModel: ObservableObject {
             self?.favoritesVersion &+= 1
             self?.filteredRequestsCache = nil
         }
+        notificationObservers.append(favoritesObserver)
+    }
+
+    deinit {
+        searchTask?.cancel()
+        loadTask?.cancel()
+        activeLoadTask?.cancel()
+        throttlingUpdateTask?.cancel()
+
+        newRequestsObserverToken?.cancel()
+        newRequestsObserverToken = nil
+
+        for observer in notificationObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        notificationObservers.removeAll()
+
+        cancellables.removeAll()
     }
 
     private func loadSettings() {
@@ -498,23 +540,47 @@ final class CaptureViewModel: ObservableObject {
         config.captureHeaders = captureOptions.captureHeaders
         config.captureBody = captureOptions.captureBody
         config.maxBodySize = captureOptions.maxBodySize
-        try? storage.saveConfiguration(config)
-        try? storage.saveCaptureOptions(captureOptions)
+        do {
+            try storage.saveConfiguration(config)
+            try storage.saveCaptureOptions(captureOptions)
+        } catch {
+            CoreLog.storage.error(
+                "event=storage.capture_options_save outcome=failure error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
         Task {
             if VPNManager.shared.isConnected {
-                try? await VPNManager.shared.sendMessage(["command": "updateCaptureConfig"])
+                do {
+                    try await VPNManager.shared.sendMessage(["command": "updateCaptureConfig"])
+                } catch {
+                    CoreLog.storage.error(
+                        "event=vpn.capture_config_update outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                    )
+                }
             }
         }
     }
 
     private func persistBodyStorageConfig() {
         guard !isLoadingSettings else { return }
-        try? storage.saveBodyStorageConfig(bodyStorageConfig)
+        do {
+            try storage.saveBodyStorageConfig(bodyStorageConfig)
+        } catch {
+            CoreLog.storage.error(
+                "event=storage.body_storage_config_save outcome=failure error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     private func persistSamplingConfig() {
         guard !isLoadingSettings else { return }
-        try? storage.saveSamplingConfig(samplingConfig)
+        do {
+            try storage.saveSamplingConfig(samplingConfig)
+        } catch {
+            CoreLog.storage.error(
+                "event=storage.sampling_config_save outcome=failure error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     private func persistHardeningConfig() {
@@ -522,21 +588,33 @@ final class CaptureViewModel: ObservableObject {
         let sanitized = mitmAllowlist
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { !$0.isEmpty }
-        let appliedAllowlist = sanitized.isEmpty ? ["*"] : sanitized
+        let appliedAllowlist = sanitized
 
         Task {
             let hardening = HardeningConfig.shared
             await hardening.setMitmAllowlist(appliedAllowlist)
             await hardening.setBlockQUIC(blockQUICEnabled)
-            try? storage.saveMITMAllowlist(appliedAllowlist)
+            do {
+                try storage.saveMITMAllowlist(appliedAllowlist)
+            } catch {
+                CoreLog.storage.error(
+                    "event=storage.mitm_allowlist_save outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                )
+            }
             if VPNManager.shared.isConnected {
-                try? await VPNManager.shared.sendMessage([
-                    "command": "updateHardeningConfig",
-                    "hardeningConfig": [
-                        "mitmAllowlist": appliedAllowlist,
-                        "blockQUIC": blockQUICEnabled
-                    ]
-                ])
+                do {
+                    try await VPNManager.shared.sendMessage([
+                        "command": "updateHardeningConfig",
+                        "hardeningConfig": [
+                            "mitmAllowlist": appliedAllowlist,
+                            "blockQUIC": blockQUICEnabled
+                        ]
+                    ])
+                } catch {
+                    CoreLog.storage.error(
+                        "event=vpn.hardening_config_update outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                    )
+                }
             }
         }
     }
@@ -560,6 +638,7 @@ final class CaptureViewModel: ObservableObject {
         throttlingUpdateTask?.cancel()
         throttlingUpdateTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
             guard let self else { return }
             self.persistThrottlingState()
         }
@@ -571,7 +650,13 @@ final class CaptureViewModel: ObservableObject {
             condition: selectedNetworkCondition
         )
 
-        try? storage.saveThrottlingState(state)
+        do {
+            try storage.saveThrottlingState(state)
+        } catch {
+            CoreLog.storage.error(
+                "event=storage.throttling_state_save outcome=failure error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
 
         Task {
             await VPNManager.shared.updateThrottlingState(state)
@@ -607,6 +692,7 @@ final class CaptureViewModel: ObservableObject {
 
             do {
                 var loadedRequests = try await self.storage.loadAllRequestsAsync()
+                loadedRequests.sort { $0.timestamp > $1.timestamp }
 
                 // Assign current session to requests without sessionId
                 let currentSessionId = await MainActor.run { self.currentSession?.id }
@@ -663,7 +749,7 @@ final class CaptureViewModel: ObservableObject {
         await activeLoadTask?.value
     }
 
-    // Check if network event type filter is user-set (not auto-set by grouping)
+    /// Check if network event type filter is user-set (not auto-set by grouping)
     private var hasUserSetNetworkEventTypeFilter: Bool {
         // If grouping is active and filter is exactly [.http], it's auto-set by grouping
         if groupingMode != .none && filterNetworkEventTypes == Set([.http]) {
@@ -738,6 +824,12 @@ final class CaptureViewModel: ObservableObject {
             return []
         }
 
+        if !hasActiveFilters, searchText.isEmpty {
+            filteredRequestsCache = requests
+            filteredRequestsCacheKey = cacheKey
+            return requests
+        }
+
         var results: [NetworkRequest] = []
         results.reserveCapacity(requests.count)
         let favoritedIds = filterFavoritesOnly ? favoritesManager.favoritedRequestIds : nil
@@ -797,7 +889,6 @@ final class CaptureViewModel: ObservableObject {
             results.append(request)
         }
 
-        results.sort { $0.timestamp > $1.timestamp }
         filteredRequestsCache = results
         filteredRequestsCacheKey = cacheKey
         return results
@@ -820,13 +911,31 @@ final class CaptureViewModel: ObservableObject {
 
     // MARK: - Regex Matching
 
-    private func matchesRegex(_ request: NetworkRequest, pattern: String) -> Bool {
-        // Cache compiled regex for performance
-        if pattern != lastRegexPattern {
-            lastRegexPattern = pattern
-            compiledRegex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+    private func validateRegexPattern(pattern rawPattern: String?) {
+        let pattern = rawPattern?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let pattern, !pattern.isEmpty else {
+            lastRegexPattern = nil
+            compiledRegex = nil
+            regexFilterError = nil
+            return
         }
 
+        if pattern == lastRegexPattern, compiledRegex != nil || regexFilterError != nil {
+            return
+        }
+
+        lastRegexPattern = pattern
+        do {
+            compiledRegex = try NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+            regexFilterError = nil
+        } catch {
+            compiledRegex = nil
+            regexFilterError = error.localizedDescription
+        }
+    }
+
+    private func matchesRegex(_ request: NetworkRequest, pattern: String) -> Bool {
+        validateRegexPattern(pattern: pattern)
         guard let regex = compiledRegex else { return false }
 
         // Check URL

@@ -98,7 +98,9 @@ public enum NetworkEventType: String, CaseIterable, Identifiable {
     case webSocket = "WebSocket"
     case sse = "SSE"
 
-    public var id: String { rawValue }
+    public var id: String {
+        rawValue
+    }
 
     public var icon: String {
         switch self {

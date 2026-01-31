@@ -77,7 +77,7 @@ struct DNSFilterView: View {
                 }
             }
         }
-        .frame(width: 400, height: 600)
+        .frame(maxWidth: 400, maxHeight: 600)
     }
 }
 

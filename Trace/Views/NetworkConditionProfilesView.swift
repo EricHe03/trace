@@ -17,13 +17,14 @@ struct NetworkConditionProfilesView: View {
     @State private var customUpload = 500
     @State private var customLatency = 50
     @State private var customPacketLoss = 0.0
+    @State private var showingEnableConfirmation = false
 
     var body: some View {
         NavigationStack {
             Form {
                 // Throttling Toggle
                 Section {
-                    Toggle("Enable Network Throttling", isOn: $viewModel.throttlingEnabled)
+                    Toggle("Enable Network Throttling", isOn: throttlingEnabledBinding)
                         .tint(DesignSystem.Colors.accent)
 
                     if viewModel.throttlingEnabled {
@@ -100,7 +101,7 @@ struct NetworkConditionProfilesView: View {
                                             .font(.title3)
                                     }
                                 }
-                                .padding(.vertical, DesignSystem.Spacing.xs)
+                                .padding(.vertical, DesignSystem.Spacing.md)
                             }
                             .buttonStyle(.plain)
                         }
@@ -155,7 +156,7 @@ struct NetworkConditionProfilesView: View {
                                         .font(.title3)
                                 }
                             }
-                            .padding(.vertical, DesignSystem.Spacing.xs)
+                            .padding(.vertical, DesignSystem.Spacing.md)
                         }
                         .buttonStyle(.plain)
                     } header: {
@@ -182,6 +183,16 @@ struct NetworkConditionProfilesView: View {
             .navigationTitle("Network Throttling")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {}
+            .alert("Enable Network Throttling?", isPresented: $showingEnableConfirmation) {
+                Button("Cancel", role: .cancel) {
+                    viewModel.throttlingEnabled = false
+                }
+                Button("Enable") {
+                    viewModel.throttlingEnabled = true
+                }
+            } message: {
+                Text("Network throttling affects captured traffic and can impact app behavior. Disable when finished testing.")
+            }
             .sheet(isPresented: $showingCustomThrottling) {
                 CustomThrottlingSheet(
                     downloadSpeed: $customDownload,
@@ -199,6 +210,19 @@ struct NetworkConditionProfilesView: View {
                 }
             }
         }
+    }
+
+    private var throttlingEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.throttlingEnabled },
+            set: { newValue in
+                if newValue, !viewModel.throttlingEnabled {
+                    showingEnableConfirmation = true
+                } else {
+                    viewModel.throttlingEnabled = newValue
+                }
+            }
+        )
     }
 }
 
@@ -223,6 +247,8 @@ struct CustomThrottlingSheet: View {
                             get: { Double(downloadSpeed) },
                             set: { downloadSpeed = Int($0) }
                         ), in: 0 ... 100_000, step: 100)
+                            .accessibilityLabel("Download speed")
+                            .accessibilityValue("\(downloadSpeed) kilobytes per second")
                     }
 
                     VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
@@ -232,6 +258,8 @@ struct CustomThrottlingSheet: View {
                             get: { Double(uploadSpeed) },
                             set: { uploadSpeed = Int($0) }
                         ), in: 0 ... 50000, step: 50)
+                            .accessibilityLabel("Upload speed")
+                            .accessibilityValue("\(uploadSpeed) kilobytes per second")
                     }
                 } header: {
                     Text("Bandwidth")
@@ -247,6 +275,8 @@ struct CustomThrottlingSheet: View {
                             get: { Double(latency) },
                             set: { latency = Int($0) }
                         ), in: 0 ... 2000, step: 10)
+                            .accessibilityLabel("Latency")
+                            .accessibilityValue("\(latency) milliseconds")
                     }
                 } header: {
                     Text("Network Delay")
@@ -259,6 +289,8 @@ struct CustomThrottlingSheet: View {
                         Text(String(format: "Packet Loss: %.1f%%", packetLoss * 100))
                             .font(.headline)
                         Slider(value: $packetLoss, in: 0 ... 0.5, step: 0.001)
+                            .accessibilityLabel("Packet loss")
+                            .accessibilityValue(String(format: "%.1f percent", packetLoss * 100))
                     }
                 } header: {
                     Text("Packet Loss")

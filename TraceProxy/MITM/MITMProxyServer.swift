@@ -275,12 +275,12 @@ public class MITMProxyServer: @unchecked Sendable {
     /// Updates the allowlist used to decide which hosts may be MITM'd.
     public func setMitmAllowlist(_ list: [String]) {
         performOnQueue {
-            // Rule: Trim, lowercase, and never allow an empty list to disable MITM.
+            // Rule: Trim and lowercase. An empty list disables MITM for all hosts.
             let sanitized = list
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
                 .filter { !$0.isEmpty }
 
-            self.mitmAllowlist = sanitized.isEmpty ? ["*"] : sanitized
+            self.mitmAllowlist = sanitized
 
             ProxyLog.mitm.info("event=proxy.allowlist_update outcome=success count=\(self.mitmAllowlist.count)")
             self.eventLog?.append(type: "mitm_allowlist", msg: "size=\(self.mitmAllowlist.count)")
@@ -1962,7 +1962,8 @@ public class ProxyConnection: @unchecked Sendable {
             if line.lowercased().hasPrefix("content-length:"),
                let colonIndex = line.firstIndex(of: ":") {
                 let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(
-                    in: .whitespaces)
+                    in: .whitespaces
+                )
                 expectedContentLength = Int(value)
             }
 
@@ -2254,7 +2255,8 @@ public class ProxyConnection: @unchecked Sendable {
                 if let colonIndex = line.firstIndex(of: ":") {
                     let key = String(line[..<colonIndex])
                     let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(
-                        in: .whitespaces)
+                        in: .whitespaces
+                    )
                     headers[key] = value
                 }
             }
@@ -2373,7 +2375,8 @@ public class ProxyConnection: @unchecked Sendable {
             if let colonIndex = line.firstIndex(of: ":") {
                 let key = String(line[..<colonIndex])
                 let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(
-                    in: .whitespaces)
+                    in: .whitespaces
+                )
                 headers[key] = value
             }
         }
@@ -2414,7 +2417,8 @@ public class ProxyConnection: @unchecked Sendable {
             if lowercasedLine.hasPrefix("content-length:"),
                let colonIndex = line.firstIndex(of: ":") {
                 let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(
-                    in: .whitespaces)
+                    in: .whitespaces
+                )
                 contentLength = Int(value)
             }
 
@@ -2690,7 +2694,8 @@ public class ProxyConnection: @unchecked Sendable {
             if let colonIndex = line.firstIndex(of: ":") {
                 let key = String(line[..<colonIndex])
                 let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(
-                    in: .whitespaces)
+                    in: .whitespaces
+                )
                 headers.append(TraceHTTPHeader(key: key, value: value))
             }
         }

@@ -299,8 +299,13 @@ public enum HuffmanDecodeTable {
         return (table, true)
     }()
 
-    public static var table: [[HuffmanDecodeNode]] { decoded.table }
-    public static var isValid: Bool { decoded.isValid }
+    public static var table: [[HuffmanDecodeNode]] {
+        decoded.table
+    }
+
+    public static var isValid: Bool {
+        decoded.isValid
+    }
 }
 
 // Rule: Access via a computed property to keep lazy initialization.

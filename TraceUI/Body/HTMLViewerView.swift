@@ -45,6 +45,8 @@ public struct HTMLViewerView: View {
                     }
                 case .preview:
                     HTMLWebPreview(html: htmlString)
+                        .accessibilityLabel("HTML preview")
+                        .accessibilityHint("Renders the HTML content for visual inspection.")
                 case .raw:
                     ScrollView {
                         rawView
@@ -59,7 +61,7 @@ public struct HTMLViewerView: View {
 
     private var formattedView: some View {
         Text(attributedHTMLString())
-            .font(.system(.caption, design: .monospaced))
+            .font(DesignSystem.Typography.monospacedFont)
             .frame(maxWidth: .infinity, alignment: .leading)
             .textSelection(.enabled)
     }
@@ -68,7 +70,7 @@ public struct HTMLViewerView: View {
 
     private var rawView: some View {
         Text(htmlString)
-            .font(.system(.caption, design: .monospaced))
+            .font(DesignSystem.Typography.monospacedFont)
             .frame(maxWidth: .infinity, alignment: .leading)
             .textSelection(.enabled)
     }
@@ -112,10 +114,10 @@ public struct HTMLViewerView: View {
             if let range = Range(match.range, in: text) {
                 text[range].foregroundColor = color
                 if bold {
-                    text[range].font = .system(.caption, design: .monospaced).weight(.bold)
+                    text[range].font = .system(.callout, design: .monospaced).weight(.bold)
                 }
                 if italic {
-                    text[range].font = .system(.caption, design: .monospaced).italic()
+                    text[range].font = .system(.callout, design: .monospaced).italic()
                 }
             }
         }

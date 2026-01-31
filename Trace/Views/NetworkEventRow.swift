@@ -50,7 +50,6 @@ struct NetworkEventRow<ContextMenu: View>: View {
         }
     }
 
-    @ViewBuilder
     private func httpRequestRow(for request: NetworkRequest) -> some View {
         HTTPRequestRowComponents.httpRequestRow(
             for: request,

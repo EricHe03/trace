@@ -10,7 +10,9 @@ import Foundation
 public struct TCPPacket: Sendable {
     public struct Flags: OptionSet, Sendable {
         public let rawValue: UInt8
-        public init(rawValue: UInt8) { self.rawValue = rawValue }
+        public init(rawValue: UInt8) {
+            self.rawValue = rawValue
+        }
 
         public static let fin = Flags(rawValue: 0x01)
         public static let syn = Flags(rawValue: 0x02)

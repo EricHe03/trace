@@ -35,11 +35,11 @@ struct SSEDetailView: View {
 
                 if connection.isTruncated {
                     HStack {
-                        Text("Truncated:")
+                        Label("Truncated:", systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.secondary)
                         Spacer()
                         Text("Yes (Limit Reached)")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(DesignSystem.Colors.warning)
                             .fontWeight(.medium)
                     }
                 }
@@ -64,6 +64,7 @@ struct SSEDetailView: View {
                             SSEConnectionEventRow(event: event)
                         }
                         .foregroundStyle(.primary)
+                        .accessibilityHint("Double tap to view event details")
                     }
                 }
             } header: {

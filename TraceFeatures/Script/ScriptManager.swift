@@ -25,7 +25,7 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
 
     public let objectWillChange = ObservableObjectPublisher()
 
-    // Expose items through computed property
+    /// Expose items through computed property
     public var scripts: [Script] {
         baseManager.items
     }

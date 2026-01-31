@@ -50,6 +50,7 @@ struct OverviewSection: View {
 
                         Image(systemName: "antenna.radiowaves.left.and.right")
                             .foregroundStyle(DesignSystem.Colors.accent)
+                            .accessibilityLabel("Server-sent events stream")
                     }
                 }
             }
@@ -123,6 +124,7 @@ struct OverviewSection: View {
                             HStack {
                                 Image(systemName: alert.level == .fatal ? "exclamationmark.triangle.fill" : "exclamationmark.circle")
                                     .foregroundStyle(alert.level == .fatal ? DesignSystem.Colors.danger : DesignSystem.Colors.warning)
+                                    .accessibilityHidden(true)
                                 Text(alert.level.displayName)
                                     .font(.caption.bold())
                                     .foregroundStyle(alert.level == .fatal ? DesignSystem.Colors.danger : DesignSystem.Colors.warning)

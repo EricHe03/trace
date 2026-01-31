@@ -9,7 +9,9 @@ import Combine
 import Foundation
 import SwiftUI
 import TraceCore
+import TraceUI
 
+@MainActor
 final class UDPFlowsViewModel: ObservableObject {
     enum SortOrder: String, CaseIterable, Identifiable {
         case startTimeAscending
@@ -23,7 +25,9 @@ final class UDPFlowsViewModel: ObservableObject {
         case datagramsAscending
         case datagramsDescending
 
-        var id: String { rawValue }
+        var id: String {
+            rawValue
+        }
 
         var displayName: String {
             switch self {
@@ -68,6 +72,14 @@ final class UDPFlowsViewModel: ObservableObject {
     @Published var lastError: String?
 
     private var isObserving = false
+    private var loadTask: Task<Void, Never>?
+    private var storageObserverToken: AppGroupStorageObserverToken?
+
+    deinit {
+        loadTask?.cancel()
+        storageObserverToken?.cancel()
+        storageObserverToken = nil
+    }
 
     var filteredFlows: [UDPFlowMetadata] {
         var result = flows
@@ -116,24 +128,29 @@ final class UDPFlowsViewModel: ObservableObject {
     func startObserving() {
         guard !isObserving else { return }
         isObserving = true
-        AppGroupStorage.shared.observeNewUDPFlows { [weak self] in
-            self?.loadFlows()
+        storageObserverToken = AppGroupStorage.shared.observeNewUDPFlows { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.scheduleLoad()
+            }
+        }
+        scheduleLoad()
+    }
+
+    private func scheduleLoad() {
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in
+            await self?.loadFlows()
         }
     }
 
-    func loadFlows() {
-        Task {
-            do {
-                let loaded = try AppGroupStorage.shared.loadAllUDPFlowMetadata()
-                await MainActor.run {
-                    self.flows = loaded
-                    self.lastError = nil
-                }
-            } catch {
-                await MainActor.run {
-                    self.lastError = error.localizedDescription
-                }
-            }
+    func loadFlows() async {
+        do {
+            var loaded = try AppGroupStorage.shared.loadAllUDPFlowMetadata()
+            loaded.sort { $0.startTime > $1.startTime }
+            flows = loaded
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
         }
     }
 
@@ -159,7 +176,11 @@ final class UDPFlowsViewModel: ObservableObject {
         let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
         let toDelete = flows.filter { ($0.endTime ?? $0.lastActivity) < cutoff }
         for flow in toDelete {
-            try? AppGroupStorage.shared.deleteUDPFlowMetadata(flow.id)
+            do {
+                try AppGroupStorage.shared.deleteUDPFlowMetadata(flow.id)
+            } catch {
+                lastError = error.localizedDescription
+            }
         }
         flows.removeAll { ($0.endTime ?? $0.lastActivity) < cutoff }
     }
@@ -188,20 +209,12 @@ final class UDPFlowsViewModel: ObservableObject {
     }
 
     func formatBytes(_ bytes: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+        let clamped = bytes > UInt64(Int.max) ? Int.max : Int(bytes)
+        return DesignSystem.formattedBytes(clamped)
     }
 
     func formatDuration(_ seconds: TimeInterval) -> String {
-        if seconds < 1 {
-            return String(format: "%.0f ms", seconds * 1000)
-        }
-        if seconds < 60 {
-            return String(format: "%.1f s", seconds)
-        }
-        if seconds < 3600 {
-            return String(format: "%.1f min", seconds / 60)
-        }
-        return String(format: "%.1f hr", seconds / 3600)
+        DesignSystem.formattedDuration(seconds)
     }
 
     func formatThroughput(_ bytesPerSecond: Double) -> String {

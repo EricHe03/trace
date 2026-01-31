@@ -77,12 +77,12 @@ struct RootTabView: View {
                 break
             }
         }
-        .onChange(of: viewModel.selectedSession) { newValue in
+        .onChangeCompat(of: viewModel.selectedSession) { newValue in
             if newValue != nil {
                 selectedTab = .network
             }
         }
-        .onChange(of: viewModel.selectedRequestId) { newValue in
+        .onChangeCompat(of: viewModel.selectedRequestId) { newValue in
             if newValue != nil {
                 selectedTab = .network
             }
@@ -361,7 +361,7 @@ struct SettingsTabView: View {
                     NavigationLink {
                         PrivacyPolicyView()
                     } label: {
-                        Label("Privacy Policy", systemImage: "hand.raised")
+                        Label("Privacy Policy", systemImage: "hand.raised.circle")
                     }
 
                     Button {

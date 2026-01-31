@@ -46,7 +46,7 @@ public struct URLEncoderView: View {
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
-                .onChange(of: mode) { _ in
+                .onChangeCompat(of: mode) {
                     processText()
                 }
                 .accessibilityLabel("URL encoding mode")
@@ -73,7 +73,7 @@ public struct URLEncoderView: View {
                         .autocapitalization(.none)
                         .autocorrectionDisabled()
                         .formTextEditorStyle()
-                        .onChange(of: inputText) { _ in
+                        .onChangeCompat(of: inputText) {
                             processText()
                         }
                 }
@@ -87,7 +87,7 @@ public struct URLEncoderView: View {
                             }
                         }
                         .pickerStyle(.segmented)
-                        .onChange(of: encodingMode) { _ in
+                        .onChangeCompat(of: encodingMode) {
                             processText()
                         }
 
@@ -107,7 +107,7 @@ public struct URLEncoderView: View {
 
                         Button {
                             UIPasteboard.general.string = outputText
-                            withAnimation {
+                            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                 toastMessage = "Copied to clipboard"
                             }
                         } label: {

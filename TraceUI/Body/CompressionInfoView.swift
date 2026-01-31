@@ -34,7 +34,7 @@ public struct CompressionInfoView: View {
                             Text("Compressed")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text(formatBytes(compressionInfo.compressedSize))
+                            Text(DesignSystem.formattedBytes(compressionInfo.compressedSize))
                                 .font(.system(.body, design: .monospaced))
                                 .fontWeight(.semibold)
                         }
@@ -50,7 +50,7 @@ public struct CompressionInfoView: View {
                             Text("Decompressed")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text(formatBytes(compressionInfo.decompressedSize))
+                            Text(DesignSystem.formattedBytes(compressionInfo.decompressedSize))
                                 .font(.system(.body, design: .monospaced))
                                 .fontWeight(.semibold)
                         }
@@ -84,7 +84,7 @@ public struct CompressionInfoView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Text(formatDuration(decompressionTime))
+                            Text(DesignSystem.formattedDuration(decompressionTime))
                                 .font(.system(.caption, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
@@ -124,13 +124,14 @@ public struct CompressionInfoView: View {
         HStack(spacing: DesignSystem.Spacing.xs) {
             ForEach(algorithms, id: \.self) { algorithm in
                 Text(algorithm.uppercased())
-                    .font(.system(.caption2, design: .monospaced))
+                    .font(DesignSystem.Typography.monospacedCaption2Font)
                     .fontWeight(.bold)
-                    .padding(.horizontal, DesignSystem.Spacing.xs)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
+                    .padding(.vertical, DesignSystem.Badge.verticalPadding)
+                    .frame(minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget)
                     .background(algorithmColor(for: algorithm))
                     .foregroundStyle(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
             }
         }
     }
@@ -145,23 +146,6 @@ public struct CompressionInfoView: View {
             .indigo
         default:
             .gray
-        }
-    }
-
-    private func formatBytes(_ bytes: Int) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .binary
-        formatter.allowedUnits = [.useKB, .useMB, .useGB]
-        return formatter.string(fromByteCount: Int64(bytes))
-    }
-
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        if duration < 0.001 {
-            String(format: "%.2f μs", duration * 1_000_000)
-        } else if duration < 1 {
-            String(format: "%.2f ms", duration * 1000)
-        } else {
-            String(format: "%.3f s", duration)
         }
     }
 }

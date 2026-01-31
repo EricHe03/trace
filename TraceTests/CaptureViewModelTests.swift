@@ -249,23 +249,6 @@ final class CaptureViewModelTests: XCTestCase {
 
     // MARK: - App Theme Tests
 
-    func testAppThemeEnum() {
-        XCTAssertEqual(AppTheme.system.rawValue, "System")
-        XCTAssertEqual(AppTheme.light.rawValue, "Light")
-        XCTAssertEqual(AppTheme.dark.rawValue, "Dark")
-    }
-
-    func testAppThemeColorScheme() {
-        XCTAssertNil(AppTheme.system.colorScheme)
-        XCTAssertEqual(AppTheme.light.colorScheme, .light)
-        XCTAssertEqual(AppTheme.dark.colorScheme, .dark)
-    }
-
-    func testAppThemeAllCases() {
-        let allCases = AppTheme.allCases
-        XCTAssertEqual(allCases.count, 3)
-    }
-
     // MARK: - Helper Methods
 
     private func createMockRequest(

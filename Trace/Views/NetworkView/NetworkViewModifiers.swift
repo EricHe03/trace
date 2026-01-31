@@ -17,7 +17,7 @@ struct RequestSelectionModifier: ViewModifier {
     @Binding var toastMessage: String?
 
     func body(content: Content) -> some View {
-        content.onChange(of: viewModel.selectedRequestId) { newValue in
+        content.onChangeCompat(of: viewModel.selectedRequestId) { newValue in
             handleRequestSelection(newValue)
         }
     }
@@ -27,7 +27,7 @@ struct RequestSelectionModifier: ViewModifier {
         if let request = viewModel.requests.first(where: { $0.id == requestId }) {
             requestToOpen = request
         } else {
-            withAnimation {
+            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                 toastMessage = "Request not found"
             }
         }
@@ -48,19 +48,19 @@ struct EventRebuildModifier: ViewModifier {
         let webSocketIds = webSocketViewModel.connections.map(\.id)
         let sseConnectionIds = sseViewModel.connections.map(\.id)
 
-        let step1 = content.onChange(of: filteredRequestIds) { _ in
+        let step1 = content.onChangeCompat(of: filteredRequestIds) {
             scheduleRebuild()
         }
-        let step2 = step1.onChange(of: webSocketIds) { _ in
+        let step2 = step1.onChangeCompat(of: webSocketIds) {
             scheduleRebuild()
         }
-        let step3 = step2.onChange(of: sseConnectionIds) { _ in
+        let step3 = step2.onChangeCompat(of: sseConnectionIds) {
             scheduleRebuild()
         }
-        let step4 = step3.onChange(of: viewModel.searchText) { _ in
+        let step4 = step3.onChangeCompat(of: viewModel.searchText) {
             scheduleRebuild()
         }
-        return step4.onChange(of: viewModel.filterNetworkEventTypes) { _ in
+        return step4.onChangeCompat(of: viewModel.filterNetworkEventTypes) {
             scheduleRebuild()
         }
     }

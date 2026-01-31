@@ -701,7 +701,9 @@ struct BodySection: View {
         case text = "Text"
         case hex = "Hex"
 
-        var id: String { rawValue }
+        var id: String {
+            rawValue
+        }
     }
 
     private var showsFullScreenOption: Bool {
@@ -944,7 +946,6 @@ struct BodySection: View {
 
     // MARK: - Full Viewer Sheet
 
-    @ViewBuilder
     private var fullViewerSheet: some View {
         NavigationStack {
             Group {

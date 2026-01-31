@@ -14,7 +14,6 @@ import TraceUI
 struct CaptureRulesView: View {
     @State private var config: CaptureConfiguration = .default
     @State private var options: CaptureOptions = .default
-    @State private var samplingConfig: SamplingConfig = .default
 
     @State private var isLoading = true
     @State private var toastMessage: String?
@@ -58,7 +57,6 @@ struct CaptureRulesView: View {
                         items: $config.domainFilters,
                         addLabel: "Add Domain",
                         placeholder: "example.com",
-                        helperText: "Use * for wildcards (e.g., *.example.com).",
                         emptyText: "No domains added",
                         validate: validateDomainPattern
                     )
@@ -70,37 +68,6 @@ struct CaptureRulesView: View {
             }
 
             Section {
-                Toggle("Enable Sampling", isOn: $samplingConfig.enabled)
-
-                if samplingConfig.enabled {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Sample Rate")
-                                .font(.subheadline)
-                            Spacer()
-                            Text("\(Int(samplingConfig.sampleRate * 100))%")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        Slider(value: $samplingConfig.sampleRate, in: 0.05 ... 1.0, step: 0.05)
-                    }
-                    .padding(.vertical, 4)
-
-                    Picker("Strategy", selection: $samplingConfig.strategy) {
-                        Text("Random").tag(SamplingStrategy.random)
-                        Text("Periodic").tag(SamplingStrategy.periodic)
-                        Text("Adaptive").tag(SamplingStrategy.adaptive)
-                    }
-                }
-            } header: {
-                Text("Request Sampling")
-            } footer: {
-                Text("Reduce overhead in high-volume environments by sampling captured requests.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
                 Button("Reset to Defaults") {
                     resetToDefaults()
                 }
@@ -109,17 +76,15 @@ struct CaptureRulesView: View {
         .navigationTitle("Capture Rules")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadSettings() }
-        .onChange(of: options) { _ in scheduleSave() }
-        .onChange(of: config.filterMode) { _ in scheduleSave() }
-        .onChange(of: config.domainFilters) { _ in scheduleSave() }
-        .onChange(of: samplingConfig) { _ in scheduleSave() }
+        .onChangeCompat(of: options) { scheduleSave() }
+        .onChangeCompat(of: config.filterMode) { scheduleSave() }
+        .onChangeCompat(of: config.domainFilters) { scheduleSave() }
         .toast(message: $toastMessage)
     }
 
     private func loadSettings() async {
         config = AppGroupStorage.shared.loadConfiguration()
         options = AppGroupStorage.shared.loadCaptureOptions()
-        samplingConfig = AppGroupStorage.shared.loadSamplingConfig()
 
         // Ensure the UI reflects the persisted config as the source of truth.
         options.captureHeaders = config.captureHeaders
@@ -134,6 +99,7 @@ struct CaptureRulesView: View {
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 persistAll()
             }
@@ -151,7 +117,6 @@ struct CaptureRulesView: View {
         do {
             try AppGroupStorage.shared.saveConfiguration(updatedConfig)
             try AppGroupStorage.shared.saveCaptureOptions(options.normalized())
-            try AppGroupStorage.shared.saveSamplingConfig(samplingConfig.normalized())
         } catch {
             toastMessage = "Failed to save: \(error.localizedDescription)"
             return
@@ -159,7 +124,13 @@ struct CaptureRulesView: View {
 
         Task {
             if vpnManager.isConnected {
-                try? await vpnManager.sendMessage(["command": "updateCaptureConfig"])
+                do {
+                    try await vpnManager.sendMessage(["command": "updateCaptureConfig"])
+                } catch {
+                    await MainActor.run {
+                        toastMessage = "Saved locally, but failed to notify VPN: \(error.localizedDescription)"
+                    }
+                }
             }
         }
     }
@@ -168,7 +139,6 @@ struct CaptureRulesView: View {
         isLoading = true
         config = .default
         options = .default
-        samplingConfig = .default
         isLoading = false
         persistAll()
         toastMessage = "Reset to defaults"

@@ -23,7 +23,7 @@ public final class RewriteManager: ObservableObject {
 
     public nonisolated(unsafe) let objectWillChange = ObservableObjectPublisher()
 
-    // Expose items through computed property
+    /// Expose items through computed property
     public var rules: [RewriteRule] {
         baseManager.items
     }

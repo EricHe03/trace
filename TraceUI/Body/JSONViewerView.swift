@@ -19,7 +19,9 @@ public struct JSONViewerView: View {
     @State private var parsedJSON: JSONValue?
     @State private var parseError: String?
     @State private var expandedPaths: Set<String> = []
-    @State private var expandAll = true
+    @State private var isParsing = false
+    @State private var formattedJSON: AttributedString?
+    @State private var didTruncateExpansion = false
 
     public enum ViewMode: String, CaseIterable {
         case formatted = "Formatted"
@@ -41,14 +43,14 @@ public struct JSONViewerView: View {
 
                 if viewMode == .tree {
                     Button {
-                        if expandAll {
-                            expandedPaths.removeAll()
+                        if expandedPaths.isEmpty || expandedPaths == ["root"] {
+                            didTruncateExpansion = expandAllNodes(maxNodes: maxExpandedNodes)
                         } else {
-                            expandAllNodes()
+                            expandedPaths = ["root"]
+                            didTruncateExpansion = false
                         }
-                        expandAll.toggle()
                     } label: {
-                        Image(systemName: expandAll ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                        Image(systemName: expandedPaths.isEmpty || expandedPaths == ["root"] ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -57,6 +59,14 @@ public struct JSONViewerView: View {
             .padding()
 
             Divider()
+
+            if isLargePayload {
+                Label("Large JSON detected. Parsing may take longer.", systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+                    .padding(.top, DesignSystem.Spacing.xs)
+            }
 
             switch viewMode {
             case .formatted:
@@ -76,29 +86,45 @@ public struct JSONViewerView: View {
                 }
             }
         }
-        .onAppear {
-            parseJSON()
-            expandAllNodes()
+        .task(id: jsonString) {
+            await parseAndPrepare()
         }
     }
 
     // MARK: - Formatted View
 
     private var formattedView: some View {
-        Text(attributedJSONString())
-            .font(.system(.caption, design: .monospaced))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .textSelection(.enabled)
+        Group {
+            if isParsing {
+                ProgressView("Parsing…")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(formattedJSON ?? attributedJSONString())
+                    .font(DesignSystem.Typography.monospacedFont)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+        }
     }
 
     // MARK: - Tree View
 
     private var treeView: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        LazyVStack(alignment: .leading, spacing: 0) {
+            if didTruncateExpansion {
+                Label("Showing a limited tree expansion for performance.", systemImage: "info.circle")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, DesignSystem.Spacing.sm)
+            }
+
             if let root = parsedJSON {
                 jsonNode(root, key: nil, path: "root", level: 0)
             } else if let error = parseError {
                 errorView(error: error)
+            } else if isParsing {
+                ProgressView("Parsing…")
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text("Parsing...")
                     .foregroundStyle(.secondary)
@@ -114,7 +140,8 @@ public struct JSONViewerView: View {
         return AnyView(
             VStack(alignment: .leading, spacing: 0) {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    guard hasChildren else { return }
+                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                         if isExpanded {
                             expandedPaths.remove(path)
                         } else {
@@ -139,10 +166,10 @@ public struct JSONViewerView: View {
 
                         if let key {
                             Text("\"\(key)\"")
-                                .font(.system(.caption, design: .monospaced))
+                                .font(.system(.callout, design: .monospaced))
                                 .foregroundStyle(DesignSystem.Colors.accent)
                             Text(":")
-                                .font(.system(.caption, design: .monospaced))
+                                .font(.system(.callout, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
 
@@ -158,9 +185,14 @@ public struct JSONViewerView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .padding(.vertical, 2)
+                .contentShape(Rectangle())
+                .frame(minHeight: DesignSystem.Accessibility.minimumTapTarget, alignment: .leading)
+                .padding(.vertical, DesignSystem.Spacing.xxs)
                 .background(isExpanded && hasChildren ? DesignSystem.Colors.surfaceMuted.opacity(0.3) : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.sm))
+                .accessibilityLabel(jsonNodeAccessibilityLabel(key: key, value: value, isExpanded: isExpanded, hasChildren: hasChildren))
+                .accessibilityValue(hasChildren ? (isExpanded ? "Expanded" : "Collapsed") : "")
+                .accessibilityHint(hasChildren ? "Double tap to \(isExpanded ? "collapse" : "expand")" : "")
 
                 if isExpanded && hasChildren {
                     childrenView(value, parentPath: path, level: level)
@@ -174,27 +206,27 @@ public struct JSONViewerView: View {
         switch value {
         case .null:
             Text("null")
-                .font(.system(.caption, design: .monospaced))
+                .font(.system(.callout, design: .monospaced))
                 .foregroundStyle(DesignSystem.Colors.muted)
 
         case let .bool(b):
             Text(b ? "true" : "false")
-                .font(.system(.caption, design: .monospaced))
+                .font(.system(.callout, design: .monospaced))
                 .foregroundStyle(DesignSystem.Colors.warning)
 
         case let .number(n):
             Text(formatNumber(n))
-                .font(.system(.caption, design: .monospaced))
+                .font(.system(.callout, design: .monospaced))
                 .foregroundStyle(DesignSystem.Colors.warning)
 
         case let .string(s):
             if s.count > 50 && !expanded {
                 Text("\"\(s.prefix(50))...\"")
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(DesignSystem.Colors.success)
             } else {
                 Text("\"\(s)\"")
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(DesignSystem.Colors.success)
                     .textSelection(.enabled)
             }
@@ -202,22 +234,22 @@ public struct JSONViewerView: View {
         case let .array(arr):
             if expanded {
                 Text("[")
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)
             } else {
                 Text("[\(arr.count) items]")
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
 
         case let .object(obj):
             if expanded {
                 Text("{")
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)
             } else {
                 Text("{\(obj.count) keys}")
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
         }
@@ -254,17 +286,17 @@ public struct JSONViewerView: View {
             }
             Color.clear.frame(width: 12)
             Text(bracket)
-                .font(.system(.caption, design: .monospaced))
+                .font(.system(.callout, design: .monospaced))
                 .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, DesignSystem.Spacing.xxs)
     }
 
     // MARK: - Raw View
 
     private var rawView: some View {
         Text(jsonString)
-            .font(.system(.caption, design: .monospaced))
+            .font(DesignSystem.Typography.monospacedFont)
             .frame(maxWidth: .infinity, alignment: .leading)
             .textSelection(.enabled)
     }
@@ -290,48 +322,84 @@ public struct JSONViewerView: View {
 
     // MARK: - JSON Parsing
 
-    private func parseJSON() {
-        guard let data = jsonString.data(using: .utf8) else {
-            parseError = "Invalid UTF-8 string"
-            return
+    @MainActor
+    private func parseAndPrepare() async {
+        isParsing = true
+        parsedJSON = nil
+        parseError = nil
+        formattedJSON = nil
+        expandedPaths = ["root"]
+        didTruncateExpansion = false
+
+        let input = jsonString
+        let (json, error, formatted) = await Task.detached(priority: .userInitiated) { () -> (JSONValue?, String?, AttributedString?) in
+            guard let data = input.data(using: .utf8) else {
+                return (nil as JSONValue?, "Invalid UTF-8 string", nil as AttributedString?)
+            }
+
+            do {
+                let jsonObject = try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)
+                let parsed = JSONValue.from(jsonObject)
+                let highlighted = Self.makeAttributedJSONString(from: input)
+                return (parsed as JSONValue?, nil as String?, highlighted as AttributedString?)
+            } catch {
+                return (nil as JSONValue?, error.localizedDescription, nil as AttributedString?)
+            }
+        }.value
+
+        parsedJSON = json
+        parseError = error
+        formattedJSON = formatted
+
+        if json != nil {
+            didTruncateExpansion = expandAllNodes(maxNodes: maxAutoExpandedNodes)
         }
 
-        do {
-            let jsonObject = try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)
-            parsedJSON = JSONValue.from(jsonObject)
-            parseError = nil
-        } catch {
-            parseError = error.localizedDescription
-            parsedJSON = nil
-        }
+        isParsing = false
     }
 
-    private func expandAllNodes() {
-        guard let root = parsedJSON else { return }
-        expandedPaths.insert("root")
-        collectPaths(root, path: "root")
+    private func expandAllNodes(maxNodes: Int) -> Bool {
+        guard let root = parsedJSON else { return false }
+        expandedPaths = ["root"]
+        var expandedCount = 0
+        return collectPaths(root, path: "root", expandedCount: &expandedCount, maxNodes: maxNodes)
     }
 
-    private func collectPaths(_ value: JSONValue, path: String) {
+    @discardableResult
+    private func collectPaths(_ value: JSONValue, path: String, expandedCount: inout Int, maxNodes: Int) -> Bool {
+        guard expandedCount < maxNodes else { return true }
+
         switch value {
         case let .array(arr):
             expandedPaths.insert(path)
+            expandedCount += 1
             for (index, item) in arr.enumerated() {
-                collectPaths(item, path: "\(path).\(index)")
+                if collectPaths(item, path: "\(path).\(index)", expandedCount: &expandedCount, maxNodes: maxNodes) {
+                    return true
+                }
             }
         case let .object(obj):
             expandedPaths.insert(path)
+            expandedCount += 1
             for (key, val) in obj {
-                collectPaths(val, path: "\(path).\(key)")
+                if collectPaths(val, path: "\(path).\(key)", expandedCount: &expandedCount, maxNodes: maxNodes) {
+                    return true
+                }
             }
         default:
             break
         }
+
+        return false
     }
 
     // MARK: - Syntax Highlighting
 
     private func attributedJSONString() -> AttributedString {
+        Self.makeAttributedJSONString(from: jsonString)
+    }
+
+    private nonisolated static func makeAttributedJSONString(from jsonString: String) -> AttributedString {
         guard let data = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed),
               let formatted = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
@@ -342,22 +410,17 @@ public struct JSONViewerView: View {
 
         var result = AttributedString(formattedString)
 
-        highlightPattern(&result, pattern: "\"[^\"]+\"\\s*:", color: DesignSystem.Colors.accent)
-
-        highlightPattern(&result, pattern: ":\\s*\"[^\"]*\"", color: DesignSystem.Colors.success)
-
-        highlightPattern(&result, pattern: ":\\s*-?\\d+(\\.\\d+)?([eE][+-]?\\d+)?", color: DesignSystem.Colors.warning)
-
-        highlightPattern(&result, pattern: ":\\s*(true|false)", color: DesignSystem.Colors.warning)
-
-        highlightPattern(&result, pattern: ":\\s*null", color: DesignSystem.Colors.muted)
-
-        highlightPattern(&result, pattern: "[\\[\\]{}]", color: .secondary)
+        Self.highlightPattern(&result, pattern: "\"[^\"]+\"\\s*:", color: DesignSystem.Colors.accent)
+        Self.highlightPattern(&result, pattern: ":\\s*\"[^\"]*\"", color: DesignSystem.Colors.success)
+        Self.highlightPattern(&result, pattern: ":\\s*-?\\d+(\\.\\d+)?([eE][+-]?\\d+)?", color: DesignSystem.Colors.warning)
+        Self.highlightPattern(&result, pattern: ":\\s*(true|false)", color: DesignSystem.Colors.warning)
+        Self.highlightPattern(&result, pattern: ":\\s*null", color: DesignSystem.Colors.muted)
+        Self.highlightPattern(&result, pattern: "[\\[\\]{}]", color: .secondary)
 
         return result
     }
 
-    private func highlightPattern(_ text: inout AttributedString, pattern: String, color: Color) {
+    private nonisolated static func highlightPattern(_ text: inout AttributedString, pattern: String, color: Color) {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return }
         let nsRange = NSRange(text.startIndex ..< text.endIndex, in: text)
         let matches = regex.matches(in: String(text.characters), options: [], range: nsRange)
@@ -371,6 +434,24 @@ public struct JSONViewerView: View {
 
     // MARK: - Helpers
 
+    private var isLargePayload: Bool {
+        jsonString.utf8.count > 1_000_000
+    }
+
+    private var maxExpandedNodes: Int {
+        isLargePayload ? 200 : 1000
+    }
+
+    private var maxAutoExpandedNodes: Int {
+        isLargePayload ? 100 : 300
+    }
+
+    private func jsonNodeAccessibilityLabel(key: String?, value: JSONValue, isExpanded: Bool, hasChildren: Bool) -> String {
+        let keyText = key ?? "Root"
+        guard hasChildren else { return keyText }
+        return "\(isExpanded ? "Collapse" : "Expand") \(keyText)"
+    }
+
     private func formatNumber(_ n: NSNumber) -> String {
         if n.doubleValue == n.doubleValue.rounded() && abs(n.doubleValue) < Double(Int64.max) {
             return String(format: "%.0f", n.doubleValue)
@@ -381,7 +462,7 @@ public struct JSONViewerView: View {
 
 // MARK: - JSON Value Type
 
-enum JSONValue {
+enum JSONValue: @unchecked Sendable {
     case null
     case bool(Bool)
     case number(NSNumber)

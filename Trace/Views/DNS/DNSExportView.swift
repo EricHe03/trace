@@ -27,7 +27,7 @@ struct DNSExportView: View {
             VStack(spacing: 20) {
                 Image(systemName: "square.and.arrow.up")
                     .font(.system(size: 60))
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(Color.accentColor)
 
                 Text("Export DNS Data")
                     .font(.title2)
@@ -42,7 +42,7 @@ struct DNSExportView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 200)
+                .frame(maxWidth: 240)
 
                 HStack(spacing: 12) {
                     Button("Cancel") {
@@ -60,7 +60,7 @@ struct DNSExportView: View {
             .padding(40)
             .navigationTitle("Export DNS Data")
         }
-        .frame(width: 400, height: 300)
+        .frame(maxWidth: 400, maxHeight: 300)
         .fileExporter(
             isPresented: $showingExporter,
             document: ExportDocument(data: exportData ?? Data(), format: exportFormat),
@@ -92,7 +92,9 @@ struct DNSExportView: View {
 }
 
 struct ExportDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.commaSeparatedText, .json] }
+    static var readableContentTypes: [UTType] {
+        [.commaSeparatedText, .json]
+    }
 
     let data: Data
     let format: DNSExportView.ExportFormat

@@ -19,7 +19,7 @@ public class AppGroupStorage: @unchecked Sendable {
         #endif
     }()
 
-    // Shared App Group identifier (must match entitlements for app + extension)
+    /// Shared App Group identifier (must match entitlements for app + extension)
     private let appGroupIdentifier = AppGroupConfiguration.appGroupIdentifier
 
     private let requestsDirectory = "CapturedRequests"
@@ -1082,10 +1082,11 @@ public class AppGroupStorage: @unchecked Sendable {
     // MARK: - Inter-Process Communication
 
     // Observers for notifications
-    private var requestObserver: NotificationObserver?
-    private var webSocketObserver: NotificationObserver?
-    private var sseObserver: NotificationObserver?
-    private var udpFlowObserver: NotificationObserver?
+    private let notificationObserversLock = NSLock()
+    private var requestObservers: [UUID: NotificationObserver] = [:]
+    private var webSocketObservers: [UUID: NotificationObserver] = [:]
+    private var sseObservers: [UUID: NotificationObserver] = [:]
+    private var udpFlowObservers: [UUID: NotificationObserver] = [:]
 
     /// Notifies the main app that a new request was captured
     private func notifyNewRequest() {
@@ -1120,28 +1121,112 @@ public class AppGroupStorage: @unchecked Sendable {
         CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
     }
 
-    /// Sets up listener for new request notifications (call from main app)
-    public func observeNewRequests(handler: @escaping @Sendable () -> Void) {
-        requestObserver = NotificationObserver()
-        requestObserver?.observe(notificationName: "com.trace.newRequest", handler: handler)
+    /// Sets up listener for new request notifications (call from main app).
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeNewRequests(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.newRequest", handler: handler)
+        notificationObserversLock.lock()
+        requestObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.requestObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingNewRequests() {
+        notificationObserversLock.lock()
+        let observers = Array(requestObservers.values)
+        requestObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
     }
 
     /// Sets up listener for new WebSocket connection notifications (call from main app)
-    public func observeNewWebSockets(handler: @escaping @Sendable () -> Void) {
-        webSocketObserver = NotificationObserver()
-        webSocketObserver?.observe(notificationName: "com.trace.newWebSocket", handler: handler)
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeNewWebSockets(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.newWebSocket", handler: handler)
+        notificationObserversLock.lock()
+        webSocketObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.webSocketObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingNewWebSockets() {
+        notificationObserversLock.lock()
+        let observers = Array(webSocketObservers.values)
+        webSocketObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
     }
 
     /// Sets up listener for new SSE connection notifications (call from main app)
-    public func observeNewSSE(handler: @escaping @Sendable () -> Void) {
-        sseObserver = NotificationObserver()
-        sseObserver?.observe(notificationName: "com.trace.newSSE", handler: handler)
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeNewSSE(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.newSSE", handler: handler)
+        notificationObserversLock.lock()
+        sseObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.sseObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingNewSSE() {
+        notificationObserversLock.lock()
+        let observers = Array(sseObservers.values)
+        sseObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
     }
 
     /// Sets up listener for new UDP flow notifications (call from main app)
-    public func observeNewUDPFlows(handler: @escaping @Sendable () -> Void) {
-        udpFlowObserver = NotificationObserver()
-        udpFlowObserver?.observe(notificationName: "com.trace.newUDPFlow", handler: handler)
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeNewUDPFlows(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.newUDPFlow", handler: handler)
+        notificationObserversLock.lock()
+        udpFlowObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.udpFlowObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingNewUDPFlows() {
+        notificationObserversLock.lock()
+        let observers = Array(udpFlowObservers.values)
+        udpFlowObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
     }
 
     // MARK: - Statistics
@@ -1646,26 +1731,38 @@ extension HTTPMethod: Codable {}
 
 /// Helper class to properly manage CFNotificationCenter observer lifecycle
 public class NotificationObserver {
+    private let lock = NSLock()
     private var observer: UnsafeMutableRawPointer?
     private var handler: (@Sendable () -> Void)?
     private var notificationName: CFString?
 
-    public func observe(notificationName: String, handler: @escaping @Sendable () -> Void) {
-        if let observer, let notificationName = self.notificationName {
-            CFNotificationCenterRemoveObserver(
-                CFNotificationCenterGetDarwinNotifyCenter(),
-                observer,
-                CFNotificationName(notificationName),
-                nil
-            )
-            Unmanaged<NotificationObserver>.fromOpaque(observer).release()
-            self.observer = nil
-            self.notificationName = nil
-        }
+    public func stop() {
+        lock.lock()
+        let observer = observer
+        let notificationName = notificationName
+        self.observer = nil
+        self.notificationName = nil
+        handler = nil
+        lock.unlock()
 
+        guard let observer, let notificationName else { return }
+        CFNotificationCenterRemoveObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            observer,
+            CFNotificationName(notificationName),
+            nil
+        )
+        Unmanaged<NotificationObserver>.fromOpaque(observer).release()
+    }
+
+    public func observe(notificationName: String, handler: @escaping @Sendable () -> Void) {
+        stop()
+
+        lock.lock()
         self.handler = handler
         self.notificationName = notificationName as CFString
         let center = CFNotificationCenterGetDarwinNotifyCenter()
+        lock.unlock()
 
         // Use a weak reference pattern
         let callback: CFNotificationCallback = { _, observer, _, _, _ in
@@ -1677,26 +1774,43 @@ public class NotificationObserver {
             }
         }
 
+        lock.lock()
         self.observer = Unmanaged.passRetained(self).toOpaque()
+        let observer = self.observer
+        let name = self.notificationName
+        lock.unlock()
         CFNotificationCenterAddObserver(
             center,
-            self.observer,
+            observer,
             callback,
-            self.notificationName,
+            name,
             nil,
             .deliverImmediately
         )
     }
 
     deinit {
-        if let observer, let notificationName {
-            CFNotificationCenterRemoveObserver(
-                CFNotificationCenterGetDarwinNotifyCenter(),
-                observer,
-                CFNotificationName(notificationName),
-                nil
-            )
-            Unmanaged<NotificationObserver>.fromOpaque(observer).release()
-        }
+        stop()
+    }
+}
+
+public final class AppGroupStorageObserverToken: @unchecked Sendable {
+    private var cancelHandler: (() -> Void)?
+    private let cancelLock = NSLock()
+
+    public init(_ cancelHandler: @escaping () -> Void) {
+        self.cancelHandler = cancelHandler
+    }
+
+    public func cancel() {
+        cancelLock.lock()
+        let handler = cancelHandler
+        cancelHandler = nil
+        cancelLock.unlock()
+        handler?()
+    }
+
+    deinit {
+        cancel()
     }
 }

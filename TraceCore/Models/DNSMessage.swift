@@ -34,7 +34,7 @@ public struct DNSMessage: Codable, Identifiable {
     public let destIP: String
     public let destPort: UInt16
 
-    // Size
+    /// Size
     public let messageSize: Int
 
     // Related messages

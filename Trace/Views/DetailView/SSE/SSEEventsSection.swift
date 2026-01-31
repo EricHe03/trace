@@ -68,6 +68,7 @@ struct SSEEventsSection: View {
                                 SSEEventRow(event: event)
                             }
                             .foregroundStyle(.primary)
+                            .accessibilityHint("Double tap to view event details")
 
                             if event.id != filteredEvents.last?.id {
                                 Divider()

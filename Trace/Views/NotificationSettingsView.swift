@@ -7,6 +7,7 @@
 
 import SwiftUI
 import TraceFeatures
+import TraceUI
 
 struct NotificationSettingsView: View {
     @ObservedObject private var settings = NotificationSettings.shared
@@ -26,6 +27,8 @@ struct NotificationSettingsView: View {
                             NotificationManager.shared.openNotificationSettings()
                         }
                         .font(.caption)
+                        .accessibilityLabel("Open system settings")
+                        .accessibilityHint("Opens the iOS Settings app for notification permissions")
                     }
                 }
             } header: {
@@ -71,6 +74,8 @@ struct NotificationSettingsView: View {
                             in: 0.5 ... 10.0,
                             step: 0.5
                         )
+                        .accessibilityLabel("Slow request threshold")
+                        .accessibilityValue(String(format: "%.1f seconds", settings.slowRequestThreshold))
                     }
                     .padding(.vertical, 4)
                 }
@@ -103,6 +108,8 @@ struct NotificationSettingsView: View {
                             in: 1_000_000 ... 50_000_000,
                             step: 1_000_000
                         )
+                        .accessibilityLabel("Large data threshold")
+                        .accessibilityValue(formatBytes(settings.largeDataThreshold))
                     }
                     .padding(.vertical, 4)
                 }
@@ -148,15 +155,15 @@ struct NotificationSettingsView: View {
     private var statusColor: Color {
         switch notificationStatus {
         case .authorized, .provisional:
-            return .green
+            return DesignSystem.Colors.success
         case .denied:
-            return .red
+            return DesignSystem.Colors.danger
         case .notDetermined:
-            return .orange
+            return DesignSystem.Colors.warning
         case .ephemeral:
-            return .blue
+            return DesignSystem.Colors.info
         @unknown default:
-            return .gray
+            return DesignSystem.Colors.muted
         }
     }
 
@@ -186,7 +193,7 @@ struct NotificationSettingsView: View {
         case .notDetermined:
             return "Permission will be requested when the app launches."
         case .provisional:
-            return "Notifications are delivered quietly. You can manage them in Settings."
+            return "Notifications are delivered quietly (provisional authorization). You can change delivery style in Settings."
         case .ephemeral:
             return "Temporary notification access granted."
         @unknown default:
@@ -195,6 +202,6 @@ struct NotificationSettingsView: View {
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        DesignSystem.formattedBytes(Int(bytes))
     }
 }

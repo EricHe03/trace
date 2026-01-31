@@ -85,7 +85,7 @@ struct RequestMapView: View {
                                 }
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     Button(role: .destructive) {
-                                        withAnimation {
+                                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                             mapManager.deleteMap(map)
                                             showToast(message: "Map deleted")
                                         }
@@ -95,7 +95,7 @@ struct RequestMapView: View {
                                 }
                                 .swipeActions(edge: .leading) {
                                     Button {
-                                        withAnimation {
+                                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                             mapManager.toggleMap(map)
                                         }
                                     } label: {
@@ -267,7 +267,7 @@ struct RequestMapView: View {
     }
 
     private func showToast(message: String) {
-        withAnimation {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
             toastMessage = message
         }
     }
@@ -283,7 +283,7 @@ struct MapRow: View {
             HStack {
                 Circle()
                     .fill(map.enabled ? DesignSystem.Colors.success : DesignSystem.Colors.muted)
-                    .frame(width: 8, height: 8)
+                    .frame(width: 12, height: 12)
 
                 Text(map.name)
                     .font(.headline)

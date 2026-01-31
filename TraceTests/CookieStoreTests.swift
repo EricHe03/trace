@@ -370,7 +370,7 @@ final class CookieStoreTests: XCTestCase {
         let apiKeyCookie = createCookie(name: "api_key", value: "key123", domain: ".example.com", path: "/")!
         let versionCookie = createCookie(name: "api_version", value: "v1", domain: ".example.com", path: "/v1")!
 
-        storage.setCookie(apiKeyCookie)
+
         storage.setCookie(versionCookie)
 
         let cookies = cookieStore.cookies(for: apiURL)

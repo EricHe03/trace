@@ -25,7 +25,7 @@ struct RequestBuilderView: View {
     @State private var toastMessage: String?
     @State private var didLoadExistingBody = false
 
-    // For editing existing request
+    /// For editing existing request
     var existingRequest: NetworkRequest?
 
     init(existingRequest: NetworkRequest? = nil) {
@@ -81,6 +81,7 @@ struct RequestBuilderView: View {
                                 Image(systemName: "minus.circle.fill")
                                     .foregroundStyle(DesignSystem.Colors.danger)
                             }
+                            .frame(minWidth: 44, minHeight: 44)
                             .accessibilityLabel("Remove header")
                         }
                     }
@@ -200,7 +201,7 @@ struct RequestBuilderView: View {
                 }
             } catch {
                 await MainActor.run {
-                    withAnimation {
+                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                         toastMessage = "Error: \(error.localizedDescription)"
                     }
                 }
@@ -213,7 +214,7 @@ struct RequestBuilderView: View {
 
         UIPasteboard.general.string = builder.toCURL()
 
-        withAnimation {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
             toastMessage = "Copied cURL to clipboard"
         }
     }
@@ -223,7 +224,7 @@ struct RequestBuilderView: View {
               let json = try? JSONSerialization.jsonObject(with: data),
               let formatted = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
               let formattedString = String(data: formatted, encoding: .utf8) else {
-            withAnimation {
+            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                 toastMessage = "Invalid JSON"
             }
             return

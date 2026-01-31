@@ -534,23 +534,29 @@ public struct StorageSettingsView: View {
 
     public var body: some View {
         Form {
-            Section("Storage Usage") {
+            Section {
                 storageUsageRow(label: "Total", bytes: storageUsage.total)
                 storageUsageRow(label: "Requests", bytes: storageUsage.requests)
                 storageUsageRow(label: "Body Files", bytes: storageUsage.bodies)
                 storageUsageRow(label: "Logs", bytes: storageUsage.logs)
+            } header: {
+                Text("Storage Usage")
+            } footer: {
+                Text("Storage usage reflects data kept in the app’s shared container. You can export logs and packet captures before cleaning up.")
             }
 
-            Section("Automatic Cleanup") {
+            Section {
                 Toggle("Enable Auto Cleanup", isOn: $config.enabled)
 
                 Stepper("Keep Requests: \(config.requestRetentionDays) days", value: $config.requestRetentionDays, in: 1 ... 30)
                 Stepper("Keep Body Files: \(config.bodyFileRetentionDays) days", value: $config.bodyFileRetentionDays, in: 1 ... 30)
                 Stepper("Keep Logs: \(config.logRetentionDays) days", value: $config.logRetentionDays, in: 1 ... 30)
                 Stepper("Max Storage: \(config.maxStorageMB) MB", value: $config.maxStorageMB, in: 100 ... 2000, step: 100)
+            } header: {
+                Text("Automatic Cleanup")
             }
 
-            Section("Statistics") {
+            Section {
                 if let lastCleanup = stats.lastCleanup {
                     HStack {
                         Text("Last Cleanup")
@@ -573,6 +579,8 @@ public struct StorageSettingsView: View {
                     Text(ByteCountFormatter.string(fromByteCount: stats.bytesFreed, countStyle: .file))
                         .foregroundStyle(.secondary)
                 }
+            } header: {
+                Text("Statistics")
             }
 
             Section {
@@ -594,22 +602,13 @@ public struct StorageSettingsView: View {
                     }
                 }
                 .disabled(isCleaningUp)
-
-                Button(role: .destructive) {
-                    Task {
-                        _ = await DataCleanupManager.shared.deleteAllRequests()
-                        await loadData()
-                    }
-                } label: {
-                    Label("Delete All Requests", systemImage: "trash.fill")
-                }
             }
         }
         .navigationTitle("Storage")
         .task {
             await loadData()
         }
-        .onChange(of: config) { newConfig in
+        .onChangeCompat(of: config) { newConfig in
             Task {
                 await DataCleanupManager.shared.updateConfiguration(newConfig)
             }

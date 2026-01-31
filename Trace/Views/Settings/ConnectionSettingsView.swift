@@ -76,12 +76,20 @@ struct ConnectionSettingsView: View {
         }
 
         udpFlowsViewModel.startObserving()
-        udpFlowsViewModel.loadFlows()
+        await udpFlowsViewModel.loadFlows()
     }
 }
 
 private struct ConnectionSummaryRow: View {
     let record: PacketFlowRecord
+    private var accessibilityValue: String {
+        var parts: [String] = []
+        parts.append("\(record.transport.rawValue.uppercased()) from \(record.sourceIP):\(record.sourcePort) to \(record.destinationIP):\(record.destinationPort)")
+        if let sni = record.tlsSNI, !sni.isEmpty {
+            parts.append("TLS SNI \(sni)")
+        }
+        return parts.joined(separator: ", ")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -98,10 +106,10 @@ private struct ConnectionSummaryRow: View {
             HStack(spacing: 6) {
                 Text(record.transport.rawValue.uppercased())
                     .font(.caption2.weight(.medium))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, DesignSystem.Spacing.xs)
+                    .padding(.vertical, DesignSystem.Spacing.xxs)
                     .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(4)
+                    .cornerRadius(DesignSystem.CornerRadius.sm)
 
                 if let sni = record.tlsSNI, !sni.isEmpty {
                     Text(sni)
@@ -111,13 +119,26 @@ private struct ConnectionSummaryRow: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, DesignSystem.Spacing.xs)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Connection")
+        .accessibilityValue(accessibilityValue)
     }
 }
 
 private struct UDPFlowSummaryRow: View {
     let flow: UDPFlowMetadata
     let viewModel: UDPFlowsViewModel
+    private var accessibilityValue: String {
+        var parts: [String] = []
+        parts.append("\(flow.sourceIP):\(flow.sourcePort) to \(flow.destinationIP):\(flow.destinationPort)")
+        parts.append(flow.detectedProtocol.displayName)
+        parts.append(viewModel.formatBytes(flow.totalBytes))
+        if flow.isActive {
+            parts.append("active")
+        }
+        return parts.joined(separator: ", ")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -134,10 +155,10 @@ private struct UDPFlowSummaryRow: View {
             HStack(spacing: 6) {
                 Text(flow.detectedProtocol.displayName)
                     .font(.caption2.weight(.medium))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, DesignSystem.Spacing.xs)
+                    .padding(.vertical, DesignSystem.Spacing.xxs)
                     .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(4)
+                    .cornerRadius(DesignSystem.CornerRadius.sm)
 
                 Text(viewModel.formatBytes(flow.totalBytes))
                     .font(.caption)
@@ -150,6 +171,9 @@ private struct UDPFlowSummaryRow: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, DesignSystem.Spacing.xs)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("UDP flow")
+        .accessibilityValue(accessibilityValue)
     }
 }

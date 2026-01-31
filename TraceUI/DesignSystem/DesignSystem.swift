@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import TraceCore
 import UIKit
 
 /// Defines the central design system for UI constants and standards.
@@ -99,48 +98,6 @@ public enum DesignSystem {
         public static let surfaceSubtle: Color = .init(.systemGray5)
         public static let surfaceMuted: Color = .init(.systemGray6)
         public static let groupedBackground: Color = .init(.systemGroupedBackground)
-
-        public static func methodColor(for method: HTTPMethod) -> Color {
-            switch method {
-            case .get: accent
-            case .post: success
-            case .put: warning
-            case .delete: danger
-            case .patch: accentAlt
-            case .connect: muted
-            default: muted
-            }
-        }
-
-        public static func statusColor(for statusColor: StatusColor) -> Color {
-            switch statusColor {
-            case .success: success
-            case .redirect: accent
-            case .clientError: warning
-            case .serverError: danger
-            case .info: info
-            case .warning: favorite
-            case .unknown: muted
-            }
-        }
-
-        public static func statusColor(for statusCode: Int) -> Color {
-            switch statusCode {
-            case 200 ..< 300: success
-            case 300 ..< 400: accent
-            case 400 ..< 500: warning
-            case 500...: danger
-            default: muted
-            }
-        }
-
-        public static func eventTypeColor(for type: NetworkEventType) -> Color {
-            switch type {
-            case .http: accent
-            case .webSocket: accentAlt
-            case .sse: warning
-            }
-        }
     }
 
     // MARK: - Effects
@@ -169,12 +126,12 @@ public enum DesignSystem {
     // MARK: - Badges & Pills
 
     /// Defines standard badge configuration.
-    enum Badge {
-        static let horizontalPadding: CGFloat = 8
-        static let verticalPadding: CGFloat = 4
-        static let cornerRadius: CGFloat = CornerRadius.sm
-        static let font: Font = .caption
-        static let fontWeight: Font.Weight = .semibold
+    public enum Badge {
+        public static let horizontalPadding: CGFloat = 8
+        public static let verticalPadding: CGFloat = 4
+        public static let cornerRadius: CGFloat = CornerRadius.sm
+        public static let font: Font = .caption
+        public static let fontWeight: Font.Weight = .semibold
     }
 
     // MARK: - Empty States
@@ -317,7 +274,10 @@ public enum DesignSystem {
     ///
     /// Defines standard list configuration.
     public enum List {
-        public nonisolated(unsafe) static let preferredStyle: any ListStyle = .insetGrouped
+        public static var preferredStyle: some ListStyle {
+            .insetGrouped
+        }
+
         public static let rowVerticalPadding: CGFloat = Spacing.rowVertical
         public static let rowInsets = EdgeInsets(
             top: Spacing.sm,
@@ -371,6 +331,10 @@ public extension View {
             .foregroundStyle(foregroundColor)
             .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
             .padding(.vertical, DesignSystem.Badge.verticalPadding)
+            .frame(
+                minWidth: DesignSystem.Accessibility.absoluteMinimumTapTarget,
+                minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget
+            )
             .background(backgroundColor)
             .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius))
     }
@@ -417,18 +381,34 @@ public extension View {
 // MARK: - Toast View
 
 /// Presents a standard toast notification view.
-public struct ToastView: View {
-    public let message: String
+struct ToastView: View {
+    let message: String
+    let onDismiss: () -> Void
 
-    public var body: some View {
-        Text(message)
-            .font(.subheadline)
-            .foregroundStyle(DesignSystem.Toast.foregroundColor)
+    var body: some View {
+        Button(action: onDismiss) {
+            HStack(spacing: DesignSystem.Spacing.md) {
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(DesignSystem.Toast.foregroundColor)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Image(systemName: "xmark")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DesignSystem.Toast.foregroundColor)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+                    .accessibilityHidden(true)
+            }
             .padding(.horizontal, DesignSystem.Toast.horizontalPadding)
             .padding(.vertical, DesignSystem.Toast.verticalPadding)
             .background(DesignSystem.Toast.backgroundColor.opacity(DesignSystem.Toast.backgroundOpacity))
             .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
-            .padding(.bottom, DesignSystem.Toast.bottomPadding)
+            .contentShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Dismiss notification")
+        .accessibilityValue(message)
     }
 }
 
@@ -437,11 +417,12 @@ public struct ToastView: View {
 private struct ToastModifier: ViewModifier {
     @Binding var message: String?
     let bottomPadding: CGFloat
+    @State private var dismissTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content.overlay(alignment: .bottom) {
             if let message {
-                ToastView(message: message)
+                ToastView(message: message, onDismiss: dismiss)
                     .transition(
                         DesignSystem.Accessibility.transition(
                             standard: AnyTransition.move(edge: Edge.bottom)
@@ -450,12 +431,32 @@ private struct ToastModifier: ViewModifier {
                     )
                     .padding(.bottom, bottomPadding)
                     .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + DesignSystem.Toast.displayDuration) {
-                            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                                self.message = nil
-                            }
-                        }
+                        scheduleAutoDismiss()
                     }
+                    .onChangeCompat(of: message) {
+                        scheduleAutoDismiss()
+                    }
+                    .onDisappear {
+                        dismissTask?.cancel()
+                    }
+            }
+        }
+    }
+
+    private func dismiss() {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+            message = nil
+        }
+    }
+
+    private func scheduleAutoDismiss() {
+        dismissTask?.cancel()
+        let duration: TimeInterval = UIAccessibility.isVoiceOverRunning ? 6.0 : DesignSystem.Toast.displayDuration
+        dismissTask = Task {
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                dismiss()
             }
         }
     }

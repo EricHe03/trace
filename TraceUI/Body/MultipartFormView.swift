@@ -78,7 +78,7 @@ public struct MultipartFormView: View {
     private func partCard(part: MultipartParser.Part, index: Int) -> some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
             Button {
-                withAnimation {
+                withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                     if expandedParts.contains(index) {
                         expandedParts.remove(index)
                     } else {
@@ -119,6 +119,12 @@ public struct MultipartFormView: View {
                         .font(.caption)
                 }
             }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .frame(minHeight: DesignSystem.Accessibility.minimumTapTarget, alignment: .leading)
+            .accessibilityLabel("\(expandedParts.contains(index) ? "Collapse" : "Expand") part \(part.name ?? part.filename ?? "Part \(index + 1)")")
+            .accessibilityValue(expandedParts.contains(index) ? "Expanded" : "Collapsed")
+            .accessibilityHint("Double tap to \(expandedParts.contains(index) ? "collapse" : "expand")")
 
             if expandedParts.contains(index) {
                 Divider()
@@ -158,7 +164,6 @@ public struct MultipartFormView: View {
 
     // MARK: - Content Preview
 
-    @ViewBuilder
     private func contentPreview(for part: MultipartParser.Part) -> some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
             HStack {
