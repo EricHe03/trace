@@ -27,3 +27,17 @@ public extension View {
         }
     }
 }
+
+public extension Scene {
+    func onChangeCompat<V: Equatable>(of value: V, perform action: @escaping () -> Void) -> some Scene {
+        onChange(of: value) { _ in
+            action()
+        }
+    }
+
+    func onChangeCompat<V: Equatable>(of value: V, perform action: @escaping (_ newValue: V) -> Void) -> some Scene {
+        onChange(of: value) { newValue in
+            action(newValue)
+        }
+    }
+}
