@@ -13,6 +13,7 @@ import TraceNetworking
 /// Repository for storing and managing DNS messages
 public final class DNSRepository {
     public static let shared = DNSRepository()
+    public static let didChangeNotification = Notification.Name("com.trace.dnsRepositoryDidChange")
 
     // MARK: - Properties
 
@@ -25,6 +26,7 @@ public final class DNSRepository {
     private let maxMessages = 10000
     private let persistInterval: TimeInterval = 5.0
     private var lastPersist = Date.distantPast
+    private var didChangeNotificationPending = false
 
     // MARK: - Initialization
 
@@ -62,6 +64,8 @@ public final class DNSRepository {
             NetworkLog.dns.debug(
                 "event=dns.message_add outcome=success type=\(message.isResponse ? "response" : "query", privacy: .public) message_id=\(message.id.uuidString, privacy: .public)"
             )
+
+            self.notifyDidChange()
         }
     }
 
@@ -125,6 +129,7 @@ public final class DNSRepository {
             self.queryIndex.removeAll()
             self.persistMessages()
             NetworkLog.dns.info("event=dns.messages_clear outcome=success")
+            self.notifyDidChange()
         }
     }
 
@@ -142,6 +147,8 @@ public final class DNSRepository {
                 self.messages.removeValue(forKey: messageId)
                 self.persistIfNeeded()
             }
+
+            self.notifyDidChange()
         }
     }
 
@@ -162,6 +169,24 @@ public final class DNSRepository {
             if !oldIds.isEmpty {
                 self.persistMessages()
                 NetworkLog.dns.info("event=dns.messages_pruned outcome=success count=\(oldIds.count)")
+                self.notifyDidChange()
+            }
+        }
+    }
+
+    private func notifyDidChange() {
+        // Coalesce rapid-fire changes (e.g. high DNS volume) into a single UI refresh per main queue tick.
+        if didChangeNotificationPending {
+            return
+        }
+        didChangeNotificationPending = true
+
+        DispatchQueue.main.async { [weak self] in
+            NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
+
+            guard let self else { return }
+            self.queue.async(flags: .barrier) { [weak self] in
+                self?.didChangeNotificationPending = false
             }
         }
     }
