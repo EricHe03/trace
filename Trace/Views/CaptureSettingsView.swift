@@ -158,7 +158,6 @@ struct CaptureSettingsView: View {
             return
         }
 
-        isSaving = false
         Task {
             await vpnManager.refreshRoutingDefaultsIfNeeded()
             if vpnManager.isConnected {
@@ -169,6 +168,9 @@ struct CaptureSettingsView: View {
                         toastMessage = "Saved locally, but failed to notify VPN: \(error.localizedDescription)"
                     }
                 }
+            }
+            await MainActor.run {
+                isSaving = false
             }
         }
     }
