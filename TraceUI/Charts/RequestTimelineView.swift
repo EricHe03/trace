@@ -87,20 +87,20 @@ public struct RequestTimelineView: View {
 
                     Text(String(format: "Total: %.2f ms", totalTime * 1000))
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                if request.timingPhases != nil {
-                    Label("Detailed", systemImage: "chart.bar.xaxis")
-                        .font(.caption)
-                        .foregroundColor(DesignSystem.Colors.success)
-                        .padding(.horizontal, DesignSystem.Spacing.sm)
-                        .padding(.vertical, DesignSystem.Spacing.xs)
-                        .background(DesignSystem.Colors.success.opacity(0.1))
-                        .clipShape(Capsule())
-                }
+                    if request.timingPhases != nil {
+                        Label("Detailed", systemImage: "chart.bar.xaxis")
+                            .font(.caption)
+                            .foregroundStyle(DesignSystem.Colors.success)
+                            .padding(.horizontal, DesignSystem.Spacing.sm)
+                            .padding(.vertical, DesignSystem.Spacing.xs)
+                            .background(DesignSystem.Colors.success.opacity(0.1))
+                            .clipShape(Capsule())
+                    }
             }
             .padding(.bottom, DesignSystem.Spacing.sm)
 
@@ -240,7 +240,7 @@ public struct TimingPhaseRow: View {
 
             Text(name)
                 .font(.subheadline)
-                .foregroundColor(.primary)
+                .foregroundStyle(.primary)
 
             Spacer()
 
@@ -251,7 +251,7 @@ public struct TimingPhaseRow: View {
 
                 Text(String(format: "%.1f%%", percentage))
                     .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, DesignSystem.Spacing.xs)
@@ -270,7 +270,7 @@ public struct SimpleTimelineView: View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
             HStack {
                 Image(systemName: "clock.fill")
-                    .foregroundColor(DesignSystem.Colors.accent)
+                    .foregroundStyle(DesignSystem.Colors.accent)
 
                 Text("Duration")
                     .font(.subheadline)
@@ -290,12 +290,12 @@ public struct SimpleTimelineView: View {
                     Text(String(format: "%.2f ms", duration * 1000))
                         .font(.caption)
                         .fontWeight(.medium)
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
                 )
 
             Text("Detailed timing information not available for this request")
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundStyle(.secondary)
                 .padding(.top, DesignSystem.Spacing.xs)
         }
     }

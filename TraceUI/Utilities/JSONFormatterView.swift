@@ -42,7 +42,7 @@ public struct JSONFormatterView: View {
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
-                .onChange(of: formatMode) { _ in
+                .onChangeCompat(of: formatMode) {
                     formatJSON()
                 }
                 .accessibilityLabel("JSON format mode")
@@ -76,7 +76,7 @@ public struct JSONFormatterView: View {
                         .autocapitalization(.none)
                         .autocorrectionDisabled()
                         .formTextEditorStyle()
-                        .onChange(of: inputText) { _ in
+                        .onChangeCompat(of: inputText) {
                             formatJSON()
                         }
                 }

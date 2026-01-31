@@ -59,9 +59,13 @@ struct CaptureOptionsView: View {
         .navigationTitle("Capture Options")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: loadConfiguration)
-        .onChange(of: options.captureHeaders) { _ in scheduleSave() }
-        .onChange(of: options.captureBody) { _ in scheduleSave() }
-        .onChange(of: options.maxBodySize) { _ in scheduleSave() }
+        .onChangeCompat(of: options.captureHeaders) { scheduleSave() }
+        .onChangeCompat(of: options.captureBody) { scheduleSave() }
+        .onChangeCompat(of: options.maxBodySize) { scheduleSave() }
+        .onDisappear {
+            saveTask?.cancel()
+            saveTask = nil
+        }
         .toast(message: $toastMessage)
     }
 
@@ -123,6 +127,7 @@ struct CaptureOptionsView: View {
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 persistOptions()
             }

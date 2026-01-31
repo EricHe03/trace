@@ -150,6 +150,7 @@ struct DNSDetailView: View {
                             Text(question.type.displayName)
                                 .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
                                 .padding(.vertical, DesignSystem.Badge.verticalPadding)
+                                .frame(minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget)
                                 .background(Color.blue.opacity(0.2))
                                 .cornerRadius(DesignSystem.Badge.cornerRadius)
 
@@ -309,6 +310,7 @@ struct DNSDetailView: View {
                     .font(.caption)
                     .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
                     .padding(.vertical, DesignSystem.Badge.verticalPadding)
+                    .frame(minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget)
                     .background(recordTypeColor(record.type))
                     .cornerRadius(DesignSystem.Badge.cornerRadius)
 
@@ -366,6 +368,7 @@ struct DNSDetailView: View {
             .fontWeight(DesignSystem.Badge.fontWeight)
             .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
             .padding(.vertical, DesignSystem.Badge.verticalPadding)
+            .frame(minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget)
             .background(color.opacity(0.2))
             .cornerRadius(DesignSystem.Badge.cornerRadius)
             .accessibilityLabel(label)

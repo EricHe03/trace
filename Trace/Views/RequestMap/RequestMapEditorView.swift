@@ -378,7 +378,7 @@ struct RequestMapEditorView: View {
                         .stroke(DesignSystem.Colors.muted.opacity(0.2), lineWidth: 1)
                 )
                 .formTextEditorStyle()
-                .onChange(of: scriptContent) { _ in
+                .onChangeCompat(of: scriptContent) {
                     validateScript()
                 }
 

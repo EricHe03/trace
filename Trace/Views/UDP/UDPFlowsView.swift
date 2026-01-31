@@ -126,7 +126,7 @@ struct UDPFlowsView: View {
             viewModel.startObserving()
             Task { await viewModel.loadFlows() }
         }
-        .onChange(of: viewModel.lastError) { newValue in
+        .onChangeCompat(of: viewModel.lastError) { newValue in
             guard let message = newValue else { return }
             toastMessage = message
         }
@@ -235,6 +235,7 @@ private struct UDPFlowRow: View {
                         .font(.caption.weight(.medium))
                         .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
                         .padding(.vertical, DesignSystem.Badge.verticalPadding)
+                        .frame(minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget)
                         .background(protocolColor.opacity(0.1))
                         .foregroundStyle(protocolColor)
                         .cornerRadius(DesignSystem.Badge.cornerRadius)

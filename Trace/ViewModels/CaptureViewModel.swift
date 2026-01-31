@@ -623,6 +623,7 @@ final class CaptureViewModel: ObservableObject {
         throttlingUpdateTask?.cancel()
         throttlingUpdateTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
             guard let self else { return }
             self.persistThrottlingState()
         }

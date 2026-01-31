@@ -98,7 +98,7 @@ struct OnboardingView: View {
         .onAppear {
             refreshCertificateTrustStatus()
         }
-        .onChange(of: showingCertificateGuide) { isShowing in
+        .onChangeCompat(of: showingCertificateGuide) { isShowing in
             if !isShowing {
                 refreshCertificateTrustStatus()
             }

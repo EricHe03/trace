@@ -76,9 +76,9 @@ struct CaptureRulesView: View {
         .navigationTitle("Capture Rules")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadSettings() }
-        .onChange(of: options) { _ in scheduleSave() }
-        .onChange(of: config.filterMode) { _ in scheduleSave() }
-        .onChange(of: config.domainFilters) { _ in scheduleSave() }
+        .onChangeCompat(of: options) { scheduleSave() }
+        .onChangeCompat(of: config.filterMode) { scheduleSave() }
+        .onChangeCompat(of: config.domainFilters) { scheduleSave() }
         .toast(message: $toastMessage)
     }
 
@@ -99,6 +99,7 @@ struct CaptureRulesView: View {
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 persistAll()
             }

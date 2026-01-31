@@ -145,7 +145,7 @@ struct NetworkView: View {
                         contextMenuContent: contextMenuContent
                     )
                 }
-                .onChange(of: viewModel.selectedSession) { newValue in
+                .onChangeCompat(of: viewModel.selectedSession) { newValue in
                     guard let session = newValue else { return }
                     guard shouldGroupRequests else {
                         viewModel.selectedSession = nil
@@ -391,6 +391,7 @@ struct NetworkView: View {
         eventRebuildTask?.cancel()
         eventRebuildTask = Task {
             try? await Task.sleep(nanoseconds: 100_000_000)
+            guard !Task.isCancelled else { return }
             await rebuildEventCaches()
         }
     }

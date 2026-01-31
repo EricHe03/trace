@@ -46,8 +46,8 @@ struct DomainFiltersView: View {
         .navigationTitle("Domain Filters")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: loadConfiguration)
-        .onChange(of: config.filterMode) { _ in saveConfiguration() }
-        .onChange(of: config.domainFilters) { _ in saveConfiguration() }
+        .onChangeCompat(of: config.filterMode) { saveConfiguration() }
+        .onChangeCompat(of: config.domainFilters) { saveConfiguration() }
         .toast(message: $toastMessage)
     }
 

@@ -241,6 +241,7 @@ struct DNSMessageRow: View {
                             .font(.caption)
                             .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
                             .padding(.vertical, DesignSystem.Badge.verticalPadding)
+                            .frame(minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget)
                             .background(DesignSystem.Colors.info.opacity(0.2))
                             .cornerRadius(DesignSystem.Badge.cornerRadius)
                     }
@@ -250,6 +251,7 @@ struct DNSMessageRow: View {
                             .font(.caption)
                             .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
                             .padding(.vertical, DesignSystem.Badge.verticalPadding)
+                            .frame(minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget)
                             .background((message.isSuccessful ? DesignSystem.Colors.success : DesignSystem.Colors.danger).opacity(0.2))
                             .cornerRadius(DesignSystem.Badge.cornerRadius)
                     }

@@ -77,12 +77,12 @@ struct RootTabView: View {
                 break
             }
         }
-        .onChange(of: viewModel.selectedSession) { newValue in
+        .onChangeCompat(of: viewModel.selectedSession) { newValue in
             if newValue != nil {
                 selectedTab = .network
             }
         }
-        .onChange(of: viewModel.selectedRequestId) { newValue in
+        .onChangeCompat(of: viewModel.selectedRequestId) { newValue in
             if newValue != nil {
                 selectedTab = .network
             }

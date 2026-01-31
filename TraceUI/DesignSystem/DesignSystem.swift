@@ -328,6 +328,10 @@ public extension View {
             .foregroundStyle(foregroundColor)
             .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
             .padding(.vertical, DesignSystem.Badge.verticalPadding)
+            .frame(
+                minWidth: DesignSystem.Accessibility.absoluteMinimumTapTarget,
+                minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget
+            )
             .background(backgroundColor)
             .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius))
     }
@@ -376,38 +380,32 @@ public extension View {
 /// Presents a standard toast notification view.
 struct ToastView: View {
     let message: String
-    var onDismiss: (() -> Void)?
+    let onDismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: DesignSystem.Spacing.md) {
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(DesignSystem.Toast.foregroundColor)
-                .fixedSize(horizontal: false, vertical: true)
+        Button(action: onDismiss) {
+            HStack(spacing: DesignSystem.Spacing.md) {
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(DesignSystem.Toast.foregroundColor)
+                    .fixedSize(horizontal: false, vertical: true)
 
-            if let onDismiss {
-                Button {
-                    onDismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(DesignSystem.Toast.foregroundColor)
-                        .frame(minWidth: 44, minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Dismiss notification")
+                Image(systemName: "xmark")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DesignSystem.Toast.foregroundColor)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+                    .accessibilityHidden(true)
             }
+            .padding(.horizontal, DesignSystem.Toast.horizontalPadding)
+            .padding(.vertical, DesignSystem.Toast.verticalPadding)
+            .background(DesignSystem.Toast.backgroundColor.opacity(DesignSystem.Toast.backgroundOpacity))
+            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
+            .contentShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
         }
-        .padding(.horizontal, DesignSystem.Toast.horizontalPadding)
-        .padding(.vertical, DesignSystem.Toast.verticalPadding)
-        .background(DesignSystem.Toast.backgroundColor.opacity(DesignSystem.Toast.backgroundOpacity))
-        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
-        .contentShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
-        .onTapGesture {
-            onDismiss?()
-        }
-        .padding(.bottom, DesignSystem.Toast.bottomPadding)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Dismiss notification")
+        .accessibilityValue(message)
     }
 }
 
@@ -432,7 +430,7 @@ private struct ToastModifier: ViewModifier {
                     .onAppear {
                         scheduleAutoDismiss()
                     }
-                    .onChange(of: message) { _ in
+                    .onChangeCompat(of: message) {
                         scheduleAutoDismiss()
                     }
                     .onDisappear {

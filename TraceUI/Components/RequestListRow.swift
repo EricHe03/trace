@@ -112,6 +112,10 @@ public struct RequestListRow: View {
             .foregroundStyle(.white)
             .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
             .padding(.vertical, DesignSystem.Badge.verticalPadding)
+            .frame(
+                minWidth: DesignSystem.Accessibility.absoluteMinimumTapTarget,
+                minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget
+            )
             .background(background)
             .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
             .accessibilityLabel(accessibilityLabel)

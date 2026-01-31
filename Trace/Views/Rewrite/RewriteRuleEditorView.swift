@@ -87,10 +87,10 @@ struct RewriteRuleEditorView: View {
                             .autocapitalization(.none)
                             .autocorrectionDisabled()
                             .accessibilityLabel("Match pattern")
-                            .onChange(of: matchPattern) { _ in
+                            .onChangeCompat(of: matchPattern) {
                                 validateMatchPattern(announceIfError: true)
                             }
-                            .onChange(of: matchType) { _ in
+                            .onChangeCompat(of: matchType) {
                                 validateMatchPattern(announceIfError: true)
                             }
 
@@ -294,7 +294,7 @@ struct ActionEditorView: View {
                 }
                 .accessibilityLabel("Action type")
                 .accessibilityHint("Select the type of rewrite action to add")
-                .onChange(of: actionType) { newValue in
+                .onChangeCompat(of: actionType) { newValue in
                     parameters.removeAll()
                     initializeParameters(for: newValue)
                 }

@@ -90,8 +90,8 @@ struct AdvancedSettingsView: View {
         .task {
             await loadSettings()
         }
-        .onChange(of: bodyStorageConfig) { _ in persistBodyStorageConfig() }
-        .onChange(of: samplingConfig) { _ in persistSamplingConfig() }
+        .onChangeCompat(of: bodyStorageConfig) { persistBodyStorageConfig() }
+        .onChangeCompat(of: samplingConfig) { persistSamplingConfig() }
         .toast(message: $toastMessage)
     }
 

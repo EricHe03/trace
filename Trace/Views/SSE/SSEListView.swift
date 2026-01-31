@@ -91,12 +91,12 @@ struct SSEConnectionRow: View {
 
                 Text("\(connection.eventCount) events")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
 
                 if connection.isTruncated {
                     Text("TRUNCATED")
                         .font(.caption)
-                        .foregroundColor(.primary)
+                        .foregroundStyle(.primary)
                         .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
                         .padding(.vertical, DesignSystem.Badge.verticalPadding)
                         .frame(minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget)
@@ -109,7 +109,7 @@ struct SSEConnectionRow: View {
                 if let duration = connection.duration {
                     Text(DesignSystem.formattedDuration(duration))
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
             }
 

@@ -608,7 +608,7 @@ public struct StorageSettingsView: View {
         .task {
             await loadData()
         }
-        .onChange(of: config) { newConfig in
+        .onChangeCompat(of: config) { newConfig in
             Task {
                 await DataCleanupManager.shared.updateConfiguration(newConfig)
             }

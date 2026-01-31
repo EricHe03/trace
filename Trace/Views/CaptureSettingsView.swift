@@ -88,12 +88,16 @@ struct CaptureSettingsView: View {
         .onAppear {
             loadConfiguration()
         }
-        .onChange(of: config.captureMode) { _ in scheduleSave(showErrors: true) }
-        .onChange(of: config.fullTunnelSocks5Host) { _ in scheduleSave(showErrors: false) }
-        .onChange(of: socksPortText) { _ in scheduleSave(showErrors: false) }
-        .onChange(of: config.fullTunnelDNSServers) { _ in scheduleSave(showErrors: false) }
-        .onChange(of: config.fullTunnelIPv6Enabled) { _ in scheduleSave(showErrors: false) }
-        .onChange(of: config.fullTunnelUDPForwardingMode) { _ in scheduleSave(showErrors: false) }
+        .onChangeCompat(of: config.captureMode) { scheduleSave(showErrors: true) }
+        .onChangeCompat(of: config.fullTunnelSocks5Host) { scheduleSave(showErrors: false) }
+        .onChangeCompat(of: socksPortText) { scheduleSave(showErrors: false) }
+        .onChangeCompat(of: config.fullTunnelDNSServers) { scheduleSave(showErrors: false) }
+        .onChangeCompat(of: config.fullTunnelIPv6Enabled) { scheduleSave(showErrors: false) }
+        .onChangeCompat(of: config.fullTunnelUDPForwardingMode) { scheduleSave(showErrors: false) }
+        .onDisappear {
+            saveTask?.cancel()
+            saveTask = nil
+        }
         .toast(message: $toastMessage)
     }
 
@@ -114,6 +118,7 @@ struct CaptureSettingsView: View {
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 persistConfiguration(showErrors: showErrors)
             }

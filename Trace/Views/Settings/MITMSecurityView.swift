@@ -73,8 +73,8 @@ struct MITMSecurityView: View {
         .navigationTitle("MITM & Security")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadSettings() }
-        .onChange(of: mitmAllowlist) { _ in persistHardeningConfig() }
-        .onChange(of: blockQUICEnabled) { _ in persistHardeningConfig() }
+        .onChangeCompat(of: mitmAllowlist) { persistHardeningConfig() }
+        .onChangeCompat(of: blockQUICEnabled) { persistHardeningConfig() }
         .toast(message: $toastMessage)
     }
 
