@@ -17,18 +17,19 @@ final class DNSViewModel: ObservableObject {
 
     private let repository = DNSRepository.shared
     private var repositoryObserver: NSObjectProtocol?
+    private var reloadTask: Task<Void, Never>?
 
     // Filters
-    @Published var searchText = "" { didSet { reloadMessages() } }
-    @Published var selectedRecordTypes: Set<DNSRecordType> = [] { didSet { reloadMessages() } }
-    @Published var selectedResponseCodes: Set<DNSResponseCode> = [] { didSet { reloadMessages() } }
-    @Published var showQueriesOnly = false { didSet { reloadMessages() } }
-    @Published var showResponsesOnly = false { didSet { reloadMessages() } }
-    @Published var showUnansweredOnly = false { didSet { reloadMessages() } }
-    @Published var showFailedOnly = false { didSet { reloadMessages() } }
+    @Published var searchText = "" { didSet { scheduleReload(debounce: true) } }
+    @Published var selectedRecordTypes: Set<DNSRecordType> = [] { didSet { scheduleReload() } }
+    @Published var selectedResponseCodes: Set<DNSResponseCode> = [] { didSet { scheduleReload() } }
+    @Published var showQueriesOnly = false { didSet { scheduleReload() } }
+    @Published var showResponsesOnly = false { didSet { scheduleReload() } }
+    @Published var showUnansweredOnly = false { didSet { scheduleReload() } }
+    @Published var showFailedOnly = false { didSet { scheduleReload() } }
 
     // Sorting
-    @Published var sortOrder: SortOrder = .newestFirst { didSet { reloadMessages() } }
+    @Published var sortOrder: SortOrder = .newestFirst { didSet { scheduleReload() } }
 
     // Statistics
     @Published var statistics: DNSStatistics?
@@ -44,13 +45,14 @@ final class DNSViewModel: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             self?.refreshStatistics()
-            self?.reloadMessages()
+            self?.scheduleReload()
         }
-        reloadMessages()
+        scheduleReload()
         refreshStatistics()
     }
 
     deinit {
+        reloadTask?.cancel()
         if let repositoryObserver {
             NotificationCenter.default.removeObserver(repositoryObserver)
         }
@@ -195,6 +197,17 @@ final class DNSViewModel: ObservableObject {
     /// Refreshes cached DNS statistics.
     func refreshStatistics() {
         statistics = repository.getStatistics()
+    }
+
+    private func scheduleReload(debounce: Bool = false) {
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self] in
+            if debounce {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            guard !Task.isCancelled else { return }
+            await self?.reloadMessages()
+        }
     }
 
     func reloadMessages() {

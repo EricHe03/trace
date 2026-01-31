@@ -2,7 +2,7 @@
 //  LogRedaction.swift
 //  TraceCore
 //
-//  Created by Codex on 2026/01/10.
+//  Created by Justin on 2026/01/10.
 //
 
 import CommonCrypto

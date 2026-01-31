@@ -310,7 +310,7 @@ final class CaptureViewModel: ObservableObject {
     @Published var filterMaxDuration: TimeInterval?
     @Published var filterRegexPattern: String? {
         didSet {
-            validateRegexPattern()
+            validateRegexPattern(pattern: filterRegexPattern)
         }
     }
     @Published private(set) var regexFilterError: String?
@@ -418,6 +418,7 @@ final class CaptureViewModel: ObservableObject {
     private let notificationDedupLimit = 200
     private var cancellables = Set<AnyCancellable>()
     private var notificationObservers: [NSObjectProtocol] = []
+    private var newRequestsObserverToken: AppGroupStorageObserverToken?
     private var throttlingUpdateTask: Task<Void, Never>?
     private var isLoadingThrottlingState = false
     private var isLoadingSettings = false
@@ -442,8 +443,8 @@ final class CaptureViewModel: ObservableObject {
         loadSettings()
 
         // Observe new requests from Network Extension with debouncing
-        storage.observeNewRequests { [weak self] in
-            Task { @MainActor in
+        newRequestsObserverToken = storage.observeNewRequests { [weak self] in
+            Task { @MainActor [weak self] in
                 self?.debouncedLoadRequests()
             }
         }
@@ -483,7 +484,8 @@ final class CaptureViewModel: ObservableObject {
         activeLoadTask?.cancel()
         throttlingUpdateTask?.cancel()
 
-        storage.stopObservingNewRequests()
+        newRequestsObserverToken?.cancel()
+        newRequestsObserverToken = nil
 
         for observer in notificationObservers {
             NotificationCenter.default.removeObserver(observer)
@@ -893,8 +895,8 @@ final class CaptureViewModel: ObservableObject {
 
     // MARK: - Regex Matching
 
-    private func validateRegexPattern() {
-        let pattern = filterRegexPattern?.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func validateRegexPattern(pattern rawPattern: String?) {
+        let pattern = rawPattern?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let pattern, !pattern.isEmpty else {
             lastRegexPattern = nil
             compiledRegex = nil
@@ -917,7 +919,7 @@ final class CaptureViewModel: ObservableObject {
     }
 
     private func matchesRegex(_ request: NetworkRequest, pattern: String) -> Bool {
-        validateRegexPattern()
+        validateRegexPattern(pattern: pattern)
         guard let regex = compiledRegex else { return false }
 
         // Check URL

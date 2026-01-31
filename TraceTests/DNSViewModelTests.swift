@@ -9,6 +9,7 @@ import XCTest
 @testable import Trace
 @testable import TraceCore
 
+@MainActor
 final class DNSViewModelTests: XCTestCase {
 
     var viewModel: DNSViewModel!
@@ -30,17 +31,17 @@ final class DNSViewModelTests: XCTestCase {
 
     func testViewModelInitialization() {
         XCTAssertNotNil(viewModel)
-        XCTAssertEqual(viewModel.searchText, "")
-        XCTAssertTrue(viewModel.selectedRecordTypes.isEmpty)
-        XCTAssertTrue(viewModel.selectedResponseCodes.isEmpty)
-        XCTAssertFalse(viewModel.showQueriesOnly)
-        XCTAssertFalse(viewModel.showResponsesOnly)
-        XCTAssertFalse(viewModel.showUnansweredOnly)
-        XCTAssertFalse(viewModel.showFailedOnly)
+        assertEqual(viewModel.searchText, "")
+        assertTrue(viewModel.selectedRecordTypes.isEmpty)
+        assertTrue(viewModel.selectedResponseCodes.isEmpty)
+        assertFalse(viewModel.showQueriesOnly)
+        assertFalse(viewModel.showResponsesOnly)
+        assertFalse(viewModel.showUnansweredOnly)
+        assertFalse(viewModel.showFailedOnly)
     }
 
     func testDefaultSortOrder() {
-        XCTAssertEqual(viewModel.sortOrder, .newestFirst)
+        assertEqual(viewModel.sortOrder, .newestFirst)
     }
 
     // MARK: - Filter Tests
@@ -52,19 +53,19 @@ final class DNSViewModelTests: XCTestCase {
 
         viewModel.clearFilters()
 
-        XCTAssertEqual(viewModel.searchText, "")
-        XCTAssertTrue(viewModel.selectedRecordTypes.isEmpty)
-        XCTAssertFalse(viewModel.showQueriesOnly)
+        assertEqual(viewModel.searchText, "")
+        assertTrue(viewModel.selectedRecordTypes.isEmpty)
+        assertFalse(viewModel.showQueriesOnly)
     }
 
     func testToggleRecordType() {
-        XCTAssertFalse(viewModel.selectedRecordTypes.contains(.a))
+        assertFalse(viewModel.selectedRecordTypes.contains(.a))
 
         viewModel.toggleRecordType(.a)
-        XCTAssertTrue(viewModel.selectedRecordTypes.contains(.a))
+        assertTrue(viewModel.selectedRecordTypes.contains(.a))
 
         viewModel.toggleRecordType(.a)
-        XCTAssertFalse(viewModel.selectedRecordTypes.contains(.a))
+        assertFalse(viewModel.selectedRecordTypes.contains(.a))
     }
 
     func testToggleMultipleRecordTypes() {
@@ -72,20 +73,20 @@ final class DNSViewModelTests: XCTestCase {
         viewModel.toggleRecordType(.aaaa)
         viewModel.toggleRecordType(.cname)
 
-        XCTAssertTrue(viewModel.selectedRecordTypes.contains(.a))
-        XCTAssertTrue(viewModel.selectedRecordTypes.contains(.aaaa))
-        XCTAssertTrue(viewModel.selectedRecordTypes.contains(.cname))
-        XCTAssertEqual(viewModel.selectedRecordTypes.count, 3)
+        assertTrue(viewModel.selectedRecordTypes.contains(.a))
+        assertTrue(viewModel.selectedRecordTypes.contains(.aaaa))
+        assertTrue(viewModel.selectedRecordTypes.contains(.cname))
+        assertEqual(viewModel.selectedRecordTypes.count, 3)
     }
 
     func testToggleResponseCode() {
-        XCTAssertFalse(viewModel.selectedResponseCodes.contains(.noError))
+        assertFalse(viewModel.selectedResponseCodes.contains(.noError))
 
         viewModel.toggleResponseCode(.noError)
-        XCTAssertTrue(viewModel.selectedResponseCodes.contains(.noError))
+        assertTrue(viewModel.selectedResponseCodes.contains(.noError))
 
         viewModel.toggleResponseCode(.noError)
-        XCTAssertFalse(viewModel.selectedResponseCodes.contains(.noError))
+        assertFalse(viewModel.selectedResponseCodes.contains(.noError))
     }
 
     // MARK: - Sort Order Tests
@@ -113,10 +114,10 @@ final class DNSViewModelTests: XCTestCase {
 
     func testChangeSortOrder() {
         viewModel.sortOrder = .oldestFirst
-        XCTAssertEqual(viewModel.sortOrder, .oldestFirst)
+        assertEqual(viewModel.sortOrder, .oldestFirst)
 
         viewModel.sortOrder = .domainAZ
-        XCTAssertEqual(viewModel.sortOrder, .domainAZ)
+        assertEqual(viewModel.sortOrder, .domainAZ)
     }
 
     // MARK: - Export Tests
@@ -159,11 +160,11 @@ final class DNSViewModelTests: XCTestCase {
 
     func testExclusiveQueryResponseFilters() {
         viewModel.showQueriesOnly = true
-        XCTAssertTrue(viewModel.showQueriesOnly)
-        XCTAssertFalse(viewModel.showResponsesOnly)
+        assertTrue(viewModel.showQueriesOnly)
+        assertFalse(viewModel.showResponsesOnly)
 
         viewModel.showResponsesOnly = true
-        XCTAssertTrue(viewModel.showResponsesOnly)
+        assertTrue(viewModel.showResponsesOnly)
         // Note: Both can be set to true in the view model,
         // but the filter logic handles this
     }
@@ -358,17 +359,17 @@ final class DNSViewModelTests: XCTestCase {
     func testSearchWithEmptyText() {
         viewModel.searchText = ""
         // Should not filter anything
-        XCTAssertEqual(viewModel.searchText, "")
+        assertEqual(viewModel.searchText, "")
     }
 
     func testSearchWithSpecialCharacters() {
         viewModel.searchText = "example.com?query=test"
-        XCTAssertEqual(viewModel.searchText, "example.com?query=test")
+        assertEqual(viewModel.searchText, "example.com?query=test")
     }
 
     func testSearchWithUnicode() {
         viewModel.searchText = "münchen.de"
-        XCTAssertEqual(viewModel.searchText, "münchen.de")
+        assertEqual(viewModel.searchText, "münchen.de")
     }
 
     func testDeleteOlderThan() {
@@ -385,4 +386,32 @@ final class DNSViewModelTests: XCTestCase {
         let unanswered = viewModel.unansweredQueries
         XCTAssertTrue(unanswered.isEmpty) // No messages
     }
+}
+
+@MainActor
+private func assertEqual<T: Equatable>(
+    _ actual: @autoclosure () -> T,
+    _ expected: T,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    XCTAssertEqual(actual(), expected, file: file, line: line)
+}
+
+@MainActor
+private func assertTrue(
+    _ condition: @autoclosure () -> Bool,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    XCTAssertTrue(condition(), file: file, line: line)
+}
+
+@MainActor
+private func assertFalse(
+    _ condition: @autoclosure () -> Bool,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    XCTAssertFalse(condition(), file: file, line: line)
 }

@@ -83,21 +83,24 @@ final class ConnectionDetailViewModel: ObservableObject {
         loadError = nil
 
         analysisTask = Task { [record, url = file.url] in
+            defer { self.isLoading = false }
             do {
                 let work = Task.detached(priority: .utility) {
                     let analyzer = try PCAPFlowAnalyzer(record: record)
                     return try analyzer.analyze(url: url)
                 }
                 analysisWorkTask = work
-                let analysis = try await work.value
-                guard !Task.isCancelled else { return }
+                let analysis = try await withTaskCancellationHandler {
+                    try await work.value
+                } onCancel: {
+                    work.cancel()
+                }
+                try Task.checkCancellation()
                 self.analysis = analysis
-                self.isLoading = false
             } catch is CancellationError {
-                self.isLoading = false
+                self.analysis = nil
             } catch {
                 self.loadError = error.localizedDescription
-                self.isLoading = false
             }
         }
     }

@@ -71,10 +71,12 @@ final class UDPFlowsViewModel: ObservableObject {
 
     private var isObserving = false
     private var loadTask: Task<Void, Never>?
+    private var storageObserverToken: AppGroupStorageObserverToken?
 
     deinit {
         loadTask?.cancel()
-        AppGroupStorage.shared.stopObservingNewUDPFlows()
+        storageObserverToken?.cancel()
+        storageObserverToken = nil
     }
 
     var filteredFlows: [UDPFlowMetadata] {
@@ -124,7 +126,7 @@ final class UDPFlowsViewModel: ObservableObject {
     func startObserving() {
         guard !isObserving else { return }
         isObserving = true
-        AppGroupStorage.shared.observeNewUDPFlows { [weak self] in
+        storageObserverToken = AppGroupStorage.shared.observeNewUDPFlows { [weak self] in
             Task { @MainActor [weak self] in
                 self?.scheduleLoad()
             }

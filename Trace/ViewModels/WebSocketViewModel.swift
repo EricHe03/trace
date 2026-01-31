@@ -16,6 +16,7 @@ import TraceNetworking
 final class WebSocketViewModel: ObservableObject {
     private let storage = AppGroupStorage.shared
     private var loadTask: Task<Void, Never>?
+    private var storageObserverToken: AppGroupStorageObserverToken?
 
     @Published var connections: [WebSocketConnection] = []
     @Published var searchText: String = ""
@@ -25,7 +26,7 @@ final class WebSocketViewModel: ObservableObject {
         scheduleLoad()
 
         // Observe new WebSocket connections from Network Extension
-        storage.observeNewWebSockets { [weak self] in
+        storageObserverToken = storage.observeNewWebSockets { [weak self] in
             Task { @MainActor [weak self] in
                 self?.scheduleLoad()
             }
@@ -34,7 +35,8 @@ final class WebSocketViewModel: ObservableObject {
 
     deinit {
         loadTask?.cancel()
-        storage.stopObservingNewWebSockets()
+        storageObserverToken?.cancel()
+        storageObserverToken = nil
     }
 
     private func scheduleLoad() {

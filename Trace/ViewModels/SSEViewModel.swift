@@ -16,6 +16,7 @@ import TraceNetworking
 final class SSEViewModel: ObservableObject {
     private let storage = AppGroupStorage.shared
     private var loadTask: Task<Void, Never>?
+    private var storageObserverToken: AppGroupStorageObserverToken?
 
     @Published var connections: [SSEConnection] = []
     @Published var searchText: String = ""
@@ -25,7 +26,7 @@ final class SSEViewModel: ObservableObject {
         scheduleLoad()
 
         // Observe new SSE connections from Network Extension
-        storage.observeNewSSE { [weak self] in
+        storageObserverToken = storage.observeNewSSE { [weak self] in
             Task { @MainActor [weak self] in
                 self?.scheduleLoad()
             }
@@ -34,7 +35,8 @@ final class SSEViewModel: ObservableObject {
 
     deinit {
         loadTask?.cancel()
-        storage.stopObservingNewSSE()
+        storageObserverToken?.cancel()
+        storageObserverToken = nil
     }
 
     private func scheduleLoad() {
