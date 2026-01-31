@@ -25,7 +25,6 @@
 		5F4B07CE2F149C0000D9933A /* HevSocks5Tunnel in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07CF2F149C0000D9933A /* HevSocks5Tunnel */; };
 		5F4B07D02F149D0000D9933A /* TraceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07D12F149D0000D9933A /* TraceCore */; };
 		5F4B07D22F149D0000D9933A /* TraceCompression in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07D32F149D0000D9933A /* TraceCompression */; };
-		5F66C8992F2E479900A03E9E /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 5F66C8982F2E479900A03E9E /* AppIcon.icon */; };
 		5F6EDD242F081F82002BB89C /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F6EDD232F081F82002BB89C /* WidgetKit.framework */; };
 		5F6EDD262F081F82002BB89C /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F6EDD252F081F82002BB89C /* SwiftUI.framework */; };
 		5F6EDD372F081F83002BB89C /* TraceWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5F6EDD222F081F82002BB89C /* TraceWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -84,7 +83,6 @@
 
 /* Begin PBXFileReference section */
 		5F20D9272F2C990A00F93194 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
-		5F66C8982F2E479900A03E9E /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		5F6EDD222F081F82002BB89C /* TraceWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TraceWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F6EDD232F081F82002BB89C /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		5F6EDD252F081F82002BB89C /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
@@ -231,7 +229,6 @@
 				5FCEECDA2F02AE4500D3CD59 /* Frameworks */,
 				5FCEEC022F0152E400D3CD59 /* Products */,
 				5F20D9272F2C990A00F93194 /* AppIcon.icon */,
-				5F66C8982F2E479900A03E9E /* AppIcon.icon */,
 			);
 			sourceTree = "<group>";
 		};
@@ -464,7 +461,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				5F20D9282F2C990A00F93194 /* AppIcon.icon in Resources */,
-				5F66C8992F2E479900A03E9E /* AppIcon.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
