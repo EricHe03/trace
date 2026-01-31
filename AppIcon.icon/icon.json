@@ -5,8 +5,20 @@
       "blur-material" : null,
       "layers" : [
         {
-          "image-name" : "trace-logomark 2.svg",
-          "name" : "trace-logomark 2"
+          "blend-mode" : "normal",
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "trace-logomark.svg",
+          "name" : "trace-logomark",
+          "opacity-specializations" : [
+            {
+              "value" : 1
+            },
+            {
+              "appearance" : "dark",
+              "value" : 1
+            }
+          ]
         }
       ],
       "lighting" : "individual",
