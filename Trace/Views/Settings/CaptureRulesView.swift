@@ -14,7 +14,6 @@ import TraceUI
 struct CaptureRulesView: View {
     @State private var config: CaptureConfiguration = .default
     @State private var options: CaptureOptions = .default
-    @State private var samplingConfig: SamplingConfig = .default
 
     @State private var isLoading = true
     @State private var toastMessage: String?
@@ -58,7 +57,6 @@ struct CaptureRulesView: View {
                         items: $config.domainFilters,
                         addLabel: "Add Domain",
                         placeholder: "example.com",
-                        helperText: "Use * for wildcards (e.g., *.example.com).",
                         emptyText: "No domains added",
                         validate: validateDomainPattern
                     )
@@ -67,39 +65,6 @@ struct CaptureRulesView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-            }
-
-            Section {
-                Toggle("Enable Sampling", isOn: $samplingConfig.enabled)
-
-                if samplingConfig.enabled {
-                    VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-                        HStack {
-                            Text("Sample Rate")
-                                .font(.subheadline)
-                            Spacer()
-                            Text("\(Int(samplingConfig.sampleRate * 100))%")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        Slider(value: $samplingConfig.sampleRate, in: 0.05 ... 1.0, step: 0.05)
-                            .accessibilityLabel("Sample rate")
-                            .accessibilityValue("\(Int(samplingConfig.sampleRate * 100)) percent")
-                    }
-                    .padding(.vertical, DesignSystem.Spacing.xs)
-
-                    Picker("Strategy", selection: $samplingConfig.strategy) {
-                        Text("Random").tag(SamplingStrategy.random)
-                        Text("Periodic").tag(SamplingStrategy.periodic)
-                        Text("Adaptive").tag(SamplingStrategy.adaptive)
-                    }
-                }
-            } header: {
-                Text("Request Sampling")
-            } footer: {
-                Text("Reduce overhead in high-volume environments by sampling captured requests.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Section {
@@ -114,14 +79,12 @@ struct CaptureRulesView: View {
         .onChange(of: options) { _ in scheduleSave() }
         .onChange(of: config.filterMode) { _ in scheduleSave() }
         .onChange(of: config.domainFilters) { _ in scheduleSave() }
-        .onChange(of: samplingConfig) { _ in scheduleSave() }
         .toast(message: $toastMessage)
     }
 
     private func loadSettings() async {
         config = AppGroupStorage.shared.loadConfiguration()
         options = AppGroupStorage.shared.loadCaptureOptions()
-        samplingConfig = AppGroupStorage.shared.loadSamplingConfig()
 
         // Ensure the UI reflects the persisted config as the source of truth.
         options.captureHeaders = config.captureHeaders
@@ -153,7 +116,6 @@ struct CaptureRulesView: View {
         do {
             try AppGroupStorage.shared.saveConfiguration(updatedConfig)
             try AppGroupStorage.shared.saveCaptureOptions(options.normalized())
-            try AppGroupStorage.shared.saveSamplingConfig(samplingConfig.normalized())
         } catch {
             toastMessage = "Failed to save: \(error.localizedDescription)"
             return
@@ -176,7 +138,6 @@ struct CaptureRulesView: View {
         isLoading = true
         config = .default
         options = .default
-        samplingConfig = .default
         isLoading = false
         persistAll()
         toastMessage = "Reset to defaults"

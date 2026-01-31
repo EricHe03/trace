@@ -30,7 +30,6 @@ struct DomainFiltersView: View {
                 items: $config.domainFilters,
                 addLabel: "Add Domain",
                 placeholder: "example.com",
-                helperText: "Use * for wildcards (e.g., *.example.com).",
                 emptyText: "No domains added",
                 validate: validateDomainPattern
             )

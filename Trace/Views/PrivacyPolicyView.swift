@@ -394,39 +394,39 @@ private struct PolicyRow: View {
     var items: [String] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
-            if !title.isEmpty {
-                HStack(spacing: DesignSystem.Spacing.md) {
-                    Image(systemName: icon)
-                        .font(.title2)
-                        .foregroundStyle(iconColor)
-                        .frame(width: 32)
+        HStack(alignment: .top, spacing: DesignSystem.Spacing.md) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(iconColor)
+                .frame(width: 32)
 
+            VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
+                if !title.isEmpty {
                     Text(title)
                         .font(.headline)
                 }
-            }
 
-            if let description {
-                Text(description)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-            }
+                if let description {
+                    Text(description)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                }
 
-            if !items.isEmpty {
-                VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-                    ForEach(items, id: \.self) { item in
-                        HStack(alignment: .top, spacing: DesignSystem.Spacing.sm) {
-                            Text("•")
-                                .foregroundStyle(.tertiary)
-                            Text(item)
-                                .font(.body)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                if !items.isEmpty {
+                    VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
+                        ForEach(items, id: \.self) { item in
+                            HStack(alignment: .top, spacing: DesignSystem.Spacing.sm) {
+                                Text("•")
+                                    .foregroundStyle(.tertiary)
+                                Text(item)
+                                    .font(.body)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
+                    .padding(.leading, 4) // Slight indent for bullets
                 }
-                .padding(.leading, 4) // Slight indent for bullets
             }
         }
         .padding(.vertical, DesignSystem.Spacing.xs)

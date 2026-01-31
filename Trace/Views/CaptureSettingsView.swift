@@ -15,7 +15,9 @@ struct CaptureSettingsView: View {
     @State private var config: CaptureConfiguration = .default
     @State private var socksPortText = ""
     @State private var toastMessage: String?
+    @State private var isLoading = true
     @State private var isSaving = false
+    @State private var saveTask: Task<Void, Never>?
 
     var body: some View {
         Form {
@@ -26,16 +28,6 @@ struct CaptureSettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 .accessibilityLabel("Capture mode")
-
-                Button {
-                    saveConfiguration()
-                } label: {
-                    Label("Apply Capture Mode", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .disabled(isSaving)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .accessibilityLabel("Apply capture mode")
-                .accessibilityHint("Applies the selected capture mode")
             }
 
             if config.captureMode == .fullTunnel {
@@ -96,10 +88,17 @@ struct CaptureSettingsView: View {
         .onAppear {
             loadConfiguration()
         }
+        .onChange(of: config.captureMode) { _ in scheduleSave(showErrors: true) }
+        .onChange(of: config.fullTunnelSocks5Host) { _ in scheduleSave(showErrors: false) }
+        .onChange(of: socksPortText) { _ in scheduleSave(showErrors: false) }
+        .onChange(of: config.fullTunnelDNSServers) { _ in scheduleSave(showErrors: false) }
+        .onChange(of: config.fullTunnelIPv6Enabled) { _ in scheduleSave(showErrors: false) }
+        .onChange(of: config.fullTunnelUDPForwardingMode) { _ in scheduleSave(showErrors: false) }
         .toast(message: $toastMessage)
     }
 
     private func loadConfiguration() {
+        isLoading = true
         let loaded = AppGroupStorage.shared.loadConfiguration()
         config = loaded
         if loaded.fullTunnelSocks5Port > 0 {
@@ -107,19 +106,38 @@ struct CaptureSettingsView: View {
         } else {
             socksPortText = ""
         }
+        isLoading = false
     }
 
-    private func saveConfiguration() {
+    private func scheduleSave(showErrors: Bool) {
+        guard !isLoading else { return }
+        saveTask?.cancel()
+        saveTask = Task {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            await MainActor.run {
+                persistConfiguration(showErrors: showErrors)
+            }
+        }
+    }
+
+    private func persistConfiguration(showErrors: Bool) {
+        guard !isLoading else { return }
+        guard !isSaving else { return }
+
         let trimmedHost = config.fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
         var updated = config
 
         if config.captureMode == .fullTunnel {
             guard !trimmedHost.isEmpty else {
-                toastMessage = "Enter a SOCKS5 host for full-tunnel mode."
+                if showErrors {
+                    toastMessage = "Enter a SOCKS5 host for full-tunnel mode."
+                }
                 return
             }
             guard let port = UInt16(socksPortText), port > 0 else {
-                toastMessage = "Enter a valid SOCKS5 port (1-65535)."
+                if showErrors {
+                    toastMessage = "Enter a valid SOCKS5 port (1-65535)."
+                }
                 return
             }
             updated.fullTunnelSocks5Host = trimmedHost
@@ -135,6 +153,7 @@ struct CaptureSettingsView: View {
             return
         }
 
+        isSaving = false
         Task {
             await vpnManager.refreshRoutingDefaultsIfNeeded()
             if vpnManager.isConnected {
@@ -145,10 +164,6 @@ struct CaptureSettingsView: View {
                         toastMessage = "Saved locally, but failed to notify VPN: \(error.localizedDescription)"
                     }
                 }
-            }
-            await MainActor.run {
-                isSaving = false
-                toastMessage = "Capture settings updated."
             }
         }
     }

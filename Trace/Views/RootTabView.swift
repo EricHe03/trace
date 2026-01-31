@@ -361,7 +361,7 @@ struct SettingsTabView: View {
                     NavigationLink {
                         PrivacyPolicyView()
                     } label: {
-                        Label("Privacy Policy", systemImage: "hand.raised")
+                        Label("Privacy Policy", systemImage: "hand.raised.circle")
                     }
 
                     Button {

@@ -23,16 +23,6 @@ struct MITMSecurityView: View {
 
     var body: some View {
         Form {
-            Section {
-                Label {
-                    Text("HTTPS interception requires installing the Trace root certificate. Only allowlisted domains are decrypted; everything stays on-device. Use a narrow allowlist to avoid capturing sensitive traffic.")
-                } icon: {
-                    Image(systemName: "exclamationmark.shield.fill")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-
             DomainListEditor(
                 title: "MITM Allowlist",
                 items: $mitmAllowlist,

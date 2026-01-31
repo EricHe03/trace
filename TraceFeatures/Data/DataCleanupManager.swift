@@ -529,7 +529,6 @@ public struct StorageSettingsView: View {
     @State private var stats = DataCleanupManager.CleanupStats()
     @State private var storageUsage: (total: Int64, requests: Int64, bodies: Int64, logs: Int64) = (0, 0, 0, 0)
     @State private var isCleaningUp = false
-    @State private var showingDeleteAllAlert = false
 
     public init() {}
 
@@ -603,26 +602,9 @@ public struct StorageSettingsView: View {
                     }
                 }
                 .disabled(isCleaningUp)
-
-                Button(role: .destructive) {
-                    showingDeleteAllAlert = true
-                } label: {
-                    Label("Delete All Requests", systemImage: "trash.fill")
-                }
             }
         }
         .navigationTitle("Storage")
-        .alert("Delete All Requests", isPresented: $showingDeleteAllAlert) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
-                Task {
-                    _ = await DataCleanupManager.shared.deleteAllRequests()
-                    await loadData()
-                }
-            }
-        } message: {
-            Text("This will permanently delete all captured requests. This action cannot be undone.")
-        }
         .task {
             await loadData()
         }
