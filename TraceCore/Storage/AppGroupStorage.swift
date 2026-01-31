@@ -1134,15 +1134,18 @@ public class AppGroupStorage: @unchecked Sendable {
         return AppGroupStorageObserverToken { [weak self] in
             guard let self else { return }
             self.notificationObserversLock.lock()
-            self.requestObservers.removeValue(forKey: id)
+            let observer = self.requestObservers.removeValue(forKey: id)
             self.notificationObserversLock.unlock()
+            observer?.stop()
         }
     }
 
     public func stopObservingNewRequests() {
         notificationObserversLock.lock()
+        let observers = Array(requestObservers.values)
         requestObservers.removeAll()
         notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
     }
 
     /// Sets up listener for new WebSocket connection notifications (call from main app)
@@ -1158,15 +1161,18 @@ public class AppGroupStorage: @unchecked Sendable {
         return AppGroupStorageObserverToken { [weak self] in
             guard let self else { return }
             self.notificationObserversLock.lock()
-            self.webSocketObservers.removeValue(forKey: id)
+            let observer = self.webSocketObservers.removeValue(forKey: id)
             self.notificationObserversLock.unlock()
+            observer?.stop()
         }
     }
 
     public func stopObservingNewWebSockets() {
         notificationObserversLock.lock()
+        let observers = Array(webSocketObservers.values)
         webSocketObservers.removeAll()
         notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
     }
 
     /// Sets up listener for new SSE connection notifications (call from main app)
@@ -1182,15 +1188,18 @@ public class AppGroupStorage: @unchecked Sendable {
         return AppGroupStorageObserverToken { [weak self] in
             guard let self else { return }
             self.notificationObserversLock.lock()
-            self.sseObservers.removeValue(forKey: id)
+            let observer = self.sseObservers.removeValue(forKey: id)
             self.notificationObserversLock.unlock()
+            observer?.stop()
         }
     }
 
     public func stopObservingNewSSE() {
         notificationObserversLock.lock()
+        let observers = Array(sseObservers.values)
         sseObservers.removeAll()
         notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
     }
 
     /// Sets up listener for new UDP flow notifications (call from main app)
@@ -1206,15 +1215,18 @@ public class AppGroupStorage: @unchecked Sendable {
         return AppGroupStorageObserverToken { [weak self] in
             guard let self else { return }
             self.notificationObserversLock.lock()
-            self.udpFlowObservers.removeValue(forKey: id)
+            let observer = self.udpFlowObservers.removeValue(forKey: id)
             self.notificationObserversLock.unlock()
+            observer?.stop()
         }
     }
 
     public func stopObservingNewUDPFlows() {
         notificationObserversLock.lock()
+        let observers = Array(udpFlowObservers.values)
         udpFlowObservers.removeAll()
         notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
     }
 
     // MARK: - Statistics
@@ -1719,26 +1731,38 @@ extension HTTPMethod: Codable {}
 
 /// Helper class to properly manage CFNotificationCenter observer lifecycle
 public class NotificationObserver {
+    private let lock = NSLock()
     private var observer: UnsafeMutableRawPointer?
     private var handler: (@Sendable () -> Void)?
     private var notificationName: CFString?
 
-    public func observe(notificationName: String, handler: @escaping @Sendable () -> Void) {
-        if let observer, let notificationName = self.notificationName {
-            CFNotificationCenterRemoveObserver(
-                CFNotificationCenterGetDarwinNotifyCenter(),
-                observer,
-                CFNotificationName(notificationName),
-                nil
-            )
-            Unmanaged<NotificationObserver>.fromOpaque(observer).release()
-            self.observer = nil
-            self.notificationName = nil
-        }
+    public func stop() {
+        lock.lock()
+        let observer = observer
+        let notificationName = notificationName
+        self.observer = nil
+        self.notificationName = nil
+        handler = nil
+        lock.unlock()
 
+        guard let observer, let notificationName else { return }
+        CFNotificationCenterRemoveObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            observer,
+            CFNotificationName(notificationName),
+            nil
+        )
+        Unmanaged<NotificationObserver>.fromOpaque(observer).release()
+    }
+
+    public func observe(notificationName: String, handler: @escaping @Sendable () -> Void) {
+        stop()
+
+        lock.lock()
         self.handler = handler
         self.notificationName = notificationName as CFString
         let center = CFNotificationCenterGetDarwinNotifyCenter()
+        lock.unlock()
 
         // Use a weak reference pattern
         let callback: CFNotificationCallback = { _, observer, _, _, _ in
@@ -1750,27 +1774,23 @@ public class NotificationObserver {
             }
         }
 
+        lock.lock()
         self.observer = Unmanaged.passRetained(self).toOpaque()
+        let observer = self.observer
+        let name = self.notificationName
+        lock.unlock()
         CFNotificationCenterAddObserver(
             center,
-            self.observer,
+            observer,
             callback,
-            self.notificationName,
+            name,
             nil,
             .deliverImmediately
         )
     }
 
     deinit {
-        if let observer, let notificationName {
-            CFNotificationCenterRemoveObserver(
-                CFNotificationCenterGetDarwinNotifyCenter(),
-                observer,
-                CFNotificationName(notificationName),
-                nil
-            )
-            Unmanaged<NotificationObserver>.fromOpaque(observer).release()
-        }
+        stop()
     }
 }
 
