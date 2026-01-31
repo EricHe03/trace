@@ -50,7 +50,6 @@ public enum HTTPRequestRowComponents {
 
     // MARK: - Row Content
 
-    @ViewBuilder
     private static func requestRowContent(
         for request: NetworkRequest
     ) -> some View {
@@ -62,7 +61,6 @@ public enum HTTPRequestRowComponents {
 
     // MARK: - Swipe Action Buttons
 
-    @ViewBuilder
     private static func favoriteButton(
         for request: NetworkRequest,
         onToggleFavorite: @escaping (NetworkRequest) -> Void
@@ -75,7 +73,6 @@ public enum HTTPRequestRowComponents {
         .tint(DesignSystem.Colors.favorite)
     }
 
-    @ViewBuilder
     private static func deleteButton(
         for request: NetworkRequest,
         onDeleteRequest: @escaping (NetworkRequest) -> Void
@@ -87,7 +84,6 @@ public enum HTTPRequestRowComponents {
         }
     }
 
-    @ViewBuilder
     private static func shareButton(
         for request: NetworkRequest,
         onShareRequest: @escaping (NetworkRequest) -> Void

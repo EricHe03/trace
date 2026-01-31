@@ -36,7 +36,7 @@ public class CertificateManager {
 
     // MARK: - Keychain identifiers (per-domain leafs)
 
-    internal struct DomainKeychainIdentifiers: Sendable {
+    struct DomainKeychainIdentifiers: Sendable {
         let keyApplicationTag: Data
         let certificateLabel: String
         let legacyKeyApplicationTag: Data
@@ -59,7 +59,7 @@ public class CertificateManager {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    internal static func keychainIdentifiers(forDomain domain: String) -> DomainKeychainIdentifiers {
+    static func keychainIdentifiers(forDomain domain: String) -> DomainKeychainIdentifiers {
         let canonical = canonicalDomainKey(domain)
         let hash = sha256Hex(canonical)
         let idPrefix = String(hash.prefix(16))
@@ -528,7 +528,7 @@ public class CertificateManager {
 
         let subjectDN = rootCADistinguishedName
 
-        let certificate = try buildX509Certificate(
+        return try buildX509Certificate(
             subject: subjectDN,
             // Rule: Self-signed certificates must use the same subject and issuer.
             issuer: subjectDN,
@@ -537,8 +537,6 @@ public class CertificateManager {
             isCA: isCA,
             validityDays: 3650
         )
-
-        return certificate
     }
 
     /// Creates a certificate signed by the Root CA.
@@ -555,7 +553,7 @@ public class CertificateManager {
         // Rule: Issuer DN must match the Root CA subject DN for chain validation.
         let issuerDN = rootCADistinguishedName
 
-        let certificate = try buildX509Certificate(
+        return try buildX509Certificate(
             subject: subjectDN,
             issuer: issuerDN,
             publicKey: publicKey,
@@ -563,8 +561,6 @@ public class CertificateManager {
             isCA: isCA,
             validityDays: 365
         )
-
-        return certificate
     }
 
     /// Builds an X.509 certificate using the custom ASN.1 encoder.

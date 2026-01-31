@@ -21,10 +21,10 @@ struct CertificateGuideView: View {
     @State private var rootCAStatus: RootCAStatus = .notGenerated
     @State private var showReinstallWizard = false
 
-    // Timer for periodic trust checking
+    /// Timer for periodic trust checking
     private let trustCheckTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
-    // Computed property to safely access current step with bounds checking
+    /// Computed property to safely access current step with bounds checking
     private var safeCurrentStep: Int {
         min(max(0, currentStep), steps.count - 1)
     }

@@ -77,7 +77,6 @@ struct DNSListView: View {
 
     // MARK: - Statistics Header
 
-    @ViewBuilder
     private func statisticsHeader(_ stats: DNSStatistics) -> some View {
         HStack(spacing: 20) {
             StatItem(

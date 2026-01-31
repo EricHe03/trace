@@ -137,7 +137,6 @@ struct SSEConnectionRow: View {
     private var statusColor: Color {
         DesignSystem.Colors.statusColor(for: connection.status.color)
     }
-
 }
 
 struct SSEFiltersView: View {

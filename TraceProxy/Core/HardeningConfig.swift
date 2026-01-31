@@ -88,10 +88,9 @@ public actor HardeningConfig {
         self.defaults = defaults
 
         func sanitizeDomainPatterns(_ list: [String]) -> [String] {
-            let cleaned = list
+            list
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
                 .filter { !$0.isEmpty }
-            return cleaned
         }
 
         func boolValue(_ key: ConfigKey, default defaultValue: Bool) -> Bool {

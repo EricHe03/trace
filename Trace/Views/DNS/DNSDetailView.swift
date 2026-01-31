@@ -54,7 +54,6 @@ struct DNSDetailView: View {
 
     // MARK: - Header Section
 
-    @ViewBuilder
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -134,7 +133,6 @@ struct DNSDetailView: View {
 
     // MARK: - Questions Section
 
-    @ViewBuilder
     private var questionsSection: some View {
         GroupBox("Questions (\(message.questions.count))") {
             VStack(alignment: .leading, spacing: 8) {
@@ -172,7 +170,6 @@ struct DNSDetailView: View {
 
     // MARK: - Answers Section
 
-    @ViewBuilder
     private var answersSection: some View {
         GroupBox("Answers (\(message.answers.count))") {
             VStack(alignment: .leading, spacing: 8) {
@@ -186,7 +183,6 @@ struct DNSDetailView: View {
 
     // MARK: - Authorities Section
 
-    @ViewBuilder
     private var authoritiesSection: some View {
         GroupBox("Authorities (\(message.authorities.count))") {
             VStack(alignment: .leading, spacing: 8) {
@@ -200,7 +196,6 @@ struct DNSDetailView: View {
 
     // MARK: - Additionals Section
 
-    @ViewBuilder
     private var additionalsSection: some View {
         GroupBox("Additional Records (\(message.additionals.count))") {
             VStack(alignment: .leading, spacing: 8) {
@@ -214,7 +209,6 @@ struct DNSDetailView: View {
 
     // MARK: - Network Info Section
 
-    @ViewBuilder
     private var networkInfoSection: some View {
         GroupBox("Network Information") {
             Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
@@ -290,7 +284,6 @@ struct DNSDetailView: View {
 
     // MARK: - Resource Record View
 
-    @ViewBuilder
     private func resourceRecordView(_ record: DNSResourceRecord) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {

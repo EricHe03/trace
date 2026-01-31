@@ -34,7 +34,7 @@ public struct CodeViewerView: View {
 
     @State private var showLineNumbers = true
     @State private var viewMode: ViewMode = .formatted
-    private let maxHighlightedLines = 2_000
+    private let maxHighlightedLines = 2000
 
     public enum ViewMode: String, CaseIterable {
         case formatted = "Formatted"
@@ -64,7 +64,7 @@ public struct CodeViewerView: View {
 
             Divider()
 
-            if estimatedLineCount > 1_000 {
+            if estimatedLineCount > 1000 {
                 Label("Large content detected. Rendering may be slower.", systemImage: "exclamationmark.triangle")
                     .font(.footnote)
                     .foregroundStyle(.secondary)

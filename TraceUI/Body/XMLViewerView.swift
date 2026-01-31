@@ -232,14 +232,14 @@ public struct XMLViewerView: View {
 
         let input = xmlString
         let (root, error, formatted) = await Task.detached(priority: .userInitiated) {
-                let parser = XMLParserHelper(xmlString: input)
-                do {
-                    let parsed = try parser.parse()
-                    let highlighted = Self.makeAttributedXMLString(from: input)
-                    return (parsed, nil as String?, highlighted as AttributedString?)
-                } catch {
-                    return (nil as XMLNode?, error.localizedDescription, nil as AttributedString?)
-                }
+            let parser = XMLParserHelper(xmlString: input)
+            do {
+                let parsed = try parser.parse()
+                let highlighted = Self.makeAttributedXMLString(from: input)
+                return (parsed, nil as String?, highlighted as AttributedString?)
+            } catch {
+                return (nil as XMLNode?, error.localizedDescription, nil as AttributedString?)
+            }
         }.value
 
         parsedXML = root
@@ -260,7 +260,7 @@ public struct XMLViewerView: View {
         Self.makeAttributedXMLString(from: xmlString)
     }
 
-    nonisolated private static func makeAttributedXMLString(from xmlString: String) -> AttributedString {
+    private nonisolated static func makeAttributedXMLString(from xmlString: String) -> AttributedString {
         var result = AttributedString(formatXML(xmlString))
 
         if let regex = try? NSRegularExpression(pattern: "</?([\\w:]+)", options: []) {
@@ -306,7 +306,7 @@ public struct XMLViewerView: View {
 
     // MARK: - XML Formatting
 
-    nonisolated private static func formatXML(_ xml: String) -> String {
+    private nonisolated static func formatXML(_ xml: String) -> String {
         var formatted = ""
         var indent = 0
         var inTag = false

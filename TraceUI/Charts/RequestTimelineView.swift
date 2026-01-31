@@ -92,15 +92,15 @@ public struct RequestTimelineView: View {
 
                 Spacer()
 
-                    if request.timingPhases != nil {
-                        Label("Detailed", systemImage: "chart.bar.xaxis")
-                            .font(.caption)
-                            .foregroundStyle(DesignSystem.Colors.success)
-                            .padding(.horizontal, DesignSystem.Spacing.sm)
-                            .padding(.vertical, DesignSystem.Spacing.xs)
-                            .background(DesignSystem.Colors.success.opacity(0.1))
-                            .clipShape(Capsule())
-                    }
+                if request.timingPhases != nil {
+                    Label("Detailed", systemImage: "chart.bar.xaxis")
+                        .font(.caption)
+                        .foregroundStyle(DesignSystem.Colors.success)
+                        .padding(.horizontal, DesignSystem.Spacing.sm)
+                        .padding(.vertical, DesignSystem.Spacing.xs)
+                        .background(DesignSystem.Colors.success.opacity(0.1))
+                        .clipShape(Capsule())
+                }
             }
             .padding(.bottom, DesignSystem.Spacing.sm)
 

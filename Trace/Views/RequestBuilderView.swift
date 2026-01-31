@@ -25,7 +25,7 @@ struct RequestBuilderView: View {
     @State private var toastMessage: String?
     @State private var didLoadExistingBody = false
 
-    // For editing existing request
+    /// For editing existing request
     var existingRequest: NetworkRequest?
 
     init(existingRequest: NetworkRequest? = nil) {

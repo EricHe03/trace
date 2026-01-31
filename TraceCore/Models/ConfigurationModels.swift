@@ -295,7 +295,7 @@ public struct RewriteAction: Codable, Identifiable, Sendable {
         self.parameters = parameters
     }
 
-    // Convenience initializers for common actions
+    /// Convenience initializers for common actions
     public static func setHeader(key: String, value: String) -> RewriteAction {
         RewriteAction(actionType: .setHeader, parameters: ["key": key, "value": value])
     }
@@ -324,24 +324,74 @@ public struct RewriteAction: Codable, Identifiable, Sendable {
         RewriteAction(actionType: .redirectTo, parameters: ["url": url])
     }
 
-    // Helper methods to extract typed values
-    public var headerKey: String? { parameters["key"] }
-    public var headerValue: String? { parameters["value"] }
-    public var bodyPattern: String? { parameters["pattern"] }
-    public var bodyReplacement: String? { parameters["replacement"] }
-    public var bodyContent: String? { parameters["content"] }
-    public var redirectUrl: String? { parameters["url"] }
-    public var queryParamName: String? { parameters["name"] }
-    public var queryParamValue: String? { parameters["value"] }
-    public var cookieName: String? { parameters["cookie"] ?? parameters["name"] }
-    public var cookieValue: String? { parameters["value"] }
-    public var jsonPath: String? { parameters["path"] }
-    public var jsonValue: String? { parameters["json"] ?? parameters["value"] }
-    public var templateBody: String? { parameters["template"] }
-    public var throttleBytesPerSecond: Int? { parameters["bandwidth"].flatMap(Int.init) }
-    public var jitterBaseMs: Int? { parameters["baseDelay"].flatMap(Int.init) }
-    public var jitterVarianceMs: Int? { parameters["variance"].flatMap(Int.init) }
-    public var compressionAlgorithm: String? { parameters["algorithm"] }
+    /// Helper methods to extract typed values
+    public var headerKey: String? {
+        parameters["key"]
+    }
+
+    public var headerValue: String? {
+        parameters["value"]
+    }
+
+    public var bodyPattern: String? {
+        parameters["pattern"]
+    }
+
+    public var bodyReplacement: String? {
+        parameters["replacement"]
+    }
+
+    public var bodyContent: String? {
+        parameters["content"]
+    }
+
+    public var redirectUrl: String? {
+        parameters["url"]
+    }
+
+    public var queryParamName: String? {
+        parameters["name"]
+    }
+
+    public var queryParamValue: String? {
+        parameters["value"]
+    }
+
+    public var cookieName: String? {
+        parameters["cookie"] ?? parameters["name"]
+    }
+
+    public var cookieValue: String? {
+        parameters["value"]
+    }
+
+    public var jsonPath: String? {
+        parameters["path"]
+    }
+
+    public var jsonValue: String? {
+        parameters["json"] ?? parameters["value"]
+    }
+
+    public var templateBody: String? {
+        parameters["template"]
+    }
+
+    public var throttleBytesPerSecond: Int? {
+        parameters["bandwidth"].flatMap(Int.init)
+    }
+
+    public var jitterBaseMs: Int? {
+        parameters["baseDelay"].flatMap(Int.init)
+    }
+
+    public var jitterVarianceMs: Int? {
+        parameters["variance"].flatMap(Int.init)
+    }
+
+    public var compressionAlgorithm: String? {
+        parameters["algorithm"]
+    }
 
     public var statusCode: Int? {
         guard let codeStr = parameters["code"] else { return nil }
@@ -361,11 +411,15 @@ extension RewriteRule: URLMatchable {}
 extension RewriteRule: ModificationTrackable {}
 
 extension RewriteRule: Equatable {
-    public static func == (lhs: RewriteRule, rhs: RewriteRule) -> Bool { lhs.id == rhs.id }
+    public static func == (lhs: RewriteRule, rhs: RewriteRule) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 extension RewriteAction: Equatable {
-    public static func == (lhs: RewriteAction, rhs: RewriteAction) -> Bool { lhs.id == rhs.id }
+    public static func == (lhs: RewriteAction, rhs: RewriteAction) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 // MARK: - Host Entries
@@ -480,7 +534,9 @@ public struct HostEntry: Codable, Identifiable, Equatable {
         return errors
     }
 
-    public var isValid: Bool { validationErrors.isEmpty }
+    public var isValid: Bool {
+        validationErrors.isEmpty
+    }
 }
 
 extension HostEntry: Toggleable {}
@@ -771,21 +827,12 @@ extension RequestMap: URLMatchable {}
 extension RequestMap: ModificationTrackable {}
 
 extension RequestMap: Equatable {
-    public static func == (lhs: RequestMap, rhs: RequestMap) -> Bool { lhs.id == rhs.id }
-}
-
-extension MockResponse: Equatable {
-    public static func == (lhs: MockResponse, rhs: MockResponse) -> Bool {
-        lhs.statusCode == rhs.statusCode &&
-            lhs.statusMessage == rhs.statusMessage &&
-            lhs.headers == rhs.headers &&
-            lhs.bodySource == rhs.bodySource &&
-            lhs.bodyContent == rhs.bodyContent &&
-            lhs.bodyFilePath == rhs.bodyFilePath &&
-            lhs.scriptContent == rhs.scriptContent &&
-            lhs.delay == rhs.delay
+    public static func == (lhs: RequestMap, rhs: RequestMap) -> Bool {
+        lhs.id == rhs.id
     }
 }
+
+extension MockResponse: Equatable {}
 
 // MARK: - Scripts
 
@@ -795,7 +842,9 @@ public enum ScriptType: String, Codable, CaseIterable, Sendable {
     case response = "Response"
     case both = "Both"
 
-    public var displayName: String { rawValue }
+    public var displayName: String {
+        rawValue
+    }
 
     public var description: String {
         switch self {
@@ -947,7 +996,9 @@ extension Script: URLMatchable {}
 extension Script: ModificationTrackable {}
 
 extension Script: Equatable {
-    public static func == (lhs: Script, rhs: Script) -> Bool { lhs.id == rhs.id }
+    public static func == (lhs: Script, rhs: Script) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 // MARK: - Breakpoints
@@ -1154,12 +1205,29 @@ public struct PausedRequest: Identifiable, Sendable {
             modifiedStatusMessage != nil
     }
 
-    public var effectiveUrl: String { modifiedUrl ?? url }
-    public var effectiveMethod: HTTPMethod { modifiedMethod ?? method }
-    public var effectiveHeaders: [TraceHTTPHeader] { modifiedHeaders ?? headers }
-    public var effectiveBody: Data? { modifiedBody ?? body }
-    public var effectiveStatusCode: Int? { modifiedStatusCode ?? statusCode }
-    public var effectiveStatusMessage: String? { modifiedStatusMessage ?? statusMessage }
+    public var effectiveUrl: String {
+        modifiedUrl ?? url
+    }
+
+    public var effectiveMethod: HTTPMethod {
+        modifiedMethod ?? method
+    }
+
+    public var effectiveHeaders: [TraceHTTPHeader] {
+        modifiedHeaders ?? headers
+    }
+
+    public var effectiveBody: Data? {
+        modifiedBody ?? body
+    }
+
+    public var effectiveStatusCode: Int? {
+        modifiedStatusCode ?? statusCode
+    }
+
+    public var effectiveStatusMessage: String? {
+        modifiedStatusMessage ?? statusMessage
+    }
 }
 
 public extension Notification.Name {

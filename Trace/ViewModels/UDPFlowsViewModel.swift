@@ -25,7 +25,9 @@ final class UDPFlowsViewModel: ObservableObject {
         case datagramsAscending
         case datagramsDescending
 
-        var id: String { rawValue }
+        var id: String {
+            rawValue
+        }
 
         var displayName: String {
             switch self {

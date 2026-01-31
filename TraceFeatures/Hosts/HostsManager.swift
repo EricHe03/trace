@@ -21,12 +21,12 @@ public final class HostsManager: ObservableObject {
 
     public let objectWillChange = ObservableObjectPublisher()
 
-    // Expose items through computed property
+    /// Expose items through computed property
     public var entries: [HostEntry] {
         baseManager.items
     }
 
-    // Notification for cross-process updates
+    /// Notification for cross-process updates
     private let hostsUpdatedNotificationName = Notification.Name("com.trace.hostsUpdated")
 
     private init() {

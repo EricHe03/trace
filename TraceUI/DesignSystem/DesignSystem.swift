@@ -274,7 +274,10 @@ public enum DesignSystem {
     ///
     /// Defines standard list configuration.
     public enum List {
-        public static var preferredStyle: some ListStyle { .insetGrouped }
+        public static var preferredStyle: some ListStyle {
+            .insetGrouped
+        }
+
         public static let rowVerticalPadding: CGFloat = Spacing.rowVertical
         public static let rowInsets = EdgeInsets(
             top: Spacing.sm,

@@ -226,7 +226,7 @@ struct RewriteRuleEditorView: View {
     }
 
     private func scheduleMatchPatternAnnouncement(_ message: String) {
-#if canImport(UIKit)
+        #if canImport(UIKit)
         guard UIAccessibility.isVoiceOverRunning else { return }
         guard lastAnnouncedMatchPatternError != message else { return }
 
@@ -241,9 +241,9 @@ struct RewriteRuleEditorView: View {
             guard !Task.isCancelled else { return }
             UIAccessibility.post(notification: .announcement, argument: message)
         }
-#else
+        #else
         _ = message
-#endif
+        #endif
     }
 }
 

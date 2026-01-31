@@ -313,12 +313,13 @@ final class CaptureViewModel: ObservableObject {
             validateRegexPattern(pattern: filterRegexPattern)
         }
     }
+
     @Published private(set) var regexFilterError: String?
     @Published var filterResponseTime: ResponseTimeFilter?
     @Published var filterShowDuplicatesOnly: Bool = false
     @Published var filterShowErrorsOnly: Bool = false
 
-    // Filter convenience properties for UI
+    /// Filter convenience properties for UI
     var minResponseTime: Int? {
         get { filterMinDuration.map { Int($0 * 1000) } }
         set { filterMinDuration = newValue.map { TimeInterval($0) / 1000.0 } }
@@ -329,16 +330,30 @@ final class CaptureViewModel: ObservableObject {
         set { filterMaxDuration = newValue.map { TimeInterval($0) / 1000.0 } }
     }
 
-    var minResponseSize: Int? { get { filterMinSize } set { filterMinSize = newValue } }
-    var maxResponseSize: Int? { get { filterMaxSize } set { filterMaxSize = newValue } }
-    var minDuration: TimeInterval? { get { filterMinDuration } set { filterMinDuration = newValue } }
-    var maxDuration: TimeInterval? { get { filterMaxDuration } set { filterMaxDuration = newValue } }
-    var regexFilter: String { get { filterRegexPattern ?? "" } set { filterRegexPattern = newValue.isEmpty ? nil : newValue } }
+    var minResponseSize: Int? {
+        get { filterMinSize } set { filterMinSize = newValue }
+    }
 
-    // Saved filter presets
+    var maxResponseSize: Int? {
+        get { filterMaxSize } set { filterMaxSize = newValue }
+    }
+
+    var minDuration: TimeInterval? {
+        get { filterMinDuration } set { filterMinDuration = newValue }
+    }
+
+    var maxDuration: TimeInterval? {
+        get { filterMaxDuration } set { filterMaxDuration = newValue }
+    }
+
+    var regexFilter: String {
+        get { filterRegexPattern ?? "" } set { filterRegexPattern = newValue.isEmpty ? nil : newValue }
+    }
+
+    /// Saved filter presets
     @Published var savedFilterPresets: [SavedFilterPreset] = []
 
-    // Network Throttling
+    /// Network Throttling
     @Published var throttlingEnabled: Bool = false {
         didSet { handleThrottlingStateChange() }
     }
@@ -347,7 +362,7 @@ final class CaptureViewModel: ObservableObject {
         didSet { handleThrottlingStateChange() }
     }
 
-    // Capture Settings
+    /// Capture Settings
     @Published var captureOptions: CaptureOptions = .default {
         didSet { persistCaptureOptions() }
     }
@@ -368,7 +383,7 @@ final class CaptureViewModel: ObservableObject {
         didSet { persistHardeningConfig() }
     }
 
-    // Grouping and Sessions
+    /// Grouping and Sessions
     @Published var groupingMode: RequestGroupingMode = .none {
         didSet {
             UserDefaults.standard.set(groupingMode.rawValue, forKey: "requestGroupingMode")
@@ -384,10 +399,10 @@ final class CaptureViewModel: ObservableObject {
     private var lastGroupingTimestamp: Date?
     private var groupingRestoreEventTypes: Set<NetworkEventType>?
 
-    // Duplicate detection cache
+    /// Duplicate detection cache
     private var duplicateRequestCache: [String: UUID] = [:] // URL+Method -> First Request ID
 
-    // Favorites manager
+    /// Favorites manager
     private let favoritesManager = FavoritesManager.shared
 
     // Search optimization
@@ -734,7 +749,7 @@ final class CaptureViewModel: ObservableObject {
         await activeLoadTask?.value
     }
 
-    // Check if network event type filter is user-set (not auto-set by grouping)
+    /// Check if network event type filter is user-set (not auto-set by grouping)
     private var hasUserSetNetworkEventTypeFilter: Bool {
         // If grouping is active and filter is exactly [.http], it's auto-set by grouping
         if groupingMode != .none && filterNetworkEventTypes == Set([.http]) {

@@ -16,12 +16,8 @@ public struct RequestTagView: View {
             .font(DesignSystem.Badge.font)
             .fontWeight(DesignSystem.Badge.fontWeight)
             .foregroundStyle(.white)
-            .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
-            .padding(.vertical, DesignSystem.Badge.verticalPadding)
-            .frame(
-                minWidth: DesignSystem.Accessibility.absoluteMinimumTapTarget,
-                minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget
-            )
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
             .background(tag.color)
             .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
             .accessibilityLabel(tag.tooltip)
@@ -73,9 +69,9 @@ public struct OverflowTagView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(count) more tags")
-            .popover(isPresented: $showAllTags) {
-                AllTagsPopover(tags: allTags)
-            }
+        .popover(isPresented: $showAllTags) {
+            AllTagsPopover(tags: allTags)
+        }
     }
 }
 

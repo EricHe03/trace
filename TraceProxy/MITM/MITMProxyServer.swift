@@ -1962,7 +1962,8 @@ public class ProxyConnection: @unchecked Sendable {
             if line.lowercased().hasPrefix("content-length:"),
                let colonIndex = line.firstIndex(of: ":") {
                 let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(
-                    in: .whitespaces)
+                    in: .whitespaces
+                )
                 expectedContentLength = Int(value)
             }
 
@@ -2254,7 +2255,8 @@ public class ProxyConnection: @unchecked Sendable {
                 if let colonIndex = line.firstIndex(of: ":") {
                     let key = String(line[..<colonIndex])
                     let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(
-                        in: .whitespaces)
+                        in: .whitespaces
+                    )
                     headers[key] = value
                 }
             }
@@ -2373,7 +2375,8 @@ public class ProxyConnection: @unchecked Sendable {
             if let colonIndex = line.firstIndex(of: ":") {
                 let key = String(line[..<colonIndex])
                 let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(
-                    in: .whitespaces)
+                    in: .whitespaces
+                )
                 headers[key] = value
             }
         }
@@ -2414,7 +2417,8 @@ public class ProxyConnection: @unchecked Sendable {
             if lowercasedLine.hasPrefix("content-length:"),
                let colonIndex = line.firstIndex(of: ":") {
                 let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(
-                    in: .whitespaces)
+                    in: .whitespaces
+                )
                 contentLength = Int(value)
             }
 
@@ -2690,7 +2694,8 @@ public class ProxyConnection: @unchecked Sendable {
             if let colonIndex = line.firstIndex(of: ":") {
                 let key = String(line[..<colonIndex])
                 let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(
-                    in: .whitespaces)
+                    in: .whitespaces
+                )
                 headers.append(TraceHTTPHeader(key: key, value: value))
             }
         }

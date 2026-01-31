@@ -87,6 +87,11 @@ private final class PreviewItem: NSObject, QLPreviewItem {
         super.init()
     }
 
-    var previewItemURL: URL? { previewURL }
-    var previewItemTitle: String? { previewTitle }
+    var previewItemURL: URL? {
+        previewURL
+    }
+
+    var previewItemTitle: String? {
+        previewTitle
+    }
 }

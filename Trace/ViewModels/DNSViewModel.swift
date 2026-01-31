@@ -19,19 +19,41 @@ final class DNSViewModel: ObservableObject {
     private var repositoryObserver: NSObjectProtocol?
     private var reloadTask: Task<Void, Never>?
 
-    // Filters
-    @Published var searchText = "" { didSet { scheduleReload(debounce: true) } }
-    @Published var selectedRecordTypes: Set<DNSRecordType> = [] { didSet { scheduleReload() } }
-    @Published var selectedResponseCodes: Set<DNSResponseCode> = [] { didSet { scheduleReload() } }
-    @Published var showQueriesOnly = false { didSet { scheduleReload() } }
-    @Published var showResponsesOnly = false { didSet { scheduleReload() } }
-    @Published var showUnansweredOnly = false { didSet { scheduleReload() } }
-    @Published var showFailedOnly = false { didSet { scheduleReload() } }
+    /// Filters
+    @Published var searchText = "" {
+        didSet { scheduleReload(debounce: true) }
+    }
 
-    // Sorting
-    @Published var sortOrder: SortOrder = .newestFirst { didSet { scheduleReload() } }
+    @Published var selectedRecordTypes: Set<DNSRecordType> = [] {
+        didSet { scheduleReload() }
+    }
 
-    // Statistics
+    @Published var selectedResponseCodes: Set<DNSResponseCode> = [] {
+        didSet { scheduleReload() }
+    }
+
+    @Published var showQueriesOnly = false {
+        didSet { scheduleReload() }
+    }
+
+    @Published var showResponsesOnly = false {
+        didSet { scheduleReload() }
+    }
+
+    @Published var showUnansweredOnly = false {
+        didSet { scheduleReload() }
+    }
+
+    @Published var showFailedOnly = false {
+        didSet { scheduleReload() }
+    }
+
+    /// Sorting
+    @Published var sortOrder: SortOrder = .newestFirst {
+        didSet { scheduleReload() }
+    }
+
+    /// Statistics
     @Published var statistics: DNSStatistics?
 
     @Published private(set) var messages: [DNSMessage] = []

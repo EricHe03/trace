@@ -8,8 +8,8 @@
 import SwiftUI
 import TraceCore
 import TraceUI
-import UniformTypeIdentifiers
 import UIKit
+import UniformTypeIdentifiers
 
 struct RequestMapEditorView: View {
     @Environment(\.dismiss) private var dismiss
@@ -264,7 +264,6 @@ struct RequestMapEditorView: View {
         }
     }
 
-    @ViewBuilder
     private var fileBodyEditor: some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
             Text("File Path")
@@ -354,7 +353,6 @@ struct RequestMapEditorView: View {
         }
     }
 
-    @ViewBuilder
     private var scriptBodyEditor: some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
             HStack {

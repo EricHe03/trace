@@ -247,8 +247,8 @@ struct CustomThrottlingSheet: View {
                             get: { Double(downloadSpeed) },
                             set: { downloadSpeed = Int($0) }
                         ), in: 0 ... 100_000, step: 100)
-                        .accessibilityLabel("Download speed")
-                        .accessibilityValue("\(downloadSpeed) kilobytes per second")
+                            .accessibilityLabel("Download speed")
+                            .accessibilityValue("\(downloadSpeed) kilobytes per second")
                     }
 
                     VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
@@ -258,8 +258,8 @@ struct CustomThrottlingSheet: View {
                             get: { Double(uploadSpeed) },
                             set: { uploadSpeed = Int($0) }
                         ), in: 0 ... 50000, step: 50)
-                        .accessibilityLabel("Upload speed")
-                        .accessibilityValue("\(uploadSpeed) kilobytes per second")
+                            .accessibilityLabel("Upload speed")
+                            .accessibilityValue("\(uploadSpeed) kilobytes per second")
                     }
                 } header: {
                     Text("Bandwidth")
@@ -275,8 +275,8 @@ struct CustomThrottlingSheet: View {
                             get: { Double(latency) },
                             set: { latency = Int($0) }
                         ), in: 0 ... 2000, step: 10)
-                        .accessibilityLabel("Latency")
-                        .accessibilityValue("\(latency) milliseconds")
+                            .accessibilityLabel("Latency")
+                            .accessibilityValue("\(latency) milliseconds")
                     }
                 } header: {
                     Text("Network Delay")
@@ -289,8 +289,8 @@ struct CustomThrottlingSheet: View {
                         Text(String(format: "Packet Loss: %.1f%%", packetLoss * 100))
                             .font(.headline)
                         Slider(value: $packetLoss, in: 0 ... 0.5, step: 0.001)
-                        .accessibilityLabel("Packet loss")
-                        .accessibilityValue(String(format: "%.1f percent", packetLoss * 100))
+                            .accessibilityLabel("Packet loss")
+                            .accessibilityValue(String(format: "%.1f percent", packetLoss * 100))
                     }
                 } header: {
                     Text("Packet Loss")

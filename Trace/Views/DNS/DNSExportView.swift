@@ -92,7 +92,9 @@ struct DNSExportView: View {
 }
 
 struct ExportDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.commaSeparatedText, .json] }
+    static var readableContentTypes: [UTType] {
+        [.commaSeparatedText, .json]
+    }
 
     let data: Data
     let format: DNSExportView.ExportFormat

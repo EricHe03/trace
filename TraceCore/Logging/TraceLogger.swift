@@ -481,16 +481,16 @@ public actor TraceLogger {
 
 // MARK: - Global Convenience Functions (Deprecated)
 
-/// Provides global convenience functions for quick logging.
-///
-/// - Note: These functions are deprecated. Use module-specific loggers instead:
-/// ```swift
-/// // Old way (deprecated).
-/// traceInfo("Message", category: .storage)
-///
-/// // New way.
-/// CoreLog.storage.info("event=storage.operation outcome=success")
-/// ```
+// Provides global convenience functions for quick logging.
+//
+// - Note: These functions are deprecated. Use module-specific loggers instead:
+// ```swift
+// // Old way (deprecated).
+// traceInfo("Message", category: .storage)
+//
+// // New way.
+// CoreLog.storage.info("event=storage.operation outcome=success")
+// ```
 
 @available(*, deprecated, message: "Use module-specific loggers (CoreLog, VPNLog, etc.)")
 func traceLog(_ message: String, level: OSLogType = .info, category: LegacyLogCategory = .general, requestId: String? = nil) {

@@ -399,7 +399,7 @@ public struct JSONViewerView: View {
         Self.makeAttributedJSONString(from: jsonString)
     }
 
-    nonisolated private static func makeAttributedJSONString(from jsonString: String) -> AttributedString {
+    private nonisolated static func makeAttributedJSONString(from jsonString: String) -> AttributedString {
         guard let data = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed),
               let formatted = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
@@ -420,7 +420,7 @@ public struct JSONViewerView: View {
         return result
     }
 
-    nonisolated private static func highlightPattern(_ text: inout AttributedString, pattern: String, color: Color) {
+    private nonisolated static func highlightPattern(_ text: inout AttributedString, pattern: String, color: Color) {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return }
         let nsRange = NSRange(text.startIndex ..< text.endIndex, in: text)
         let matches = regex.matches(in: String(text.characters), options: [], range: nsRange)
@@ -439,7 +439,7 @@ public struct JSONViewerView: View {
     }
 
     private var maxExpandedNodes: Int {
-        isLargePayload ? 200 : 1_000
+        isLargePayload ? 200 : 1000
     }
 
     private var maxAutoExpandedNodes: Int {

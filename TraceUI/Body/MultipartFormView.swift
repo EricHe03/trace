@@ -164,7 +164,6 @@ public struct MultipartFormView: View {
 
     // MARK: - Content Preview
 
-    @ViewBuilder
     private func contentPreview(for part: MultipartParser.Part) -> some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
             HStack {

@@ -34,10 +34,10 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public var isDuplicate: Bool = false
     public var duplicateOfRequestId: UUID?
 
-    // Session Tracking
+    /// Session Tracking
     public var sessionId: UUID?
 
-    // Manual Request Tracking
+    /// Manual Request Tracking
     public var isManual: Bool = false
 
     // MARK: - Interception Metadata

@@ -2,7 +2,7 @@ import SwiftUI
 import TraceCore
 
 public extension DesignSystem.Colors {
-    public static func methodColor(for method: HTTPMethod) -> Color {
+    static func methodColor(for method: HTTPMethod) -> Color {
         switch method {
         case .get: accent
         case .post: success
@@ -14,7 +14,7 @@ public extension DesignSystem.Colors {
         }
     }
 
-    public static func statusColor(for statusColor: StatusColor) -> Color {
+    static func statusColor(for statusColor: StatusColor) -> Color {
         switch statusColor {
         case .success: success
         case .redirect: accent
@@ -26,7 +26,7 @@ public extension DesignSystem.Colors {
         }
     }
 
-    public static func statusColor(for statusCode: Int) -> Color {
+    static func statusColor(for statusCode: Int) -> Color {
         switch statusCode {
         case 200 ..< 300: success
         case 300 ..< 400: accent
@@ -36,7 +36,7 @@ public extension DesignSystem.Colors {
         }
     }
 
-    public static func eventTypeColor(for type: NetworkEventType) -> Color {
+    static func eventTypeColor(for type: NetworkEventType) -> Color {
         switch type {
         case .http: accent
         case .webSocket: accentAlt

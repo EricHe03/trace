@@ -19,7 +19,7 @@ public class AppGroupStorage: @unchecked Sendable {
         #endif
     }()
 
-    // Shared App Group identifier (must match entitlements for app + extension)
+    /// Shared App Group identifier (must match entitlements for app + extension)
     private let appGroupIdentifier = AppGroupConfiguration.appGroupIdentifier
 
     private let requestsDirectory = "CapturedRequests"

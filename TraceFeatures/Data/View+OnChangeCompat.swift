@@ -2,7 +2,7 @@ import SwiftUI
 
 extension View {
     @ViewBuilder
-    func onChangeCompat<V: Equatable>(of value: V, perform action: @escaping () -> Void) -> some View {
+    func onChangeCompat(of value: some Equatable, perform action: @escaping () -> Void) -> some View {
         if #available(iOS 17.0, *) {
             onChange(of: value) { _, _ in
                 action()
@@ -27,4 +27,3 @@ extension View {
         }
     }
 }
-
