@@ -192,8 +192,7 @@ struct RequestMapEditorView: View {
                     }
                 }
             }
-            .scrollDismissesKeyboard(.interactively)
-            .keyboardDismissToolbar()
+            .dismissKeyboardOnTapAndScroll()
             .navigationTitle(map == nil ? "New Map" : "Edit Map")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -470,7 +469,7 @@ struct HeaderEditorView: View {
 
                 TextField("Header Value", text: $value)
             }
-            .scrollDismissesKeyboard(.interactively)
+            .dismissKeyboardOnTapAndScroll()
             .navigationTitle("Add Header")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

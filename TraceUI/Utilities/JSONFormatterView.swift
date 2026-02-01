@@ -137,7 +137,7 @@ public struct JSONFormatterView: View {
             .padding(.vertical)
         }
         .toast(message: $toastMessage)
-        .keyboardDismissToolbar()
+        .dismissKeyboardOnTapAndScroll()
         .navigationTitle("JSON Formatter")
     }
 

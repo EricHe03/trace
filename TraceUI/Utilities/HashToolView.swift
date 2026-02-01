@@ -105,7 +105,7 @@ public struct HashToolView: View {
             .padding(.vertical)
         }
         .toast(message: $toastMessage)
-        .keyboardDismissToolbar()
+        .dismissKeyboardOnTapAndScroll()
         .navigationTitle("Hash")
     }
 

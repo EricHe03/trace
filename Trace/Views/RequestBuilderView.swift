@@ -179,7 +179,7 @@ struct RequestBuilderView: View {
                 }
             }
             .toast(message: $toastMessage)
-            .keyboardDismissToolbar()
+            .dismissKeyboardOnTapAndScroll()
             .task(id: existingRequest?.id) {
                 await loadExistingRequestBodyIfNeeded()
             }

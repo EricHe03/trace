@@ -89,7 +89,7 @@ struct BreakpointEditorView: View {
             }
             .navigationTitle("Breakpoint")
             .navigationBarTitleDisplayMode(.inline)
-            .keyboardDismissToolbar()
+            .dismissKeyboardOnTapAndScroll()
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
@@ -210,7 +210,7 @@ struct BreakpointEditorView: View {
                 }
             }
         }
-        .scrollDismissesKeyboard(.interactively)
+        .dismissKeyboardOnTapAndScroll()
     }
 
     private var headersTab: some View {
@@ -378,7 +378,7 @@ struct BreakpointConfigView: View {
                     }
                 }
             }
-            .scrollDismissesKeyboard(.interactively)
+            .dismissKeyboardOnTapAndScroll()
             .navigationTitle("Breakpoints")
             .task {
                 await loadConfig()

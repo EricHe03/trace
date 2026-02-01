@@ -337,6 +337,7 @@ private struct UDPFlowFiltersView: View {
             }
         }
         .navigationTitle("Filters")
+        .dismissKeyboardOnTapAndScroll()
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button("Done") {

@@ -96,6 +96,7 @@ struct RootTabView: View {
             }
             .interactiveDismissDisabled()
         }
+        .dismissKeyboardOnTapAndScroll()
     }
 
     private func checkOnboarding() {

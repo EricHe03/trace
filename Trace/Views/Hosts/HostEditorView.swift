@@ -154,8 +154,7 @@ struct HostEditorView: View {
                     Text("Example")
                 }
             }
-            .scrollDismissesKeyboard(.interactively)
-            .keyboardDismissToolbar()
+            .dismissKeyboardOnTapAndScroll()
             .navigationTitle(entry == nil ? "Add Host Entry" : "Edit Host Entry")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

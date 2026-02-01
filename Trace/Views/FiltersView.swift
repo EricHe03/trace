@@ -359,8 +359,7 @@ struct FiltersView: View {
                     Text("Summary")
                 }
             }
-            .scrollDismissesKeyboard(.interactively)
-            .keyboardDismissToolbar()
+            .dismissKeyboardOnTapAndScroll()
             .navigationTitle("Filters")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -392,8 +391,7 @@ struct FiltersView: View {
                             Text("Enter a domain to filter (e.g., api.example.com or *.example.com)")
                         }
                     }
-                    .scrollDismissesKeyboard(.interactively)
-                    .keyboardDismissToolbar()
+                    .dismissKeyboardOnTapAndScroll()
                     .navigationTitle("Add Domain Filter")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
