@@ -173,7 +173,7 @@ struct ScriptEditorView: View {
                     .disabled(!isValid)
                 }
             }
-            .keyboardDismissToolbar()
+            .dismissKeyboardOnTapAndScroll()
         }
     }
 

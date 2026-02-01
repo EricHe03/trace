@@ -120,7 +120,7 @@ public struct Base64ToolView: View {
             .padding(.vertical)
         }
         .toast(message: $toastMessage)
-        .keyboardDismissToolbar()
+        .dismissKeyboardOnTapAndScroll()
         .navigationTitle("Base64")
     }
 

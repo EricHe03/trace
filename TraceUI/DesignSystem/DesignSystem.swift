@@ -116,8 +116,8 @@ public enum DesignSystem {
         static let backgroundColor: Color = .black
         static let backgroundOpacity: Double = 0.8
         static let foregroundColor: Color = .white
-        static let horizontalPadding: CGFloat = Spacing.lg
-        static let verticalPadding: CGFloat = Spacing.md
+        static let horizontalPadding: CGFloat = Spacing.md
+        static let verticalPadding: CGFloat = Spacing.sm
         static let cornerRadius: CGFloat = CornerRadius.md
         public static let bottomPadding: CGFloat = 20
         static let displayDuration: TimeInterval = 2.0
@@ -290,17 +290,17 @@ public enum DesignSystem {
 
 // MARK: - Keyboard Dismissal
 
-/// A view modifier that adds a keyboard toolbar with a Done button for dismissing the keyboard.
-private struct KeyboardDismissToolbarModifier: ViewModifier {
+/// A view modifier that provides unified keyboard dismissal behavior across the app.
+/// Keyboards dismiss via:
+/// 1. Tapping outside text fields (on the background)
+/// 2. Scrolling interactively
+/// 3. Natural system events (app switch, lock)
+private struct UnifiedKeyboardDismissalModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") {
-                        hideKeyboard()
-                    }
-                }
+            .scrollDismissesKeyboard(.interactively)
+            .background {
+                KeyboardDismissalTapRecognizerInstaller(onTap: hideKeyboard)
             }
     }
 
@@ -309,16 +309,110 @@ private struct KeyboardDismissToolbarModifier: ViewModifier {
     }
 }
 
+private struct KeyboardDismissalTapRecognizerInstaller: UIViewRepresentable {
+    let onTap: () -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        InstallerView(coordinator: context.coordinator)
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onTap: onTap)
+    }
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.uninstall()
+    }
+
+    private final class InstallerView: UIView {
+        private let coordinator: Coordinator
+
+        init(coordinator: Coordinator) {
+            self.coordinator = coordinator
+            super.init(frame: .zero)
+            backgroundColor = .clear
+            isUserInteractionEnabled = false
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func didMoveToSuperview() {
+            super.didMoveToSuperview()
+            coordinator.install(on: superview)
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        private let onTap: () -> Void
+        private var recognizer: UITapGestureRecognizer?
+        private weak var installedOn: UIView?
+
+        init(onTap: @escaping () -> Void) {
+            self.onTap = onTap
+        }
+
+        @objc func handleTap() {
+            onTap()
+        }
+
+        func install(on view: UIView?) {
+            guard let view else { return }
+            guard installedOn !== view else { return }
+
+            uninstall()
+
+            let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+            recognizer.cancelsTouchesInView = false
+            recognizer.delegate = self
+
+            view.addGestureRecognizer(recognizer)
+            self.recognizer = recognizer
+            installedOn = view
+        }
+
+        func uninstall() {
+            if let recognizer, let installedOn {
+                installedOn.removeGestureRecognizer(recognizer)
+            }
+            recognizer = nil
+            installedOn = nil
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let touchedView = touch.view else { return true }
+
+            var current: UIView? = touchedView
+            while let view = current {
+                if view is UITextField || view is UITextView {
+                    return false
+                }
+                current = view.superview
+            }
+
+            return true
+        }
+    }
+}
+
 // MARK: - View Modifiers
 
 public extension View {
-    /// Adds a keyboard toolbar with a Done button for dismissing the keyboard.
-    /// Use this on views containing TextField or TextEditor to allow users to dismiss the keyboard.
-    func keyboardDismissToolbar() -> some View {
-        modifier(KeyboardDismissToolbarModifier())
+    /// Applies unified keyboard dismissal behavior.
+    /// Use this on views containing TextField or TextEditor.
+    /// The keyboard will dismiss when:
+    /// - User taps outside the text field
+    /// - User scrolls the view
+    /// - System events (app switch, lock)
+    func dismissKeyboardOnTapAndScroll() -> some View {
+        modifier(UnifiedKeyboardDismissalModifier())
     }
 
-    /// Dismisses the keyboard when called.
+    /// Dismisses the keyboard programmatically when called.
     func hideKeyboard() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
@@ -387,28 +481,18 @@ struct ToastView: View {
 
     var body: some View {
         Button(action: onDismiss) {
-            HStack(spacing: DesignSystem.Spacing.md) {
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(DesignSystem.Toast.foregroundColor)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Image(systemName: "xmark")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(DesignSystem.Toast.foregroundColor)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, DesignSystem.Toast.horizontalPadding)
-            .padding(.vertical, DesignSystem.Toast.verticalPadding)
-            .background(DesignSystem.Toast.backgroundColor.opacity(DesignSystem.Toast.backgroundOpacity))
-            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
-            .contentShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(DesignSystem.Toast.foregroundColor)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, DesignSystem.Toast.horizontalPadding)
+                .padding(.vertical, DesignSystem.Toast.verticalPadding)
+                .background(DesignSystem.Toast.backgroundColor.opacity(DesignSystem.Toast.backgroundOpacity))
+                .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Dismiss notification")
-        .accessibilityValue(message)
+        .accessibilityLabel(message)
+        .accessibilityHint("Dismiss notification")
     }
 }
 

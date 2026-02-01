@@ -136,7 +136,7 @@ public struct URLEncoderView: View {
             .padding(.vertical)
         }
         .toast(message: $toastMessage)
-        .keyboardDismissToolbar()
+        .dismissKeyboardOnTapAndScroll()
         .navigationTitle("URL Encoder")
     }
 

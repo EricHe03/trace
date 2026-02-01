@@ -131,8 +131,7 @@ struct RewriteRuleEditorView: View {
                         .font(.caption)
                 }
             }
-            .scrollDismissesKeyboard(.interactively)
-            .keyboardDismissToolbar()
+            .dismissKeyboardOnTapAndScroll()
             .navigationTitle(rule == nil ? "New Rule" : "Edit Rule")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -303,7 +302,7 @@ struct ActionEditorView: View {
                     parameterFields
                 }
             }
-            .scrollDismissesKeyboard(.interactively)
+            .dismissKeyboardOnTapAndScroll()
             .navigationTitle("Add Action")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -163,9 +163,8 @@ public struct TimestampToolView: View {
             }
             .padding(.vertical)
         }
-        .scrollDismissesKeyboard(.interactively)
         .toast(message: $toastMessage)
-        .keyboardDismissToolbar()
+        .dismissKeyboardOnTapAndScroll()
         .navigationTitle("Timestamp")
         .onAppear {
             dateFormatter.timeZone = selectedTimezone

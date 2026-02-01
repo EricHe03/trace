@@ -200,6 +200,7 @@ struct FavoriteEditorView: View {
             }
             .navigationTitle("Edit Favorite")
             .navigationBarTitleDisplayMode(.inline)
+            .dismissKeyboardOnTapAndScroll()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

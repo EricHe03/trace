@@ -22,6 +22,7 @@ struct RequestBuilderView: View {
     @State private var followRedirects = true
 
     @State private var showResponse = false
+    @State private var shouldDismissBuilderAfterResponse = false
     @State private var toastMessage: String?
     @State private var didLoadExistingBody = false
 
@@ -162,7 +163,7 @@ struct RequestBuilderView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showResponse) {
+            .sheet(isPresented: $showResponse, onDismiss: handleResponseDismissed) {
                 if let response = executor.lastResponse {
                     NavigationStack {
                         DetailView(request: response)
@@ -179,7 +180,7 @@ struct RequestBuilderView: View {
                 }
             }
             .toast(message: $toastMessage)
-            .keyboardDismissToolbar()
+            .dismissKeyboardOnTapAndScroll()
             .task(id: existingRequest?.id) {
                 await loadExistingRequestBodyIfNeeded()
             }
@@ -197,6 +198,7 @@ struct RequestBuilderView: View {
                 // Save the manual request response to storage
                 try AppGroupStorage.shared.saveRequest(response)
                 await MainActor.run {
+                    shouldDismissBuilderAfterResponse = true
                     showResponse = true
                 }
             } catch {
@@ -207,6 +209,18 @@ struct RequestBuilderView: View {
                 }
             }
         }
+    }
+
+    private func handleResponseDismissed() {
+        guard shouldDismissBuilderAfterResponse else { return }
+        shouldDismissBuilderAfterResponse = false
+
+        NotificationCenter.default.post(
+            name: .openTab,
+            object: nil,
+            userInfo: ["tab": "network"]
+        )
+        dismiss()
     }
 
     private func copyAsCURL() {

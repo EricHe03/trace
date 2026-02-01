@@ -86,7 +86,7 @@ public struct CurlImportView: View {
                 }
             }
             .toast(message: $toastMessage)
-            .keyboardDismissToolbar()
+            .dismissKeyboardOnTapAndScroll()
         }
     }
 

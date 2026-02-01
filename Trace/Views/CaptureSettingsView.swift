@@ -85,6 +85,7 @@ struct CaptureSettingsView: View {
             }
         }
         .navigationTitle("Capture Mode")
+        .dismissKeyboardOnTapAndScroll()
         .onAppear {
             loadConfiguration()
         }
