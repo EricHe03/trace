@@ -399,3 +399,62 @@ func XCTAssertCount<T: Collection>(
         line: line
     )
 }
+
+// MARK: - Interception Assertions
+
+/// Asserts that redirect count is within safe limits
+func XCTAssertNoRedirectLoop(
+    _ redirectCount: Int,
+    maxRedirects: Int = 10,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    XCTAssertLessThanOrEqual(
+        redirectCount,
+        maxRedirects,
+        "Redirect count \(redirectCount) exceeds maximum \(maxRedirects), possible redirect loop",
+        file: file,
+        line: line
+    )
+}
+
+/// Asserts that size is within specified limit
+func XCTAssertWithinLimit(
+    _ size: Int,
+    limit: Int,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    XCTAssertLessThanOrEqual(
+        size,
+        limit,
+        "Size \(size) bytes exceeds limit \(limit) bytes",
+        file: file,
+        line: line
+    )
+}
+
+/// Asserts that an async expression executes successfully on an actor
+@discardableResult
+func XCTAssertActorIsolated<T>(
+    _ expression: @escaping () async -> T,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async -> T? {
+    await expression()
+}
+
+/// Asserts that an async throwing expression executes successfully on an actor
+@discardableResult
+func XCTAssertActorIsolated<T>(
+    _ expression: @escaping () async throws -> T,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async -> T? {
+    do {
+        return try await expression()
+    } catch {
+        XCTFail("Actor isolated expression threw error: \(error)", file: file, line: line)
+        return nil
+    }
+}

@@ -11,6 +11,13 @@ import Foundation
 /// This allows the main app and Network Extension to share captured request data
 public class AppGroupStorage: @unchecked Sendable {
     public static let shared = AppGroupStorage()
+
+    /// Shared App Group identifier (must match entitlements for app + extension).
+    ///
+    /// Exposed for tooling/tests that need to create `FileManager`/`UserDefaults` suites directly.
+    public static var appGroupIdentifier: String {
+        AppGroupConfiguration.appGroupIdentifier
+    }
     private static let isSimulator: Bool = {
         #if targetEnvironment(simulator)
         return true
@@ -20,7 +27,7 @@ public class AppGroupStorage: @unchecked Sendable {
     }()
 
     /// Shared App Group identifier (must match entitlements for app + extension)
-    private let appGroupIdentifier = AppGroupConfiguration.appGroupIdentifier
+    private let appGroupIdentifier = AppGroupStorage.appGroupIdentifier
 
     private let requestsDirectory = "CapturedRequests"
     private let configDirectory = "Configuration"
