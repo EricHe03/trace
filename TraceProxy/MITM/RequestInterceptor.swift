@@ -1048,7 +1048,11 @@ public actor RequestInterceptor {
 
         case .decompress:
             return transformBody(request: &request, target: target) { data in
-                CompressionHelper.decompress(data: data, algorithm: action.compressionAlgorithm) ?? data
+                CompressionHelper.decompress(
+                    data: data,
+                    algorithm: action.compressionAlgorithm,
+                    maxOutputBytes: maxBodyModificationBytes
+                ) ?? data
             }
 
         case .jsonToXml:

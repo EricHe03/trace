@@ -299,3 +299,111 @@ func makeRequestWithNHeaders(count: Int) -> NetworkRequest {
     }
     return makeNetworkRequest(requestHeaders: headers)
 }
+
+// MARK: - Interception Component Factories
+
+/// Creates a test RewriteRule
+func makeRewriteRule(
+    id: UUID = UUID(),
+    name: String = "Test Rule",
+    enabled: Bool = true,
+    matchURL: String = "*.example.com",
+    action: RewriteRule.Action = .modifyHeaders,
+    modifyHeadersAdd: [String: String] = [:],
+    modifyHeadersSet: [String: String] = [:],
+    modifyHeadersRemove: [String] = []
+) -> RewriteRule {
+    RewriteRule(
+        id: id,
+        name: name,
+        enabled: enabled,
+        matchURL: matchURL,
+        action: action,
+        modifyHeadersAdd: modifyHeadersAdd,
+        modifyHeadersSet: modifyHeadersSet,
+        modifyHeadersRemove: modifyHeadersRemove
+    )
+}
+
+/// Creates a test RequestMap
+func makeRequestMap(
+    id: UUID = UUID(),
+    name: String = "Test Map",
+    enabled: Bool = true,
+    source: String = "https://api.example.com/old",
+    target: String = "https://api.example.com/new",
+    method: String? = nil
+) -> RequestMap {
+    RequestMap(
+        id: id,
+        name: name,
+        enabled: enabled,
+        source: source,
+        target: target,
+        method: method
+    )
+}
+
+/// Creates a test Script
+func makeScript(
+    id: UUID = UUID(),
+    name: String = "Test Script",
+    enabled: Bool = true,
+    code: String = "// Test script",
+    phase: Script.Phase = .request
+) -> Script {
+    Script(
+        id: id,
+        name: name,
+        enabled: enabled,
+        code: code,
+        phase: phase
+    )
+}
+
+/// Creates a test RuleGroup
+func makeRuleGroup(
+    id: UUID = UUID(),
+    name: String = "Test Group",
+    enabled: Bool = true,
+    ruleIds: [UUID] = []
+) -> RuleGroup {
+    RuleGroup(
+        id: id,
+        name: name,
+        enabled: enabled,
+        ruleIds: ruleIds
+    )
+}
+
+/// Creates a test Profile
+func makeProfile(
+    id: UUID = UUID(),
+    name: String = "Test Profile",
+    isActive: Bool = true,
+    ruleGroupIds: [UUID] = []
+) -> Profile {
+    Profile(
+        id: id,
+        name: name,
+        isActive: isActive,
+        ruleGroupIds: ruleGroupIds
+    )
+}
+
+/// Creates a test ConfigSnapshot
+func makeConfigSnapshot(
+    rewriteRules: [RewriteRule] = [],
+    requestMaps: [RequestMap] = [],
+    scripts: [Script] = [],
+    ruleGroups: [RuleGroup] = [],
+    activeProfile: Profile? = nil
+) -> ConfigSnapshot {
+    ConfigSnapshot(
+        rewriteRules: rewriteRules,
+        requestMaps: requestMaps,
+        scripts: scripts,
+        ruleGroups: ruleGroups,
+        activeProfile: activeProfile
+    )
+}

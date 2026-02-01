@@ -19,4 +19,4 @@ jobs:
         run: brew install swiftformat
 
       - name: Run SwiftFormat Check
-        run: swiftformat --lint . --reporter github-actions-log
+        run: swiftformat --lint . --config .swiftformat --reporter github-actions-log
