@@ -155,12 +155,13 @@ final class ZstdCompressionAlgorithmTests: XCTestCase {
 
         let largeData = Data(repeating: 0x42, count: 100000)
         var compressed = Data(count: largeData.count * 2)
+        let outputCapacity = compressed.count
 
         let compressedSize = compressed.withUnsafeMutableBytes { outputBuffer in
             largeData.withUnsafeBytes { inputBuffer in
                 compression_encode_buffer(
                     outputBuffer.baseAddress!,
-                    compressed.count,
+                    outputCapacity,
                     inputBuffer.baseAddress!,
                     largeData.count,
                     nil,
@@ -184,12 +185,13 @@ final class ZstdCompressionAlgorithmTests: XCTestCase {
         }
 
         var compressed = Data(count: binaryData.count * 2)
+        let outputCapacity = compressed.count
 
         let compressedSize = compressed.withUnsafeMutableBytes { outputBuffer in
             binaryData.withUnsafeBytes { inputBuffer in
                 compression_encode_buffer(
                     outputBuffer.baseAddress!,
-                    compressed.count,
+                    outputCapacity,
                     inputBuffer.baseAddress!,
                     binaryData.count,
                     nil,
@@ -203,13 +205,15 @@ final class ZstdCompressionAlgorithmTests: XCTestCase {
         compressed.count = compressedSize
 
         var decompressed = Data(count: binaryData.count * 2)
+        let decompressedCapacity = decompressed.count
+        let compressedInputSize = compressed.count
         let decompressedSize = decompressed.withUnsafeMutableBytes { outputBuffer in
             compressed.withUnsafeBytes { inputBuffer in
                 compression_decode_buffer(
                     outputBuffer.baseAddress!,
-                    decompressed.count,
+                    decompressedCapacity,
                     inputBuffer.baseAddress!,
-                    compressed.count,
+                    compressedInputSize,
                     nil,
                     algorithm
                 )

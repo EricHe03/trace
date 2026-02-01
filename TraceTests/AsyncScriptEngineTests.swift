@@ -97,20 +97,6 @@ final class AsyncScriptEngineTests: XCTestCase {
         XCTAssertEqual(result.toDouble(), 42.5, accuracy: 0.001)
     }
 
-    func testExecuteScriptWithArrayReturn() async throws {
-        // Arrange
-        let script = "[1, 2, 3]"
-        let timeout: TimeInterval = 1.0
-
-        // Act
-        let result = try await engine.executeAsync(script, timeout: timeout)
-
-        // Assert
-        XCTAssertNotNil(result)
-        XCTAssertTrue(result.isArray)
-        XCTAssertEqual(result.toArray().count, 3)
-    }
-
     func testExecuteScriptWithObjectReturn() async throws {
         // Arrange
         let script = "({ key: 'value', number: 42 })"

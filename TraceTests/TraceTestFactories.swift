@@ -9,6 +9,7 @@ import Foundation
 @testable import Trace
 @testable import TraceCore
 @testable import TraceNetworking
+@testable import TraceProxy
 @testable import TraceVPN
 
 // MARK: - Network Request Factories
@@ -306,22 +307,32 @@ func makeRequestWithNHeaders(count: Int) -> NetworkRequest {
 func makeRewriteRule(
     id: UUID = UUID(),
     name: String = "Test Rule",
-    enabled: Bool = true,
     matchURL: String = "*.example.com",
-    action: RewriteRule.Action = .modifyHeaders,
+    enabled: Bool = true,
+    ruleType: RuleType = .modifyRequest,
     modifyHeadersAdd: [String: String] = [:],
     modifyHeadersSet: [String: String] = [:],
     modifyHeadersRemove: [String] = []
 ) -> RewriteRule {
-    RewriteRule(
+    var actions: [RewriteAction] = []
+    for (key, value) in modifyHeadersAdd {
+        actions.append(.setHeader(key: key, value: value))
+    }
+    for (key, value) in modifyHeadersSet {
+        actions.append(.setHeader(key: key, value: value))
+    }
+    for key in modifyHeadersRemove {
+        actions.append(.removeHeader(key: key))
+    }
+
+    return RewriteRule(
         id: id,
         name: name,
         enabled: enabled,
-        matchURL: matchURL,
-        action: action,
-        modifyHeadersAdd: modifyHeadersAdd,
-        modifyHeadersSet: modifyHeadersSet,
-        modifyHeadersRemove: modifyHeadersRemove
+        ruleType: ruleType,
+        matchType: .wildcard,
+        matchPattern: matchURL,
+        actions: actions
     )
 }
 
@@ -330,17 +341,26 @@ func makeRequestMap(
     id: UUID = UUID(),
     name: String = "Test Map",
     enabled: Bool = true,
-    source: String = "https://api.example.com/old",
-    target: String = "https://api.example.com/new",
-    method: String? = nil
+    matchURL: String = "https://api.example.com/old",
+    statusCode: Int = 200,
+    body: String = "{\"ok\":true}"
 ) -> RequestMap {
-    RequestMap(
+    let mockResponse = MockResponse(
+        statusCode: statusCode,
+        statusMessage: HTTPURLResponse.localizedString(forStatusCode: statusCode),
+        headers: [TraceHTTPHeader(key: "Content-Type", value: "application/json")],
+        bodySource: .inline,
+        bodyContent: body.data(using: .utf8),
+        delay: 0
+    )
+
+    return RequestMap(
         id: id,
         name: name,
         enabled: enabled,
-        source: source,
-        target: target,
-        method: method
+        matchType: .exact,
+        matchPattern: matchURL,
+        mockResponse: mockResponse
     )
 }
 
@@ -350,14 +370,14 @@ func makeScript(
     name: String = "Test Script",
     enabled: Bool = true,
     code: String = "// Test script",
-    phase: Script.Phase = .request
+    scriptType: ScriptType = .request
 ) -> Script {
     Script(
         id: id,
         name: name,
         enabled: enabled,
-        code: code,
-        phase: phase
+        scriptType: scriptType,
+        code: code
     )
 }
 
@@ -372,7 +392,7 @@ func makeRuleGroup(
         id: id,
         name: name,
         enabled: enabled,
-        ruleIds: ruleIds
+        rules: ruleIds
     )
 }
 
@@ -386,8 +406,8 @@ func makeProfile(
     Profile(
         id: id,
         name: name,
-        isActive: isActive,
-        ruleGroupIds: ruleGroupIds
+        ruleGroups: ruleGroupIds,
+        isActive: isActive
     )
 }
 

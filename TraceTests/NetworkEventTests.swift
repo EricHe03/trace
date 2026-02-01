@@ -94,11 +94,8 @@ final class NetworkEventTests: XCTestCase {
         let now = Date()
         let earlier = now.addingTimeInterval(-60)
 
-        var request1 = NetworkRequest.sample
-        request1.timestamp = earlier
-
-        var request2 = NetworkRequest.sample
-        request2.timestamp = now
+        let request1 = NetworkRequest.sample(timestamp: earlier)
+        let request2 = NetworkRequest.sample(timestamp: now)
 
         let event1 = NetworkEvent.httpRequest(request1)
         let event2 = NetworkEvent.httpRequest(request2)

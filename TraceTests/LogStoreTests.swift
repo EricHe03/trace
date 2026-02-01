@@ -225,8 +225,8 @@ final class LogStoreTests: XCTestCase {
 
         let logs = try await store.fetchLogs(
             since: Date().addingTimeInterval(-60),
-            includeVPNLogs: true,
-            limit: 100
+            limit: 100,
+            includeVPNLogs: true
         )
 
         XCTAssertNotNil(logs)
@@ -237,8 +237,8 @@ final class LogStoreTests: XCTestCase {
 
         let logs = try await store.fetchLogs(
             since: Date().addingTimeInterval(-60),
-            includeVPNLogs: false,
-            limit: 100
+            limit: 100,
+            includeVPNLogs: false
         )
 
         XCTAssertNotNil(logs)

@@ -41,19 +41,27 @@ public class BrotliDecoder {
                 }
                 defer { compression_stream_destroy(&stream) }
 
+                // Re-set src fields after init (compression_stream_init clears all fields except state)
+                stream.src_ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
+                stream.src_size = data.count
+
                 var output = Data()
 
                 repeat {
                     stream.dst_ptr = destinationBuffer
                     stream.dst_size = bufferSize
 
-                    status = compression_stream_process(&stream, 0)
+                    // Always finalize since all input is provided upfront
+                    status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
 
                     switch status {
                     case COMPRESSION_STATUS_OK, COMPRESSION_STATUS_END:
                         let produced = bufferSize - stream.dst_size
                         if produced > 0 {
                             output.append(destinationBuffer, count: produced)
+                        } else if status == COMPRESSION_STATUS_OK {
+                            // No progress while processing - likely invalid data
+                            throw DecompressionError.processingFailed
                         }
                     case COMPRESSION_STATUS_ERROR:
                         throw DecompressionError.processingFailed

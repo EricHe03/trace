@@ -642,7 +642,6 @@ final class ShareHelperTests: XCTestCase {
         var request = createTestRequest()
         request.responseHeaders = [HTTPHeader(key: "Content-Type", value: "image/png")]
         request.responseBody = .data(Data([0x89, 0x50, 0x4E, 0x47])) // PNG header
-        request.isBinary = true
 
         // When
         let items = ShareHelper.shareItemsForResponseBody(from: request)
@@ -782,8 +781,9 @@ final class ShareHelperTests: XCTestCase {
         return NetworkRequest(
             id: UUID(),
             url: "https://example.com/api",
-            method: .GET,
-            timestamp: Date()
+            method: .get,
+            timestamp: Date(),
+            duration: 0.1
         )
     }
 }

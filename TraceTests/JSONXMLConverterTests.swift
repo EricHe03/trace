@@ -166,7 +166,7 @@ final class JSONXMLConverterTests: XCTestCase {
 
     func testJSONToXMLWithXMLSpecialCharacters() {
         let json = """
-        {"text": "<tag> & \"quote\" & 'apostrophe' & > symbol"}
+        {"text": "<tag> & \\"quote\\" & 'apostrophe' & > symbol"}
         """.data(using: .utf8)!
 
         let xmlData = JSONXMLConverter.jsonToXML(data: json)

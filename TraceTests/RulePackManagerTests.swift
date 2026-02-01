@@ -96,7 +96,7 @@ final class RulePackManagerTests: XCTestCase {
         let decoded = try JSONDecoder().decode(RulePack.self, from: data)
         XCTAssertEqual(decoded.rules.count, 1)
         XCTAssertEqual(decoded.rules.first?.name, "Test Rule")
-        XCTAssertEqual(decoded.rules.first?.matchURL, "*.example.com")
+        XCTAssertEqual(decoded.rules.first?.matchPattern, "*.example.com")
     }
 
     func testExportRulePackWithMultipleRules() throws {
@@ -152,7 +152,7 @@ final class RulePackManagerTests: XCTestCase {
         let decoded = try JSONDecoder().decode(RulePack.self, from: data)
         XCTAssertEqual(decoded.groups.count, 1)
         XCTAssertEqual(decoded.groups.first?.name, "Test Group")
-        XCTAssertEqual(decoded.groups.first?.ruleIds.count, 2)
+        XCTAssertEqual(decoded.groups.first?.rules.count, 2)
     }
 
     func testExportRulePackWithMetadata() throws {
@@ -296,7 +296,7 @@ final class RulePackManagerTests: XCTestCase {
         XCTAssertEqual(importedPack.rules.count, 2)
         XCTAssertEqual(importedPack.groups.count, 1)
         XCTAssertEqual(importedPack.groups.first?.name, "Group 1")
-        XCTAssertEqual(importedPack.groups.first?.ruleIds.count, 1)
+        XCTAssertEqual(importedPack.groups.first?.rules.count, 1)
     }
 
     func testImportRulePackFromNonExistentFile() {
@@ -384,15 +384,17 @@ final class RulePackManagerTests: XCTestCase {
 
         // Verify rule details
         XCTAssertEqual(importedPack.rules[0].name, "Rule 1")
-        XCTAssertEqual(importedPack.rules[0].matchURL, "*.example.com")
-        XCTAssertEqual(importedPack.rules[0].modifyHeadersAdd, ["X-Custom": "Value"])
+        XCTAssertEqual(importedPack.rules[0].matchPattern, "*.example.com")
+        XCTAssertTrue(importedPack.rules[0].actions.contains(where: { action in
+            action.actionType == .setHeader && action.parameters["key"] == "X-Custom" && action.parameters["value"] == "Value"
+        }))
         XCTAssertEqual(importedPack.rules[1].name, "Rule 2")
         XCTAssertFalse(importedPack.rules[1].enabled)
 
         // Verify group details
         XCTAssertEqual(importedPack.groups[0].name, "Test Group")
         XCTAssertTrue(importedPack.groups[0].enabled)
-        XCTAssertEqual(importedPack.groups[0].ruleIds.count, 2)
+        XCTAssertEqual(importedPack.groups[0].rules.count, 2)
     }
 
     // MARK: - Merge Rule Pack Tests
@@ -479,9 +481,8 @@ final class RulePackManagerTests: XCTestCase {
         // Arrange
         let rule = makeRewriteRule(
             name: "Complex Rule",
-            enabled: true,
             matchURL: "https://*.api.example.com/v*/users/*",
-            action: .modifyHeaders,
+            enabled: true,
             modifyHeadersAdd: [
                 "X-Custom-Header": "Value1",
                 "X-Another-Header": "Value2"
@@ -508,9 +509,7 @@ final class RulePackManagerTests: XCTestCase {
         let decoded = try JSONDecoder().decode(RulePack.self, from: data)
         let decodedRule = decoded.rules.first
         XCTAssertNotNil(decodedRule)
-        XCTAssertEqual(decodedRule?.modifyHeadersAdd.count, 2)
-        XCTAssertEqual(decodedRule?.modifyHeadersSet.count, 1)
-        XCTAssertEqual(decodedRule?.modifyHeadersRemove.count, 2)
+        XCTAssertEqual(decodedRule?.actions.count, 5)
     }
 
     func testExportRulePackWithSpecialCharactersInMetadata() throws {

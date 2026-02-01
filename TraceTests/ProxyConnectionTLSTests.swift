@@ -9,6 +9,7 @@ import XCTest
 import Network
 @testable import TraceProxy
 @testable import TraceSecurity
+@testable import TraceCore
 
 final class ProxyConnectionTLSTests: XCTestCase {
     // MARK: - Properties
@@ -272,7 +273,15 @@ final class ProxyConnectionTLSTests: XCTestCase {
 
 class MockProxyConnection: ProxyConnection {
     init() {
-        // Create a minimal initialization for testing
-        // Note: This may require adjustment based on ProxyConnection's actual initializer
+        let connection = NWConnection(host: "127.0.0.1", port: 80, using: .tcp)
+        super.init(
+            connection: connection,
+            mitmAllowlist: [],
+            mitmEnabled: true,
+            transparentTLSModeEnabled: false,
+            eventLog: nil,
+            throttler: PacketThrottler(),
+            captureConfig: .default
+        )
     }
 }

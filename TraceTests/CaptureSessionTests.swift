@@ -190,7 +190,9 @@ final class CaptureSessionTests: XCTestCase {
         XCTAssertEqual(session.id, decodedSession.id)
         XCTAssertEqual(session.name, decodedSession.name)
         XCTAssertEqual(session.startTime.timeIntervalSince1970, decodedSession.startTime.timeIntervalSince1970, accuracy: 0.001)
-        XCTAssertEqual(session.endTime?.timeIntervalSince1970, decodedSession.endTime?.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertNotNil(session.endTime)
+        XCTAssertNotNil(decodedSession.endTime)
+        XCTAssertEqual(session.endTime!.timeIntervalSince1970, decodedSession.endTime!.timeIntervalSince1970, accuracy: 0.001)
         XCTAssertEqual(session.requestCount, decodedSession.requestCount)
         XCTAssertEqual(session.totalDataTransferred, decodedSession.totalDataTransferred)
     }

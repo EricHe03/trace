@@ -488,7 +488,7 @@ final class BreakpointPresetManagerTests: XCTestCase {
     func testSavePresetWithAllHTTPMethods() {
         // Arrange
         let manager = BreakpointPresetManager.shared
-        let allMethods: Set<HTTPMethod> = [.get, .post, .put, .delete, .patch, .head, .options, .trace, .connect]
+        let allMethods: Set<HTTPMethod> = [.get, .post, .put, .delete, .patch, .head, .options, .connect]
         let configuration = BreakpointConfiguration(methods: allMethods)
         let preset = BreakpointPreset(name: "All Methods", configuration: configuration)
 

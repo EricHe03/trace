@@ -126,7 +126,7 @@ final class WebSocketConnectionTests: XCTestCase {
         connection.endTime = endTime
 
         XCTAssertNotNil(connection.duration)
-        XCTAssertEqual(connection.duration, 5.5, accuracy: 0.001)
+        XCTAssertEqual(connection.duration!, 5.5, accuracy: 0.001)
     }
 
     func testDurationWhenActive() {

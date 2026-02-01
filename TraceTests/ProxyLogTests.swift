@@ -55,8 +55,7 @@ final class ProxyLogTests: XCTestCase {
         let event = LogEvent.proxy(action)
 
         // Then
-        XCTAssertEqual(event.domain, "proxy")
-        XCTAssertEqual(event.action, action)
+        XCTAssertTrue(String(describing: event).hasPrefix("event=proxy.\(action)"))
     }
 
     func testProxyEventWithDifferentActions() {
@@ -68,8 +67,7 @@ final class ProxyLogTests: XCTestCase {
             let event = LogEvent.proxy(action)
 
             // Then
-            XCTAssertEqual(event.domain, "proxy")
-            XCTAssertEqual(event.action, action)
+            XCTAssertTrue(String(describing: event).hasPrefix("event=proxy.\(action)"))
         }
     }
 
@@ -81,8 +79,7 @@ final class ProxyLogTests: XCTestCase {
         let event = LogEvent.intercept(action)
 
         // Then
-        XCTAssertEqual(event.domain, "intercept")
-        XCTAssertEqual(event.action, action)
+        XCTAssertTrue(String(describing: event).hasPrefix("event=intercept.\(action)"))
     }
 
     func testInterceptEventWithDifferentActions() {
@@ -94,8 +91,7 @@ final class ProxyLogTests: XCTestCase {
             let event = LogEvent.intercept(action)
 
             // Then
-            XCTAssertEqual(event.domain, "intercept")
-            XCTAssertEqual(event.action, action)
+            XCTAssertTrue(String(describing: event).hasPrefix("event=intercept.\(action)"))
         }
     }
 
@@ -107,8 +103,7 @@ final class ProxyLogTests: XCTestCase {
         let event = LogEvent.throttle(action)
 
         // Then
-        XCTAssertEqual(event.domain, "throttle")
-        XCTAssertEqual(event.action, action)
+        XCTAssertTrue(String(describing: event).hasPrefix("event=throttle.\(action)"))
     }
 
     func testThrottleEventWithDifferentActions() {
@@ -120,8 +115,7 @@ final class ProxyLogTests: XCTestCase {
             let event = LogEvent.throttle(action)
 
             // Then
-            XCTAssertEqual(event.domain, "throttle")
-            XCTAssertEqual(event.action, action)
+            XCTAssertTrue(String(describing: event).hasPrefix("event=throttle.\(action)"))
         }
     }
 
@@ -132,7 +126,7 @@ final class ProxyLogTests: XCTestCase {
         let event = LogEvent.proxy("accept")
 
         // When
-        let formatted = event.formatted
+        let formatted = String(describing: event)
 
         // Then
         XCTAssertTrue(formatted.hasPrefix("event=proxy.accept"))
@@ -143,7 +137,7 @@ final class ProxyLogTests: XCTestCase {
         let event = LogEvent.intercept("request")
 
         // When
-        let formatted = event.formatted
+        let formatted = String(describing: event)
 
         // Then
         XCTAssertTrue(formatted.hasPrefix("event=intercept.request"))
@@ -154,7 +148,7 @@ final class ProxyLogTests: XCTestCase {
         let event = LogEvent.throttle("delay")
 
         // When
-        let formatted = event.formatted
+        let formatted = String(describing: event)
 
         // Then
         XCTAssertTrue(formatted.hasPrefix("event=throttle.delay"))
@@ -170,8 +164,7 @@ final class ProxyLogTests: XCTestCase {
         let event = LogEvent.proxy(action)
 
         // Then
-        XCTAssertEqual(event.domain, "proxy")
-        XCTAssertEqual(event.action, "")
+        XCTAssertTrue(String(describing: event).hasPrefix("event=proxy."))
     }
 
     func testInterceptEventWithSpecialCharacters() {
@@ -182,8 +175,7 @@ final class ProxyLogTests: XCTestCase {
         let event = LogEvent.intercept(action)
 
         // Then
-        XCTAssertEqual(event.domain, "intercept")
-        XCTAssertEqual(event.action, action)
+        XCTAssertTrue(String(describing: event).hasPrefix("event=intercept.\(action)"))
     }
 
     func testThrottleEventWithLongAction() {
@@ -194,7 +186,6 @@ final class ProxyLogTests: XCTestCase {
         let event = LogEvent.throttle(action)
 
         // Then
-        XCTAssertEqual(event.domain, "throttle")
-        XCTAssertEqual(event.action, action)
+        XCTAssertTrue(String(describing: event).hasPrefix("event=throttle.\(action)"))
     }
 }

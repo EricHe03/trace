@@ -92,9 +92,7 @@ final class NetworkRequestTagsTests: XCTestCase {
     // MARK: - TLS/Security Detection Tests
 
     func testIsTLSPassthrough() {
-        var request = NetworkRequest.sample
-        request.method = .connect
-        request.statusMessage = "TLS Passthrough"
+        var request = NetworkRequest.sample(method: .connect, statusMessage: "TLS Passthrough")
 
         XCTAssertTrue(request.isTLSPassthrough)
 
@@ -106,9 +104,7 @@ final class NetworkRequestTagsTests: XCTestCase {
     }
 
     func testTLSPassthroughReason() {
-        var request = NetworkRequest.sample
-        request.method = .connect
-        request.statusMessage = "TLS Passthrough"
+        var request = NetworkRequest.sample(method: .connect, statusMessage: "TLS Passthrough")
 
         // Test with X-Trace-Note header
         request.requestHeaders = [
@@ -121,14 +117,12 @@ final class NetworkRequestTagsTests: XCTestCase {
         XCTAssertEqual(request.tlsPassthroughReason, "TLS Passthrough")
 
         // Test non-passthrough request
-        request.method = .get
-        XCTAssertNil(request.tlsPassthroughReason)
+        let nonPassthrough = NetworkRequest.sample(method: .get)
+        XCTAssertNil(nonPassthrough.tlsPassthroughReason)
     }
 
     func testIsPinningLikely() {
-        var request = NetworkRequest.sample
-        request.method = .connect
-        request.statusMessage = "TLS Passthrough"
+        var request = NetworkRequest.sample(method: .connect, statusMessage: "TLS Passthrough")
 
         // Test explicit pinning detection
         request.requestHeaders = [
@@ -148,8 +142,8 @@ final class NetworkRequestTagsTests: XCTestCase {
         XCTAssertFalse(request.isPinningLikely)
 
         // Test non-passthrough request
-        request.method = .get
-        XCTAssertFalse(request.isPinningLikely)
+        let nonPassthrough = NetworkRequest.sample(method: .get)
+        XCTAssertFalse(nonPassthrough.isPinningLikely)
     }
 
     // MARK: - Reliability Detection Tests
@@ -165,37 +159,29 @@ final class NetworkRequestTagsTests: XCTestCase {
         XCTAssertTrue(request.isFailed)
 
         // Test missing status with negligible duration
-        request.statusCode = nil
-        request.duration = 0.05
-        XCTAssertTrue(request.isFailed)
+        let missingStatusFast = NetworkRequest.sample(statusCode: nil, duration: 0.05)
+        XCTAssertTrue(missingStatusFast.isFailed)
 
         // Test successful response
         request.statusCode = 200
         XCTAssertFalse(request.isFailed)
 
         // Test TLS passthrough is not a failure
-        request.method = .connect
-        request.statusMessage = "TLS Passthrough"
-        request.statusCode = nil
-        XCTAssertFalse(request.isFailed)
+        let tlsPassthrough = NetworkRequest.sample(method: .connect, statusCode: nil, statusMessage: "TLS Passthrough")
+        XCTAssertFalse(tlsPassthrough.isFailed)
     }
 
     func testDidTimeout() {
-        var request = NetworkRequest.sample
-
         // Test timeout condition
-        request.statusCode = nil
-        request.duration = 35.0
-        XCTAssertTrue(request.didTimeout)
+        let timedOut = NetworkRequest.sample(statusCode: nil, duration: 35.0)
+        XCTAssertTrue(timedOut.didTimeout)
 
         // Test non-timeout conditions
-        request.statusCode = 200
-        request.duration = 35.0
-        XCTAssertFalse(request.didTimeout)
+        let completed = NetworkRequest.sample(statusCode: 200, duration: 35.0)
+        XCTAssertFalse(completed.didTimeout)
 
-        request.statusCode = nil
-        request.duration = 5.0
-        XCTAssertFalse(request.didTimeout)
+        let shortPending = NetworkRequest.sample(statusCode: nil, duration: 5.0)
+        XCTAssertFalse(shortPending.didTimeout)
     }
 
     // MARK: - Performance Detection Tests
@@ -205,21 +191,21 @@ final class NetworkRequestTagsTests: XCTestCase {
 
         // Test with timing phases showing high TTFB
         request.timingPhases = NetworkTimingPhases(
-            dns: 0.1,
-            tcp: 0.2,
-            tls: 0.3,
+            dnsLookup: 0.1,
+            tcpConnection: 0.2,
+            tlsHandshake: 0.3,
             ttfb: 3.5,
-            download: 0.5
+            contentDownload: 0.5
         )
         XCTAssertEqual(request.stallDuration, 3.5)
 
         // Test with normal TTFB
         request.timingPhases = NetworkTimingPhases(
-            dns: 0.1,
-            tcp: 0.2,
-            tls: 0.3,
+            dnsLookup: 0.1,
+            tcpConnection: 0.2,
+            tlsHandshake: 0.3,
             ttfb: 1.0,
-            download: 0.5
+            contentDownload: 0.5
         )
         XCTAssertNil(request.stallDuration)
 
@@ -312,8 +298,8 @@ final class NetworkRequestTagsTests: XCTestCase {
 
         // Test with redirect chain
         request.redirectChain = [
-            RedirectInfo(fromURL: "https://example.com", toURL: "https://www.example.com", statusCode: 301),
-            RedirectInfo(fromURL: "https://www.example.com", toURL: "https://www.example.com/page", statusCode: 302)
+            RedirectInfo(fromURL: "https://example.com", toURL: "https://www.example.com", statusCode: 301, location: nil),
+            RedirectInfo(fromURL: "https://www.example.com", toURL: "https://www.example.com/page", statusCode: 302, location: nil)
         ]
         XCTAssertEqual(request.redirectCount, 2)
 
@@ -371,13 +357,12 @@ final class NetworkRequestTagsTests: XCTestCase {
     // MARK: - Tag Generation Tests
 
     func testGetAllTags() {
-        var request = NetworkRequest.sample
+        var request = NetworkRequest.sample(duration: 6.0)
 
         // Setup a request with multiple tag conditions
         request.protocolVersion = .http3
         request.wasBlocked = true
         request.statusCode = 500
-        request.duration = 6.0
         request.responseHeaders = [
             TraceHTTPHeader(key: "Content-Type", value: "image/png")
         ]
@@ -407,13 +392,12 @@ final class NetworkRequestTagsTests: XCTestCase {
     }
 
     func testGetVisibleTags() {
-        var request = NetworkRequest.sample
+        var request = NetworkRequest.sample(duration: 6.0)
 
         // Setup a request with many tags
         request.protocolVersion = .http3
         request.wasBlocked = true
         request.statusCode = 500
-        request.duration = 6.0
         request.isMocked = true
 
         let (visible, overflow) = request.getVisibleTags(maxVisible: 3)

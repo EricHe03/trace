@@ -432,12 +432,13 @@ final class ServerSentEventTests: XCTestCase {
     func testSSEParserParseComplexEvent() {
         let parser = SSEParser()
         let input = """
-        id: 42
-        event: userconnect
-        data: {"username": "bobby", "time": "02:33:48"}
-        retry: 10000
+id: 42
+event: userconnect
+data: {"username": "bobby", "time": "02:33:48"}
+retry: 10000
 
-        """
+
+"""
 
         let events = parser.parse(input)
 

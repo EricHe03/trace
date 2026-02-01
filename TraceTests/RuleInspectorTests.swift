@@ -17,8 +17,8 @@ final class RuleInspectorTests: XCTestCase {
         // Arrange
         let rule = makeRewriteRule(
             name: "Test Rule",
-            enabled: true,
-            matchURL: "*.example.com"
+            matchURL: "*.example.com",
+            enabled: true
         )
         let request = makeNetworkRequest(url: "https://api.example.com/test")
 
@@ -36,8 +36,8 @@ final class RuleInspectorTests: XCTestCase {
         // Arrange
         let rule = makeRewriteRule(
             name: "Test Rule",
-            enabled: true,
-            matchURL: "*.example.com"
+            matchURL: "*.example.com",
+            enabled: true
         )
         let request = makeNetworkRequest(url: "https://api.other.com/test")
 
@@ -314,8 +314,8 @@ final class RuleInspectorTests: XCTestCase {
         // Arrange
         let rule = makeRewriteRule(
             name: "Message Test Rule",
-            enabled: true,
-            matchURL: "*.example.com"
+            matchURL: "*.example.com",
+            enabled: true
         )
         let request = makeNetworkRequest(url: "https://api.example.com/test")
 
@@ -355,8 +355,8 @@ final class RuleInspectorTests: XCTestCase {
         // Arrange
         let rule = makeRewriteRule(
             name: "Disabled Rule",
-            enabled: false,
-            matchURL: "*.example.com"
+            matchURL: "*.example.com",
+            enabled: false
         )
         let request = makeNetworkRequest(url: "https://api.example.com/test")
 
@@ -371,8 +371,8 @@ final class RuleInspectorTests: XCTestCase {
         // Arrange
         let rule = makeRewriteRule(
             name: "Test Rule",
-            enabled: true,
-            matchURL: "*.example.com"
+            matchURL: "*.example.com",
+            enabled: true
         )
         let request = makeNetworkRequest(url: "")
 
@@ -509,8 +509,8 @@ final class RuleInspectorTests: XCTestCase {
         // Arrange
         let rule = makeRewriteRule(
             name: "Test Rule",
-            enabled: true,
-            matchURL: "*.example.com"
+            matchURL: "*.example.com",
+            enabled: true
         )
         let request1 = makeNetworkRequest(url: "https://api.example.com/test1")
         let request2 = makeNetworkRequest(url: "https://api.example.com/test2")
@@ -531,8 +531,8 @@ final class RuleInspectorTests: XCTestCase {
         // Arrange
         let rule = makeRewriteRule(
             name: "Test Rule",
-            enabled: true,
-            matchURL: "*.example.com"
+            matchURL: "*.example.com",
+            enabled: true
         )
         let request = makeNetworkRequest(url: "https://api.example.com/test")
 
@@ -549,8 +549,8 @@ final class RuleInspectorTests: XCTestCase {
     func testEvaluatePerformance() {
         let rule = makeRewriteRule(
             name: "Performance Test Rule",
-            enabled: true,
-            matchURL: "*.example.com"
+            matchURL: "*.example.com",
+            enabled: true
         )
         let request = makeNetworkRequest(url: "https://api.example.com/test")
 

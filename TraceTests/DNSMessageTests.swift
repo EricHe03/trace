@@ -69,15 +69,11 @@ final class DNSMessageTests: XCTestCase {
     }
 
     func testIsSuccessful() {
-        var message = DNSMessage.sampleResponse
+        let message = DNSMessage.sampleResponse
 
         XCTAssertTrue(message.isSuccessful)
-
-        message.responseCode = .nameError
-        XCTAssertFalse(message.isSuccessful)
-
-        message.isResponse = false
-        XCTAssertFalse(message.isSuccessful)
+        XCTAssertFalse(message.with(responseCode: .nameError).isSuccessful)
+        XCTAssertFalse(message.with(isResponse: false).isSuccessful)
     }
 
     func testResolvedIPs() {
@@ -170,25 +166,15 @@ final class DNSMessageTests: XCTestCase {
     }
 
     func testStatusIcon() {
-        var message = DNSMessage.sampleQuery
-        XCTAssertEqual(message.statusIcon, "arrow.up.circle")
-
-        message = DNSMessage.sampleResponse
-        XCTAssertEqual(message.statusIcon, "checkmark.circle.fill")
-
-        message.responseCode = .nameError
-        XCTAssertEqual(message.statusIcon, "xmark.circle.fill")
+        XCTAssertEqual(DNSMessage.sampleQuery.statusIcon, "arrow.up.circle")
+        XCTAssertEqual(DNSMessage.sampleResponse.statusIcon, "checkmark.circle.fill")
+        XCTAssertEqual(DNSMessage.sampleResponse.with(responseCode: .nameError).statusIcon, "xmark.circle.fill")
     }
 
     func testStatusColor() {
-        var message = DNSMessage.sampleQuery
-        XCTAssertEqual(message.statusColor, "blue")
-
-        message = DNSMessage.sampleResponse
-        XCTAssertEqual(message.statusColor, "green")
-
-        message.responseCode = .serverFailure
-        XCTAssertEqual(message.statusColor, "red")
+        XCTAssertEqual(DNSMessage.sampleQuery.statusColor, "blue")
+        XCTAssertEqual(DNSMessage.sampleResponse.statusColor, "green")
+        XCTAssertEqual(DNSMessage.sampleResponse.with(responseCode: .serverFailure).statusColor, "red")
     }
 
     // MARK: - DNSQuestion Tests
@@ -562,5 +548,37 @@ final class DNSMessageTests: XCTestCase {
     func testHexEncodedString() {
         let data = Data([0x01, 0x02, 0x0A, 0xFF])
         XCTAssertEqual(data.hexEncodedString(), "01020aff")
+    }
+}
+
+private extension DNSMessage {
+    func with(
+        responseCode: DNSResponseCode? = nil,
+        isResponse: Bool? = nil
+    ) -> DNSMessage {
+        DNSMessage(
+            id: id,
+            transactionId: transactionId,
+            timestamp: timestamp,
+            isResponse: isResponse ?? self.isResponse,
+            opcode: opcode,
+            isAuthoritative: isAuthoritative,
+            isTruncated: isTruncated,
+            recursionDesired: recursionDesired,
+            recursionAvailable: recursionAvailable,
+            responseCode: responseCode ?? self.responseCode,
+            questions: questions,
+            answers: answers,
+            authorities: authorities,
+            additionals: additionals,
+            sourceIP: sourceIP,
+            sourcePort: sourcePort,
+            destIP: destIP,
+            destPort: destPort,
+            messageSize: messageSize,
+            relatedQueryId: relatedQueryId,
+            relatedResponseId: relatedResponseId,
+            responseTime: responseTime
+        )
     }
 }

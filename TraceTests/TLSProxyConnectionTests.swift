@@ -15,7 +15,7 @@ final class TLSProxyConnectionTests: XCTestCase {
     // MARK: - Properties
 
     var sut: TLSProxyConnection!
-    var mockClientConnection: MockNWConnection!
+    private var mockClientConnection: MockNWConnection!
 
     // MARK: - Setup & Teardown
 

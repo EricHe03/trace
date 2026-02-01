@@ -105,10 +105,15 @@ public enum CompressionHelper {
             }
             defer { compression_stream_destroy(&stream) }
 
+            // Re-set src fields after init (compression_stream_init clears all fields except state)
+            stream.src_ptr = srcPtr
+            stream.src_size = data.count
+
             while true {
                 stream.dst_ptr = dstBuffer
                 stream.dst_size = bufferSize
-                let status = compression_stream_process(&stream, 0)
+                // Always finalize for decompression since all input is provided upfront
+                let status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
 
                 let produced = bufferSize - stream.dst_size
                 if produced > 0 {
@@ -118,7 +123,8 @@ public enum CompressionHelper {
 
                 if status == COMPRESSION_STATUS_END { break }
                 if status == COMPRESSION_STATUS_ERROR { return nil }
-                if produced == 0, stream.src_size == 0 { return nil }
+                // Safety: Avoid infinite loops if no progress is made
+                if status == COMPRESSION_STATUS_OK && produced == 0 { return nil }
             }
 
             return output

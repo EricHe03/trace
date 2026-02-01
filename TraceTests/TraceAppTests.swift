@@ -439,7 +439,7 @@ final class TraceAppTests: XCTestCase {
     func testAppDelegate_MultipleShortcutCalls() async {
         // Given
         let application = UIApplication.shared
-        let viewModel = CaptureViewModel()
+        let viewModel = await MainActor.run { CaptureViewModel() }
         appDelegate.viewModel = viewModel
 
         let shortcut1 = UIApplicationShortcutItem(
@@ -469,6 +469,7 @@ final class TraceAppTests: XCTestCase {
         await fulfillment(of: [expectation1, expectation2], timeout: 3.0)
     }
 
+    @MainActor
     func testAppDelegate_ViewModelSetAfterInit() {
         // Given
         let delegate = AppDelegate()

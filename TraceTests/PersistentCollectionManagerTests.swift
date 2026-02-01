@@ -34,9 +34,9 @@ private struct TestItem: Codable, Identifiable, Equatable, Toggleable, URLMatcha
 }
 
 final class PersistentCollectionManagerTests: XCTestCase {
-    var manager: PersistentCollectionManager<TestItem>!
-    var testFileName: String!
-    var cancellables: Set<AnyCancellable>!
+    private var manager: PersistentCollectionManager<TestItem>!
+    private var testFileName: String!
+    private var cancellables: Set<AnyCancellable>!
 
     override func setUp() {
         super.setUp()
@@ -53,7 +53,9 @@ final class PersistentCollectionManagerTests: XCTestCase {
 
     override func tearDown() {
         // Clean up test file
-        try? AppGroupStorage.shared.deleteData(from: testFileName)
+        if let fileURL = AppGroupStorage.shared.configFileURL(for: testFileName) {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
         manager = nil
         cancellables = nil
         super.tearDown()

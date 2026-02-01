@@ -7,6 +7,7 @@
 
 import XCTest
 @testable import Trace
+@testable import TraceCore
 
 // Note: Exports.swift uses @_exported to re-export modules.
 // Testing focuses on verifying that the modules are accessible through the import.
@@ -64,7 +65,8 @@ final class ExportsTests: XCTestCase {
             id: UUID(),
             url: "https://example.com",
             method: .GET,
-            timestamp: Date()
+            timestamp: Date(),
+            duration: 0.1
         )
 
         // When/Then - Should be accessible through Trace import
@@ -146,7 +148,8 @@ final class ExportsTests: XCTestCase {
             id: UUID(),
             url: "https://test.com",
             method: .GET,
-            timestamp: Date()
+            timestamp: Date(),
+            duration: 0.1
         )
 
         // TraceCore type
@@ -196,7 +199,8 @@ final class ExportsTests: XCTestCase {
             id: UUID(),
             url: "https://example.com",
             method: .GET,
-            timestamp: Date()
+            timestamp: Date(),
+            duration: 0.1
         )
         XCTAssertNotNil(request)
 
@@ -238,7 +242,8 @@ final class ExportsTests: XCTestCase {
             id: UUID(),
             url: "https://example.com",
             method: .GET,
-            timestamp: Date()
+            timestamp: Date(),
+            duration: 0.1
         )
 
         // When - Add headers
@@ -260,7 +265,8 @@ final class ExportsTests: XCTestCase {
             id: UUID(),
             url: "https://example.com",
             method: .GET,
-            timestamp: Date()
+            timestamp: Date(),
+            duration: 0.1
         )
 
         // When
@@ -337,7 +343,8 @@ final class ExportsTests: XCTestCase {
             id: UUID(),
             url: "https://example.com",
             method: .GET,
-            timestamp: Date()
+            timestamp: Date(),
+            duration: 0.1
         )
 
         let session = CaptureSession(
@@ -372,7 +379,8 @@ final class ExportsTests: XCTestCase {
                     id: UUID(),
                     url: "https://example.com",
                     method: .GET,
-                    timestamp: Date()
+                    timestamp: Date(),
+                    duration: 0.1
                 )
                 _ = request.url
             }

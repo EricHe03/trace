@@ -473,11 +473,10 @@ private func makeRewriteRule(
         id: id,
         name: name,
         enabled: enabled,
-        matchURL: "*.example.com",
-        action: .modifyHeaders,
-        modifyHeadersAdd: [:],
-        modifyHeadersSet: [:],
-        modifyHeadersRemove: []
+        ruleType: .modifyRequest,
+        matchType: .wildcard,
+        matchPattern: "*.example.com",
+        actions: []
     )
 }
 
@@ -486,13 +485,22 @@ private func makeRequestMap(
     name: String = "Test Map",
     enabled: Bool = true
 ) -> RequestMap {
-    RequestMap(
+    let mockResponse = MockResponse(
+        statusCode: 200,
+        statusMessage: "OK",
+        headers: [],
+        bodySource: .inline,
+        bodyContent: Data(),
+        delay: 0
+    )
+
+    return RequestMap(
         id: id,
         name: name,
         enabled: enabled,
-        source: "https://api.example.com/old",
-        target: "https://api.example.com/new",
-        method: nil
+        matchType: .exact,
+        matchPattern: "https://api.example.com/old",
+        mockResponse: mockResponse
     )
 }
 
@@ -505,8 +513,8 @@ private func makeScript(
         id: id,
         name: name,
         enabled: enabled,
-        code: "// Test script",
-        phase: .request
+        scriptType: .request,
+        code: "// Test script"
     )
 }
 
@@ -519,7 +527,7 @@ private func makeRuleGroup(
         id: id,
         name: name,
         enabled: enabled,
-        ruleIds: []
+        rules: []
     )
 }
 
@@ -530,7 +538,7 @@ private func makeProfile(
     Profile(
         id: id,
         name: name,
-        isActive: true,
-        ruleGroupIds: []
+        ruleGroups: [],
+        isActive: true
     )
 }
