@@ -108,6 +108,13 @@ final class MITMProxyServerTests: XCTestCase {
         XCTAssertEqual(endIndex, chunkedBody.count)
     }
 
+    func testDecodeChunkedBody_StopsBeforeExtraData() {
+        let chunkedBody = makeChunkedBody(["Hello"])
+        let combined = chunkedBody + "EXTRA".data(using: .ascii)!
+        let expected = "Hello".data(using: .ascii)!
+        XCTAssertEqual(HTTPParser.decodeChunkedBody(combined), expected)
+    }
+
     func testDecodeChunkedBody_InvalidFormat() {
         let chunkedBody = "XYZ\r\n".data(using: .ascii)!
 
@@ -155,6 +162,22 @@ final class MITMProxyServerTests: XCTestCase {
 
         let request = HTTPParser.parseRequest(from: data)
         XCTAssertEqual(request?.body, "Hello".data(using: .ascii)!)
+    }
+
+    func testParseRequestHeaders_ChunkedTransferEncoding_WithExtraBytes() {
+        let chunkedBody = makeChunkedBody(["Hello"])
+        let extra = "EXTRA".data(using: .ascii)!
+        let headersString = """
+        POST /api/test HTTP/1.1\r
+        Host: example.com\r
+        Transfer-Encoding: chunked\r
+        \r
+        """
+        let data = Data(headersString.utf8) + chunkedBody + extra
+
+        let request = HTTPParser.parseRequest(from: data)
+        XCTAssertEqual(request?.body, "Hello".data(using: .ascii)!)
+        XCTAssertEqual(request?.rawRequest.count, data.count - extra.count)
     }
 
     func testParseRequestHeaders_BothContentLengthAndChunked() {
