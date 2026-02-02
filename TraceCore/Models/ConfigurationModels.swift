@@ -7,6 +7,29 @@
 
 import Foundation
 
+private func matchSubject(for url: String, pattern: String, matchType: MatchType) -> (subject: String, isHostMatch: Bool) {
+    if pattern.contains("://") || pattern.contains("/") {
+        return (url, false)
+    }
+
+    // Heuristic:
+    // - Treat host-only patterns like "*.example.com" and "example.com" as host matches.
+    // - Treat extension patterns like "*.png" / "*.js" as URL matches.
+    if matchType == .wildcard, pattern.hasPrefix("*.") {
+        let dotCount = pattern.count(where: { $0 == "." })
+        if dotCount == 1 {
+            return (url, false)
+        }
+    }
+
+    if let host = URL(string: url)?.host {
+        return (host, true)
+    }
+
+    // If URL parsing fails, fall back to matching against the full URL string.
+    return (url, false)
+}
+
 // MARK: - Shared Matching
 
 /// Pattern matching type for rules/maps/scripts/breakpoints.
@@ -183,19 +206,34 @@ public struct RewriteRule: Codable, Identifiable, Sendable {
             return urlMatcher.matches(url)
         }
 
+        let pattern = matchPattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        if pattern.isEmpty {
+            return url.isEmpty
+        }
+
+        let (subject, isHostMatch) = matchSubject(for: url, pattern: pattern, matchType: matchType)
+
         switch matchType {
         case .exact:
-            return url == matchPattern
+            if isHostMatch {
+                return subject.lowercased() == pattern.lowercased()
+            }
+            return subject == pattern
         case .contains:
-            return url.contains(matchPattern)
+            if isHostMatch {
+                let lowerPattern = pattern.lowercased()
+                return subject.lowercased().contains(lowerPattern) || url.lowercased().contains(lowerPattern)
+            }
+            return subject.contains(pattern) || url.contains(pattern)
         case .wildcard:
-            return matchesWildcard(url, pattern: matchPattern)
+            return matchesWildcard(subject, pattern: pattern)
         case .regex:
-            guard let regex = try? NSRegularExpression(pattern: matchPattern, options: []) else {
+            let options: NSRegularExpression.Options = isHostMatch ? [.caseInsensitive] : []
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else {
                 return false
             }
-            let range = NSRange(url.startIndex..., in: url)
-            return regex.firstMatch(in: url, range: range) != nil
+            let range = NSRange(subject.startIndex..., in: subject)
+            return regex.firstMatch(in: subject, range: range) != nil
         }
     }
 
@@ -492,27 +530,7 @@ public struct HostEntry: Codable, Identifiable, Equatable {
     }
 
     public var isValidTargetIP: Bool {
-        if isValidIPv4(targetIP) { return true }
-        if isValidIPv6(targetIP) { return true }
-        return !targetIP.trimmingCharacters(in: .whitespaces).isEmpty
-    }
-
-    private func isValidIPv4(_ ip: String) -> Bool {
-        let parts = ip.split(separator: ".")
-        guard parts.count == 4 else { return false }
-        return parts.allSatisfy { part in
-            guard let num = Int(part), num >= 0, num <= 255 else { return false }
-            return true
-        }
-    }
-
-    private func isValidIPv6(_ ip: String) -> Bool {
-        let parts = ip.split(separator: ":")
-        guard parts.count >= 3 && parts.count <= 8 else { return false }
-        return parts.allSatisfy { part in
-            guard part.count <= 4 else { return false }
-            return part.allSatisfy { char in char.isHexDigit }
-        }
+        Validation.isValidIPAddress(targetIP)
     }
 
     public var validationErrors: [String] {
@@ -894,23 +912,33 @@ public struct Script: Codable, Identifiable, Sendable {
 
     public func matches(_ url: String) -> Bool {
         guard enabled else { return false }
-        guard let pattern = matchPattern, !pattern.isEmpty else {
-            return true
-        }
+        guard let rawPattern = matchPattern else { return true }
+        let pattern = rawPattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !pattern.isEmpty else { return true }
+
+        let (subject, isHostMatch) = matchSubject(for: url, pattern: pattern, matchType: matchType)
 
         switch matchType {
         case .exact:
-            return url == pattern
+            if isHostMatch {
+                return subject.lowercased() == pattern.lowercased()
+            }
+            return subject == pattern
         case .contains:
-            return url.contains(pattern)
+            if isHostMatch {
+                let lowerPattern = pattern.lowercased()
+                return subject.lowercased().contains(lowerPattern) || url.lowercased().contains(lowerPattern)
+            }
+            return subject.contains(pattern) || url.contains(pattern)
         case .wildcard:
-            return matchesWildcard(url, pattern: pattern)
+            return matchesWildcard(subject, pattern: pattern)
         case .regex:
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            let options: NSRegularExpression.Options = isHostMatch ? [.caseInsensitive] : []
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else {
                 return false
             }
-            let range = NSRange(url.startIndex..., in: url)
-            return regex.firstMatch(in: url, range: range) != nil
+            let range = NSRange(subject.startIndex..., in: subject)
+            return regex.firstMatch(in: subject, range: range) != nil
         }
     }
 

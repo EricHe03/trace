@@ -10,6 +10,14 @@ import Foundation
 public enum ContentSafety {
     public static func isBinary(_ data: Data) -> Bool {
         guard !data.isEmpty else { return false }
+        // Fast-path for common binary signatures where the heuristic ratio can misclassify
+        // small headers as text-like (e.g. PNG).
+        if data.count >= 8 {
+            let prefix8 = [UInt8](data.prefix(8))
+            if prefix8 == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] { // PNG
+                return true
+            }
+        }
         if data.contains(0) { return true }
         let sample = data.prefix(4096)
         let nonText = sample.filter { byte in
