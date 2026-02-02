@@ -58,28 +58,50 @@ public struct ScriptDebugger {
 }
 
 @objc private protocol DebugConsoleExports: JSExport {
-    func log(_ message: String)
-    func error(_ message: String)
-    func warn(_ message: String)
-    func info(_ message: String)
+    func log(_ message: JSValue)
+    func error(_ message: JSValue)
+    func warn(_ message: JSValue)
+    func info(_ message: JSValue)
 }
 
 @objc private final class DebugConsole: NSObject, DebugConsoleExports {
     var messages: [ScriptDebugger.ConsoleMessage] = []
 
-    func log(_ message: String) {
-        messages.append(.init(level: .debug, message: message))
+    func log(_ message: JSValue) {
+        messages.append(.init(level: .debug, message: stringify(message)))
     }
 
-    func error(_ message: String) {
-        messages.append(.init(level: .error, message: message))
+    func error(_ message: JSValue) {
+        messages.append(.init(level: .error, message: stringify(message)))
     }
 
-    func warn(_ message: String) {
-        messages.append(.init(level: .warning, message: message))
+    func warn(_ message: JSValue) {
+        messages.append(.init(level: .warning, message: stringify(message)))
     }
 
-    func info(_ message: String) {
-        messages.append(.init(level: .info, message: message))
+    func info(_ message: JSValue) {
+        messages.append(.init(level: .info, message: stringify(message)))
+    }
+
+    private func stringify(_ value: JSValue) -> String {
+        if value.isNull {
+            return "null"
+        }
+        if value.isUndefined {
+            return "undefined"
+        }
+        if value.isString || value.isNumber || value.isBoolean {
+            return value.toString()
+        }
+
+        if let context = value.context,
+           let json = context.objectForKeyedSubscript("JSON"),
+           let stringify = json.objectForKeyedSubscript("stringify"),
+           let jsonString = stringify.call(withArguments: [value])?.toString(),
+           jsonString != "undefined" {
+            return jsonString
+        }
+
+        return value.toString()
     }
 }
