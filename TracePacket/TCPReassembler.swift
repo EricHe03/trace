@@ -116,12 +116,88 @@ public final class TCPReassembler: @unchecked Sendable {
         var outputs: [Output] = []
         guard var expected = state.nextExpectedSeq else { return outputs }
 
-        while let data = state.buffered.removeValue(forKey: expected) {
-            outputs.append(Output(flow: flow, data: data, isFinal: false))
-            expected = expected &+ UInt32(data.count)
+        while true {
+            if let data = state.buffered.removeValue(forKey: expected) {
+                outputs.append(Output(flow: flow, data: data, isFinal: false))
+                expected = expected &+ UInt32(data.count)
+                continue
+            }
+
+            // If we have an overlapping segment that spans the expected sequence, trim it forward to
+            // the expected boundary so draining can continue.
+            if let (seq, data) = findSegmentSpanningExpected(buffered: state.buffered, expected: expected) {
+                state.buffered.removeValue(forKey: seq)
+                let overlap = expected &- seq
+                if overlap < data.count {
+                    let trimmed = data.dropFirst(Int(overlap))
+                    state.buffered[expected] = Data(trimmed)
+                    continue
+                }
+            }
+
+            break
         }
+
+        pruneBufferedSegmentsBehindExpected(state: &state, expected: expected)
         state.nextExpectedSeq = expected
         return outputs
+    }
+
+    private func findSegmentSpanningExpected(
+        buffered: [UInt32: Data],
+        expected: UInt32
+    ) -> (seq: UInt32, data: Data)? {
+        var bestSeq: UInt32?
+        var bestData: Data?
+
+        for (seq, data) in buffered {
+            guard seq < expected else { continue }
+            let end = seq &+ UInt32(data.count)
+            guard end > expected else { continue }
+            if let currentBest = bestSeq, currentBest > seq {
+                continue
+            }
+            bestSeq = seq
+            bestData = data
+        }
+
+        if let bestSeq, let bestData {
+            return (bestSeq, bestData)
+        }
+        return nil
+    }
+
+    private func pruneBufferedSegmentsBehindExpected(state: inout FlowState, expected: UInt32) {
+        guard !state.buffered.isEmpty else { return }
+
+        var toRemove: [UInt32] = []
+        var toReinsert: [(UInt32, Data)] = []
+
+        for (seq, data) in state.buffered {
+            let end = seq &+ UInt32(data.count)
+            if end <= expected {
+                toRemove.append(seq)
+                continue
+            }
+            if seq < expected {
+                let overlap = expected &- seq
+                if overlap < data.count {
+                    toRemove.append(seq)
+                    let trimmed = data.dropFirst(Int(overlap))
+                    toReinsert.append((expected, Data(trimmed)))
+                }
+            }
+        }
+
+        for seq in toRemove {
+            state.buffered.removeValue(forKey: seq)
+        }
+        for (seq, data) in toReinsert {
+            if let existing = state.buffered[seq] {
+                if existing.count >= data.count { continue }
+            }
+            state.buffered[seq] = data
+        }
     }
 
     private func evictExpired(now: Date) {

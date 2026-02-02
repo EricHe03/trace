@@ -178,6 +178,53 @@ final class PCAPReaderTests: XCTestCase {
         }
     }
 
+    func testReadBigEndianPCAPFile() throws {
+        let url = tempDirectory.appendingPathComponent("big_endian.pcap")
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+
+        guard let handle = try? FileHandle(forWritingTo: url) else {
+            XCTFail("Could not create file")
+            return
+        }
+
+        // Write global header (big-endian).
+        var header = Data()
+        header.appendUInt32BE(0xA1B2_C3D4) // Magic (microsecond, big-endian)
+        header.appendUInt16BE(2) // Version major
+        header.appendUInt16BE(4) // Version minor
+        header.appendUInt32BE(0) // Timezone
+        header.appendUInt32BE(0) // Sigfigs
+        header.appendUInt32BE(65535) // Snaplen
+        header.appendUInt32BE(101) // Network (RAW IP)
+        try handle.write(contentsOf: header)
+
+        // Write one packet record (big-endian).
+        let timestamp = Date(timeIntervalSince1970: 1_234_567_890.25)
+        let data = Data([0x01, 0x02, 0x03])
+        let seconds = UInt32(timestamp.timeIntervalSince1970)
+        let usec = UInt32((timestamp.timeIntervalSince1970 - Double(seconds)) * 1_000_000.0)
+
+        var recordHeader = Data()
+        recordHeader.appendUInt32BE(seconds)
+        recordHeader.appendUInt32BE(usec)
+        recordHeader.appendUInt32BE(UInt32(data.count))
+        recordHeader.appendUInt32BE(UInt32(data.count))
+        try handle.write(contentsOf: recordHeader)
+        try handle.write(contentsOf: data)
+
+        try handle.close()
+
+        let reader = try PCAPReader(url: url)
+        var packets: [PCAPPacket] = []
+        try reader.forEachPacket { packet in
+            packets.append(packet)
+        }
+
+        XCTAssertEqual(packets.count, 1)
+        XCTAssertEqual(packets[0].data, data)
+        XCTAssertEqual(packets[0].timestamp.timeIntervalSince1970, timestamp.timeIntervalSince1970, accuracy: 0.001)
+    }
+
     func testTruncatedHeader() throws {
         let url = tempDirectory.appendingPathComponent("truncated.pcap")
         let truncatedHeader = Data([0xD4, 0xC3, 0xB2, 0xA1, 0x02]) // Only 5 bytes
@@ -361,6 +408,16 @@ private extension Data {
 
     mutating func appendUInt32LE(_ value: UInt32) {
         var v = value.littleEndian
+        self.append(UnsafeBufferPointer(start: &v, count: 1))
+    }
+
+    mutating func appendUInt16BE(_ value: UInt16) {
+        var v = value.bigEndian
+        self.append(UnsafeBufferPointer(start: &v, count: 1))
+    }
+
+    mutating func appendUInt32BE(_ value: UInt32) {
+        var v = value.bigEndian
         self.append(UnsafeBufferPointer(start: &v, count: 1))
     }
 }

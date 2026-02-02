@@ -516,4 +516,58 @@ final class TCPReassemblerTests: XCTestCase {
         XCTAssertEqual(outputs2.count, 1)
         XCTAssertEqual(outputs2[0].data, Data("CD".utf8))
     }
+
+    func testDrainsBufferedSegmentThatOverlapsExpectedBoundary() {
+        let packet1 = TCPPacket(
+            sourcePort: 12345,
+            destinationPort: 80,
+            sequenceNumber: 1000,
+            acknowledgmentNumber: 0,
+            dataOffset: 20,
+            flags: [],
+            windowSize: 8192,
+            options: TCPPacket.Options(mss: nil, windowScale: nil, sackPermitted: false, timestamps: nil),
+            payload: Data("ABCDE".utf8)
+        )
+
+        // This gets buffered initially because it starts after the expected sequence.
+        let packet2 = TCPPacket(
+            sourcePort: 12345,
+            destinationPort: 80,
+            sequenceNumber: 1010,
+            acknowledgmentNumber: 0,
+            dataOffset: 20,
+            flags: [],
+            windowSize: 8192,
+            options: TCPPacket.Options(mss: nil, windowScale: nil, sackPermitted: false, timestamps: nil),
+            payload: Data("KLMNO".utf8)
+        )
+
+        // This fills the gap and also overlaps packet2, so packet2 should be trimmed forward and drained.
+        let packet3 = TCPPacket(
+            sourcePort: 12345,
+            destinationPort: 80,
+            sequenceNumber: 1003,
+            acknowledgmentNumber: 0,
+            dataOffset: 20,
+            flags: [],
+            windowSize: 8192,
+            options: TCPPacket.Options(mss: nil, windowScale: nil, sackPermitted: false, timestamps: nil),
+            payload: Data("DEFGHIJKLM".utf8) // 1003..1013
+        )
+
+        let outputs1 = reassembler.process(ipPacket: testIPPacket, tcpPacket: packet1)
+        XCTAssertEqual(outputs1.count, 1)
+        XCTAssertEqual(outputs1[0].data, Data("ABCDE".utf8))
+
+        let outputs2 = reassembler.process(ipPacket: testIPPacket, tcpPacket: packet2)
+        XCTAssertEqual(outputs2.count, 0)
+
+        let outputs3 = reassembler.process(ipPacket: testIPPacket, tcpPacket: packet3)
+        var combined = Data()
+        for output in outputs3 {
+            combined.append(output.data)
+        }
+        XCTAssertEqual(combined, Data("FGHIJKLMNO".utf8))
+    }
 }
