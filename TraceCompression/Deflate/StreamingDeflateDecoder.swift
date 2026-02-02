@@ -15,6 +15,7 @@ public class StreamingDeflateDecoder: StreamingDecoderProtocol {
     public private(set) var isInitialized: Bool = false
     public private(set) var totalBytesIn: Int = 0
     public private(set) var totalBytesOut: Int = 0
+    private var didReachStreamEnd: Bool = false
     private var buffer: Data
 
     /// Creates a decoder with the provided configuration.
@@ -71,6 +72,10 @@ public class StreamingDeflateDecoder: StreamingDecoderProtocol {
                         throw CompressionError.decompressionFailed("inflate failed with code \(result)")
                     }
 
+                    if result == Z_STREAM_END {
+                        didReachStreamEnd = true
+                    }
+
                     let bytesProduced = config.chunkSize - Int(stream.avail_out)
                     if bytesProduced > 0, let baseAddress = outputPointer.baseAddress {
                         output.append(baseAddress, count: bytesProduced)
@@ -94,6 +99,20 @@ public class StreamingDeflateDecoder: StreamingDecoderProtocol {
             throw CompressionError.notInitialized("Decoder not initialized")
         }
 
+        if totalBytesIn == 0 {
+            inflateEnd(&stream)
+            isInitialized = false
+            didReachStreamEnd = false
+            return Data()
+        }
+
+        if didReachStreamEnd {
+            inflateEnd(&stream)
+            isInitialized = false
+            didReachStreamEnd = false
+            return Data()
+        }
+
         var output = Data()
         var outputBuffer = [UInt8](repeating: 0, count: config.chunkSize)
 
@@ -112,6 +131,10 @@ public class StreamingDeflateDecoder: StreamingDecoderProtocol {
                     throw CompressionError.decompressionFailed("inflate finalize failed with code \(result)")
                 }
 
+                if result == Z_STREAM_END {
+                    didReachStreamEnd = true
+                }
+
                 let bytesProduced = config.chunkSize - Int(stream.avail_out)
                 if bytesProduced > 0, let baseAddress = outputPointer.baseAddress {
                     output.append(baseAddress, count: bytesProduced)
@@ -125,6 +148,7 @@ public class StreamingDeflateDecoder: StreamingDecoderProtocol {
 
         inflateEnd(&stream)
         isInitialized = false
+        didReachStreamEnd = false
 
         return output
     }
@@ -137,6 +161,7 @@ public class StreamingDeflateDecoder: StreamingDecoderProtocol {
         isInitialized = false
         totalBytesIn = 0
         totalBytesOut = 0
+        didReachStreamEnd = false
         buffer.removeAll(keepingCapacity: true)
     }
 }
