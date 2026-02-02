@@ -166,6 +166,13 @@ final class PCAPReaderTests: XCTestCase {
         let url = tempDirectory.appendingPathComponent("invalid.pcap")
         var invalidHeader = Data()
         invalidHeader.appendUInt32LE(0xDEADBEEF) // Invalid magic
+        // Fill out the rest of the 24-byte global header so this exercises magic parsing (not truncation).
+        invalidHeader.appendUInt16LE(2) // Version major
+        invalidHeader.appendUInt16LE(4) // Version minor
+        invalidHeader.appendUInt32LE(0) // Timezone
+        invalidHeader.appendUInt32LE(0) // Sigfigs
+        invalidHeader.appendUInt32LE(65535) // Snaplen
+        invalidHeader.appendUInt32LE(101) // Network (RAW IP)
         try invalidHeader.write(to: url)
 
         let reader = try PCAPReader(url: url)

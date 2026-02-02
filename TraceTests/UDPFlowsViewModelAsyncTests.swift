@@ -206,7 +206,9 @@ final class UDPFlowsViewModelAsyncTests: XCTestCase {
         let url = try viewModel.exportJSON()
 
         let data = try Data(contentsOf: url)
-        let jsonArray = try JSONDecoder().decode([UDPFlowMetadata].self, from: data)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let jsonArray = try decoder.decode([UDPFlowMetadata].self, from: data)
 
         XCTAssertEqual(jsonArray.count, 1)
         XCTAssertEqual(jsonArray.first?.sourceIP, "192.168.1.100")

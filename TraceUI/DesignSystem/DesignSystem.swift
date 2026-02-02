@@ -549,6 +549,8 @@ private struct ToastModifier: ViewModifier {
 // MARK: - Helper Functions
 
 public extension DesignSystem {
+    private static let posixLocale = Locale(identifier: "en_US_POSIX")
+
     /// Formats a duration consistently for UI display.
     static func formattedDuration(_ duration: TimeInterval) -> String {
         if duration < 1 {
@@ -564,6 +566,29 @@ public extension DesignSystem {
 
     /// Formats byte counts consistently for UI display.
     static func formattedBytes(_ bytes: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+        // Use a deterministic formatter instead of `ByteCountFormatter` to avoid
+        // OS-version/locale wording differences (e.g. "Zero KB" vs "0 B").
+        let value = max(0, bytes)
+        if value < 1024 {
+            return "\(value) B"
+        }
+
+        let kb = Double(value) / 1024.0
+        if kb < 1024 {
+            return String(format: "%.1f KB", locale: posixLocale, arguments: [kb])
+        }
+
+        let mb = kb / 1024.0
+        if mb < 1024 {
+            return String(format: "%.1f MB", locale: posixLocale, arguments: [mb])
+        }
+
+        let gb = mb / 1024.0
+        if gb < 1024 {
+            return String(format: "%.1f GB", locale: posixLocale, arguments: [gb])
+        }
+
+        let tb = gb / 1024.0
+        return String(format: "%.1f TB", locale: posixLocale, arguments: [tb])
     }
 }
