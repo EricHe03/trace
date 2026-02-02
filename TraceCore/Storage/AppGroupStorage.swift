@@ -18,6 +18,7 @@ public class AppGroupStorage: @unchecked Sendable {
     public static var appGroupIdentifier: String {
         AppGroupConfiguration.appGroupIdentifier
     }
+
     private static let isSimulator: Bool = {
         #if targetEnvironment(simulator)
         return true

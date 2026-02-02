@@ -28,4 +28,3 @@ final actor StartCompletionGate {
         return true
     }
 }
-

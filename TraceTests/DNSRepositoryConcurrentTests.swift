@@ -348,9 +348,10 @@ final class DNSRepositoryConcurrentTests: XCTestCase {
         let observer = NotificationCenter.default.addObserver(
             forName: DNSRepository.didChangeNotification,
             object: nil,
-            queue: .main
+            queue: nil
         ) { _ in
             notificationCount += 1
+            expectation.fulfill()
         }
 
         // Add many messages rapidly
@@ -362,15 +363,12 @@ final class DNSRepositoryConcurrentTests: XCTestCase {
             repository.add(message)
         }
 
-        // Wait for coalescing
-        Thread.sleep(forTimeInterval: 0.5)
+        // Allow the main-queue coalesced notification to fire.
+        wait(for: [expectation], timeout: 2.0)
 
         // Should have fewer notifications than messages due to coalescing
         XCTAssertLessThan(notificationCount, 100)
         XCTAssertGreaterThan(notificationCount, 0)
-
-        expectation.fulfill()
-        wait(for: [expectation], timeout: 1.0)
 
         NotificationCenter.default.removeObserver(observer)
     }

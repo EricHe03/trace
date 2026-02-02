@@ -186,7 +186,12 @@ final class DeflateDecoderTests: XCTestCase {
             compressed[5] = compressed[5] ^ 0xFF
         }
 
-        XCTAssertThrowsError(try DeflateDecoder.decompress(compressed))
+        do {
+            let decompressed = try DeflateDecoder.decompress(compressed)
+            XCTAssertNotEqual(decompressed, original)
+        } catch {
+            // Raw DEFLATE has no checksum; corruption may be detected or may produce garbage output.
+        }
     }
 
     // MARK: - Binary Data Tests

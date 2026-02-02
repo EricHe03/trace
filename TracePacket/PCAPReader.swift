@@ -89,9 +89,9 @@ public final class PCAPReader {
                 throw PCAPReaderError.packetTooLarge
             }
 
-            guard inclLen <= UInt32(Int.max) else { throw PCAPReaderError.packetTooLarge }
-            let packetData = try readExactly(count: Int(inclLen))
-            guard packetData.count == Int(inclLen) else { throw PCAPReaderError.truncatedRecord }
+            guard let inclLenInt = Int(exactly: inclLen) else { throw PCAPReaderError.packetTooLarge }
+            let packetData = try readExactly(count: inclLenInt)
+            guard packetData.count == inclLenInt else { throw PCAPReaderError.truncatedRecord }
 
             let timestamp = Date(timeIntervalSince1970: Double(tsSec) + (Double(tsSubsec) / format.timestampDivisor))
             try handler(PCAPPacket(timestamp: timestamp, data: packetData))

@@ -279,6 +279,12 @@ final class NetworkRequestTagsTests: XCTestCase {
         ]
         XCTAssertTrue(request.isStale)
 
+        // Non-cached responses should not be marked stale just because directives exist.
+        request.responseHeaders = [
+            TraceHTTPHeader(key: "Cache-Control", value: "max-age=3600, stale-while-revalidate=60")
+        ]
+        XCTAssertFalse(request.isStale)
+
         // Test Warning 110
         request.responseHeaders = [
             TraceHTTPHeader(key: "Warning", value: "110 - Response is Stale")

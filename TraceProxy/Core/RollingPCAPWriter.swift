@@ -182,4 +182,3 @@ private struct PCAPGlobalHeader {
     var snaplen: UInt32 = 65535
     var network: UInt32 = 101
 }
-

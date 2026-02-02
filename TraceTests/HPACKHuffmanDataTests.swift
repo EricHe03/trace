@@ -87,7 +87,9 @@ final class HPACKHuffmanDataTests: XCTestCase {
     func testGlobalHuffmanDecodeTableAccess() {
         let table = huffmanDecodeTable
         XCTAssertGreaterThan(table.count, 0)
-        XCTAssertTrue(table.count % 16 == 0, "Table size should be multiple of 16")
+        for row in table {
+            XCTAssertEqual(row.count, 16, "Each row should have 16 entries")
+        }
     }
 
     func testHuffmanDecodeTableConsistency() {

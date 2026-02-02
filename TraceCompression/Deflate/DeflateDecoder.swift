@@ -86,15 +86,17 @@ public class DeflateDecoder {
                             output.append(baseAddress, count: produced)
                         }
                     case Z_BUF_ERROR:
-                        if stream.avail_in == 0 {
-                            break
-                        }
+                        // If we're out of input but not at stream end, treat as corrupted/truncated.
                         throw DecompressionError.processingFailed
                     default:
                         throw DecompressionError.processingFailed
                     }
                 }
             } while status == Z_OK
+
+            guard status == Z_STREAM_END, stream.avail_in == 0 else {
+                throw DecompressionError.processingFailed
+            }
 
             return output
         }

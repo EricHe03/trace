@@ -18,6 +18,7 @@ final class MITMAutoBypassCacheTests: XCTestCase {
     override func setUp() {
         super.setUp()
         sut = MITMAutoBypassCache.shared
+        sut.clear()
     }
 
     override func tearDown() {

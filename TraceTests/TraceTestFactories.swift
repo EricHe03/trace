@@ -219,6 +219,8 @@ func makeChunkedBody(chunks: [String]) -> Data {
     var chunkedData = Data()
 
     for chunk in chunks {
+        // A zero-length chunk is the terminal chunk in RFC 9112; don't generate it as a mid-stream chunk.
+        guard !chunk.isEmpty else { continue }
         if let chunkSize = "\(String(format: "%X", chunk.count))\r\n".data(using: .utf8) {
             chunkedData.append(chunkSize)
         }

@@ -439,6 +439,13 @@ final class CaptureViewModel: ObservableObject {
     private var isLoadingSettings = false
 
     init() {
+        // Unit tests run with the full host app launched. Avoid starting long-lived observers,
+        // VPN hooks, and bulk storage loads during tests to prevent hangs/timeouts and to keep
+        // tests deterministic.
+        if RuntimeEnvironment.isRunningUnitTests {
+            return
+        }
+
         // Load saved grouping mode.
         //
         // IMPORTANT: Restore via `setGroupingMode(_:)` (not direct assignment) so we also
@@ -825,9 +832,10 @@ final class CaptureViewModel: ObservableObject {
         }
 
         if !hasActiveFilters, searchText.isEmpty {
-            filteredRequestsCache = requests
+            let sorted = requests.sorted { $0.timestamp > $1.timestamp }
+            filteredRequestsCache = sorted
             filteredRequestsCacheKey = cacheKey
-            return requests
+            return sorted
         }
 
         var results: [NetworkRequest] = []
@@ -889,6 +897,7 @@ final class CaptureViewModel: ObservableObject {
             results.append(request)
         }
 
+        results.sort { $0.timestamp > $1.timestamp }
         filteredRequestsCache = results
         filteredRequestsCacheKey = cacheKey
         return results
