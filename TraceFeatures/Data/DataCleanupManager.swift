@@ -16,7 +16,15 @@ actor DataCleanupManager {
     static let shared = DataCleanupManager()
 
     private var cleanupTask: Task<Void, Never>?
-    private let defaults = UserDefaults.standard
+    private static var isRunningUnitTests: Bool {
+        #if canImport(TraceCore)
+        return RuntimeEnvironment.isRunningUnitTests
+        #else
+        return ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        #endif
+    }
+
+    private let defaults: UserDefaults
 
     private enum DefaultsKey {
         static let cleanupConfiguration = "trace.settings.storage.cleanupConfiguration"
@@ -52,8 +60,19 @@ actor DataCleanupManager {
     private var stats = CleanupStats()
 
     private init() {
-        config = Self.loadPersistedConfiguration(from: defaults) ?? CleanupConfiguration()
-        stats = Self.loadPersistedStats(from: defaults) ?? CleanupStats()
+        // Unit tests should not depend on developer/user persisted app settings.
+        // Use an isolated suite so default configuration tests are deterministic.
+        if Self.isRunningUnitTests {
+            defaults = UserDefaults(suiteName: "com.trace.TraceTests") ?? .standard
+            // Keep tests deterministic and isolated from any persisted host-app settings.
+            // Unit tests can still mutate configuration in-memory via `updateConfiguration`.
+            config = CleanupConfiguration()
+            stats = CleanupStats()
+        } else {
+            defaults = .standard
+            config = Self.loadPersistedConfiguration(from: defaults) ?? CleanupConfiguration()
+            stats = Self.loadPersistedStats(from: defaults) ?? CleanupStats()
+        }
         if config.enabled {
             Task { await self.startAutoCleanup() }
         }
@@ -655,6 +674,7 @@ extension DataCleanupManager {
     }
 
     private func persistConfiguration() {
+        guard !Self.isRunningUnitTests else { return }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         if let data = try? encoder.encode(config) {
@@ -663,6 +683,7 @@ extension DataCleanupManager {
     }
 
     private func persistStats() {
+        guard !Self.isRunningUnitTests else { return }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         if let data = try? encoder.encode(stats) {

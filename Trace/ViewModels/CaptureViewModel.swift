@@ -439,6 +439,13 @@ final class CaptureViewModel: ObservableObject {
     private var isLoadingSettings = false
 
     init() {
+        // Unit tests run with the full host app launched. Avoid starting long-lived observers,
+        // VPN hooks, and bulk storage loads during tests to prevent hangs/timeouts and to keep
+        // tests deterministic.
+        if RuntimeEnvironment.isRunningUnitTests {
+            return
+        }
+
         // Load saved grouping mode.
         //
         // IMPORTANT: Restore via `setGroupingMode(_:)` (not direct assignment) so we also

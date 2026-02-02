@@ -333,6 +333,13 @@
 			);
 			name = TraceTests;
 			packageProductDependencies = (
+				5F4B07C12F149C0000D9933A /* TraceCore */,
+				5F4B07C32F149C0000D9933A /* TraceCompression */,
+				5F4B07C52F149C0000D9933A /* TraceSecurity */,
+				5F4B07C72F149C0000D9933A /* TraceNetworking */,
+				5F4B07C92F149C0000D9933A /* TraceProxy */,
+				5F4B07CB2F149C0000D9933A /* TraceFeatures */,
+				5F4B07B12F149B1000D9933A /* TraceUI */,
 				5F4B07CD2F149C0000D9933A /* TracePacket */,
 				5F4B07CF2F149C0000D9933A /* HevSocks5Tunnel */,
 			);
