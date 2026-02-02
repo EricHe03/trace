@@ -832,9 +832,10 @@ final class CaptureViewModel: ObservableObject {
         }
 
         if !hasActiveFilters, searchText.isEmpty {
-            filteredRequestsCache = requests
+            let sorted = requests.sorted { $0.timestamp > $1.timestamp }
+            filteredRequestsCache = sorted
             filteredRequestsCacheKey = cacheKey
-            return requests
+            return sorted
         }
 
         var results: [NetworkRequest] = []
@@ -896,6 +897,7 @@ final class CaptureViewModel: ObservableObject {
             results.append(request)
         }
 
+        results.sort { $0.timestamp > $1.timestamp }
         filteredRequestsCache = results
         filteredRequestsCacheKey = cacheKey
         return results

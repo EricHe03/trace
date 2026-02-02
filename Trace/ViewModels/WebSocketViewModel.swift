@@ -75,6 +75,7 @@ final class WebSocketViewModel: ObservableObject {
             }
         }
 
+        filtered.sort { $0.startTime > $1.startTime }
         return filtered
     }
 
