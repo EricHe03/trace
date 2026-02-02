@@ -35,11 +35,11 @@ struct SSEDetailView: View {
 
                 if connection.isTruncated {
                     HStack {
-                        Text("Truncated:")
+                        Label("Truncated:", systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.secondary)
                         Spacer()
                         Text("Yes (Limit Reached)")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(DesignSystem.Colors.warning)
                             .fontWeight(.medium)
                     }
                 }
@@ -54,13 +54,18 @@ struct SSEDetailView: View {
 
             // Events Section
             Section {
-                ForEach(filteredEvents) { event in
-                    Button {
-                        selectedEvent = event
-                    } label: {
-                        SSEConnectionEventRow(event: event)
+                if filteredEvents.isEmpty {
+                    eventsEmptyState
+                } else {
+                    ForEach(filteredEvents) { event in
+                        Button {
+                            selectedEvent = event
+                        } label: {
+                            SSEConnectionEventRow(event: event)
+                        }
+                        .foregroundStyle(.primary)
+                        .accessibilityHint("Double tap to view event details")
                     }
-                    .foregroundStyle(.primary)
                 }
             } header: {
                 HStack {
@@ -127,6 +132,26 @@ struct SSEDetailView: View {
 
     private var hasActiveFilters: Bool {
         filterEventType != nil
+    }
+
+    @ViewBuilder
+    private var eventsEmptyState: some View {
+        if connection.events.isEmpty {
+            TraceContentUnavailableView(
+                "No Events",
+                systemImage: "text.badge.checkmark",
+                description: Text("Server-sent events will appear here as they're received")
+            )
+            .listRowBackground(Color.clear)
+        } else {
+            // Filters resulted in no events
+            TraceContentUnavailableView(
+                "No Events Match",
+                systemImage: "magnifyingglass",
+                description: Text("Try adjusting your search or filters")
+            )
+            .listRowBackground(Color.clear)
+        }
     }
 
     private func clearFilters() {

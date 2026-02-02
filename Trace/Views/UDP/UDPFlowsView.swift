@@ -119,14 +119,14 @@ struct UDPFlowsView: View {
             }
         }
         .refreshable {
-            viewModel.loadFlows()
+            await viewModel.loadFlows()
         }
         .toast(message: $toastMessage)
         .onAppear {
             viewModel.startObserving()
-            viewModel.loadFlows()
+            Task { await viewModel.loadFlows() }
         }
-        .onChange(of: viewModel.lastError) { newValue in
+        .onChangeCompat(of: viewModel.lastError) { newValue in
             guard let message = newValue else { return }
             toastMessage = message
         }
@@ -188,6 +188,17 @@ private struct StatCard: View {
 private struct UDPFlowRow: View {
     let flow: UDPFlowMetadata
     let viewModel: UDPFlowsViewModel
+    private var accessibilityValue: String {
+        var parts: [String] = []
+        parts.append("\(flow.sourceIP):\(flow.sourcePort) to \(flow.destinationIP):\(flow.destinationPort)")
+        parts.append(flow.detectedProtocol.displayName)
+        parts.append(viewModel.formatBytes(flow.totalBytes))
+        parts.append(viewModel.formatDuration(flow.duration))
+        if flow.isActive {
+            parts.append("active")
+        }
+        return parts.joined(separator: ", ")
+    }
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -221,12 +232,13 @@ private struct UDPFlowRow: View {
                 // Metadata
                 HStack(spacing: 6) {
                     Text(flow.detectedProtocol.displayName)
-                        .font(.caption2.weight(.medium))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
+                        .padding(.vertical, DesignSystem.Badge.verticalPadding)
+                        .frame(minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget)
                         .background(protocolColor.opacity(0.1))
                         .foregroundStyle(protocolColor)
-                        .cornerRadius(4)
+                        .cornerRadius(DesignSystem.Badge.cornerRadius)
 
                     Text("•")
                         .font(.caption2)
@@ -240,9 +252,9 @@ private struct UDPFlowRow: View {
                         Text("•")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        Text("Active")
+                        Label("Active", systemImage: "bolt.fill")
                             .font(.caption)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(DesignSystem.Colors.success)
                     }
                 }
             }
@@ -256,7 +268,10 @@ private struct UDPFlowRow: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, DesignSystem.Spacing.xs)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("UDP flow")
+        .accessibilityValue(accessibilityValue)
     }
 
     private var protocolColor: Color {
@@ -322,6 +337,7 @@ private struct UDPFlowFiltersView: View {
             }
         }
         .navigationTitle("Filters")
+        .dismissKeyboardOnTapAndScroll()
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button("Done") {

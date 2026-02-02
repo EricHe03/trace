@@ -21,11 +21,26 @@ public enum XPathMatcher {
         }
         #endif
 
-        let sanitized = xpath
-            .replacingOccurrences(of: "//", with: "")
-            .replacingOccurrences(of: "/", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sanitized.isEmpty else { return false }
-        return xml.contains("<\(sanitized)") || xml.contains("</\(sanitized)")
+        let trimmed = xpath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        // Fallback matcher for platforms without FoundationXML.
+        // We support simple XPath shapes used in tests:
+        // - "//tag"
+        // - "/a/b" (match leaf tag)
+        // - "tag"
+        let leaf = trimmed
+            .split(separator: "/")
+            .last(where: { !$0.isEmpty })
+            .map(String.init) ?? ""
+
+        let tag = leaf.split(separator: "[", maxSplits: 1).first.map(String.init) ?? ""
+        guard !tag.isEmpty else { return false }
+
+        let escapedTag = NSRegularExpression.escapedPattern(for: tag)
+        let pattern = "<\\/?\(escapedTag)(\\s|>|/)"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return false }
+        let range = NSRange(xml.startIndex..., in: xml)
+        return regex.firstMatch(in: xml, options: [], range: range) != nil
     }
 }

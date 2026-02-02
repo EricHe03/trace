@@ -11,7 +11,7 @@ import zlib
 @testable import Trace
 @testable import TraceCompression
 
-final class BrotliDecoderTests: XCTestCase {
+final class CompressionDecoder_BrotliDecoderTests: XCTestCase {
     // MARK: - Decompress Tests
 
     func testDecompress_WithEmptyData_ReturnsEmptyData() throws {
@@ -156,7 +156,7 @@ final class BrotliDecoderTests: XCTestCase {
 
 // MARK: - DeflateDecoder Tests
 
-final class DeflateDecoderTests: XCTestCase {
+final class CompressionDecoder_DeflateDecoderTests: XCTestCase {
     // MARK: - Decompress Tests
 
     func testDecompress_WithEmptyData_ReturnsEmptyData() throws {
@@ -329,7 +329,7 @@ final class DeflateDecoderTests: XCTestCase {
 
 // MARK: - CompressionErrors Tests
 
-final class CompressionErrorsTests: XCTestCase {
+final class CompressionDecoder_CompressionErrorsTests: XCTestCase {
     func testDecompressionError_InvalidData_HasCorrectDescription() {
         // Given
         let error = DecompressionError.invalidData

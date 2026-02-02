@@ -96,7 +96,7 @@ struct WebSocketConnectionRow: View {
                 Spacer()
 
                 if let duration = connection.duration {
-                    Text(formattedDuration(duration))
+                    Text(DesignSystem.formattedDuration(duration))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -125,18 +125,6 @@ struct WebSocketConnectionRow: View {
 
     private var statusColor: Color {
         DesignSystem.Colors.statusColor(for: connection.status.color)
-    }
-
-    private func formattedDuration(_ duration: TimeInterval) -> String {
-        if duration < 1 {
-            return String(format: "%.0f ms", duration * 1000)
-        } else if duration < 60 {
-            return String(format: "%.2f s", duration)
-        } else {
-            let minutes = Int(duration / 60)
-            let seconds = Int(duration.truncatingRemainder(dividingBy: 60))
-            return "\(minutes)m \(seconds)s"
-        }
     }
 }
 

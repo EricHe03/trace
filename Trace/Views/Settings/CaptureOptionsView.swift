@@ -38,7 +38,7 @@ struct CaptureOptionsView: View {
                 )
 
                 if showLowBodyWarning {
-                    Text("Configured size was below 10 MB. Using 10 MB instead.")
+                    Label("Configured size was below 10 MB. Using 10 MB instead.", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(DesignSystem.Colors.warning)
                 }
@@ -59,9 +59,13 @@ struct CaptureOptionsView: View {
         .navigationTitle("Capture Options")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: loadConfiguration)
-        .onChange(of: options.captureHeaders) { _ in scheduleSave() }
-        .onChange(of: options.captureBody) { _ in scheduleSave() }
-        .onChange(of: options.maxBodySize) { _ in scheduleSave() }
+        .onChangeCompat(of: options.captureHeaders) { scheduleSave() }
+        .onChangeCompat(of: options.captureBody) { scheduleSave() }
+        .onChangeCompat(of: options.maxBodySize) { scheduleSave() }
+        .onDisappear {
+            saveTask?.cancel()
+            saveTask = nil
+        }
         .toast(message: $toastMessage)
     }
 
@@ -105,9 +109,17 @@ struct CaptureOptionsView: View {
 
         Task {
             if vpnManager.isConnected {
-                try? await vpnManager.sendMessage(["command": "updateCaptureConfig"])
+                do {
+                    try await vpnManager.sendMessage(["command": "updateCaptureConfig"])
+                } catch {
+                    await MainActor.run {
+                        toastMessage = "Saved locally, but failed to notify VPN: \(error.localizedDescription)"
+                    }
+                }
             }
-            isSaving = false
+            await MainActor.run {
+                isSaving = false
+            }
         }
     }
 
@@ -115,6 +127,7 @@ struct CaptureOptionsView: View {
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 persistOptions()
             }

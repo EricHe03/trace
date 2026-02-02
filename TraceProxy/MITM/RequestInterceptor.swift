@@ -321,25 +321,38 @@ public actor RequestInterceptor {
         }
         metrics.blockCheckTimeNs += DispatchTime.now().uptimeNanoseconds - blockStart.uptimeNanoseconds
 
-        // Phase 2: Redirect (single winner)
+        // Phase 2: Redirect (with loop prevention)
         let redirectStart = DispatchTime.now()
-        if let redirectUrl = getRedirectUrl(for: modifiedRequest), redirectUrl != modifiedRequest.url {
-            if redirectUrl == modifiedRequest.url {
+        var redirectCount = 0
+        var visitedRedirectURLs = Set<String>()
+        visitedRedirectURLs.insert(modifiedRequest.url)
+
+        while let redirectUrl = getRedirectUrl(for: modifiedRequest),
+              redirectUrl != modifiedRequest.url {
+            if visitedRedirectURLs.contains(redirectUrl) || redirectCount >= maxRedirectsPerFlow {
                 metrics.redirectLoopsPrevented += 1
-            } else {
-                metrics.redirectedCount += 1
-                modifiedRequest.url = redirectUrl
-                modifiedRequest.wasRewritten = true
-                ProxyLog.interceptor.info(
-                    "event=intercept.redirected outcome=success to=\(redirectUrl, privacy: .private(mask: .hash)) request_id=\(flowIdString, privacy: .public)"
+                ProxyLog.interceptor.warning(
+                    "event=intercept.redirect_loop_prevented outcome=success url=\(modifiedRequest.url, privacy: .private(mask: .hash)) to=\(redirectUrl, privacy: .private(mask: .hash)) count=\(redirectCount) request_id=\(flowIdString, privacy: .public)"
                 )
-                if shouldBlock(request: modifiedRequest) {
-                    metrics.blockedCount += 1
-                    ProxyLog.interceptor.info(
-                        "event=intercept.blocked_after_redirect outcome=success url=\(modifiedRequest.url, privacy: .private(mask: .hash)) request_id=\(flowIdString, privacy: .public)"
-                    )
-                    return .blocked
-                }
+                break
+            }
+
+            redirectCount += 1
+            visitedRedirectURLs.insert(redirectUrl)
+
+            metrics.redirectedCount += 1
+            modifiedRequest.url = redirectUrl
+            modifiedRequest.wasRewritten = true
+            ProxyLog.interceptor.info(
+                "event=intercept.redirected outcome=success to=\(redirectUrl, privacy: .private(mask: .hash)) count=\(redirectCount) request_id=\(flowIdString, privacy: .public)"
+            )
+
+            if shouldBlock(request: modifiedRequest) {
+                metrics.blockedCount += 1
+                ProxyLog.interceptor.info(
+                    "event=intercept.blocked_after_redirect outcome=success url=\(modifiedRequest.url, privacy: .private(mask: .hash)) request_id=\(flowIdString, privacy: .public)"
+                )
+                return .blocked
             }
         }
         metrics.redirectCheckTimeNs += DispatchTime.now().uptimeNanoseconds - redirectStart.uptimeNanoseconds
@@ -1048,7 +1061,11 @@ public actor RequestInterceptor {
 
         case .decompress:
             return transformBody(request: &request, target: target) { data in
-                CompressionHelper.decompress(data: data, algorithm: action.compressionAlgorithm) ?? data
+                CompressionHelper.decompress(
+                    data: data,
+                    algorithm: action.compressionAlgorithm,
+                    maxOutputBytes: maxBodyModificationBytes
+                ) ?? data
             }
 
         case .jsonToXml:

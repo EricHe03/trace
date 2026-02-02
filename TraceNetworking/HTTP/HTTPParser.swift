@@ -84,10 +84,10 @@ public class HTTPParser {
         if isChunked {
             let bodyStart = headerEndOffset
             let bodySlice = data.subdata(in: bodyStart ..< data.count)
-            guard let decodedBody = decodeChunkedBody(bodySlice) else {
+            guard let chunkedInfo = chunkedBodyInfo(bodySlice) else {
                 return nil
             }
-            guard let chunkedInfo = chunkedBodyInfo(bodySlice) else {
+            guard let decodedBody = decodeChunkedBody(bodySlice.subdata(in: 0 ..< chunkedInfo.end)) else {
                 return nil
             }
 
@@ -185,10 +185,10 @@ public class HTTPParser {
         } else if isChunked {
             let bodyStart = headerEndOffset
             let bodySlice = data.subdata(in: bodyStart ..< data.count)
-            guard let decodedBody = decodeChunkedBody(bodySlice) else {
+            guard let chunkedInfo = chunkedBodyInfo(bodySlice) else {
                 return nil
             }
-            guard let chunkedInfo = chunkedBodyInfo(bodySlice) else {
+            guard let decodedBody = decodeChunkedBody(bodySlice.subdata(in: 0 ..< chunkedInfo.end)) else {
                 return nil
             }
 
@@ -270,91 +270,79 @@ public class HTTPParser {
 
     /// Returns the expected body length from the Content-Length header.
     private static func getExpectedBodyLength(headers: [String: [String]]) -> Int? {
-        guard let contentLengthStr = headers["content-length"]?.last else {
+        guard let values = headers["content-length"], !values.isEmpty else {
             return nil
         }
-        return Int(contentLengthStr)
+
+        let parsed = values.compactMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        guard parsed.count == values.count else {
+            return nil
+        }
+        guard let first = parsed.first, first >= 0 else {
+            return nil
+        }
+        // Rule: Multiple Content-Length values must match; otherwise treat as invalid.
+        guard parsed.allSatisfy({ $0 == first }) else {
+            return nil
+        }
+
+        return first
     }
 
     /// Decodes a chunked transfer-encoding body.
     ///
     /// Returns `nil` when the chunk data is incomplete.
     public static func decodeChunkedBody(_ data: Data) -> Data? {
-        let crlf = Data([13, 10])
+        let crlf = Data([0x0D, 0x0A])
+        let trailersTerminator = Data([0x0D, 0x0A, 0x0D, 0x0A])
+
         var result = Data()
         var offset = 0
 
         while offset < data.count {
-            guard let lineRange = data.range(of: crlf, options: [], in: offset ..< data.count) else {
+            guard let sizeLineRange = data.range(of: crlf, options: [], in: offset ..< data.count) else {
                 return nil
             }
 
-            let lineData = data.subdata(in: offset ..< lineRange.lowerBound)
-            let line = String(decoding: lineData, as: UTF8.self)
+            let sizeLineData = data.subdata(in: offset ..< sizeLineRange.lowerBound)
+            let sizeLine = String(decoding: sizeLineData, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let sizeToken = sizeLine.split(separator: ";", maxSplits: 1).first ?? Substring()
 
-            let chunkSizeStr: String = if let semicolonIndex = line.firstIndex(of: ";") {
-                String(line[..<semicolonIndex])
-            } else {
-                line
-            }
-
-            guard let chunkSize = Int(chunkSizeStr.trimmingCharacters(in: .whitespaces), radix: 16) else {
+            guard let chunkSize = Int(sizeToken, radix: 16) else {
                 return nil
             }
 
-            let dataStart = lineRange.upperBound
-            let dataEnd = dataStart + chunkSize
-            guard dataEnd <= data.count else {
+            let chunkDataStart = sizeLineRange.upperBound
+
+            if chunkSize == 0 {
+                // Rule: Final chunk is followed by trailers and a terminating CRLF.
+                let emptyTrailersEnd = chunkDataStart + 2
+                if emptyTrailersEnd <= data.count, data[chunkDataStart ..< emptyTrailersEnd] == crlf {
+                    return result
+                }
+
+                if let trailerEnd = data.range(of: trailersTerminator, options: [], in: chunkDataStart ..< data.count) {
+                    return result
+                }
+
+                return nil
+            }
+
+            let chunkDataEnd = chunkDataStart + chunkSize
+            let chunkEndCRLFEnd = chunkDataEnd + 2
+            guard chunkEndCRLFEnd <= data.count else {
+                return nil
+            }
+            guard data[chunkDataEnd ..< chunkEndCRLFEnd] == crlf else {
                 return nil
             }
 
             if chunkSize > 0 {
-                result.append(data.subdata(in: dataStart ..< dataEnd))
+                result.append(data.subdata(in: chunkDataStart ..< chunkDataEnd))
             }
 
-            let nextStart: Int
-            if chunkSize == 0 {
-                if dataStart + 2 <= data.count, data[dataStart ..< dataStart + 2] == crlf {
-                    nextStart = dataStart + 2
-                } else {
-                    nextStart = dataStart
-                }
-            } else {
-                let expectedStart = dataEnd + 2
-                guard expectedStart <= data.count else {
-                    return nil
-                }
-                guard data[dataEnd ..< expectedStart] == crlf else {
-                    return nil
-                }
-                nextStart = expectedStart
-            }
-
-            if chunkSize == 0 {
-                if nextStart == data.count {
-                    return result
-                }
-
-                if let nextLineRange = data.range(of: crlf, options: [], in: nextStart ..< data.count) {
-                    let nextLineData = data.subdata(in: nextStart ..< nextLineRange.lowerBound)
-                    let nextLine = String(decoding: nextLineData, as: UTF8.self)
-                    let nextToken = nextLine.split(separator: ";", maxSplits: 1).first ?? Substring()
-                    if Int(nextToken.trimmingCharacters(in: .whitespaces), radix: 16) != nil {
-                        offset = nextStart
-                        continue
-                    }
-                }
-
-                let trailerTerminator = Data([13, 10, 13, 10])
-                if let trailerEnd = data.range(of: trailerTerminator, options: [], in: nextStart ..< data.count),
-                   trailerEnd.upperBound == data.count {
-                    return result
-                }
-
-                return nil
-            }
-
-            offset = nextStart
+            offset = chunkEndCRLFEnd
         }
 
         return nil

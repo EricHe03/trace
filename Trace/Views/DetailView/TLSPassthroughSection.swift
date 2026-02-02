@@ -19,7 +19,8 @@ struct TLSPassthroughSection: View {
                 // Header
                 HStack {
                     Image(systemName: request.isPinningLikely ? "lock.shield" : "lock.open")
-                        .foregroundStyle(request.isPinningLikely ? .red : .orange)
+                        .foregroundStyle(request.isPinningLikely ? DesignSystem.Colors.danger : DesignSystem.Colors.warning)
+                        .accessibilityHidden(true)
                     Text(request.isPinningLikely ? "Certificate Pinning Detected" : "TLS Not Decrypted")
                         .font(.headline)
                 }
@@ -52,7 +53,7 @@ struct TLSPassthroughSection: View {
                             .font(.subheadline)
                             .fontWeight(.medium)
 
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
                             reasonItem("Domain not in MITM allowlist")
                             reasonItem("MITM interception disabled")
                             reasonItem("Root CA not trusted / full trust not enabled on device")
@@ -67,13 +68,13 @@ struct TLSPassthroughSection: View {
             .padding()
             .background(
                 RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.lg)
-                    .fill(request.isPinningLikely ? Color.red.opacity(0.1) : Color.orange.opacity(0.1))
+                    .fill((request.isPinningLikely ? DesignSystem.Colors.danger : DesignSystem.Colors.warning).opacity(0.1))
             )
         }
     }
 
     private func explanationText(title: String, description: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: DesignSystem.Spacing.xxs) {
             Text(title)
                 .font(.subheadline)
                 .fontWeight(.medium)
@@ -84,7 +85,7 @@ struct TLSPassthroughSection: View {
     }
 
     private func reasonItem(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: DesignSystem.Spacing.smPlus) {
             Text("•")
                 .foregroundStyle(.secondary)
             Text(text)

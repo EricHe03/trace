@@ -14,8 +14,13 @@ import WidgetKit
 /// Provides configuration options for widget display and behavior.
 @available(iOS 16.0, iOSApplicationExtension 16.0, *)
 struct ConfigurationAppIntent: WidgetConfigurationIntent {
-    static var title: LocalizedStringResource { "Trace Widget Configuration" }
-    static var description: IntentDescription { "Configure your Trace network monitoring widget." }
+    static var title: LocalizedStringResource {
+        "Trace Widget Configuration"
+    }
+
+    static var description: IntentDescription {
+        "Configure your Trace network monitoring widget."
+    }
 
     @Parameter(title: "Show Request Details", default: true)
     var showRequestDetails: Bool

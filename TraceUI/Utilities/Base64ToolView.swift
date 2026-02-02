@@ -32,7 +32,7 @@ public struct Base64ToolView: View {
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
-                .onChange(of: mode) { _ in
+                .onChangeCompat(of: mode) {
                     processText()
                 }
                 .accessibilityLabel("Base64 mode")
@@ -59,7 +59,7 @@ public struct Base64ToolView: View {
                         .frame(minHeight: DesignSystem.Form.textEditorMinHeightMedium)
                         .font(DesignSystem.Typography.monospacedFont)
                         .formTextEditorStyle()
-                        .onChange(of: inputText) { _ in
+                        .onChangeCompat(of: inputText) {
                             processText()
                         }
                         .accessibilityLabel("Input text")
@@ -69,7 +69,7 @@ public struct Base64ToolView: View {
 
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
                     Toggle("URL-Safe Base64", isOn: $useURLSafe)
-                        .onChange(of: useURLSafe) { _ in
+                        .onChangeCompat(of: useURLSafe) {
                             processText()
                         }
                         .accessibilityHint("Use URL-safe Base64 encoding")
@@ -89,7 +89,7 @@ public struct Base64ToolView: View {
 
                         Button {
                             UIPasteboard.general.string = outputText
-                            withAnimation {
+                            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                 toastMessage = "Copied to clipboard"
                             }
                         } label: {
@@ -120,7 +120,7 @@ public struct Base64ToolView: View {
             .padding(.vertical)
         }
         .toast(message: $toastMessage)
-        .keyboardDismissToolbar()
+        .dismissKeyboardOnTapAndScroll()
         .navigationTitle("Base64")
     }
 

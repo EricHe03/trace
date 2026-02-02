@@ -12,6 +12,14 @@ public enum Validation {
     public static func isValidDomainPattern(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
+
+        // Reject obviously-invalid IPv4-like inputs (e.g. 999.999.999.999) which are frequently
+        // user mistakes when entering a domain pattern.
+        let dotParts = trimmed.split(separator: ".", omittingEmptySubsequences: false)
+        if dotParts.count == 4, dotParts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }) {
+            return isValidIPv4(trimmed)
+        }
+
         let validCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-*")
         let valueSet = CharacterSet(charactersIn: trimmed)
         return valueSet.isSubset(of: validCharacters)

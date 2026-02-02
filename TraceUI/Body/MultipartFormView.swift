@@ -78,7 +78,7 @@ public struct MultipartFormView: View {
     private func partCard(part: MultipartParser.Part, index: Int) -> some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
             Button {
-                withAnimation {
+                withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                     if expandedParts.contains(index) {
                         expandedParts.remove(index)
                     } else {
@@ -119,6 +119,12 @@ public struct MultipartFormView: View {
                         .font(.caption)
                 }
             }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .frame(minHeight: DesignSystem.Accessibility.minimumTapTarget, alignment: .leading)
+            .accessibilityLabel("\(expandedParts.contains(index) ? "Collapse" : "Expand") part \(part.name ?? part.filename ?? "Part \(index + 1)")")
+            .accessibilityValue(expandedParts.contains(index) ? "Expanded" : "Collapsed")
+            .accessibilityHint("Double tap to \(expandedParts.contains(index) ? "collapse" : "expand")")
 
             if expandedParts.contains(index) {
                 Divider()
@@ -158,7 +164,6 @@ public struct MultipartFormView: View {
 
     // MARK: - Content Preview
 
-    @ViewBuilder
     private func contentPreview(for part: MultipartParser.Part) -> some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
             HStack {
@@ -310,58 +315,45 @@ public struct ImagePreviewSheet: View {
     public let contentType: String?
     @Environment(\.dismiss) private var dismiss: DismissAction
 
-    @State private var isLoading = true
-    @State private var loadedImage: UIImage?
-    @State private var loadError: String?
+    @State private var isPreparing = true
+    @State private var prepareError: String?
+    @State private var tempURL: URL?
 
     private var isSVG: Bool {
         SVGPreviewHelper.isSVG(data: imageData, contentType: contentType, filename: filename)
     }
 
     public var body: some View {
-        NavigationStack {
-            Group {
-                if isSVG {
+        Group {
+            if isSVG {
+                NavigationStack {
                     SVGPreviewView(svgData: imageData, isScrollable: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(DesignSystem.Colors.surface)
-                } else if isLoading {
-                    loadingView
-                } else if let error = loadError {
-                    errorView(message: error)
-                } else if let uiImage = loadedImage {
-                    ScrollView([.horizontal, .vertical]) {
-                        Image(uiImage: uiImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                    }
-                } else {
-                    TraceContentUnavailableView(
-                        "Unable to Load Image",
-                        systemImage: "photo",
-                        description: Text("The image data could not be loaded")
-                    )
+                        .navigationTitle(filename)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Close") { dismiss() }
+                            }
+                        }
                 }
-            }
-            .navigationTitle(filename)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") {
-                        dismiss()
-                    }
+            } else if let tempURL {
+                QuickLookPreviewController(url: tempURL, title: filename) {
+                    dismiss()
                 }
-
-                if let uiImage = loadedImage {
-                    ToolbarItem(placement: .primaryAction) {
-                        ShareLink(item: Image(uiImage: uiImage), preview: SharePreview(filename))
-                    }
-                }
-            }
-            .task {
-                await loadImage()
+            } else if let prepareError {
+                TraceContentUnavailableView(
+                    "Unable to Preview Image",
+                    systemImage: "photo",
+                    description: Text(prepareError)
+                )
+            } else {
+                loadingView
             }
         }
+        .task { await preparePreview() }
+        .onDisappear { ImagePreviewTempFile.cleanup(url: tempURL) }
     }
 
     private var loadingView: some View {
@@ -381,40 +373,30 @@ public struct ImagePreviewSheet: View {
         )
     }
 
-    private func loadImage() async {
-        guard !isSVG else {
-            isLoading = false
-            return
-        }
+    private func preparePreview() async {
+        guard isPreparing else { return }
+        isPreparing = false
+
+        guard !isSVG else { return }
 
         guard !imageData.isEmpty else {
-            loadError = "No image data available"
-            isLoading = false
+            prepareError = "No image data available"
             return
         }
 
-        // Load on background thread for larger images
-        if imageData.count > 512 * 1024 { // > 512 KB
-            let data = imageData
-            let image = await Task.detached(priority: .userInitiated) {
-                UIImage(data: data)
-            }.value
+        let data = imageData
+        let preferredFilename = filename
+        let contentType = contentType
 
+        do {
+            let url = try await Task.detached(priority: .userInitiated) {
+                try ImagePreviewTempFile.write(data: data, preferredFilename: preferredFilename, contentType: contentType)
+            }.value
             await MainActor.run {
-                if let image {
-                    loadedImage = image
-                } else {
-                    loadError = "The image data appears to be corrupted or in an unsupported format"
-                }
-                isLoading = false
+                tempURL = url
             }
-        } else {
-            if let image = UIImage(data: imageData) {
-                loadedImage = image
-            } else {
-                loadError = "The image data appears to be corrupted or in an unsupported format"
-            }
-            isLoading = false
+        } catch {
+            prepareError = error.localizedDescription
         }
     }
 }

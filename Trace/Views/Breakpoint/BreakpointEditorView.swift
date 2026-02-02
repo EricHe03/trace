@@ -89,7 +89,7 @@ struct BreakpointEditorView: View {
             }
             .navigationTitle("Breakpoint")
             .navigationBarTitleDisplayMode(.inline)
-            .keyboardDismissToolbar()
+            .dismissKeyboardOnTapAndScroll()
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
@@ -113,6 +113,7 @@ struct BreakpointEditorView: View {
         HStack(spacing: DesignSystem.Spacing.md) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(DesignSystem.Colors.warning)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: DesignSystem.Spacing.xxs) {
                 Text(pausedRequest.breakpointType == .request ? "Request Paused" : "Response Paused")
@@ -128,10 +129,15 @@ struct BreakpointEditorView: View {
             if hasModifications {
                 Image(systemName: "pencil.circle.fill")
                     .foregroundStyle(DesignSystem.Colors.accent)
+                    .accessibilityHidden(true)
             }
         }
         .padding()
         .background(DesignSystem.Colors.warning.opacity(0.1))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(pausedRequest.breakpointType == .request ? "Request paused" : "Response paused")
+        .accessibilityValue(hasModifications ? "Edits made" : "No edits")
+        .accessibilityHint("Review details and choose an action at the bottom")
     }
 
     private var tabPicker: some View {
@@ -204,7 +210,7 @@ struct BreakpointEditorView: View {
                 }
             }
         }
-        .scrollDismissesKeyboard(.interactively)
+        .dismissKeyboardOnTapAndScroll()
     }
 
     private var headersTab: some View {
@@ -372,7 +378,7 @@ struct BreakpointConfigView: View {
                     }
                 }
             }
-            .scrollDismissesKeyboard(.interactively)
+            .dismissKeyboardOnTapAndScroll()
             .navigationTitle("Breakpoints")
             .task {
                 await loadConfig()

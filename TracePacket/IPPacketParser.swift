@@ -27,6 +27,14 @@ public enum IPPacketParser {
         guard ihl >= 20, data.count >= ihl else { return nil }
         let totalLength = Int(UInt16(data[2]) << 8 | UInt16(data[3]))
         guard totalLength >= ihl, data.count >= totalLength else { return nil }
+
+        // If this is a non-initial fragment, we can't reliably parse transport headers.
+        // We intentionally drop non-first fragments instead of mis-parsing them as TCP/UDP.
+        let fragmentOffset = Int((UInt16(data[6] & 0x1F) << 8) | UInt16(data[7]))
+        if fragmentOffset != 0 {
+            return nil
+        }
+
         let proto = data[9]
         let src = readIPv4(data, offset: 12)
         let dst = readIPv4(data, offset: 16)
@@ -45,21 +53,93 @@ public enum IPPacketParser {
     private static func parseIPv6(_ data: Data) -> IPPacket? {
         guard data.count >= 40 else { return nil }
         let payloadLength = Int(UInt16(data[4]) << 8 | UInt16(data[5]))
-        let nextHeader = data[6]
+        var nextHeader = data[6]
         let totalLength = 40 + payloadLength
         guard data.count >= totalLength else { return nil }
         let src = readIPv6(data, offset: 8)
         let dst = readIPv6(data, offset: 24)
-        let payload = data.subdata(in: 40 ..< totalLength)
+
+        var headerLength = 40
+        if payloadLength > 0 {
+            guard let (finalHeader, finalOffset) = parseIPv6NextHeaderChain(
+                data: data,
+                totalLength: totalLength,
+                initialNextHeader: nextHeader,
+                initialOffset: 40
+            ) else {
+                return nil
+            }
+            nextHeader = finalHeader
+            headerLength = finalOffset
+        }
+
+        let payload = headerLength <= totalLength ? data.subdata(in: headerLength ..< totalLength) : Data()
         return IPPacket(
             version: 6,
-            headerLength: 40,
+            headerLength: headerLength,
             totalLength: totalLength,
             protocolNumber: nextHeader,
             source: src,
             destination: dst,
             payload: payload
         )
+    }
+
+    private static func parseIPv6NextHeaderChain(
+        data: Data,
+        totalLength: Int,
+        initialNextHeader: UInt8,
+        initialOffset: Int
+    ) -> (finalHeader: UInt8, finalOffset: Int)? {
+        var nextHeader = initialNextHeader
+        var offset = initialOffset
+
+        while true {
+            switch nextHeader {
+            case 0, 43, 60:
+                // Hop-by-Hop Options (0), Routing (43), Destination Options (60)
+                guard offset + 2 <= totalLength else { return nil }
+                let newNext = data[offset]
+                let hdrExtLen = Int(data[offset + 1])
+                let headerBytes = (hdrExtLen + 1) * 8
+                guard headerBytes >= 8, offset + headerBytes <= totalLength else { return nil }
+                nextHeader = newNext
+                offset += headerBytes
+            case 44:
+                // Fragment header (fixed 8 bytes)
+                guard offset + 8 <= totalLength else { return nil }
+                let newNext = data[offset]
+                let offsetAndFlags = (UInt16(data[offset + 2]) << 8) | UInt16(data[offset + 3])
+                let fragmentOffset = offsetAndFlags >> 3
+                if fragmentOffset != 0 {
+                    // Non-first fragment: transport header may not be present.
+                    return nil
+                }
+                nextHeader = newNext
+                offset += 8
+            case 51:
+                // Authentication Header (AH): length is in 32-bit words, minus 2.
+                guard offset + 2 <= totalLength else { return nil }
+                let newNext = data[offset]
+                let payloadLen = Int(data[offset + 1])
+                let headerBytes = (payloadLen + 2) * 4
+                guard headerBytes >= 8, offset + headerBytes <= totalLength else { return nil }
+                nextHeader = newNext
+                offset += headerBytes
+            case 50:
+                // ESP: encrypted payload; stop here.
+                return (nextHeader, offset)
+            case 59:
+                // No Next Header
+                return (nextHeader, offset)
+            default:
+                return (nextHeader, offset)
+            }
+
+            if offset >= totalLength {
+                return (nextHeader, offset)
+            }
+        }
     }
 
     private static func readIPv4(_ data: Data, offset: Int) -> IPAddress {

@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import TraceCore
 import UIKit
 
 /// Defines the central design system for UI constants and standards.
@@ -99,48 +98,6 @@ public enum DesignSystem {
         public static let surfaceSubtle: Color = .init(.systemGray5)
         public static let surfaceMuted: Color = .init(.systemGray6)
         public static let groupedBackground: Color = .init(.systemGroupedBackground)
-
-        public static func methodColor(for method: HTTPMethod) -> Color {
-            switch method {
-            case .get: accent
-            case .post: success
-            case .put: warning
-            case .delete: danger
-            case .patch: accentAlt
-            case .connect: muted
-            default: muted
-            }
-        }
-
-        public static func statusColor(for statusColor: StatusColor) -> Color {
-            switch statusColor {
-            case .success: success
-            case .redirect: accent
-            case .clientError: warning
-            case .serverError: danger
-            case .info: info
-            case .warning: favorite
-            case .unknown: muted
-            }
-        }
-
-        public static func statusColor(for statusCode: Int) -> Color {
-            switch statusCode {
-            case 200 ..< 300: success
-            case 300 ..< 400: accent
-            case 400 ..< 500: warning
-            case 500...: danger
-            default: muted
-            }
-        }
-
-        public static func eventTypeColor(for type: NetworkEventType) -> Color {
-            switch type {
-            case .http: accent
-            case .webSocket: accentAlt
-            case .sse: warning
-            }
-        }
     }
 
     // MARK: - Effects
@@ -159,8 +116,8 @@ public enum DesignSystem {
         static let backgroundColor: Color = .black
         static let backgroundOpacity: Double = 0.8
         static let foregroundColor: Color = .white
-        static let horizontalPadding: CGFloat = Spacing.lg
-        static let verticalPadding: CGFloat = Spacing.md
+        static let horizontalPadding: CGFloat = Spacing.md
+        static let verticalPadding: CGFloat = Spacing.sm
         static let cornerRadius: CGFloat = CornerRadius.md
         public static let bottomPadding: CGFloat = 20
         static let displayDuration: TimeInterval = 2.0
@@ -169,12 +126,12 @@ public enum DesignSystem {
     // MARK: - Badges & Pills
 
     /// Defines standard badge configuration.
-    enum Badge {
-        static let horizontalPadding: CGFloat = 8
-        static let verticalPadding: CGFloat = 4
-        static let cornerRadius: CGFloat = CornerRadius.sm
-        static let font: Font = .caption
-        static let fontWeight: Font.Weight = .semibold
+    public enum Badge {
+        public static let horizontalPadding: CGFloat = 8
+        public static let verticalPadding: CGFloat = 4
+        public static let cornerRadius: CGFloat = CornerRadius.sm
+        public static let font: Font = .caption
+        public static let fontWeight: Font.Weight = .semibold
     }
 
     // MARK: - Empty States
@@ -317,7 +274,10 @@ public enum DesignSystem {
     ///
     /// Defines standard list configuration.
     public enum List {
-        public nonisolated(unsafe) static let preferredStyle: any ListStyle = .insetGrouped
+        public static var preferredStyle: some ListStyle {
+            .insetGrouped
+        }
+
         public static let rowVerticalPadding: CGFloat = Spacing.rowVertical
         public static let rowInsets = EdgeInsets(
             top: Spacing.sm,
@@ -330,17 +290,17 @@ public enum DesignSystem {
 
 // MARK: - Keyboard Dismissal
 
-/// A view modifier that adds a keyboard toolbar with a Done button for dismissing the keyboard.
-private struct KeyboardDismissToolbarModifier: ViewModifier {
+/// A view modifier that provides unified keyboard dismissal behavior across the app.
+/// Keyboards dismiss via:
+/// 1. Tapping outside text fields (on the background)
+/// 2. Scrolling interactively
+/// 3. Natural system events (app switch, lock)
+private struct UnifiedKeyboardDismissalModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") {
-                        hideKeyboard()
-                    }
-                }
+            .scrollDismissesKeyboard(.interactively)
+            .background {
+                KeyboardDismissalTapRecognizerInstaller(onTap: hideKeyboard)
             }
     }
 
@@ -349,16 +309,110 @@ private struct KeyboardDismissToolbarModifier: ViewModifier {
     }
 }
 
+private struct KeyboardDismissalTapRecognizerInstaller: UIViewRepresentable {
+    let onTap: () -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        InstallerView(coordinator: context.coordinator)
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onTap: onTap)
+    }
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.uninstall()
+    }
+
+    private final class InstallerView: UIView {
+        private let coordinator: Coordinator
+
+        init(coordinator: Coordinator) {
+            self.coordinator = coordinator
+            super.init(frame: .zero)
+            backgroundColor = .clear
+            isUserInteractionEnabled = false
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func didMoveToSuperview() {
+            super.didMoveToSuperview()
+            coordinator.install(on: superview)
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        private let onTap: () -> Void
+        private var recognizer: UITapGestureRecognizer?
+        private weak var installedOn: UIView?
+
+        init(onTap: @escaping () -> Void) {
+            self.onTap = onTap
+        }
+
+        @objc func handleTap() {
+            onTap()
+        }
+
+        func install(on view: UIView?) {
+            guard let view else { return }
+            guard installedOn !== view else { return }
+
+            uninstall()
+
+            let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+            recognizer.cancelsTouchesInView = false
+            recognizer.delegate = self
+
+            view.addGestureRecognizer(recognizer)
+            self.recognizer = recognizer
+            installedOn = view
+        }
+
+        func uninstall() {
+            if let recognizer, let installedOn {
+                installedOn.removeGestureRecognizer(recognizer)
+            }
+            recognizer = nil
+            installedOn = nil
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let touchedView = touch.view else { return true }
+
+            var current: UIView? = touchedView
+            while let view = current {
+                if view is UITextField || view is UITextView {
+                    return false
+                }
+                current = view.superview
+            }
+
+            return true
+        }
+    }
+}
+
 // MARK: - View Modifiers
 
 public extension View {
-    /// Adds a keyboard toolbar with a Done button for dismissing the keyboard.
-    /// Use this on views containing TextField or TextEditor to allow users to dismiss the keyboard.
-    func keyboardDismissToolbar() -> some View {
-        modifier(KeyboardDismissToolbarModifier())
+    /// Applies unified keyboard dismissal behavior.
+    /// Use this on views containing TextField or TextEditor.
+    /// The keyboard will dismiss when:
+    /// - User taps outside the text field
+    /// - User scrolls the view
+    /// - System events (app switch, lock)
+    func dismissKeyboardOnTapAndScroll() -> some View {
+        modifier(UnifiedKeyboardDismissalModifier())
     }
 
-    /// Dismisses the keyboard when called.
+    /// Dismisses the keyboard programmatically when called.
     func hideKeyboard() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
@@ -371,6 +425,10 @@ public extension View {
             .foregroundStyle(foregroundColor)
             .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
             .padding(.vertical, DesignSystem.Badge.verticalPadding)
+            .frame(
+                minWidth: DesignSystem.Accessibility.absoluteMinimumTapTarget,
+                minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget
+            )
             .background(backgroundColor)
             .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius))
     }
@@ -417,18 +475,24 @@ public extension View {
 // MARK: - Toast View
 
 /// Presents a standard toast notification view.
-public struct ToastView: View {
-    public let message: String
+struct ToastView: View {
+    let message: String
+    let onDismiss: () -> Void
 
-    public var body: some View {
-        Text(message)
-            .font(.subheadline)
-            .foregroundStyle(DesignSystem.Toast.foregroundColor)
-            .padding(.horizontal, DesignSystem.Toast.horizontalPadding)
-            .padding(.vertical, DesignSystem.Toast.verticalPadding)
-            .background(DesignSystem.Toast.backgroundColor.opacity(DesignSystem.Toast.backgroundOpacity))
-            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
-            .padding(.bottom, DesignSystem.Toast.bottomPadding)
+    var body: some View {
+        Button(action: onDismiss) {
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(DesignSystem.Toast.foregroundColor)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, DesignSystem.Toast.horizontalPadding)
+                .padding(.vertical, DesignSystem.Toast.verticalPadding)
+                .background(DesignSystem.Toast.backgroundColor.opacity(DesignSystem.Toast.backgroundOpacity))
+                .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(message)
+        .accessibilityHint("Dismiss notification")
     }
 }
 
@@ -437,11 +501,12 @@ public struct ToastView: View {
 private struct ToastModifier: ViewModifier {
     @Binding var message: String?
     let bottomPadding: CGFloat
+    @State private var dismissTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content.overlay(alignment: .bottom) {
             if let message {
-                ToastView(message: message)
+                ToastView(message: message, onDismiss: dismiss)
                     .transition(
                         DesignSystem.Accessibility.transition(
                             standard: AnyTransition.move(edge: Edge.bottom)
@@ -450,12 +515,32 @@ private struct ToastModifier: ViewModifier {
                     )
                     .padding(.bottom, bottomPadding)
                     .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + DesignSystem.Toast.displayDuration) {
-                            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                                self.message = nil
-                            }
-                        }
+                        scheduleAutoDismiss()
                     }
+                    .onChangeCompat(of: message) {
+                        scheduleAutoDismiss()
+                    }
+                    .onDisappear {
+                        dismissTask?.cancel()
+                    }
+            }
+        }
+    }
+
+    private func dismiss() {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+            message = nil
+        }
+    }
+
+    private func scheduleAutoDismiss() {
+        dismissTask?.cancel()
+        let duration: TimeInterval = UIAccessibility.isVoiceOverRunning ? 6.0 : DesignSystem.Toast.displayDuration
+        dismissTask = Task {
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                dismiss()
             }
         }
     }
@@ -464,6 +549,8 @@ private struct ToastModifier: ViewModifier {
 // MARK: - Helper Functions
 
 public extension DesignSystem {
+    private static let posixLocale = Locale(identifier: "en_US_POSIX")
+
     /// Formats a duration consistently for UI display.
     static func formattedDuration(_ duration: TimeInterval) -> String {
         if duration < 1 {
@@ -479,6 +566,29 @@ public extension DesignSystem {
 
     /// Formats byte counts consistently for UI display.
     static func formattedBytes(_ bytes: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+        // Use a deterministic formatter instead of `ByteCountFormatter` to avoid
+        // OS-version/locale wording differences (e.g. "Zero KB" vs "0 B").
+        let value = max(0, bytes)
+        if value < 1024 {
+            return "\(value) B"
+        }
+
+        let kb = Double(value) / 1024.0
+        if kb < 1024 {
+            return String(format: "%.1f KB", locale: posixLocale, arguments: [kb])
+        }
+
+        let mb = kb / 1024.0
+        if mb < 1024 {
+            return String(format: "%.1f MB", locale: posixLocale, arguments: [mb])
+        }
+
+        let gb = mb / 1024.0
+        if gb < 1024 {
+            return String(format: "%.1f GB", locale: posixLocale, arguments: [gb])
+        }
+
+        let tb = gb / 1024.0
+        return String(format: "%.1f TB", locale: posixLocale, arguments: [tb])
     }
 }

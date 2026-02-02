@@ -340,62 +340,7 @@ public actor HTTP2StreamManager {
         stream.lastActivity = Date()
         recordFrame(frame, to: &stream)
 
-        // Rule: Track bytes seen even when body capture is truncated.
-        stream.requestBodyBytesSeen += payload.count
-
-        if captureBodies, maxBodySize > 0, !stream.requestBodyTruncated {
-            let remainingCapture = max(0, maxBodySize - stream.requestBodyBytesCaptured)
-            if remainingCapture == 0 {
-                stream.requestBodyTruncated = true
-                if var capture = requestBodyCaptures[streamId] {
-                    capture.truncated = true
-                    requestBodyCaptures[streamId] = capture
-                }
-            } else {
-                let toCapture = min(remainingCapture, payload.count)
-                let willNeedFile =
-                    stream.requestBodyFileURL != nil ||
-                    (stream.requestBodyBytesCaptured + toCapture) > BodyStorage.inlineThreshold
-
-                if willNeedFile {
-                    if stream.requestBodyFileURL == nil {
-                        _ = ensureRequestBodyCapture(streamId: streamId, stream: &stream)
-                    }
-                    if var capture = requestBodyCaptures[streamId] {
-                        do {
-                            try capture.handle.write(contentsOf: payload.prefix(toCapture))
-                            capture.bytesWritten += toCapture
-                            requestBodyCaptures[streamId] = capture
-                        } catch {
-                            stream.requestBodyTruncated = true
-                            capture.truncated = true
-                            requestBodyCaptures[streamId] = capture
-                            try? FileManager.default.removeItem(at: capture.url)
-                            requestBodyCaptures.removeValue(forKey: streamId)
-                        }
-                    }
-
-                    if stream.requestBodyData.count < BodyStorage.previewSize {
-                        let previewRemaining = BodyStorage.previewSize - stream.requestBodyData.count
-                        let toPreview = min(previewRemaining, toCapture)
-                        if toPreview > 0 {
-                            stream.requestBodyData.append(contentsOf: payload.prefix(toPreview))
-                        }
-                    }
-                } else {
-                    stream.requestBodyData.append(contentsOf: payload.prefix(toCapture))
-                }
-
-                stream.requestBodyBytesCaptured += toCapture
-                if payload.count > toCapture {
-                    stream.requestBodyTruncated = true
-                    if var capture = requestBodyCaptures[streamId] {
-                        capture.truncated = true
-                        requestBodyCaptures[streamId] = capture
-                    }
-                }
-            }
-        }
+        captureBodyChunk(streamId: streamId, payload: payload, side: .request, stream: &stream)
 
         // Rule: END_STREAM completes the request body.
         if flags.contains(.endStream) {
@@ -539,61 +484,7 @@ public actor HTTP2StreamManager {
         stream.lastActivity = Date()
         recordFrame(frame, to: &stream)
 
-        stream.responseBodyBytesSeen += payload.count
-
-        if captureBodies, maxBodySize > 0, !stream.responseBodyTruncated {
-            let remainingCapture = max(0, maxBodySize - stream.responseBodyBytesCaptured)
-            if remainingCapture == 0 {
-                stream.responseBodyTruncated = true
-                if var capture = responseBodyCaptures[streamId] {
-                    capture.truncated = true
-                    responseBodyCaptures[streamId] = capture
-                }
-            } else {
-                let toCapture = min(remainingCapture, payload.count)
-                let willNeedFile =
-                    stream.responseBodyFileURL != nil ||
-                    (stream.responseBodyBytesCaptured + toCapture) > BodyStorage.inlineThreshold
-
-                if willNeedFile {
-                    if stream.responseBodyFileURL == nil {
-                        _ = ensureResponseBodyCapture(streamId: streamId, stream: &stream)
-                    }
-                    if var capture = responseBodyCaptures[streamId] {
-                        do {
-                            try capture.handle.write(contentsOf: payload.prefix(toCapture))
-                            capture.bytesWritten += toCapture
-                            responseBodyCaptures[streamId] = capture
-                        } catch {
-                            stream.responseBodyTruncated = true
-                            capture.truncated = true
-                            responseBodyCaptures[streamId] = capture
-                            try? FileManager.default.removeItem(at: capture.url)
-                            responseBodyCaptures.removeValue(forKey: streamId)
-                        }
-                    }
-
-                    if stream.responseBodyData.count < BodyStorage.previewSize {
-                        let previewRemaining = BodyStorage.previewSize - stream.responseBodyData.count
-                        let toPreview = min(previewRemaining, toCapture)
-                        if toPreview > 0 {
-                            stream.responseBodyData.append(contentsOf: payload.prefix(toPreview))
-                        }
-                    }
-                } else {
-                    stream.responseBodyData.append(contentsOf: payload.prefix(toCapture))
-                }
-
-                stream.responseBodyBytesCaptured += toCapture
-                if payload.count > toCapture {
-                    stream.responseBodyTruncated = true
-                    if var capture = responseBodyCaptures[streamId] {
-                        capture.truncated = true
-                        responseBodyCaptures[streamId] = capture
-                    }
-                }
-            }
-        }
+        captureBodyChunk(streamId: streamId, payload: payload, side: .response, stream: &stream)
 
         // Rule: END_STREAM completes the response body.
         if flags.contains(.endStream) {
@@ -854,6 +745,148 @@ public actor HTTP2StreamManager {
 
     // MARK: - Body spooling helpers
 
+    private enum BodySide {
+        case request
+        case response
+    }
+
+    private func captureBodyChunk(
+        streamId: UInt32,
+        payload: Data,
+        side: BodySide,
+        stream: inout HTTP2StreamState
+    ) {
+        // Rule: Track bytes seen even when body capture is truncated.
+        let dataKeyPath: WritableKeyPath<HTTP2StreamState, Data>
+        let bytesSeenKeyPath: WritableKeyPath<HTTP2StreamState, Int>
+        let bytesCapturedKeyPath: WritableKeyPath<HTTP2StreamState, Int>
+        let truncatedKeyPath: WritableKeyPath<HTTP2StreamState, Bool>
+        let fileURLKeyPath: WritableKeyPath<HTTP2StreamState, URL?>
+
+        switch side {
+        case .request:
+            dataKeyPath = \.requestBodyData
+            bytesSeenKeyPath = \.requestBodyBytesSeen
+            bytesCapturedKeyPath = \.requestBodyBytesCaptured
+            truncatedKeyPath = \.requestBodyTruncated
+            fileURLKeyPath = \.requestBodyFileURL
+        case .response:
+            dataKeyPath = \.responseBodyData
+            bytesSeenKeyPath = \.responseBodyBytesSeen
+            bytesCapturedKeyPath = \.responseBodyBytesCaptured
+            truncatedKeyPath = \.responseBodyTruncated
+            fileURLKeyPath = \.responseBodyFileURL
+        }
+
+        stream[keyPath: bytesSeenKeyPath] += payload.count
+
+        guard captureBodies, maxBodySize > 0, !stream[keyPath: truncatedKeyPath] else { return }
+
+        let remainingCapture = max(0, maxBodySize - stream[keyPath: bytesCapturedKeyPath])
+        if remainingCapture == 0 {
+            stream[keyPath: truncatedKeyPath] = true
+            markActiveCaptureTruncated(streamId: streamId, side: side)
+            return
+        }
+
+        let toCapture = min(remainingCapture, payload.count)
+        let willNeedFile =
+            stream[keyPath: fileURLKeyPath] != nil ||
+            (stream[keyPath: bytesCapturedKeyPath] + toCapture) > BodyStorage.inlineThreshold
+
+        if willNeedFile {
+            if stream[keyPath: fileURLKeyPath] == nil {
+                let created: ActiveBodyCapture? = switch side {
+                case .request:
+                    ensureRequestBodyCapture(streamId: streamId, stream: &stream)
+                case .response:
+                    ensureResponseBodyCapture(streamId: streamId, stream: &stream)
+                }
+                if created == nil {
+                    stream[keyPath: truncatedKeyPath] = true
+                    return
+                }
+            }
+
+            if var capture = activeCapture(streamId: streamId, side: side) {
+                do {
+                    try capture.handle.write(contentsOf: payload.prefix(toCapture))
+                    capture.bytesWritten += toCapture
+                    setActiveCapture(streamId: streamId, side: side, capture: capture)
+                } catch {
+                    stream[keyPath: truncatedKeyPath] = true
+                    capture.truncated = true
+                    setActiveCapture(streamId: streamId, side: side, capture: capture)
+                    try? FileManager.default.removeItem(at: capture.url)
+                    removeActiveCapture(streamId: streamId, side: side)
+                }
+            } else if stream[keyPath: fileURLKeyPath] != nil {
+                // If we expected to spool to disk but have no open handle, treat as truncated to avoid false "captured" claims.
+                stream[keyPath: truncatedKeyPath] = true
+            }
+
+            // Keep a small in-memory preview for UI/debugging.
+            if stream[keyPath: dataKeyPath].count < BodyStorage.previewSize {
+                let previewRemaining = BodyStorage.previewSize - stream[keyPath: dataKeyPath].count
+                let toPreview = min(previewRemaining, toCapture)
+                if toPreview > 0 {
+                    stream[keyPath: dataKeyPath].append(contentsOf: payload.prefix(toPreview))
+                }
+            }
+        } else {
+            stream[keyPath: dataKeyPath].append(contentsOf: payload.prefix(toCapture))
+        }
+
+        stream[keyPath: bytesCapturedKeyPath] += toCapture
+
+        if payload.count > toCapture {
+            stream[keyPath: truncatedKeyPath] = true
+            markActiveCaptureTruncated(streamId: streamId, side: side)
+        }
+    }
+
+    private func activeCapture(streamId: UInt32, side: BodySide) -> ActiveBodyCapture? {
+        switch side {
+        case .request:
+            requestBodyCaptures[streamId]
+        case .response:
+            responseBodyCaptures[streamId]
+        }
+    }
+
+    private func setActiveCapture(streamId: UInt32, side: BodySide, capture: ActiveBodyCapture) {
+        switch side {
+        case .request:
+            requestBodyCaptures[streamId] = capture
+        case .response:
+            responseBodyCaptures[streamId] = capture
+        }
+    }
+
+    private func removeActiveCapture(streamId: UInt32, side: BodySide) {
+        switch side {
+        case .request:
+            requestBodyCaptures.removeValue(forKey: streamId)
+        case .response:
+            responseBodyCaptures.removeValue(forKey: streamId)
+        }
+    }
+
+    private func markActiveCaptureTruncated(streamId: UInt32, side: BodySide) {
+        switch side {
+        case .request:
+            if var capture = requestBodyCaptures[streamId] {
+                capture.truncated = true
+                requestBodyCaptures[streamId] = capture
+            }
+        case .response:
+            if var capture = responseBodyCaptures[streamId] {
+                capture.truncated = true
+                responseBodyCaptures[streamId] = capture
+            }
+        }
+    }
+
     private func bodyContainerURLForCapture() -> URL? {
         if let groupContainer = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: AppGroupConfiguration.appGroupIdentifier
@@ -890,6 +923,10 @@ public actor HTTP2StreamManager {
         if !stream.requestBodyData.isEmpty {
             try? handle.write(contentsOf: stream.requestBodyData)
         }
+        // Rule: Once the body is file-backed, keep only a small preview in memory.
+        if stream.requestBodyData.count > BodyStorage.previewSize {
+            stream.requestBodyData = Data(stream.requestBodyData.prefix(BodyStorage.previewSize))
+        }
 
         let capture = ActiveBodyCapture(
             url: fileURL,
@@ -922,6 +959,9 @@ public actor HTTP2StreamManager {
 
         if !stream.responseBodyData.isEmpty {
             try? handle.write(contentsOf: stream.responseBodyData)
+        }
+        if stream.responseBodyData.count > BodyStorage.previewSize {
+            stream.responseBodyData = Data(stream.responseBodyData.prefix(BodyStorage.previewSize))
         }
 
         let capture = ActiveBodyCapture(

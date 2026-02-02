@@ -7,13 +7,14 @@
 
 import SwiftUI
 import TraceCore
-import TraceFeatures
 
 public struct RequestListRow: View {
     public let request: NetworkRequest
+    public let isFavorited: Bool
 
-    public init(request: NetworkRequest) {
+    public init(request: NetworkRequest, isFavorited: Bool = false) {
         self.request = request
+        self.isFavorited = isFavorited
     }
 
     private var tagDisplay: (visible: [TagType], overflow: Int) {
@@ -21,27 +22,19 @@ public struct RequestListRow: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text(request.method.rawValue)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(methodColor)
-                    .cornerRadius(4)
-                    .accessibilityLabel("Method: \(request.method.rawValue)")
+        VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
+            HStack(spacing: DesignSystem.Spacing.smPlus) {
+                badge(
+                    text: request.method.rawValue,
+                    background: methodColor,
+                    accessibilityLabel: "Method: \(request.method.rawValue)"
+                )
 
-                Text(request.statusCodeText)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(statusColor)
-                    .cornerRadius(4)
-                    .accessibilityLabel("Status: \(request.statusCodeText)")
+                badge(
+                    text: request.statusCodeText,
+                    background: statusColor,
+                    accessibilityLabel: "Status: \(request.statusCodeText)"
+                )
 
                 if request.duplicateCount > 1 {
                     DuplicateCounterView(count: request.duplicateCount)
@@ -55,7 +48,7 @@ public struct RequestListRow: View {
                     OverflowTagView(count: tagDisplay.overflow, allTags: request.getAllTags())
                 }
 
-                if FavoritesManager.shared.isFavorited(requestId: request.id) {
+                if isFavorited {
                     Image(systemName: "star.fill")
                         .font(.caption)
                         .foregroundStyle(DesignSystem.Colors.favorite)
@@ -64,22 +57,24 @@ public struct RequestListRow: View {
 
                 Spacer()
 
-                VStack(alignment: .trailing, spacing: 2) {
+                VStack(alignment: .trailing, spacing: DesignSystem.Spacing.xxs) {
                     if let size = request.responseSize ?? request.requestSize {
-                        Text(formatBytes(size))
+                        let formattedBytes = DesignSystem.formattedBytes(size)
+                        Text(formattedBytes)
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
-                            .accessibilityLabel("Size: \(formatBytes(size))")
+                            .accessibilityLabel("Size: \(formattedBytes)")
                     }
 
-                    Text(formatDuration(request.duration))
+                    let formattedDuration = DesignSystem.formattedDuration(request.duration)
+                    Text(formattedDuration)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .accessibilityLabel("Duration: \(formatDuration(request.duration))")
+                        .accessibilityLabel("Duration: \(formattedDuration)")
                 }
             }
 
-            HStack(spacing: 4) {
+            HStack(spacing: DesignSystem.Spacing.xs) {
                 Text(request.host)
                     .font(.subheadline)
                     .fontWeight(.medium)
@@ -97,60 +92,29 @@ public struct RequestListRow: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, DesignSystem.Spacing.rowVertical)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityDescription)
     }
 
     private var methodColor: Color {
-        switch request.method {
-        case .get:
-            .blue
-        case .post:
-            .green
-        case .put:
-            .orange
-        case .delete:
-            .red
-        case .patch:
-            .purple
-        case .connect:
-            .gray
-        default:
-            .gray
-        }
+        DesignSystem.Colors.methodColor(for: request.method)
     }
 
     private var statusColor: Color {
-        switch request.statusColor {
-        case .success:
-            return DesignSystem.Colors.success
-        case .redirect:
-            return .blue
-        case .clientError:
-            return DesignSystem.Colors.warning
-        case .serverError:
-            return DesignSystem.Colors.danger
-        case .unknown:
-            return .gray
-        @unknown default:
-            return .gray
-        }
+        DesignSystem.Colors.statusColor(for: request.statusColor)
     }
 
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        if duration < 1 {
-            String(format: "%.0f ms", duration * 1000)
-        } else {
-            String(format: "%.2f s", duration)
-        }
-    }
-
-    private func formatBytes(_ bytes: Int) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useBytes, .useKB, .useMB]
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: Int64(bytes))
+    private func badge(text: String, background: Color, accessibilityLabel: String) -> some View {
+        Text(text)
+            .font(DesignSystem.Badge.font)
+            .fontWeight(DesignSystem.Badge.fontWeight)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(background)
+            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
+            .accessibilityLabel(accessibilityLabel)
     }
 
     private var accessibilityDescription: String {
@@ -165,7 +129,7 @@ public struct RequestListRow: View {
             description += ", \(request.duplicateCount) duplicates"
         }
 
-        if FavoritesManager.shared.isFavorited(requestId: request.id) {
+        if isFavorited {
             description += ", Favorited"
         }
 

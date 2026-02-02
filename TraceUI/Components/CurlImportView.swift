@@ -86,19 +86,19 @@ public struct CurlImportView: View {
                 }
             }
             .toast(message: $toastMessage)
-            .keyboardDismissToolbar()
+            .dismissKeyboardOnTapAndScroll()
         }
     }
 
     private func parseCommand() {
         do {
             parsedRequest = try CurlParser.parse(curlCommand)
-            withAnimation {
+            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                 toastMessage = "Parsed successfully"
             }
         } catch {
             parsedRequest = nil
-            withAnimation {
+            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                 toastMessage = "Parse error: \(error.localizedDescription)"
             }
         }

@@ -65,7 +65,7 @@ struct ScriptListView: View {
                                 }
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     Button(role: .destructive) {
-                                        withAnimation {
+                                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                             scriptManager.deleteScript(script)
                                             showToast(message: "Script deleted")
                                         }
@@ -76,7 +76,7 @@ struct ScriptListView: View {
                                 }
                                 .swipeActions(edge: .leading) {
                                     Button {
-                                        withAnimation {
+                                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                             scriptManager.toggleScript(script)
                                         }
                                     } label: {
@@ -219,12 +219,12 @@ struct ScriptListView: View {
     }
 
     private var emptyStateContent: some View {
-        EmptyStateView(
-            icon: "doc.text.fill.badge.ellipsis",
-            title: "No Scripts",
-            description: "Create JavaScript scripts to modify requests and responses",
-            action: { showingAddScript = true },
-            actionLabel: "New Script"
+        TraceContentUnavailableView(
+            "No Scripts",
+            systemImage: "chevron.left.forwardslash.chevron.right",
+            description: Text("Create JavaScript scripts to modify requests and responses"),
+            actionTitle: "New Script",
+            action: { showingAddScript = true }
         )
     }
 
@@ -252,7 +252,7 @@ struct ScriptListView: View {
     }
 
     private func showToast(message: String) {
-        withAnimation {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
             toastMessage = message
         }
     }
@@ -268,7 +268,7 @@ struct ScriptRow: View {
             HStack {
                 Circle()
                     .fill(script.enabled ? DesignSystem.Colors.success : DesignSystem.Colors.muted)
-                    .frame(width: 8, height: 8)
+                    .frame(width: 12, height: 12)
 
                 Text(script.name)
                     .font(.headline)

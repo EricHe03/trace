@@ -189,6 +189,10 @@ public func selectVisibleTags(
     from allTags: [TagType],
     maxVisible: Int = 3
 ) -> (visible: [TagType], overflow: Int) {
+    if maxVisible <= 0 {
+        return ([], allTags.count)
+    }
+
     // Rationale: Order by priority, then by label, to keep the output stable.
     let sorted = allTags.sorted { lhs, rhs in
         if lhs.priority != rhs.priority {
@@ -199,6 +203,10 @@ public func selectVisibleTags(
 
     // Rule: Always include critical tags in the visible list.
     let critical = sorted.filter { $0.priority == .critical }
+    if critical.count >= maxVisible {
+        return (Array(critical.prefix(maxVisible)), sorted.count - maxVisible)
+    }
+
     let remaining = maxVisible - critical.count
 
     guard remaining > 0 else {

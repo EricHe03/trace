@@ -13,13 +13,13 @@ public struct RequestTagView: View {
 
     public var body: some View {
         Text(tag.displayText)
-            .font(.caption)
-            .fontWeight(.semibold)
+            .font(DesignSystem.Badge.font)
+            .fontWeight(DesignSystem.Badge.fontWeight)
             .foregroundStyle(.white)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
             .background(tag.color)
-            .cornerRadius(4)
+            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
             .accessibilityLabel(tag.tooltip)
     }
 }
@@ -32,10 +32,14 @@ public struct DuplicateCounterView: View {
             .font(.caption2)
             .fontWeight(.medium)
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 2)
+            .padding(.horizontal, DesignSystem.Spacing.xs)
+            .padding(.vertical, DesignSystem.Spacing.xxs)
+            .frame(
+                minWidth: DesignSystem.Accessibility.absoluteMinimumTapTarget,
+                minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget
+            )
             .background(Color.secondary.opacity(0.15))
-            .cornerRadius(3)
+            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.sm, style: .continuous))
             .accessibilityLabel("\(count) duplicate requests")
     }
 }
@@ -46,21 +50,28 @@ public struct OverflowTagView: View {
     @State private var showAllTags = false
 
     public var body: some View {
-        Text("+\(count)")
-            .font(.caption)
-            .fontWeight(.medium)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Color.secondary.opacity(0.2))
-            .cornerRadius(4)
-            .accessibilityLabel("\(count) more tags")
-            .onTapGesture {
-                showAllTags = true
-            }
-            .popover(isPresented: $showAllTags) {
-                AllTagsPopover(tags: allTags)
-            }
+        Button {
+            showAllTags = true
+        } label: {
+            Text("+\(count)")
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
+                .padding(.vertical, DesignSystem.Badge.verticalPadding)
+                .frame(
+                    minWidth: DesignSystem.Accessibility.absoluteMinimumTapTarget,
+                    minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget
+                )
+                .background(Color.secondary.opacity(0.2))
+                .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(count) more tags")
+        .popover(isPresented: $showAllTags) {
+            AllTagsPopover(tags: allTags)
+        }
     }
 }
 
@@ -68,14 +79,14 @@ public struct AllTagsPopover: View {
     public let tags: [TagType]
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
             Text("All Tags")
                 .font(.headline)
-                .padding(.bottom, 4)
+                .padding(.bottom, DesignSystem.Spacing.xs)
 
             LazyVGrid(columns: [
-                GridItem(.adaptive(minimum: 80), spacing: 8)
-            ], spacing: 8) {
+                GridItem(.adaptive(minimum: 80), spacing: DesignSystem.Spacing.sm)
+            ], spacing: DesignSystem.Spacing.sm) {
                 ForEach(tags, id: \.self) { tag in
                     RequestTagView(tag: tag)
                 }

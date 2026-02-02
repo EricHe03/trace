@@ -77,7 +77,7 @@ struct HostsListView: View {
                                 }
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     Button(role: .destructive) {
-                                        withAnimation {
+                                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                             hostsManager.deleteEntry(entry)
                                             showToast(message: "Entry deleted")
                                         }
@@ -88,7 +88,7 @@ struct HostsListView: View {
                                 }
                                 .swipeActions(edge: .leading) {
                                     Button {
-                                        withAnimation {
+                                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                             hostsManager.toggleEntry(entry)
                                         }
                                     } label: {
@@ -136,7 +136,7 @@ struct HostsListView: View {
                         Divider()
 
                         Button {
-                            withAnimation {
+                            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                 hostsManager.enableAll()
                                 showToast(message: "All entries enabled")
                             }
@@ -145,7 +145,7 @@ struct HostsListView: View {
                         }
 
                         Button {
-                            withAnimation {
+                            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                 hostsManager.disableAll()
                                 showToast(message: "All entries disabled")
                             }
@@ -156,7 +156,7 @@ struct HostsListView: View {
                         Divider()
 
                         Button(role: .destructive) {
-                            withAnimation {
+                            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                 hostsManager.clearAll()
                                 showToast(message: "All entries cleared")
                             }
@@ -226,7 +226,7 @@ struct HostsListView: View {
                         title: status.rawValue,
                         isSelected: filterStatus == status
                     ) {
-                        withAnimation {
+                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                             filterStatus = status
                         }
                     }
@@ -239,15 +239,23 @@ struct HostsListView: View {
     // MARK: - Empty State
 
     private var emptyStateContent: some View {
-        EmptyStateView(
-            icon: searchText.isEmpty ? "network" : "magnifyingglass",
-            title: searchText.isEmpty ? "No Host Entries" : "No Results",
-            description: searchText.isEmpty
-                ? "Create host entries to override DNS resolution"
-                : "Try a different search term",
-            action: searchText.isEmpty ? { showingAddEntry = true } : nil,
-            actionLabel: searchText.isEmpty ? "Add Entry" : nil
-        )
+        Group {
+            if searchText.isEmpty {
+                TraceContentUnavailableView(
+                    "No Host Entries",
+                    systemImage: "network",
+                    description: Text("Create host entries to override DNS resolution"),
+                    actionTitle: "Add Entry",
+                    action: { showingAddEntry = true }
+                )
+            } else {
+                TraceContentUnavailableView(
+                    "No Results",
+                    systemImage: "magnifyingglass",
+                    description: Text("Try a different search term")
+                )
+            }
+        }
     }
 
     // MARK: - Import/Export
@@ -303,7 +311,7 @@ struct HostsListView: View {
     // MARK: - Toast
 
     private func showToast(message: String) {
-        withAnimation {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
             toastMessage = message
         }
     }
@@ -319,7 +327,7 @@ struct HostEntryRow: View {
             HStack {
                 Circle()
                     .fill(entry.enabled ? DesignSystem.Colors.success : DesignSystem.Colors.muted)
-                    .frame(width: 8, height: 8)
+                    .frame(width: 12, height: 12)
 
                 Text(entry.name)
                     .font(.headline)

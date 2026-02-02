@@ -131,7 +131,7 @@ public final class RequestMapManager: ObservableObject {
 
     public nonisolated(unsafe) let objectWillChange = ObservableObjectPublisher()
 
-    // Expose items through computed property
+    /// Expose items through computed property
     public var maps: [RequestMap] {
         baseManager.items
     }
@@ -296,8 +296,7 @@ public final class RequestMapManager: ObservableObject {
         }
 
         do {
-            let result = try engine.executeBodyScript(scriptContent, url: url, method: method.rawValue)
-            return result
+            return try engine.executeBodyScript(scriptContent, url: url, method: method.rawValue)
         } catch {
             FeatureLog.requestMap.error("event=request_map.script_execute outcome=failure error=\(error.localizedDescription, privacy: .public)")
             throw error

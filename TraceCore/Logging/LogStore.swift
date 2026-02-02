@@ -115,6 +115,8 @@ public actor LogStore {
         includeVPNLogs: Bool = true
     ) async throws -> [LogEntry] {
         let startDate = since ?? Date().addingTimeInterval(-3600) // Default: last hour
+        // OSLogStore can behave unexpectedly for future positions; treat it as empty.
+        if startDate > Date() { return [] }
 
         // Fetch from OSLogStore.
         var allLogs = try await fetchFromOSLogStore(

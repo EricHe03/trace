@@ -22,12 +22,12 @@ public final class FavoritesManager: ObservableObject {
 
     public nonisolated(unsafe) let objectWillChange = ObservableObjectPublisher()
 
-    // Expose items through computed property
+    /// Expose items through computed property
     public var favorites: [Favorite] {
         baseManager.items
     }
 
-    // Notification for cross-process updates
+    /// Notification for cross-process updates
     private let favoritesUpdatedNotificationName = Notification.Name("com.trace.favoritesUpdated")
 
     private init() {

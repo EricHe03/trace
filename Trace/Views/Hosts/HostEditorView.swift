@@ -9,6 +9,7 @@ import SwiftUI
 import TraceCore
 import TraceFeatures
 import TraceUI
+import UIKit
 
 struct HostEditorView: View {
     @Environment(\.dismiss) private var dismiss
@@ -78,8 +79,10 @@ struct HostEditorView: View {
                 Section("Basic Information") {
                     TextField("Entry Name", text: $name)
                         .autocapitalization(.words)
+                        .accessibilityLabel("Entry name")
 
                     Toggle("Enabled", isOn: $enabled)
+                        .accessibilityLabel("Enabled")
                 }
 
                 Section {
@@ -88,6 +91,7 @@ struct HostEditorView: View {
                             .autocapitalization(.none)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
+                            .accessibilityLabel("Hostname")
 
                         Text("e.g., api.example.com or *.example.com")
                             .font(.caption)
@@ -106,6 +110,7 @@ struct HostEditorView: View {
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
                             .keyboardType(.numbersAndPunctuation)
+                            .accessibilityLabel("Target IP address")
 
                         Text("e.g., 192.168.1.100 or 10.0.0.50")
                             .font(.caption)
@@ -115,6 +120,8 @@ struct HostEditorView: View {
                     VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
                         TextField("Target Port (optional)", text: $targetPortString)
                             .keyboardType(.numberPad)
+                            .accessibilityLabel("Target port")
+                            .accessibilityHint("Optional. Leave empty to keep the original port.")
 
                         Text("Leave empty to use the original port")
                             .font(.caption)
@@ -126,7 +133,7 @@ struct HostEditorView: View {
                     Text("The IP address and optional port to redirect to")
                 }
 
-                if showValidationErrors && !validationErrors.isEmpty {
+                if !validationErrors.isEmpty {
                     Section {
                         ForEach(validationErrors, id: \.self) { error in
                             HStack {
@@ -147,8 +154,7 @@ struct HostEditorView: View {
                     Text("Example")
                 }
             }
-            .scrollDismissesKeyboard(.interactively)
-            .keyboardDismissToolbar()
+            .dismissKeyboardOnTapAndScroll()
             .navigationTitle(entry == nil ? "Add Host Entry" : "Edit Host Entry")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -162,7 +168,7 @@ struct HostEditorView: View {
                     Button("Save") {
                         saveEntry()
                     }
-                    .disabled(!isValid && showValidationErrors)
+                    .disabled(!isValid)
                 }
             }
         }
@@ -260,6 +266,9 @@ struct HostEditorView: View {
         // Show validation errors if invalid
         if !isValid {
             showValidationErrors = true
+            if let first = validationErrors.first {
+                UIAccessibility.post(notification: .announcement, argument: first)
+            }
             return
         }
 

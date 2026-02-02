@@ -7,6 +7,29 @@
 
 import Foundation
 
+private func matchSubject(for url: String, pattern: String, matchType: MatchType) -> (subject: String, isHostMatch: Bool) {
+    if pattern.contains("://") || pattern.contains("/") {
+        return (url, false)
+    }
+
+    // Heuristic:
+    // - Treat host-only patterns like "*.example.com" and "example.com" as host matches.
+    // - Treat extension patterns like "*.png" / "*.js" as URL matches.
+    if matchType == .wildcard, pattern.hasPrefix("*.") {
+        let dotCount = pattern.count(where: { $0 == "." })
+        if dotCount == 1 {
+            return (url, false)
+        }
+    }
+
+    if let host = URL(string: url)?.host {
+        return (host, true)
+    }
+
+    // If URL parsing fails, fall back to matching against the full URL string.
+    return (url, false)
+}
+
 // MARK: - Shared Matching
 
 /// Pattern matching type for rules/maps/scripts/breakpoints.
@@ -183,19 +206,34 @@ public struct RewriteRule: Codable, Identifiable, Sendable {
             return urlMatcher.matches(url)
         }
 
+        let pattern = matchPattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        if pattern.isEmpty {
+            return url.isEmpty
+        }
+
+        let (subject, isHostMatch) = matchSubject(for: url, pattern: pattern, matchType: matchType)
+
         switch matchType {
         case .exact:
-            return url == matchPattern
+            if isHostMatch {
+                return subject.lowercased() == pattern.lowercased()
+            }
+            return subject == pattern
         case .contains:
-            return url.contains(matchPattern)
+            if isHostMatch {
+                let lowerPattern = pattern.lowercased()
+                return subject.lowercased().contains(lowerPattern) || url.lowercased().contains(lowerPattern)
+            }
+            return subject.contains(pattern) || url.contains(pattern)
         case .wildcard:
-            return matchesWildcard(url, pattern: matchPattern)
+            return matchesWildcard(subject, pattern: pattern)
         case .regex:
-            guard let regex = try? NSRegularExpression(pattern: matchPattern, options: []) else {
+            let options: NSRegularExpression.Options = isHostMatch ? [.caseInsensitive] : []
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else {
                 return false
             }
-            let range = NSRange(url.startIndex..., in: url)
-            return regex.firstMatch(in: url, range: range) != nil
+            let range = NSRange(subject.startIndex..., in: subject)
+            return regex.firstMatch(in: subject, range: range) != nil
         }
     }
 
@@ -295,7 +333,7 @@ public struct RewriteAction: Codable, Identifiable, Sendable {
         self.parameters = parameters
     }
 
-    // Convenience initializers for common actions
+    /// Convenience initializers for common actions
     public static func setHeader(key: String, value: String) -> RewriteAction {
         RewriteAction(actionType: .setHeader, parameters: ["key": key, "value": value])
     }
@@ -324,24 +362,74 @@ public struct RewriteAction: Codable, Identifiable, Sendable {
         RewriteAction(actionType: .redirectTo, parameters: ["url": url])
     }
 
-    // Helper methods to extract typed values
-    public var headerKey: String? { parameters["key"] }
-    public var headerValue: String? { parameters["value"] }
-    public var bodyPattern: String? { parameters["pattern"] }
-    public var bodyReplacement: String? { parameters["replacement"] }
-    public var bodyContent: String? { parameters["content"] }
-    public var redirectUrl: String? { parameters["url"] }
-    public var queryParamName: String? { parameters["name"] }
-    public var queryParamValue: String? { parameters["value"] }
-    public var cookieName: String? { parameters["cookie"] ?? parameters["name"] }
-    public var cookieValue: String? { parameters["value"] }
-    public var jsonPath: String? { parameters["path"] }
-    public var jsonValue: String? { parameters["json"] ?? parameters["value"] }
-    public var templateBody: String? { parameters["template"] }
-    public var throttleBytesPerSecond: Int? { parameters["bandwidth"].flatMap(Int.init) }
-    public var jitterBaseMs: Int? { parameters["baseDelay"].flatMap(Int.init) }
-    public var jitterVarianceMs: Int? { parameters["variance"].flatMap(Int.init) }
-    public var compressionAlgorithm: String? { parameters["algorithm"] }
+    /// Helper methods to extract typed values
+    public var headerKey: String? {
+        parameters["key"]
+    }
+
+    public var headerValue: String? {
+        parameters["value"]
+    }
+
+    public var bodyPattern: String? {
+        parameters["pattern"]
+    }
+
+    public var bodyReplacement: String? {
+        parameters["replacement"]
+    }
+
+    public var bodyContent: String? {
+        parameters["content"]
+    }
+
+    public var redirectUrl: String? {
+        parameters["url"]
+    }
+
+    public var queryParamName: String? {
+        parameters["name"]
+    }
+
+    public var queryParamValue: String? {
+        parameters["value"]
+    }
+
+    public var cookieName: String? {
+        parameters["cookie"] ?? parameters["name"]
+    }
+
+    public var cookieValue: String? {
+        parameters["value"]
+    }
+
+    public var jsonPath: String? {
+        parameters["path"]
+    }
+
+    public var jsonValue: String? {
+        parameters["json"] ?? parameters["value"]
+    }
+
+    public var templateBody: String? {
+        parameters["template"]
+    }
+
+    public var throttleBytesPerSecond: Int? {
+        parameters["bandwidth"].flatMap(Int.init)
+    }
+
+    public var jitterBaseMs: Int? {
+        parameters["baseDelay"].flatMap(Int.init)
+    }
+
+    public var jitterVarianceMs: Int? {
+        parameters["variance"].flatMap(Int.init)
+    }
+
+    public var compressionAlgorithm: String? {
+        parameters["algorithm"]
+    }
 
     public var statusCode: Int? {
         guard let codeStr = parameters["code"] else { return nil }
@@ -361,11 +449,15 @@ extension RewriteRule: URLMatchable {}
 extension RewriteRule: ModificationTrackable {}
 
 extension RewriteRule: Equatable {
-    public static func == (lhs: RewriteRule, rhs: RewriteRule) -> Bool { lhs.id == rhs.id }
+    public static func == (lhs: RewriteRule, rhs: RewriteRule) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 extension RewriteAction: Equatable {
-    public static func == (lhs: RewriteAction, rhs: RewriteAction) -> Bool { lhs.id == rhs.id }
+    public static func == (lhs: RewriteAction, rhs: RewriteAction) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 // MARK: - Host Entries
@@ -438,27 +530,7 @@ public struct HostEntry: Codable, Identifiable, Equatable {
     }
 
     public var isValidTargetIP: Bool {
-        if isValidIPv4(targetIP) { return true }
-        if isValidIPv6(targetIP) { return true }
-        return !targetIP.trimmingCharacters(in: .whitespaces).isEmpty
-    }
-
-    private func isValidIPv4(_ ip: String) -> Bool {
-        let parts = ip.split(separator: ".")
-        guard parts.count == 4 else { return false }
-        return parts.allSatisfy { part in
-            guard let num = Int(part), num >= 0, num <= 255 else { return false }
-            return true
-        }
-    }
-
-    private func isValidIPv6(_ ip: String) -> Bool {
-        let parts = ip.split(separator: ":")
-        guard parts.count >= 3 && parts.count <= 8 else { return false }
-        return parts.allSatisfy { part in
-            guard part.count <= 4 else { return false }
-            return part.allSatisfy { char in char.isHexDigit }
-        }
+        Validation.isValidIPAddress(targetIP)
     }
 
     public var validationErrors: [String] {
@@ -480,7 +552,9 @@ public struct HostEntry: Codable, Identifiable, Equatable {
         return errors
     }
 
-    public var isValid: Bool { validationErrors.isEmpty }
+    public var isValid: Bool {
+        validationErrors.isEmpty
+    }
 }
 
 extension HostEntry: Toggleable {}
@@ -771,21 +845,12 @@ extension RequestMap: URLMatchable {}
 extension RequestMap: ModificationTrackable {}
 
 extension RequestMap: Equatable {
-    public static func == (lhs: RequestMap, rhs: RequestMap) -> Bool { lhs.id == rhs.id }
-}
-
-extension MockResponse: Equatable {
-    public static func == (lhs: MockResponse, rhs: MockResponse) -> Bool {
-        lhs.statusCode == rhs.statusCode &&
-            lhs.statusMessage == rhs.statusMessage &&
-            lhs.headers == rhs.headers &&
-            lhs.bodySource == rhs.bodySource &&
-            lhs.bodyContent == rhs.bodyContent &&
-            lhs.bodyFilePath == rhs.bodyFilePath &&
-            lhs.scriptContent == rhs.scriptContent &&
-            lhs.delay == rhs.delay
+    public static func == (lhs: RequestMap, rhs: RequestMap) -> Bool {
+        lhs.id == rhs.id
     }
 }
+
+extension MockResponse: Equatable {}
 
 // MARK: - Scripts
 
@@ -795,7 +860,9 @@ public enum ScriptType: String, Codable, CaseIterable, Sendable {
     case response = "Response"
     case both = "Both"
 
-    public var displayName: String { rawValue }
+    public var displayName: String {
+        rawValue
+    }
 
     public var description: String {
         switch self {
@@ -845,23 +912,33 @@ public struct Script: Codable, Identifiable, Sendable {
 
     public func matches(_ url: String) -> Bool {
         guard enabled else { return false }
-        guard let pattern = matchPattern, !pattern.isEmpty else {
-            return true
-        }
+        guard let rawPattern = matchPattern else { return true }
+        let pattern = rawPattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !pattern.isEmpty else { return true }
+
+        let (subject, isHostMatch) = matchSubject(for: url, pattern: pattern, matchType: matchType)
 
         switch matchType {
         case .exact:
-            return url == pattern
+            if isHostMatch {
+                return subject.lowercased() == pattern.lowercased()
+            }
+            return subject == pattern
         case .contains:
-            return url.contains(pattern)
+            if isHostMatch {
+                let lowerPattern = pattern.lowercased()
+                return subject.lowercased().contains(lowerPattern) || url.lowercased().contains(lowerPattern)
+            }
+            return subject.contains(pattern) || url.contains(pattern)
         case .wildcard:
-            return matchesWildcard(url, pattern: pattern)
+            return matchesWildcard(subject, pattern: pattern)
         case .regex:
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            let options: NSRegularExpression.Options = isHostMatch ? [.caseInsensitive] : []
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else {
                 return false
             }
-            let range = NSRange(url.startIndex..., in: url)
-            return regex.firstMatch(in: url, range: range) != nil
+            let range = NSRange(subject.startIndex..., in: subject)
+            return regex.firstMatch(in: subject, range: range) != nil
         }
     }
 
@@ -947,7 +1024,9 @@ extension Script: URLMatchable {}
 extension Script: ModificationTrackable {}
 
 extension Script: Equatable {
-    public static func == (lhs: Script, rhs: Script) -> Bool { lhs.id == rhs.id }
+    public static func == (lhs: Script, rhs: Script) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 // MARK: - Breakpoints
@@ -1154,12 +1233,29 @@ public struct PausedRequest: Identifiable, Sendable {
             modifiedStatusMessage != nil
     }
 
-    public var effectiveUrl: String { modifiedUrl ?? url }
-    public var effectiveMethod: HTTPMethod { modifiedMethod ?? method }
-    public var effectiveHeaders: [TraceHTTPHeader] { modifiedHeaders ?? headers }
-    public var effectiveBody: Data? { modifiedBody ?? body }
-    public var effectiveStatusCode: Int? { modifiedStatusCode ?? statusCode }
-    public var effectiveStatusMessage: String? { modifiedStatusMessage ?? statusMessage }
+    public var effectiveUrl: String {
+        modifiedUrl ?? url
+    }
+
+    public var effectiveMethod: HTTPMethod {
+        modifiedMethod ?? method
+    }
+
+    public var effectiveHeaders: [TraceHTTPHeader] {
+        modifiedHeaders ?? headers
+    }
+
+    public var effectiveBody: Data? {
+        modifiedBody ?? body
+    }
+
+    public var effectiveStatusCode: Int? {
+        modifiedStatusCode ?? statusCode
+    }
+
+    public var effectiveStatusMessage: String? {
+        modifiedStatusMessage ?? statusMessage
+    }
 }
 
 public extension Notification.Name {

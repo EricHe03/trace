@@ -8,6 +8,18 @@
 import Foundation
 
 public extension NetworkRequest {
+    private func responseHeader(_ key: String) -> String? {
+        responseHeaders.first(where: { $0.key.lowercased() == key })?.value
+    }
+
+    private var effectiveContentType: String? {
+        contentType ?? responseHeader("content-type")
+    }
+
+    private var effectiveCacheControl: String? {
+        cacheControl ?? responseHeader("cache-control")
+    }
+
     // MARK: - Protocol Detection
 
     /// Indicates whether the request uses HTTP/3.
@@ -24,7 +36,7 @@ public extension NetworkRequest {
 
     /// Indicates whether the request is gRPC.
     var isGRPC: Bool {
-        contentType?.lowercased().contains("application/grpc") ?? false
+        effectiveContentType?.lowercased().contains("application/grpc") ?? false
     }
 
     /// Indicates whether the request is GraphQL.
@@ -34,7 +46,7 @@ public extension NetworkRequest {
             return true
         }
         // GraphQL content-type heuristic.
-        if contentType?.lowercased().contains("application/graphql") ?? false {
+        if effectiveContentType?.lowercased().contains("application/graphql") ?? false {
             return true
         }
         return false
@@ -128,7 +140,13 @@ public extension NetworkRequest {
 
     /// Indicates whether the response appears to be cached.
     var isCached: Bool {
-        if let cacheControl = cacheControl?.lowercased() {
+        if let warning = responseHeaders.first(where: { $0.key.lowercased() == "warning" })?.value {
+            if warning.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("110") {
+                return true
+            }
+        }
+
+        if let cacheControl = effectiveCacheControl?.lowercased() {
             if cacheControl.contains("max-age") || cacheControl.contains("public") {
                 // Age header indicates cached delivery.
                 if responseHeaders.contains(where: { $0.key.lowercased() == "age" }) {
@@ -167,13 +185,13 @@ public extension NetworkRequest {
     var isStale: Bool {
         guard isCached else { return false }
 
-        if let cacheControl = cacheControl?.lowercased() {
+        if let cacheControl = effectiveCacheControl?.lowercased() {
             return cacheControl.contains("stale-while-revalidate") ||
                 cacheControl.contains("stale-if-error")
         }
 
         if let warning = responseHeaders.first(where: { $0.key.lowercased() == "warning" })?.value {
-            return warning.starts(with: "110")
+            return warning.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("110")
         }
 
         return false
@@ -196,7 +214,7 @@ public extension NetworkRequest {
 
     /// Indicates whether the response content is binary.
     var isBinary: Bool {
-        guard let contentType = contentType?.lowercased() else { return false }
+        guard let contentType = effectiveContentType?.lowercased() else { return false }
 
         // SVG is XML text, not binary - exclude it
         if contentType.contains("image/svg") {

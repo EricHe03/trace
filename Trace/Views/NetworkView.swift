@@ -145,7 +145,7 @@ struct NetworkView: View {
                         contextMenuContent: contextMenuContent
                     )
                 }
-                .onChange(of: viewModel.selectedSession) { newValue in
+                .onChangeCompat(of: viewModel.selectedSession) { newValue in
                     guard let session = newValue else { return }
                     guard shouldGroupRequests else {
                         viewModel.selectedSession = nil
@@ -183,11 +183,7 @@ struct NetworkView: View {
         }
         .overlay {
             if shouldShowEmptyState {
-                TraceContentUnavailableView(
-                    viewModel.searchText.isEmpty ? "No Network Activity" : "No Results",
-                    systemImage: viewModel.searchText.isEmpty ? "network.slash" : "magnifyingglass",
-                    description: Text(viewModel.searchText.isEmpty ? "Network events will appear here when capture is active" : "Try a different search term or filter")
-                )
+                emptyStateView
             }
         }
         .refreshable {
@@ -288,6 +284,32 @@ struct NetworkView: View {
         }
     }
 
+    @ViewBuilder
+    private var emptyStateView: some View {
+        if !viewModel.searchText.isEmpty || viewModel.hasActiveFilters {
+            // Search or filter resulted in no results
+            TraceContentUnavailableView(
+                "No Results",
+                systemImage: "magnifyingglass",
+                description: Text("Try adjusting your search or filters")
+            )
+        } else if !vpnManager.isConnected {
+            // Capture is not active
+            TraceContentUnavailableView(
+                "No Requests Yet",
+                systemImage: "network.slash",
+                description: Text("Start capture to see network traffic here")
+            )
+        } else {
+            // Capture is active but no requests yet
+            TraceContentUnavailableView(
+                "No Network Activity",
+                systemImage: "network",
+                description: Text("Network requests will appear here as they're captured")
+            )
+        }
+    }
+
     // MARK: - Grouping Helpers
 
     private var shouldGroupRequests: Bool {
@@ -369,6 +391,7 @@ struct NetworkView: View {
         eventRebuildTask?.cancel()
         eventRebuildTask = Task {
             try? await Task.sleep(nanoseconds: 100_000_000)
+            guard !Task.isCancelled else { return }
             await rebuildEventCaches()
         }
     }
@@ -382,31 +405,58 @@ struct NetworkView: View {
         let enabledTypes = viewModel.filterNetworkEventTypes
 
         let results = await Task.detached(priority: .userInitiated) {
-            var events: [NetworkEvent] = []
-            events.reserveCapacity(httpRequests.count + webSockets.count + sseConnections.count)
-            events.append(contentsOf: httpRequests.map { .httpRequest($0) })
-            events.append(contentsOf: webSockets.map { .webSocket($0) })
-            events.append(contentsOf: sseConnections.map { .sse($0) })
+            let httpEvents: [NetworkEvent] = httpRequests.map { .httpRequest($0) }
+            let webSocketEvents: [NetworkEvent] = webSockets.map { .webSocket($0) }
+            let sseEvents: [NetworkEvent] = sseConnections.map { .sse($0) }
+
+            func mergeSortedByTimestampDescending(_ arrays: [[NetworkEvent]]) -> [NetworkEvent] {
+                var indices = Array(repeating: 0, count: arrays.count)
+                let totalCount = arrays.reduce(0) { $0 + $1.count }
+                var merged: [NetworkEvent] = []
+                merged.reserveCapacity(totalCount)
+
+                while merged.count < totalCount {
+                    var selectedArrayIndex: Int?
+                    var selectedEvent: NetworkEvent?
+
+                    for arrayIndex in arrays.indices {
+                        let elementIndex = indices[arrayIndex]
+                        guard elementIndex < arrays[arrayIndex].count else { continue }
+                        let candidate = arrays[arrayIndex][elementIndex]
+
+                        if selectedEvent == nil || candidate.timestamp > selectedEvent!.timestamp {
+                            selectedEvent = candidate
+                            selectedArrayIndex = arrayIndex
+                        }
+                    }
+
+                    guard let selectedArrayIndex, let selectedEvent else { break }
+                    merged.append(selectedEvent)
+                    indices[selectedArrayIndex] += 1
+                }
+
+                return merged
+            }
+
+            let events = mergeSortedByTimestampDescending([httpEvents, webSocketEvents, sseEvents])
 
             var counts: [NetworkEventType: Int] = [:]
             for event in events {
                 counts[event.type, default: 0] += 1
             }
 
-            var filtered = events.filter { enabledTypes.contains($0.type) }
-            if !searchText.isEmpty {
-                filtered = filtered.filter { event in
-                    switch event {
-                    case .httpRequest:
-                        true
-                    case let .webSocket(connection):
-                        connection.url.localizedCaseInsensitiveContains(searchText)
-                    case let .sse(connection):
-                        connection.url.localizedCaseInsensitiveContains(searchText)
-                    }
+            let filtered = events.filter { event in
+                guard enabledTypes.contains(event.type) else { return false }
+                guard !searchText.isEmpty else { return true }
+                switch event {
+                case .httpRequest:
+                    return true
+                case let .webSocket(connection):
+                    return connection.url.localizedCaseInsensitiveContains(searchText)
+                case let .sse(connection):
+                    return connection.url.localizedCaseInsensitiveContains(searchText)
                 }
             }
-            filtered.sort { $0.timestamp > $1.timestamp }
 
             return (events, filtered, counts)
         }.value

@@ -247,6 +247,75 @@ final class IPPacketParserTests: XCTestCase {
         XCTAssertNil(packet)
     }
 
+    func testParseIPv6HopByHopThenTCP() {
+        // IPv6 + Hop-by-Hop (8 bytes) + TCP header (20 bytes)
+        var data = Data([
+            0x60, 0x00, 0x00, 0x00,
+            0x00, 0x1C, // Payload length: 28
+            0x00,       // Next header: Hop-by-Hop Options
+            0x40,       // Hop limit
+            // Source: ::1
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+            // Destination: ::1
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        ])
+
+        // Hop-by-Hop header: next=TCP(6), len=0 (8 bytes total), then 6 bytes of padding/options.
+        data.append(contentsOf: [
+            0x06, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ])
+
+        // Minimal TCP header (20 bytes) with data offset=5 (0x50).
+        var tcp = Data(repeating: 0, count: 20)
+        tcp[0] = 0x30 // src port 12345
+        tcp[1] = 0x39
+        tcp[2] = 0x00 // dst port 80
+        tcp[3] = 0x50
+        tcp[12] = 0x50 // data offset 5
+        data.append(tcp)
+
+        let packet = IPPacketParser.parse(data)
+        XCTAssertNotNil(packet)
+        XCTAssertEqual(packet?.version, 6)
+        XCTAssertEqual(packet?.protocolNumber, 6)
+        XCTAssertEqual(packet?.transport, .tcp)
+        XCTAssertEqual(packet?.headerLength, 48) // 40 + 8
+        XCTAssertEqual(packet?.payload.count, 20)
+
+        if let payload = packet?.payload {
+            XCTAssertNotNil(TCPParser.parse(payload))
+        }
+    }
+
+    func testParseIPv6NonInitialFragmentReturnsNil() {
+        // IPv6 + Fragment header with non-zero offset.
+        var data = Data([
+            0x60, 0x00, 0x00, 0x00,
+            0x00, 0x1C, // Payload length: 28 (8 frag + 20 data)
+            0x2C,       // Next header: Fragment (44)
+            0x40,
+            // Source: ::1
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+            // Destination: ::1
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        ])
+
+        // Fragment header: next=TCP(6), offset=1 (non-zero) => should be rejected.
+        data.append(contentsOf: [
+            0x06, 0x00,
+            0x00, 0x08, // fragment offset 1 << 3
+            0x00, 0x00, 0x00, 0x00, // identification
+        ])
+
+        data.append(Data(repeating: 0xAB, count: 20))
+        XCTAssertNil(IPPacketParser.parse(data))
+    }
+
     // MARK: - Version Detection Tests
 
     func testParseEmptyData() {
@@ -294,5 +363,23 @@ final class IPPacketParserTests: XCTestCase {
 
         let packet = IPPacketParser.parse(data)
         XCTAssertEqual(packet?.transport, .udp)
+    }
+
+    func testParseIPv4NonInitialFragmentReturnsNil() {
+        // IPv4 with fragment offset 1 (8 bytes), header length 20, total length 28
+        let data = Data([
+            0x45, 0x00,
+            0x00, 0x1C, // total length 28
+            0x00, 0x00,
+            0x00, 0x08, // fragment offset 1
+            0x40,
+            0x11, // UDP
+            0x00, 0x00,
+            0x7F, 0x00, 0x00, 0x01,
+            0x7F, 0x00, 0x00, 0x01,
+            0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        ])
+
+        XCTAssertNil(IPPacketParser.parse(data))
     }
 }

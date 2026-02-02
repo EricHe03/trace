@@ -66,7 +66,7 @@ public struct TimestampToolView: View {
                             .background(DesignSystem.Colors.surfaceMuted)
                             .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
                             .font(.system(.body, design: .monospaced))
-                            .onChange(of: unixTimestamp) { newValue in
+                            .onChangeCompat(of: unixTimestamp) { newValue in
                                 timestampToDate(newValue)
                             }
 
@@ -76,7 +76,7 @@ public struct TimestampToolView: View {
                             }
                         }
                         .pickerStyle(.menu)
-                        .onChange(of: timestampUnit) { _ in
+                        .onChangeCompat(of: timestampUnit) {
                             timestampToDate(unixTimestamp)
                         }
                     }
@@ -109,7 +109,7 @@ public struct TimestampToolView: View {
                         .frame(height: 80)
                         .font(DesignSystem.Typography.monospacedFont)
                         .formTextEditorStyle()
-                        .onChange(of: isoDateTime) { newValue in
+                        .onChangeCompat(of: isoDateTime) { newValue in
                             dateToTimestamp(newValue)
                         }
 
@@ -130,7 +130,7 @@ public struct TimestampToolView: View {
                                     .tag(timezone)
                             }
                         }
-                        .onChange(of: selectedTimezone) { _ in
+                        .onChangeCompat(of: selectedTimezone) {
                             dateFormatter.timeZone = selectedTimezone
                             timestampToDate(unixTimestamp)
                         }
@@ -163,9 +163,8 @@ public struct TimestampToolView: View {
             }
             .padding(.vertical)
         }
-        .scrollDismissesKeyboard(.interactively)
         .toast(message: $toastMessage)
-        .keyboardDismissToolbar()
+        .dismissKeyboardOnTapAndScroll()
         .navigationTitle("Timestamp")
         .onAppear {
             dateFormatter.timeZone = selectedTimezone
@@ -258,7 +257,7 @@ public struct TimestampToolView: View {
 
     private func copyToClipboard(_ text: String) {
         UIPasteboard.general.string = text
-        withAnimation {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
             toastMessage = "Copied: \(String(text.prefix(20)))"
         }
     }

@@ -583,13 +583,13 @@ public class TLSHandler {
             )
         }
 
-        // Rule: Key and certificate labels must match CertificateManager for identity lookup on iOS.
-        let keyTag = "com.trace.domain.\(domain)"
-        guard let keyTagData = keyTag.data(using: .utf8) else {
-            SecurityLog.tls.error("event=tls.identity_create outcome=failure domain=\(domain, privacy: .private(mask: .hash)) reason=key_tag_encode")
-            return nil
-        }
-        let certLabel = "Trace - \(domain)"
+        // Rule: Key and certificate identifiers must match CertificateManager for identity lookup on iOS.
+        let identifiers = CertificateManager.keychainIdentifiers(forDomain: domain)
+        let currentKeyTagData = identifiers.keyApplicationTag
+        let legacyKeyTagData = identifiers.legacyKeyApplicationTag
+        let currentCertLabel = identifiers.certificateLabel
+        let legacyCertLabel = identifiers.legacyCertificateLabel
+        var effectiveCertLabel = currentCertLabel
         let accessGroup = CertificateManager.keychainAccessGroup
         TLSLog.debug("event=tls.keychain_group group=\(accessGroup ?? "default")")
 
@@ -608,19 +608,29 @@ public class TLSHandler {
                 "event=tls.key_lookup outcome=pending domain=\(domain, privacy: .private(mask: .hash))"
             )
         }
-        var keyQuery: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: keyTagData,
-            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
-            kSecReturnRef as String: true
-        ]
-        if let accessGroup {
-            keyQuery[kSecAttrAccessGroup as String] = accessGroup
+        func queryKey(tag: Data) -> OSStatus {
+            var keyQuery: [String: Any] = [
+                kSecClass as String: kSecClassKey,
+                kSecAttrApplicationTag as String: tag,
+                kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+                kSecReturnRef as String: true
+            ]
+            if let accessGroup {
+                keyQuery[kSecAttrAccessGroup as String] = accessGroup
+            }
+            return SecItemCopyMatching(keyQuery as CFDictionary, &keyRef)
         }
 
         var keyRef: CFTypeRef?
-        var status = SecItemCopyMatching(keyQuery as CFDictionary, &keyRef)
+        var status = queryKey(tag: currentKeyTagData)
         TLSLog.debug("event=tls.key_lookup status=\(describeOSStatus(status))")
+
+        if status == errSecItemNotFound {
+            status = queryKey(tag: legacyKeyTagData)
+            if status == errSecSuccess {
+                TLSLog.debug("event=tls.key_lookup outcome=legacy_hit")
+            }
+        }
 
         if status == errSecItemNotFound {
             if TLSLog.verboseEnabled {
@@ -630,8 +640,8 @@ public class TLSHandler {
             }
             var keyAttrs: [String: Any] = [
                 kSecClass as String: kSecClassKey,
-                kSecAttrApplicationTag as String: keyTagData,
-                kSecAttrLabel as String: certLabel,
+                kSecAttrApplicationTag as String: currentKeyTagData,
+                kSecAttrLabel as String: currentCertLabel,
                 kSecValueRef as String: privateKey,
                 kSecAttrIsPermanent as String: true,
                 kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
@@ -667,18 +677,29 @@ public class TLSHandler {
                 "event=tls.cert_lookup outcome=pending domain=\(domain, privacy: .private(mask: .hash))"
             )
         }
-        var certQuery: [String: Any] = [
-            kSecClass as String: kSecClassCertificate,
-            kSecAttrLabel as String: certLabel,
-            kSecReturnRef as String: true
-        ]
-        if let accessGroup {
-            certQuery[kSecAttrAccessGroup as String] = accessGroup
+        func queryCert(label: String) -> OSStatus {
+            var certQuery: [String: Any] = [
+                kSecClass as String: kSecClassCertificate,
+                kSecAttrLabel as String: label,
+                kSecReturnRef as String: true
+            ]
+            if let accessGroup {
+                certQuery[kSecAttrAccessGroup as String] = accessGroup
+            }
+            return SecItemCopyMatching(certQuery as CFDictionary, &certRef)
         }
 
         var certRef: CFTypeRef?
-        var certStatus = SecItemCopyMatching(certQuery as CFDictionary, &certRef)
+        var certStatus = queryCert(label: currentCertLabel)
         TLSLog.debug("event=tls.cert_lookup status=\(describeOSStatus(certStatus))")
+
+        if certStatus == errSecItemNotFound {
+            certStatus = queryCert(label: legacyCertLabel)
+            if certStatus == errSecSuccess {
+                effectiveCertLabel = legacyCertLabel
+                TLSLog.debug("event=tls.cert_lookup outcome=legacy_hit")
+            }
+        }
 
         if certStatus == errSecItemNotFound {
             if TLSLog.verboseEnabled {
@@ -689,7 +710,7 @@ public class TLSHandler {
             var certAttrs: [String: Any] = [
                 kSecClass as String: kSecClassCertificate,
                 kSecValueRef as String: certificate,
-                kSecAttrLabel as String: certLabel,
+                kSecAttrLabel as String: currentCertLabel,
                 kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             ]
             if let accessGroup {
@@ -719,7 +740,7 @@ public class TLSHandler {
         // Rationale: Use SecItemCopyMatching because some SDKs omit SecIdentityCreateWithCertificate.
         var identityQuery: [String: Any] = [
             kSecClass as String: kSecClassIdentity,
-            kSecAttrLabel as String: certLabel,
+            kSecAttrLabel as String: effectiveCertLabel,
             kSecReturnRef as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -763,6 +784,7 @@ public class TLSHandler {
         let identity = unsafeBitCast(matchRef, to: SecIdentity.self)
         return sec_identity_create(identity)
     }
+
     // swiftlint:enable cyclomatic_complexity
 
     private static func deleteKeychainIdentity(for domain: String) {
@@ -772,143 +794,100 @@ public class TLSHandler {
             )
         }
 
-        let keyTag = "com.trace.domain.\(domain)"
-        guard let keyTagData = keyTag.data(using: .utf8) else {
-            SecurityLog.tls.error("event=tls.keychain_delete outcome=failure domain=\(domain, privacy: .private(mask: .hash)) reason=key_tag_encode")
-            return
-        }
-        let certLabel = "Trace - \(domain)"
+        let identifiers = CertificateManager.keychainIdentifiers(forDomain: domain)
         let accessGroup = CertificateManager.keychainAccessGroup
 
-        var keyQuery: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: keyTagData
+        let variants: [(label: String, tag: Data)] = [
+            (identifiers.certificateLabel, identifiers.keyApplicationTag),
+            (identifiers.legacyCertificateLabel, identifiers.legacyKeyApplicationTag)
         ]
-        if let accessGroup {
-            keyQuery[kSecAttrAccessGroup as String] = accessGroup
-        }
-        let keyStatus = SecItemDelete(keyQuery as CFDictionary)
-        TLSLog.debug("event=tls.key_delete status=\(describeOSStatus(keyStatus))")
 
-        var certQuery: [String: Any] = [
-            kSecClass as String: kSecClassCertificate,
-            kSecAttrLabel as String: certLabel
-        ]
-        if let accessGroup {
-            certQuery[kSecAttrAccessGroup as String] = accessGroup
-        }
-        let certStatus = SecItemDelete(certQuery as CFDictionary)
-        TLSLog.debug("event=tls.cert_delete status=\(describeOSStatus(certStatus))")
+        for variant in variants {
+            var keyQuery: [String: Any] = [
+                kSecClass as String: kSecClassKey,
+                kSecAttrApplicationTag as String: variant.tag
+            ]
+            if let accessGroup {
+                keyQuery[kSecAttrAccessGroup as String] = accessGroup
+            }
+            let keyStatus = SecItemDelete(keyQuery as CFDictionary)
+            TLSLog.debug("event=tls.key_delete status=\(describeOSStatus(keyStatus))")
 
-        var identityQuery: [String: Any] = [
-            kSecClass as String: kSecClassIdentity,
-            kSecAttrLabel as String: certLabel
-        ]
-        if let accessGroup {
-            identityQuery[kSecAttrAccessGroup as String] = accessGroup
+            var certQuery: [String: Any] = [
+                kSecClass as String: kSecClassCertificate,
+                kSecAttrLabel as String: variant.label
+            ]
+            if let accessGroup {
+                certQuery[kSecAttrAccessGroup as String] = accessGroup
+            }
+            let certStatus = SecItemDelete(certQuery as CFDictionary)
+            TLSLog.debug("event=tls.cert_delete status=\(describeOSStatus(certStatus))")
+
+            var identityQuery: [String: Any] = [
+                kSecClass as String: kSecClassIdentity,
+                kSecAttrLabel as String: variant.label
+            ]
+            if let accessGroup {
+                identityQuery[kSecAttrAccessGroup as String] = accessGroup
+            }
+            let identityStatus = SecItemDelete(identityQuery as CFDictionary)
+            TLSLog.debug("event=tls.identity_delete status=\(describeOSStatus(identityStatus))")
         }
-        let identityStatus = SecItemDelete(identityQuery as CFDictionary)
-        TLSLog.debug("event=tls.identity_delete status=\(describeOSStatus(identityStatus))")
     }
 
-    /// Extracts SNI (Server Name Indication) from TLS ClientHello.
-    /// - Important: Best-effort parse that assumes ClientHello is unfragmented in `data`.
+    /// Extracts SNI (Server Name Indication) from a TLS ClientHello.
+    /// - Important: Best-effort parse. Supports ClientHello spanning multiple TLS records, but requires enough bytes.
     public static func extractSNI(from data: Data) -> String? {
         debugSampled("tls.sni_parse.pending", first: 5, every: 500) {
             "event=tls.sni_parse outcome=pending data_size=\(data.count)"
         }
 
-        // Rationale: Parse the ClientHello structure to locate the SNI extension.
-
-        guard data.count > 43 else {
+        guard let extensions = extractClientHelloExtensions(from: data) else {
             debugSampled("tls.sni_parse.short", first: 5, every: 500) {
-                "event=tls.sni_parse outcome=failure reason=data_too_short size=\(data.count)"
+                "event=tls.sni_parse outcome=failure reason=client_hello_incomplete size=\(data.count)"
             }
             return nil
         }
 
-        var offset = 0
+        var offset = extensions.startIndex
+        while offset + 4 <= extensions.endIndex {
+            let extensionType = Int(extensions[offset]) << 8 | Int(extensions[offset + 1])
+            let extensionLength = Int(extensions[offset + 2]) << 8 | Int(extensions[offset + 3])
+            offset += 4
 
-        guard data[offset] == 0x16 else { return nil }
-        offset += 1
+            guard offset + extensionLength <= extensions.endIndex else { break }
 
-        offset += 2
+            if extensionType == 0x0000 {
+                let end = offset + extensionLength
+                guard offset + 2 <= end else { break }
 
-        offset += 2
-
-        guard data[offset] == 0x01 else { return nil }
-        offset += 1
-
-        offset += 3
-
-        offset += 2
-
-        offset += 32
-
-        guard offset < data.count else { return nil }
-        let sessionIDLength = Int(data[offset])
-        guard offset + 1 + sessionIDLength <= data.count else { return nil }
-        offset += 1 + sessionIDLength
-
-        guard offset + 2 <= data.count else { return nil }
-        let cipherSuitesLength = Int(data[offset]) << 8 | Int(data[offset + 1])
-        guard offset + 2 + cipherSuitesLength <= data.count else { return nil }
-        offset += 2 + cipherSuitesLength
-
-        guard offset < data.count else { return nil }
-        let compressionMethodsLength = Int(data[offset])
-        guard offset + 1 + compressionMethodsLength <= data.count else { return nil }
-        offset += 1 + compressionMethodsLength
-
-        guard offset + 2 <= data.count else { return nil }
-        let extensionsLength = Int(data[offset]) << 8 | Int(data[offset + 1])
-        offset += 2
-
-        guard offset + extensionsLength <= data.count else { return nil }
-
-        let extensionsEnd = offset + extensionsLength
-
-        while offset + 4 <= extensionsEnd {
-            let extensionType = Int(data[offset]) << 8 | Int(data[offset + 1])
-            offset += 2
-
-            let extensionLength = Int(data[offset]) << 8 | Int(data[offset + 1])
-            offset += 2
-
-            guard offset + extensionLength <= extensionsEnd else { break }
-
-            if extensionType == 0 {
-                guard offset + 5 <= extensionsEnd else { break }
-
-                let serverNameListLength = Int(data[offset]) << 8 | Int(data[offset + 1])
+                let serverNameListLength = Int(extensions[offset]) << 8 | Int(extensions[offset + 1])
                 offset += 2
 
-                guard offset + serverNameListLength <= extensionsEnd else { break }
+                guard offset + serverNameListLength <= end else { break }
 
-                let serverNameType = data[offset]
-                offset += 1
+                var listOffset = offset
+                let listEnd = offset + serverNameListLength
+                while listOffset + 3 <= listEnd {
+                    let nameType = extensions[listOffset]
+                    listOffset += 1
+                    let nameLength = Int(extensions[listOffset]) << 8 | Int(extensions[listOffset + 1])
+                    listOffset += 2
+                    guard listOffset + nameLength <= listEnd else { break }
 
-                // Rule: SNI server name type must be hostname (0).
-                guard serverNameType == 0 else { break }
-
-                let serverNameLength = Int(data[offset]) << 8 | Int(data[offset + 1])
-                offset += 2
-
-                guard offset + serverNameLength <= extensionsEnd else { break }
-
-                let serverNameData = data.subdata(in: offset ..< (offset + serverNameLength))
-
-                if let serverName = String(data: serverNameData, encoding: .ascii) {
-                    debugSampled("tls.sni_parse.success.\(serverName)", first: 5, every: 500) {
-                        LogEvent.tls("sni_parse")
-                            .success()
-                            .with("sni", value: serverName, privacy: .hash)
+                    if nameType == 0x00,
+                       let serverName = String(
+                           data: extensions[listOffset ..< (listOffset + nameLength)],
+                           encoding: .ascii
+                       ) {
+                        debugSampled("tls.sni_parse.success.\(serverName)", first: 5, every: 500) {
+                            LogEvent.tls("sni_parse")
+                                .success()
+                                .with("sni", value: serverName, privacy: .hash)
+                        }
+                        return serverName
                     }
-                    return serverName
-                } else {
-                    debugSampled("tls.sni_parse.ascii_decode", first: 5, every: 500) {
-                        "event=tls.sni_parse outcome=failure reason=ascii_decode"
-                    }
+                    listOffset += nameLength
                 }
 
                 break
@@ -923,84 +902,41 @@ public class TLSHandler {
         return nil
     }
 
-    /// Extracts ALPN (Application-Layer Protocol Negotiation) extension from TLS ClientHello.
-    /// - Important: Best-effort parse that assumes ClientHello is unfragmented in `data`.
+    /// Extracts ALPN (Application-Layer Protocol Negotiation) extension from a TLS ClientHello.
+    /// - Important: Best-effort parse. Supports ClientHello spanning multiple TLS records, but requires enough bytes.
     public static func extractALPN(from data: Data) -> [String]? {
-        // Rationale: Parse the ClientHello structure to locate the ALPN extension.
-        guard data.count > 43 else { return nil }
+        guard let extensions = extractClientHelloExtensions(from: data) else { return nil }
 
-        var offset = 0
+        var offset = extensions.startIndex
+        while offset + 4 <= extensions.endIndex {
+            let extensionType = Int(extensions[offset]) << 8 | Int(extensions[offset + 1])
+            let extensionLength = Int(extensions[offset + 2]) << 8 | Int(extensions[offset + 3])
+            offset += 4
 
-        guard data[offset] == 0x16 else { return nil }
-        offset += 1
+            guard offset + extensionLength <= extensions.endIndex else { break }
 
-        offset += 2
+            if extensionType == 0x0010 {
+                let end = offset + extensionLength
+                guard offset + 2 <= end else { break }
 
-        offset += 2
-
-        guard data[offset] == 0x01 else { return nil }
-        offset += 1
-
-        offset += 3
-
-        offset += 2
-
-        offset += 32
-
-        guard offset < data.count else { return nil }
-        let sessionIDLength = Int(data[offset])
-        guard offset + 1 + sessionIDLength <= data.count else { return nil }
-        offset += 1 + sessionIDLength
-
-        guard offset + 2 <= data.count else { return nil }
-        let cipherSuitesLength = Int(data[offset]) << 8 | Int(data[offset + 1])
-        guard offset + 2 + cipherSuitesLength <= data.count else { return nil }
-        offset += 2 + cipherSuitesLength
-
-        guard offset < data.count else { return nil }
-        let compressionMethodsLength = Int(data[offset])
-        guard offset + 1 + compressionMethodsLength <= data.count else { return nil }
-        offset += 1 + compressionMethodsLength
-
-        guard offset + 2 <= data.count else { return nil }
-        let extensionsLength = Int(data[offset]) << 8 | Int(data[offset + 1])
-        offset += 2
-
-        guard offset + extensionsLength <= data.count else { return nil }
-
-        let extensionsEnd = offset + extensionsLength
-
-        while offset + 4 <= extensionsEnd {
-            let extensionType = Int(data[offset]) << 8 | Int(data[offset + 1])
-            offset += 2
-
-            let extensionLength = Int(data[offset]) << 8 | Int(data[offset + 1])
-            offset += 2
-
-            guard offset + extensionLength <= extensionsEnd else { break }
-
-            if extensionType == 16 {
-                guard extensionLength >= 2 else { break }
-
-                let alpnListLength = Int(data[offset]) << 8 | Int(data[offset + 1])
+                let alpnListLength = Int(extensions[offset]) << 8 | Int(extensions[offset + 1])
                 var alpnOffset = offset + 2
 
-                guard alpnOffset + alpnListLength <= offset + extensionLength else { break }
+                guard alpnOffset + alpnListLength <= end else { break }
 
                 var protocols: [String] = []
-
-                while alpnOffset < offset + 2 + alpnListLength {
-                    guard alpnOffset < data.count else { break }
-
-                    let protocolLength = Int(data[alpnOffset])
+                let alpnEnd = alpnOffset + alpnListLength
+                while alpnOffset < alpnEnd {
+                    let protocolLength = Int(extensions[alpnOffset])
                     alpnOffset += 1
+                    guard alpnOffset + protocolLength <= alpnEnd else { break }
 
-                    guard alpnOffset + protocolLength <= offset + 2 + alpnListLength else { break }
-
-                    if let protocolName = String(data: data[alpnOffset ..< (alpnOffset + protocolLength)], encoding: .ascii) {
+                    if let protocolName = String(
+                        data: extensions[alpnOffset ..< (alpnOffset + protocolLength)],
+                        encoding: .ascii
+                    ) {
                         protocols.append(protocolName)
                     }
-
                     alpnOffset += protocolLength
                 }
 
@@ -1018,6 +954,111 @@ public class TLSHandler {
         debugSampled("tls.alpn_parse.none", first: 5, every: 500) {
             "event=tls.alpn_parse outcome=failure reason=no_alpn_extension"
         }
+        return nil
+    }
+
+    // MARK: - ClientHello parsing (best-effort)
+
+    /// Extracts the raw extensions block from a TLS ClientHello message.
+    /// - Important: Returns nil when the ClientHello is incomplete or not present in `data`.
+    private static func extractClientHelloExtensions(from data: Data) -> Data? {
+        guard let clientHello = extractClientHelloHandshake(from: data) else { return nil }
+        guard clientHello.count >= 4 else { return nil }
+
+        let body = clientHello.dropFirst(4)
+        guard body.count >= 2 + 32 + 1 else { return nil }
+
+        var offset = body.startIndex
+
+        // client_version (2)
+        offset = body.index(offset, offsetBy: 2)
+
+        // random (32)
+        offset = body.index(offset, offsetBy: 32)
+
+        // session_id
+        guard offset < body.endIndex else { return nil }
+        let sessionIDLength = Int(body[offset])
+        offset = body.index(offset, offsetBy: 1)
+        guard offset + sessionIDLength <= body.endIndex else { return nil }
+        offset = body.index(offset, offsetBy: sessionIDLength)
+
+        // cipher_suites
+        guard offset + 2 <= body.endIndex else { return nil }
+        let cipherSuitesLength = Int(body[offset]) << 8 | Int(body[offset + 1])
+        offset = body.index(offset, offsetBy: 2)
+        guard offset + cipherSuitesLength <= body.endIndex else { return nil }
+        offset = body.index(offset, offsetBy: cipherSuitesLength)
+
+        // compression_methods
+        guard offset < body.endIndex else { return nil }
+        let compressionMethodsLength = Int(body[offset])
+        offset = body.index(offset, offsetBy: 1)
+        guard offset + compressionMethodsLength <= body.endIndex else { return nil }
+        offset = body.index(offset, offsetBy: compressionMethodsLength)
+
+        // extensions (optional)
+        guard offset + 2 <= body.endIndex else { return Data() }
+        let extensionsLength = Int(body[offset]) << 8 | Int(body[offset + 1])
+        offset = body.index(offset, offsetBy: 2)
+        guard offset + extensionsLength <= body.endIndex else { return nil }
+
+        return Data(body[offset ..< (offset + extensionsLength)])
+    }
+
+    /// Extracts the first ClientHello handshake message from a TLS byte stream.
+    /// Accepts either a full TLS record stream (starting with content type 0x16) or a raw handshake message (starting with 0x01).
+    private static func extractClientHelloHandshake(from data: Data, maxBytes: Int = 256 * 1024) -> Data? {
+        guard !data.isEmpty else { return nil }
+
+        func expectedHandshakeTotal(_ handshake: Data) -> Int? {
+            guard handshake.count >= 4 else { return nil }
+            guard handshake[handshake.startIndex] == 0x01 else { return -1 }
+            let start = handshake.startIndex
+            let length =
+                (Int(handshake[start + 1]) << 16)
+                    | (Int(handshake[start + 2]) << 8)
+                    | Int(handshake[start + 3])
+            return 4 + length
+        }
+
+        // Raw handshake message path.
+        if data.first == 0x01 {
+            guard let total = expectedHandshakeTotal(data) else { return nil }
+            guard total >= 0, total <= maxBytes else { return nil }
+            guard data.count >= total else { return nil }
+            return Data(data.prefix(total))
+        }
+
+        var offset = 0
+        var handshakeBytes = Data()
+        var expectedTotal: Int?
+
+        while offset + 5 <= data.count {
+            let contentType = data[offset]
+            let recordLength = (Int(data[offset + 3]) << 8) | Int(data[offset + 4])
+            let recordStart = offset + 5
+            let recordEnd = recordStart + recordLength
+            guard recordEnd <= data.count else { return nil }
+
+            if contentType == 0x16 {
+                handshakeBytes.append(contentsOf: data[recordStart ..< recordEnd])
+                if handshakeBytes.count > maxBytes { return nil }
+
+                if expectedTotal == nil, let total = expectedHandshakeTotal(handshakeBytes) {
+                    if total < 0 { return nil }
+                    if total > maxBytes { return nil }
+                    expectedTotal = total
+                }
+
+                if let expectedTotal, handshakeBytes.count >= expectedTotal {
+                    return Data(handshakeBytes.prefix(expectedTotal))
+                }
+            }
+
+            offset = recordEnd
+        }
+
         return nil
     }
 

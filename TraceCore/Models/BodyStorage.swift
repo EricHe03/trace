@@ -488,6 +488,7 @@ public enum BodyStorage: Codable, Equatable {
             stream.src_size = data.count
 
             repeat {
+                let previousSrcSize = stream.src_size
                 stream.dst_ptr = destinationBuffer
                 stream.dst_size = bufferSize
 
@@ -505,6 +506,14 @@ public enum BodyStorage: Codable, Equatable {
                         if output.count >= outputLimit {
                             return output
                         }
+                    }
+                    // Safety: If the decoder makes no progress, exit to avoid an infinite loop.
+                    // This can happen for malformed / truncated streams where the API keeps returning `.OK`.
+                    if status == COMPRESSION_STATUS_OK,
+                       produced == 0,
+                       stream.src_size == previousSrcSize,
+                       stream.dst_size == bufferSize {
+                        return output.isEmpty ? nil : output
                     }
                 default:
                     return nil

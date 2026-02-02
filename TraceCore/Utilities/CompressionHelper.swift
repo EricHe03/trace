@@ -13,14 +13,18 @@ import TraceCompression
 #endif
 
 public enum CompressionHelper {
-    public static func compress(data: Data, algorithm: String?) -> Data? {
+    public static func compress(data: Data, algorithm: String?, maxOutputBytes: Int? = nil) -> Data? {
         let algo = algorithm?.lowercased() ?? "deflate"
         switch algo {
         case "deflate", "zlib":
-            return compress(data: data, algorithm: COMPRESSION_ZLIB)
+            return compress(data: data, algorithm: COMPRESSION_ZLIB, maxOutputBytes: maxOutputBytes)
         case "gzip":
-            guard let deflated = compress(data: data, algorithm: COMPRESSION_ZLIB) else { return nil }
-            return wrapGzip(deflated, originalSize: data.count, crc32: crc32(data))
+            let wrapperBytes = 18
+            let deflatedMax = maxOutputBytes.map { max(0, $0 - wrapperBytes) }
+            guard let deflated = compress(data: data, algorithm: COMPRESSION_ZLIB, maxOutputBytes: deflatedMax) else { return nil }
+            let wrapped = wrapGzip(deflated, originalSize: data.count, crc32: crc32(data))
+            if let maxOutputBytes, wrapped.count > maxOutputBytes { return nil }
+            return wrapped
         case "br", "brotli":
             return nil
         default:
@@ -28,17 +32,21 @@ public enum CompressionHelper {
         }
     }
 
-    public static func decompress(data: Data, algorithm: String?) -> Data? {
+    public static func decompress(data: Data, algorithm: String?, maxOutputBytes: Int? = nil) -> Data? {
         let algo = algorithm?.lowercased() ?? "deflate"
         switch algo {
         case "deflate", "zlib":
-            return decompress(data: data, algorithm: COMPRESSION_ZLIB)
+            return decompress(data: data, algorithm: COMPRESSION_ZLIB, maxOutputBytes: maxOutputBytes)
         case "gzip":
             guard let stripped = stripGzipWrapper(from: data) else { return nil }
-            return decompress(data: stripped, algorithm: COMPRESSION_ZLIB)
+            return decompress(data: stripped, algorithm: COMPRESSION_ZLIB, maxOutputBytes: maxOutputBytes)
         case "br", "brotli":
             #if canImport(TraceCompression)
-            return try? BrotliDecoder.decompress(data)
+            if let decompressed = try? BrotliDecoder.decompress(data) {
+                if let maxOutputBytes, decompressed.count > maxOutputBytes { return nil }
+                return decompressed
+            }
+            return nil
             #else
             return nil
             #endif
@@ -47,52 +55,44 @@ public enum CompressionHelper {
         }
     }
 
-    private static func compress(data: Data, algorithm: compression_algorithm) -> Data? {
+    private static func compress(data: Data, algorithm: compression_algorithm, maxOutputBytes: Int?) -> Data? {
         guard !data.isEmpty else { return data }
-        let bufferSize = 64 * 1024
-        var output = Data()
 
-        data.withUnsafeBytes { (srcBuffer: UnsafeRawBufferPointer) in
-            guard let srcPtr = srcBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-            let dstBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-            defer { dstBuffer.deallocate() }
-            var stream = compression_stream(
-                dst_ptr: dstBuffer,
-                dst_size: bufferSize,
-                src_ptr: srcPtr,
-                src_size: data.count,
-                state: nil
-            )
-            guard compression_stream_init(&stream, COMPRESSION_STREAM_ENCODE, algorithm) != COMPRESSION_STATUS_ERROR else {
-                return
-            }
-            defer { compression_stream_destroy(&stream) }
+        // Note: In this environment, `compression_stream_process` for encoding can return `COMPRESSION_STATUS_ERROR`
+        // even for valid inputs; `compression_encode_buffer` is consistently reliable for one-shot compression.
+        let bound = max(64, compressBound(for: data.count, algorithm: algorithm))
+        let dstCapacity = maxOutputBytes.map { min(bound, $0) } ?? bound
+        guard dstCapacity > 0 else { return nil }
 
-            while true {
-                stream.dst_ptr = dstBuffer
-                stream.dst_size = bufferSize
-                let status = compression_stream_process(&stream, 0)
-                let produced = bufferSize - stream.dst_size
-                if produced > 0 {
-                    output.append(dstBuffer, count: produced)
-                }
-                if status == COMPRESSION_STATUS_END { break }
-                if status == COMPRESSION_STATUS_ERROR { return }
+        var dst = Data(count: dstCapacity)
+        let encodedSize = dst.withUnsafeMutableBytes { (dstBuffer: UnsafeMutableRawBufferPointer) -> Int in
+            guard let dstPtr = dstBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return 0 }
+            return data.withUnsafeBytes { (srcBuffer: UnsafeRawBufferPointer) -> Int in
+                guard let srcPtr = srcBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return 0 }
+                return compression_encode_buffer(dstPtr, dstCapacity, srcPtr, data.count, nil, algorithm)
             }
         }
 
-        return output
+        guard encodedSize > 0 else { return nil }
+        let result = dst.prefix(encodedSize)
+        if let maxOutputBytes, result.count > maxOutputBytes { return nil }
+        return result
     }
 
-    private static func decompress(data: Data, algorithm: compression_algorithm) -> Data? {
+    private static func decompress(data: Data, algorithm: compression_algorithm, maxOutputBytes: Int?) -> Data? {
         guard !data.isEmpty else { return data }
         let bufferSize = 64 * 1024
-        var output = Data()
 
-        data.withUnsafeBytes { (srcBuffer: UnsafeRawBufferPointer) in
-            guard let srcPtr = srcBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+        return data.withUnsafeBytes { (srcBuffer: UnsafeRawBufferPointer) -> Data? in
+            guard let srcPtr = srcBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return nil }
             let dstBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
             defer { dstBuffer.deallocate() }
+
+            var output = Data()
+            if let maxOutputBytes {
+                output.reserveCapacity(min(maxOutputBytes, bufferSize))
+            }
+
             var stream = compression_stream(
                 dst_ptr: dstBuffer,
                 dst_size: bufferSize,
@@ -101,23 +101,49 @@ public enum CompressionHelper {
                 state: nil
             )
             guard compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, algorithm) != COMPRESSION_STATUS_ERROR else {
-                return
+                return nil
             }
             defer { compression_stream_destroy(&stream) }
+
+            // Re-set src fields after init (compression_stream_init clears all fields except state)
+            stream.src_ptr = srcPtr
+            stream.src_size = data.count
 
             while true {
                 stream.dst_ptr = dstBuffer
                 stream.dst_size = bufferSize
-                let status = compression_stream_process(&stream, 0)
+                // Always finalize for decompression since all input is provided upfront
+                let status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
+
                 let produced = bufferSize - stream.dst_size
                 if produced > 0 {
+                    if let maxOutputBytes, output.count + produced > maxOutputBytes { return nil }
                     output.append(dstBuffer, count: produced)
                 }
+
                 if status == COMPRESSION_STATUS_END { break }
-                if status == COMPRESSION_STATUS_ERROR { return }
+                if status == COMPRESSION_STATUS_ERROR { return nil }
+                // Safety: Avoid infinite loops if no progress is made
+                if status == COMPRESSION_STATUS_OK && produced == 0 { return nil }
             }
+
+            return output
         }
-        return output
+    }
+
+    private static func compressBound(for inputSize: Int, algorithm: compression_algorithm) -> Int {
+        if algorithm == COMPRESSION_ZLIB {
+            return zlibCompressBound(inputSize)
+        }
+        return max(64, inputSize)
+    }
+
+    private static func zlibCompressBound(_ inputSize: Int) -> Int {
+        // Matches zlib's `compressBound` formula.
+        let n = Int64(inputSize)
+        let bound = n + (n >> 12) + (n >> 14) + (n >> 25) + 13
+        if bound >= Int64(Int.max) { return Int.max }
+        return Int(bound)
     }
 
     private static func stripGzipWrapper(from data: Data) -> Data? {

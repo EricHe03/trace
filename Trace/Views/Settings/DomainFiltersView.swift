@@ -30,7 +30,6 @@ struct DomainFiltersView: View {
                 items: $config.domainFilters,
                 addLabel: "Add Domain",
                 placeholder: "example.com",
-                helperText: "Use * for wildcards (e.g., *.example.com).",
                 emptyText: "No domains added",
                 validate: validateDomainPattern
             )
@@ -47,8 +46,8 @@ struct DomainFiltersView: View {
         .navigationTitle("Domain Filters")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: loadConfiguration)
-        .onChange(of: config.filterMode) { _ in saveConfiguration() }
-        .onChange(of: config.domainFilters) { _ in saveConfiguration() }
+        .onChangeCompat(of: config.filterMode) { saveConfiguration() }
+        .onChangeCompat(of: config.domainFilters) { saveConfiguration() }
         .toast(message: $toastMessage)
     }
 

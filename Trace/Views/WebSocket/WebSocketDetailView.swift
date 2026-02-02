@@ -52,13 +52,18 @@ struct WebSocketDetailView: View {
 
             // Messages Section
             Section {
-                ForEach(filteredMessages) { message in
-                    Button {
-                        selectedMessage = message
-                    } label: {
-                        WebSocketMessageRow(message: message)
+                if filteredMessages.isEmpty {
+                    messagesEmptyState
+                } else {
+                    ForEach(filteredMessages) { message in
+                        Button {
+                            selectedMessage = message
+                        } label: {
+                            WebSocketMessageRow(message: message)
+                        }
+                        .foregroundStyle(.primary)
+                        .accessibilityHint("Double tap to view message details")
                     }
-                    .foregroundStyle(.primary)
                 }
             } header: {
                 HStack {
@@ -127,6 +132,26 @@ struct WebSocketDetailView: View {
 
     private var hasActiveFilters: Bool {
         filterDirection != nil || filterMessageType != nil
+    }
+
+    @ViewBuilder
+    private var messagesEmptyState: some View {
+        if connection.messages.isEmpty {
+            TraceContentUnavailableView(
+                "No Messages",
+                systemImage: "message",
+                description: Text("Messages will appear here as they are sent and received")
+            )
+            .listRowBackground(Color.clear)
+        } else {
+            // Filters resulted in no messages
+            TraceContentUnavailableView(
+                "No Messages Match",
+                systemImage: "magnifyingglass",
+                description: Text("Try adjusting your search or filters")
+            )
+            .listRowBackground(Color.clear)
+        }
     }
 
     private func clearFilters() {

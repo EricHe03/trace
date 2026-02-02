@@ -22,10 +22,11 @@ struct RequestBuilderView: View {
     @State private var followRedirects = true
 
     @State private var showResponse = false
+    @State private var shouldDismissBuilderAfterResponse = false
     @State private var toastMessage: String?
     @State private var didLoadExistingBody = false
 
-    // For editing existing request
+    /// For editing existing request
     var existingRequest: NetworkRequest?
 
     init(existingRequest: NetworkRequest? = nil) {
@@ -81,6 +82,7 @@ struct RequestBuilderView: View {
                                 Image(systemName: "minus.circle.fill")
                                     .foregroundStyle(DesignSystem.Colors.danger)
                             }
+                            .frame(minWidth: 44, minHeight: 44)
                             .accessibilityLabel("Remove header")
                         }
                     }
@@ -161,7 +163,7 @@ struct RequestBuilderView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showResponse) {
+            .sheet(isPresented: $showResponse, onDismiss: handleResponseDismissed) {
                 if let response = executor.lastResponse {
                     NavigationStack {
                         DetailView(request: response)
@@ -178,7 +180,7 @@ struct RequestBuilderView: View {
                 }
             }
             .toast(message: $toastMessage)
-            .keyboardDismissToolbar()
+            .dismissKeyboardOnTapAndScroll()
             .task(id: existingRequest?.id) {
                 await loadExistingRequestBodyIfNeeded()
             }
@@ -196,11 +198,12 @@ struct RequestBuilderView: View {
                 // Save the manual request response to storage
                 try AppGroupStorage.shared.saveRequest(response)
                 await MainActor.run {
+                    shouldDismissBuilderAfterResponse = true
                     showResponse = true
                 }
             } catch {
                 await MainActor.run {
-                    withAnimation {
+                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                         toastMessage = "Error: \(error.localizedDescription)"
                     }
                 }
@@ -208,12 +211,24 @@ struct RequestBuilderView: View {
         }
     }
 
+    private func handleResponseDismissed() {
+        guard shouldDismissBuilderAfterResponse else { return }
+        shouldDismissBuilderAfterResponse = false
+
+        NotificationCenter.default.post(
+            name: .openTab,
+            object: nil,
+            userInfo: ["tab": "network"]
+        )
+        dismiss()
+    }
+
     private func copyAsCURL() {
         let builder = resolvedBuilder()
 
         UIPasteboard.general.string = builder.toCURL()
 
-        withAnimation {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
             toastMessage = "Copied cURL to clipboard"
         }
     }
@@ -223,7 +238,7 @@ struct RequestBuilderView: View {
               let json = try? JSONSerialization.jsonObject(with: data),
               let formatted = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
               let formattedString = String(data: formatted, encoding: .utf8) else {
-            withAnimation {
+            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                 toastMessage = "Invalid JSON"
             }
             return

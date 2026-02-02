@@ -13,10 +13,10 @@ struct SessionSectionHeader: View {
     let group: SessionGroup
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
             HStack {
                 Image(systemName: group.session.isActive ? "record.circle" : "checkmark.circle")
-                    .foregroundStyle(group.session.isActive ? .red : .green)
+                    .foregroundStyle(group.session.isActive ? DesignSystem.Colors.danger : DesignSystem.Colors.success)
                 Text(group.session.displayName)
                     .font(.headline)
             }
@@ -28,7 +28,7 @@ struct SessionSectionHeader: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, DesignSystem.Spacing.xs)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(group.session.displayName), \(group.session.isActive ? "Active" : "Completed") session, \(group.requestCount) requests, \(group.session.durationString), \(group.totalSizeString)")
         .accessibilityAddTraits(.isHeader)
@@ -51,7 +51,7 @@ struct DomainSectionHeader: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, DesignSystem.Spacing.xs)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(group.domain), \(group.requestCount) requests, \(group.totalSizeString)")
         .accessibilityAddTraits(.isHeader)
@@ -69,9 +69,9 @@ struct DomainGroupLabel: View {
             Spacer()
             Text("\(group.requestCount)")
                 .font(.caption)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
+                .foregroundStyle(.primary)
+                .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
+                .padding(.vertical, DesignSystem.Badge.verticalPadding)
                 .background(Capsule().fill(DesignSystem.Colors.accent))
         }
         .accessibilityElement(children: .combine)

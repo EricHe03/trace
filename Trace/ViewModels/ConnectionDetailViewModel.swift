@@ -54,9 +54,16 @@ final class ConnectionDetailViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var loadError: String?
     @Published var analysis: ConnectionPCAPAnalysis?
+    private var analysisTask: Task<Void, Never>?
+    private var analysisWorkTask: Task<ConnectionPCAPAnalysis, Error>?
 
     init(record: PacketFlowRecord) {
         self.record = record
+    }
+
+    deinit {
+        analysisTask?.cancel()
+        analysisWorkTask?.cancel()
     }
 
     func refreshPCAPFiles() {
@@ -70,22 +77,33 @@ final class ConnectionDetailViewModel: ObservableObject {
     }
 
     func loadFromPCAP(_ file: PCAPFileItem) {
+        analysisTask?.cancel()
+        analysisWorkTask?.cancel()
         isLoading = true
         loadError = nil
 
-        Task.detached(priority: .utility) { [record] in
+        let capturedRecord = record
+        let capturedURL = file.url
+
+        analysisTask = Task { @MainActor in
+            defer { isLoading = false }
             do {
-                let analyzer = try PCAPFlowAnalyzer(record: record)
-                let analysis = try analyzer.analyze(url: file.url)
-                await MainActor.run {
-                    self.analysis = analysis
-                    self.isLoading = false
+                let work = Task.detached(priority: .utility) {
+                    let analyzer = try PCAPFlowAnalyzer(record: capturedRecord)
+                    return try analyzer.analyze(url: capturedURL)
                 }
+                analysisWorkTask = work
+                let analysis = try await withTaskCancellationHandler {
+                    try await work.value
+                } onCancel: {
+                    work.cancel()
+                }
+                try Task.checkCancellation()
+                self.analysis = analysis
+            } catch is CancellationError {
+                self.analysis = nil
             } catch {
-                await MainActor.run {
-                    self.loadError = error.localizedDescription
-                    self.isLoading = false
-                }
+                self.loadError = error.localizedDescription
             }
         }
     }
@@ -150,7 +168,10 @@ private final class PCAPFlowAnalyzer {
         let endpointA = EndpointKey(ip: record.sourceIP, port: record.sourcePort)
         let endpointB = EndpointKey(ip: record.destinationIP, port: record.destinationPort)
 
-        try reader.forEachPacket { packet in
+        try reader.forEachPacket(throwing: { packet in
+            if Task.isCancelled {
+                throw CancellationError()
+            }
             guard let ipPacket = IPPacketParser.parse(packet.data) else { return }
             guard ipPacket.transport == .tcp else { return }
             guard let tcpPacket = TCPParser.parse(ipPacket.payload) else { return }
@@ -254,7 +275,7 @@ private final class PCAPFlowAnalyzer {
                     }
                 }
             }
-        }
+        })
 
         if connectionState == .unknown {
             if !rstSeen.isEmpty {

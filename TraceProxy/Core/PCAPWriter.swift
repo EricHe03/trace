@@ -126,16 +126,3 @@ public final class PCAPWriter: PCAPWriting, @unchecked Sendable {
         try handle.write(contentsOf: hdr)
     }
 }
-
-private extension Data {
-    // Rationale: Use little-endian helpers to avoid repeated byte shuffling at call sites.
-    mutating func appendUInt16LE(_ v: UInt16) {
-        var x = v.littleEndian
-        self.append(UnsafeBufferPointer(start: &x, count: 1))
-    }
-
-    mutating func appendUInt32LE(_ v: UInt32) {
-        var x = v.littleEndian
-        self.append(UnsafeBufferPointer(start: &x, count: 1))
-    }
-}

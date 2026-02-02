@@ -14,6 +14,7 @@ import TraceUI
 struct PCAPExportView: View {
     @State private var pcapFiles: [PCAPFileInfo] = []
     @State private var isLoading = true
+    @State private var isExportingAll = false
     @State private var shareSheetItem: ShareSheetItem?
     @State private var showingDeleteAlert = false
     @State private var fileToDelete: PCAPFileInfo?
@@ -49,6 +50,7 @@ struct PCAPExportView: View {
         Form {
             Section("Packet Capture") {
                 Toggle("Enable Raw Packet Capture", isOn: rawCaptureEnabledBinding)
+                    .accessibilityHint("Captures raw IP packets and saves them as PCAP files")
 
                 if rawCaptureEnabled {
                     ByteSizeSlider(
@@ -66,6 +68,7 @@ struct PCAPExportView: View {
 
             Section("Network Hardening") {
                 Toggle("Block QUIC (HTTP/3)", isOn: blockQUICEnabledBinding)
+                    .accessibilityHint("Blocks QUIC to force HTTP/2 for easier capture")
 
                 Text("Blocks QUIC (UDP/443). Disable if apps rely on HTTP/3.")
                     .font(.caption)
@@ -78,6 +81,7 @@ struct PCAPExportView: View {
                 } label: {
                     Label("Export VPN Logs", systemImage: "square.and.arrow.up")
                 }
+                .accessibilityHint("Exports the VPN extension log file")
 
                 Text("Exports the VPN extension NDJSON log file (vpn_events.ndjson).")
                     .font(.caption)
@@ -157,8 +161,16 @@ struct PCAPExportView: View {
                     Button {
                         shareAllFiles()
                     } label: {
-                        Label("Export All Files", systemImage: "square.and.arrow.up.fill")
+                        if isExportingAll {
+                            HStack {
+                                ProgressView()
+                                Text("Exporting…")
+                            }
+                        } else {
+                            Label("Export All Files", systemImage: "square.and.arrow.up.fill")
+                        }
                     }
+                    .disabled(isExportingAll)
 
                     Button(role: .destructive) {
                         showingDeleteAlert = true
@@ -310,13 +322,19 @@ struct PCAPExportView: View {
 
             // Notify VPN extension if connected
             if vpnManager.isConnected {
-                try? await vpnManager.sendMessage([
-                    "command": "updateHardeningConfig",
-                    "hardeningConfig": [
-                        "enableRawCapture": rawCaptureEnabled,
-                        "maxRawCaptureSize": clampedBytes
-                    ]
-                ])
+                do {
+                    try await vpnManager.sendMessage([
+                        "command": "updateHardeningConfig",
+                        "hardeningConfig": [
+                            "enableRawCapture": rawCaptureEnabled,
+                            "maxRawCaptureSize": clampedBytes
+                        ]
+                    ])
+                } catch {
+                    await MainActor.run {
+                        toastMessage = "Saved locally, but failed to notify VPN: \(error.localizedDescription)"
+                    }
+                }
             }
 
             await MainActor.run {
@@ -331,35 +349,56 @@ struct PCAPExportView: View {
             await hardening.setBlockQUIC(blockQUICEnabled)
 
             if vpnManager.isConnected {
-                try? await vpnManager.sendMessage([
-                    "command": "updateHardeningConfig",
-                    "hardeningConfig": [
-                        "blockQUIC": blockQUICEnabled
-                    ]
-                ])
+                do {
+                    try await vpnManager.sendMessage([
+                        "command": "updateHardeningConfig",
+                        "hardeningConfig": [
+                            "blockQUIC": blockQUICEnabled
+                        ]
+                    ])
+                } catch {
+                    await MainActor.run {
+                        toastMessage = "Saved locally, but failed to notify VPN: \(error.localizedDescription)"
+                    }
+                }
             }
         }
     }
 
     private func shareAllFiles() {
-        // Create a temporary directory with all PCAP files
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("PCAPExport-\(Date().timeIntervalSince1970)")
+        isExportingAll = true
+        Task { [pcapFiles] in
+            do {
+                let copiedURLs: [URL] = try await Task.detached(priority: .utility) {
+                    // Create a temporary directory with all PCAP files
+                    let tempDir = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("PCAPExport-\(Date().timeIntervalSince1970)")
+                    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        do {
-            try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+                    var urls: [URL] = []
+                    urls.reserveCapacity(pcapFiles.count)
+                    for file in pcapFiles {
+                        let destURL = tempDir.appendingPathComponent(file.name)
+                        if FileManager.default.fileExists(atPath: destURL.path) {
+                            try FileManager.default.removeItem(at: destURL)
+                        }
+                        try FileManager.default.copyItem(at: file.url, to: destURL)
+                        urls.append(destURL)
+                    }
+                    return urls
+                }.value
 
-            var copiedURLs: [URL] = []
-            for file in pcapFiles {
-                let destURL = tempDir.appendingPathComponent(file.name)
-                try FileManager.default.copyItem(at: file.url, to: destURL)
-                copiedURLs.append(destURL)
+                await MainActor.run {
+                    shareSheetItem = ShareSheetItem(copiedURLs.map { $0 as Any })
+                }
+            } catch {
+                await MainActor.run {
+                    toastMessage = "Failed to export files: \(error.localizedDescription)"
+                }
             }
-
-            // Use SwiftUI sheet with ShareSheet wrapper (proper iPad popover support).
-            shareSheetItem = ShareSheetItem(copiedURLs.map { $0 as Any })
-        } catch {
-            toastMessage = "Failed to export files: \(error.localizedDescription)"
+            await MainActor.run {
+                isExportingAll = false
+            }
         }
     }
 
@@ -392,7 +431,7 @@ struct PCAPExportView: View {
                 try FileManager.default.removeItem(at: file.url)
                 deletedCount += 1
             } catch {
-                print("Failed to delete \(file.name): \(error)")
+                toastMessage = "Failed to delete \(file.name): \(error.localizedDescription)"
             }
         }
         loadFiles()
@@ -427,6 +466,7 @@ private struct PCAPFileRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(file.name), \(file.sizeFormatted), \(file.dateFormatted)")
+        .accessibilityHint("Swipe to share or delete")
     }
 }
 

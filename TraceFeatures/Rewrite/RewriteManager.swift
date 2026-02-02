@@ -23,7 +23,7 @@ public final class RewriteManager: ObservableObject {
 
     public nonisolated(unsafe) let objectWillChange = ObservableObjectPublisher()
 
-    // Expose items through computed property
+    /// Expose items through computed property
     public var rules: [RewriteRule] {
         baseManager.items
     }
@@ -375,7 +375,11 @@ public final class RewriteManager: ObservableObject {
 
         case .decompress:
             transformBody(request: &request, target: target) { data in
-                CompressionHelper.decompress(data: data, algorithm: action.compressionAlgorithm) ?? data
+                CompressionHelper.decompress(
+                    data: data,
+                    algorithm: action.compressionAlgorithm,
+                    maxOutputBytes: maxBodyModificationBytes
+                ) ?? data
             }
 
         case .jsonToXml:

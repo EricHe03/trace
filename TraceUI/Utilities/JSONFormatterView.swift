@@ -42,7 +42,7 @@ public struct JSONFormatterView: View {
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
-                .onChange(of: formatMode) { _ in
+                .onChangeCompat(of: formatMode) {
                     formatJSON()
                 }
                 .accessibilityLabel("JSON format mode")
@@ -76,7 +76,7 @@ public struct JSONFormatterView: View {
                         .autocapitalization(.none)
                         .autocorrectionDisabled()
                         .formTextEditorStyle()
-                        .onChange(of: inputText) { _ in
+                        .onChangeCompat(of: inputText) {
                             formatJSON()
                         }
                 }
@@ -108,7 +108,7 @@ public struct JSONFormatterView: View {
 
                         Button {
                             UIPasteboard.general.string = outputText
-                            withAnimation {
+                            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                 toastMessage = "Copied to clipboard"
                             }
                         } label: {
@@ -137,7 +137,7 @@ public struct JSONFormatterView: View {
             .padding(.vertical)
         }
         .toast(message: $toastMessage)
-        .keyboardDismissToolbar()
+        .dismissKeyboardOnTapAndScroll()
         .navigationTitle("JSON Formatter")
     }
 

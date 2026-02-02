@@ -88,10 +88,9 @@ public actor HardeningConfig {
         self.defaults = defaults
 
         func sanitizeDomainPatterns(_ list: [String]) -> [String] {
-            let cleaned = list
+            list
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
                 .filter { !$0.isEmpty }
-            return cleaned.isEmpty ? ["*"] : cleaned
         }
 
         func boolValue(_ key: ConfigKey, default defaultValue: Bool) -> Bool {
@@ -270,9 +269,9 @@ public actor HardeningConfig {
     /// Updates the MITM allowlist (suffix patterns).
     public func setMitmAllowlist(_ list: [String]) {
         let sanitized = list
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { !$0.isEmpty }
-        _mitmAllowlist = sanitized.isEmpty ? ["*"] : sanitized
+        _mitmAllowlist = sanitized
         if let data = try? JSONEncoder().encode(_mitmAllowlist) {
             defaults?.set(data, forKey: ConfigKey.mitmAllowlist.rawValue)
         }

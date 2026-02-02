@@ -38,7 +38,7 @@ struct FavoritesListView: View {
                             }
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button(role: .destructive) {
-                                    withAnimation {
+                                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                                         favoritesManager.deleteFavorite(favorite)
                                         showToast(message: "Favorite removed")
                                     }
@@ -51,7 +51,7 @@ struct FavoritesListView: View {
                             .accessibilityHint("Double tap to edit favorite")
                     }
                 }
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowInsets(EdgeInsets(top: DesignSystem.Spacing.sm, leading: DesignSystem.Spacing.sectionHorizontal, bottom: DesignSystem.Spacing.sm, trailing: DesignSystem.Spacing.sectionHorizontal))
             }
         }
         .searchable(text: $searchText, prompt: "Search favorites")
@@ -67,7 +67,7 @@ struct FavoritesListView: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
                     Button(role: .destructive) {
-                        withAnimation {
+                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                             favoritesManager.clearAll()
                             showToast(message: "All favorites cleared")
                         }
@@ -89,18 +89,26 @@ struct FavoritesListView: View {
     }
 
     private var emptyStateView: some View {
-        EmptyStateView(
-            icon: searchText.isEmpty ? "star" : "magnifyingglass",
-            title: searchText.isEmpty ? "No Favorites" : "No Results",
-            description: searchText.isEmpty
-                ? "Star requests to add them to your favorites"
-                : "Try a different search term"
-        )
+        Group {
+            if searchText.isEmpty {
+                TraceContentUnavailableView(
+                    "No Favorites Yet",
+                    systemImage: "star",
+                    description: Text("Star requests to add them to your favorites")
+                )
+            } else {
+                TraceContentUnavailableView(
+                    "No Results",
+                    systemImage: "magnifyingglass",
+                    description: Text("Try a different search term")
+                )
+            }
+        }
         .listRowBackground(Color.clear)
     }
 
     private func showToast(message: String) {
-        withAnimation {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
             toastMessage = message
         }
     }
@@ -192,6 +200,7 @@ struct FavoriteEditorView: View {
             }
             .navigationTitle("Edit Favorite")
             .navigationBarTitleDisplayMode(.inline)
+            .dismissKeyboardOnTapAndScroll()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

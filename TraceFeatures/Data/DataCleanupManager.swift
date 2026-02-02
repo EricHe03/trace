@@ -16,6 +16,20 @@ actor DataCleanupManager {
     static let shared = DataCleanupManager()
 
     private var cleanupTask: Task<Void, Never>?
+    private static var isRunningUnitTests: Bool {
+        #if canImport(TraceCore)
+        return RuntimeEnvironment.isRunningUnitTests
+        #else
+        return ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        #endif
+    }
+
+    private let defaults: UserDefaults
+
+    private enum DefaultsKey {
+        static let cleanupConfiguration = "trace.settings.storage.cleanupConfiguration"
+        static let cleanupStats = "trace.settings.storage.cleanupStats"
+    }
 
     private enum DirectoryName {
         static let requests = "CapturedRequests"
@@ -26,7 +40,7 @@ actor DataCleanupManager {
 
     private var config = CleanupConfiguration()
 
-    struct CleanupConfiguration: Equatable {
+    struct CleanupConfiguration: Codable, Equatable {
         var enabled: Bool = true
         var requestRetentionDays: Int = 7
         var bodyFileRetentionDays: Int = 7
@@ -35,7 +49,7 @@ actor DataCleanupManager {
         var cleanupInterval: TimeInterval = 3600
     }
 
-    struct CleanupStats {
+    struct CleanupStats: Codable {
         var lastCleanup: Date?
         var requestsDeleted: Int = 0
         var bodyFilesDeleted: Int = 0
@@ -46,8 +60,22 @@ actor DataCleanupManager {
     private var stats = CleanupStats()
 
     private init() {
-        // Rule: Start the cleanup task after actor initialization to avoid escaping self.
-        Task { await self.startAutoCleanup() }
+        // Unit tests should not depend on developer/user persisted app settings.
+        // Use an isolated suite so default configuration tests are deterministic.
+        if Self.isRunningUnitTests {
+            defaults = UserDefaults(suiteName: "com.trace.TraceTests") ?? .standard
+            // Keep tests deterministic and isolated from any persisted host-app settings.
+            // Unit tests can still mutate configuration in-memory via `updateConfiguration`.
+            config = CleanupConfiguration()
+            stats = CleanupStats()
+        } else {
+            defaults = .standard
+            config = Self.loadPersistedConfiguration(from: defaults) ?? CleanupConfiguration()
+            stats = Self.loadPersistedStats(from: defaults) ?? CleanupStats()
+        }
+        if config.enabled {
+            Task { await self.startAutoCleanup() }
+        }
     }
 
     // MARK: - Configuration
@@ -60,6 +88,7 @@ actor DataCleanupManager {
             startAutoCleanup()
         }
 
+        persistConfiguration()
         FeatureLog.storage.info("event=storage.config_update outcome=success")
     }
 
@@ -122,6 +151,7 @@ actor DataCleanupManager {
         stats.bodyFilesDeleted += deletedBodies
         stats.logsDeleted += deletedLogs
         stats.bytesFreed += bytesFreed
+        persistStats()
 
         FeatureLog.storage.info("event=storage.cleanup_complete outcome=success requests_deleted=\(deletedRequests) bodies_deleted=\(deletedBodies) logs_deleted=\(deletedLogs) bytes_freed=\(bytesFreed)")
     }
@@ -523,23 +553,29 @@ public struct StorageSettingsView: View {
 
     public var body: some View {
         Form {
-            Section("Storage Usage") {
+            Section {
                 storageUsageRow(label: "Total", bytes: storageUsage.total)
                 storageUsageRow(label: "Requests", bytes: storageUsage.requests)
                 storageUsageRow(label: "Body Files", bytes: storageUsage.bodies)
                 storageUsageRow(label: "Logs", bytes: storageUsage.logs)
+            } header: {
+                Text("Storage Usage")
+            } footer: {
+                Text("Storage usage reflects data kept in the app’s shared container. You can export logs and packet captures before cleaning up.")
             }
 
-            Section("Automatic Cleanup") {
+            Section {
                 Toggle("Enable Auto Cleanup", isOn: $config.enabled)
 
                 Stepper("Keep Requests: \(config.requestRetentionDays) days", value: $config.requestRetentionDays, in: 1 ... 30)
                 Stepper("Keep Body Files: \(config.bodyFileRetentionDays) days", value: $config.bodyFileRetentionDays, in: 1 ... 30)
                 Stepper("Keep Logs: \(config.logRetentionDays) days", value: $config.logRetentionDays, in: 1 ... 30)
                 Stepper("Max Storage: \(config.maxStorageMB) MB", value: $config.maxStorageMB, in: 100 ... 2000, step: 100)
+            } header: {
+                Text("Automatic Cleanup")
             }
 
-            Section("Statistics") {
+            Section {
                 if let lastCleanup = stats.lastCleanup {
                     HStack {
                         Text("Last Cleanup")
@@ -562,6 +598,8 @@ public struct StorageSettingsView: View {
                     Text(ByteCountFormatter.string(fromByteCount: stats.bytesFreed, countStyle: .file))
                         .foregroundStyle(.secondary)
                 }
+            } header: {
+                Text("Statistics")
             }
 
             Section {
@@ -583,22 +621,13 @@ public struct StorageSettingsView: View {
                     }
                 }
                 .disabled(isCleaningUp)
-
-                Button(role: .destructive) {
-                    Task {
-                        _ = await DataCleanupManager.shared.deleteAllRequests()
-                        await loadData()
-                    }
-                } label: {
-                    Label("Delete All Requests", systemImage: "trash.fill")
-                }
             }
         }
         .navigationTitle("Storage")
         .task {
             await loadData()
         }
-        .onChange(of: config) { newConfig in
+        .onChangeCompat(of: config) { newConfig in
             Task {
                 await DataCleanupManager.shared.updateConfiguration(newConfig)
             }
@@ -624,5 +653,41 @@ public struct StorageSettingsView: View {
 #Preview {
     NavigationStack {
         StorageSettingsView()
+    }
+}
+
+// MARK: - Persistence
+
+extension DataCleanupManager {
+    private static func loadPersistedConfiguration(from defaults: UserDefaults) -> CleanupConfiguration? {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = defaults.data(forKey: DefaultsKey.cleanupConfiguration) else { return nil }
+        return try? decoder.decode(CleanupConfiguration.self, from: data)
+    }
+
+    private static func loadPersistedStats(from defaults: UserDefaults) -> CleanupStats? {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = defaults.data(forKey: DefaultsKey.cleanupStats) else { return nil }
+        return try? decoder.decode(CleanupStats.self, from: data)
+    }
+
+    private func persistConfiguration() {
+        guard !Self.isRunningUnitTests else { return }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        if let data = try? encoder.encode(config) {
+            defaults.set(data, forKey: DefaultsKey.cleanupConfiguration)
+        }
+    }
+
+    private func persistStats() {
+        guard !Self.isRunningUnitTests else { return }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        if let data = try? encoder.encode(stats) {
+            defaults.set(data, forKey: DefaultsKey.cleanupStats)
+        }
     }
 }

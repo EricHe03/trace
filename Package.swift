@@ -99,16 +99,16 @@ let package = Package(
         // Foundation Layer
         // ═══════════════════════════════════════════════════════
 
-        /// TraceCore: Shared models, storage, and logging
-        /// Dependencies: None
+        // TraceCore: Shared models, storage, and logging
+        // Dependencies: None
         .target(
             name: "TraceCore",
             dependencies: ["TraceCompression"],
             path: "TraceCore"
         ),
 
-        /// TraceCompression: Compression/decompression algorithms
-        /// Dependencies: None
+        // TraceCompression: Compression/decompression algorithms
+        // Dependencies: None
         .target(
             name: "TraceCompression",
             path: "TraceCompression"
@@ -118,30 +118,30 @@ let package = Package(
         // Infrastructure Layer
         // ═══════════════════════════════════════════════════════
 
-        /// TraceSecurity: Certificate management and TLS handling
-        /// Dependencies: TraceCore, TraceNetworking
+        // TraceSecurity: Certificate management and TLS handling
+        // Dependencies: TraceCore, TraceNetworking
         .target(
             name: "TraceSecurity",
             dependencies: ["TraceCore", "TraceNetworking"],
             path: "TraceSecurity"
         ),
 
-        /// TraceNetworking: Protocol parsers (HTTP, HTTP2, WebSocket, etc.)
-        /// Dependencies: TraceCore
+        // TraceNetworking: Protocol parsers (HTTP, HTTP2, WebSocket, etc.)
+        // Dependencies: TraceCore
         .target(
             name: "TraceNetworking",
             dependencies: ["TraceCore"],
             path: "TraceNetworking"
         ),
 
-        /// TracePacket: IP/TCP parsing and reassembly
+        // TracePacket: IP/TCP parsing and reassembly
         .target(
             name: "TracePacket",
             dependencies: ["TraceCore"],
             path: "TracePacket"
         ),
 
-        /// HevSocks5Tunnel: C tunnel over SOCKS5 (tun2socks replacement)
+        // HevSocks5Tunnel: C tunnel over SOCKS5 (tun2socks replacement)
         .target(
             name: "HevSocks5Tunnel",
             path: "ThirdParty/hev-socks5-tunnel",
@@ -206,24 +206,24 @@ let package = Package(
         // Feature Layer
         // ═══════════════════════════════════════════════════════
 
-        /// TraceProxy: MITM proxy and connection management
-        /// Dependencies: TraceCore, TraceNetworking, TraceSecurity
+        // TraceProxy: MITM proxy and connection management
+        // Dependencies: TraceCore, TraceNetworking, TraceSecurity
         .target(
             name: "TraceProxy",
             dependencies: ["TraceCore", "TraceNetworking", "TraceSecurity", "TraceFeatures"],
             path: "TraceProxy"
         ),
 
-        /// TraceFeatures: Application features (breakpoints, scripts, etc.)
-        /// Dependencies: TraceCore, TraceSecurity
+        // TraceFeatures: Application features (breakpoints, scripts, etc.)
+        // Dependencies: TraceCore, TraceSecurity
         .target(
             name: "TraceFeatures",
             dependencies: ["TraceCore", "TraceSecurity"],
             path: "TraceFeatures"
         ),
 
-        /// TraceUI: Reusable SwiftUI components
-        /// Dependencies: TraceCore, TraceFeatures
+        // TraceUI: Reusable SwiftUI components
+        // Dependencies: TraceCore, TraceFeatures
         .target(
             name: "TraceUI",
             dependencies: ["TraceCore", "TraceFeatures"],
@@ -234,7 +234,7 @@ let package = Package(
         // App Targets
         // ═══════════════════════════════════════════════════════
 
-        /// Main App Target
+        // Main App Target
         .executableTarget(
             name: "Trace",
             dependencies: [
@@ -253,7 +253,7 @@ let package = Package(
             ]
         ),
 
-        /// VPN Network Extension
+        // VPN Network Extension
         .target(
             name: "TraceVPN",
             dependencies: [
@@ -267,7 +267,7 @@ let package = Package(
             path: "TraceVPN"
         ),
 
-        /// Widget Extension
+        // Widget Extension
         .target(
             name: "TraceWidget",
             dependencies: ["TraceCore"],

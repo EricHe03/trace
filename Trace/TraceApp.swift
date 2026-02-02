@@ -9,6 +9,7 @@ import SwiftUI
 import TraceCore
 import TraceFeatures
 import TraceSecurity
+import TraceUI
 import UIKit
 
 @main
@@ -33,7 +34,6 @@ struct TraceApp: App {
     var body: some Scene {
         WindowGroup {
             RootTabView(viewModel: viewModel)
-                .preferredColorScheme(viewModel.selectedTheme.colorScheme)
                 .onOpenURL { url in
                     handleDeepLink(url)
                 }
@@ -45,7 +45,7 @@ struct TraceApp: App {
                     updateQuickActions()
                 }
         }
-        .onChange(of: scenePhase) { newPhase in
+        .onChangeCompat(of: scenePhase) { newPhase in
             if newPhase == .active {
                 // Rule: Avoid VPN setup before onboarding completion.
                 if UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {

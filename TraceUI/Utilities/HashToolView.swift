@@ -105,7 +105,7 @@ public struct HashToolView: View {
             .padding(.vertical)
         }
         .toast(message: $toastMessage)
-        .keyboardDismissToolbar()
+        .dismissKeyboardOnTapAndScroll()
         .navigationTitle("Hash")
     }
 
@@ -175,7 +175,7 @@ public struct HashToolView: View {
         guard !hash.isEmpty else { return }
 
         UIPasteboard.general.string = hash
-        withAnimation {
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
             toastMessage = "Copied \(algorithm) hash"
         }
     }

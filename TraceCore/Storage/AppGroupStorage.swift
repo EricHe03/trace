@@ -11,6 +11,14 @@ import Foundation
 /// This allows the main app and Network Extension to share captured request data
 public class AppGroupStorage: @unchecked Sendable {
     public static let shared = AppGroupStorage()
+
+    /// Shared App Group identifier (must match entitlements for app + extension).
+    ///
+    /// Exposed for tooling/tests that need to create `FileManager`/`UserDefaults` suites directly.
+    public static var appGroupIdentifier: String {
+        AppGroupConfiguration.appGroupIdentifier
+    }
+
     private static let isSimulator: Bool = {
         #if targetEnvironment(simulator)
         return true
@@ -19,8 +27,8 @@ public class AppGroupStorage: @unchecked Sendable {
         #endif
     }()
 
-    // Shared App Group identifier (must match entitlements for app + extension)
-    private let appGroupIdentifier = AppGroupConfiguration.appGroupIdentifier
+    /// Shared App Group identifier (must match entitlements for app + extension)
+    private let appGroupIdentifier = AppGroupStorage.appGroupIdentifier
 
     private let requestsDirectory = "CapturedRequests"
     private let configDirectory = "Configuration"
@@ -33,6 +41,26 @@ public class AppGroupStorage: @unchecked Sendable {
     private let captureOptionsFileName = "capture_options.json"
     private let bodyStorageConfigFileName = "body_storage.json"
     private let samplingConfigFileName = "sampling.json"
+    private let configurationFileName = "configuration.json"
+    private let mitmAllowlistFileName = "mitm_allowlist.json"
+
+    private enum DefaultsKey {
+        static let captureConfiguration = "trace.settings.captureConfiguration"
+        static let captureOptions = "trace.settings.captureOptions"
+        static let bodyStorageConfig = "trace.settings.bodyStorageConfig"
+        static let samplingConfig = "trace.settings.samplingConfig"
+        static let mitmAllowlist = "trace.settings.mitmAllowlist"
+        static let throttlingState = "trace.settings.throttlingState"
+
+        static let all: [String] = [
+            captureConfiguration,
+            captureOptions,
+            bodyStorageConfig,
+            samplingConfig,
+            mitmAllowlist,
+            throttlingState
+        ]
+    }
 
     /// Whether we're using fallback storage (local instead of App Group)
     private(set) var isUsingFallback = false
@@ -62,6 +90,51 @@ public class AppGroupStorage: @unchecked Sendable {
     public init() {
         setupDirectories()
         logStorageConfiguration()
+    }
+
+    // MARK: - Shared Defaults
+
+    private var sharedUserDefaults: UserDefaults {
+        if let defaults = UserDefaults(suiteName: appGroupIdentifier) {
+            return defaults
+        }
+        CoreLog.storage.warning("event=storage.userdefaults outcome=fallback reason=suite_unavailable")
+        return UserDefaults.standard
+    }
+
+    private func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
+    private func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+
+    /// Clears UserDefaults-backed settings (does not delete captured requests).
+    public func resetStoredSettings() {
+        let defaults = sharedUserDefaults
+        for key in DefaultsKey.all {
+            defaults.removeObject(forKey: key)
+        }
+
+        // Best-effort cleanup of legacy, file-based settings.
+        let legacyFiles = [
+            configurationFileName,
+            captureOptionsFileName,
+            bodyStorageConfigFileName,
+            samplingConfigFileName,
+            mitmAllowlistFileName,
+            throttlingConfigFileName
+        ]
+        for fileName in legacyFiles {
+            if let url = configFileURL(for: fileName) {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
     }
 
     // MARK: - Setup
@@ -572,101 +645,125 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Saves capture configuration (filters, settings, etc.)
     public func saveConfiguration(_ config: CaptureConfiguration) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
-        }
-
-        let configURL = container
-            .appendingPathComponent(configDirectory)
-            .appendingPathComponent("configuration.json")
-
-        let encoder = JSONEncoder()
-        let data = try encoder.encode(config)
-
-        try data.write(to: configURL, options: [.atomic])
+        let data = try makeEncoder().encode(config)
+        sharedUserDefaults.set(data, forKey: DefaultsKey.captureConfiguration)
     }
 
     /// Loads capture configuration
     public func loadConfiguration() -> CaptureConfiguration {
-        guard let container = containerURL else {
-            return CaptureConfiguration.default
+        if let data = sharedUserDefaults.data(forKey: DefaultsKey.captureConfiguration),
+           let config = try? makeDecoder().decode(CaptureConfiguration.self, from: data) {
+            return config
         }
 
-        let configURL = container
-            .appendingPathComponent(configDirectory)
-            .appendingPathComponent("configuration.json")
-
-        guard let data = try? Data(contentsOf: configURL),
-              let config = try? JSONDecoder().decode(CaptureConfiguration.self, from: data) else {
-            return CaptureConfiguration.default
+        // Legacy migration: JSON file in App Group container.
+        if let legacyData = try? loadData(from: configurationFileName),
+           let legacyConfig = try? makeDecoder().decode(CaptureConfiguration.self, from: legacyData) {
+            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.captureConfiguration)
+            return legacyConfig
         }
 
-        return config
+        return CaptureConfiguration.default
     }
 
     // MARK: - Capture Options
 
     public func saveCaptureOptions(_ options: CaptureOptions) throws {
-        let data = try JSONEncoder().encode(options.normalized())
-        try saveData(data, to: captureOptionsFileName)
+        let normalized = options.normalized()
+        let data = try makeEncoder().encode(normalized)
+        sharedUserDefaults.set(data, forKey: DefaultsKey.captureOptions)
     }
 
     public func loadCaptureOptions() -> CaptureOptions {
-        guard let data = try? loadData(from: captureOptionsFileName),
-              let options = try? JSONDecoder().decode(CaptureOptions.self, from: data) else {
-            try? saveCaptureOptions(.default)
-            return CaptureOptions.default
+        if let data = sharedUserDefaults.data(forKey: DefaultsKey.captureOptions),
+           let options = try? makeDecoder().decode(CaptureOptions.self, from: data) {
+            return options.normalized()
         }
-        return options.normalized()
+
+        // Legacy migration: JSON file in App Group container.
+        if let legacyData = try? loadData(from: captureOptionsFileName),
+           let legacy = try? makeDecoder().decode(CaptureOptions.self, from: legacyData) {
+            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.captureOptions)
+            return legacy.normalized()
+        }
+
+        try? saveCaptureOptions(.default)
+        return CaptureOptions.default
     }
 
     // MARK: - Body Storage Configuration
 
     public func saveBodyStorageConfig(_ config: BodyStorageConfig) throws {
-        let data = try JSONEncoder().encode(config.normalized())
-        try saveData(data, to: bodyStorageConfigFileName)
+        let normalized = config.normalized()
+        let data = try makeEncoder().encode(normalized)
+        sharedUserDefaults.set(data, forKey: DefaultsKey.bodyStorageConfig)
     }
 
     public func loadBodyStorageConfig() -> BodyStorageConfig {
-        guard let data = try? loadData(from: bodyStorageConfigFileName),
-              let config = try? JSONDecoder().decode(BodyStorageConfig.self, from: data) else {
-            try? saveBodyStorageConfig(.default)
-            return BodyStorageConfig.default
+        if let data = sharedUserDefaults.data(forKey: DefaultsKey.bodyStorageConfig),
+           let config = try? makeDecoder().decode(BodyStorageConfig.self, from: data) {
+            return config.normalized()
         }
-        return config.normalized()
+
+        // Legacy migration: JSON file in App Group container.
+        if let legacyData = try? loadData(from: bodyStorageConfigFileName),
+           let legacy = try? makeDecoder().decode(BodyStorageConfig.self, from: legacyData) {
+            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.bodyStorageConfig)
+            return legacy.normalized()
+        }
+
+        try? saveBodyStorageConfig(.default)
+        return BodyStorageConfig.default
     }
 
     // MARK: - Sampling Configuration
 
     public func saveSamplingConfig(_ config: SamplingConfig) throws {
-        let data = try JSONEncoder().encode(config.normalized())
-        try saveData(data, to: samplingConfigFileName)
+        let normalized = config.normalized()
+        let data = try makeEncoder().encode(normalized)
+        sharedUserDefaults.set(data, forKey: DefaultsKey.samplingConfig)
     }
 
     public func loadSamplingConfig() -> SamplingConfig {
-        guard let data = try? loadData(from: samplingConfigFileName),
-              let config = try? JSONDecoder().decode(SamplingConfig.self, from: data) else {
-            try? saveSamplingConfig(.default)
-            return SamplingConfig.default
+        if let data = sharedUserDefaults.data(forKey: DefaultsKey.samplingConfig),
+           let config = try? makeDecoder().decode(SamplingConfig.self, from: data) {
+            return config.normalized()
         }
-        return config.normalized()
+
+        // Legacy migration: JSON file in App Group container.
+        if let legacyData = try? loadData(from: samplingConfigFileName),
+           let legacy = try? makeDecoder().decode(SamplingConfig.self, from: legacyData) {
+            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.samplingConfig)
+            return legacy.normalized()
+        }
+
+        try? saveSamplingConfig(.default)
+        return SamplingConfig.default
     }
 
     // MARK: - MITM Allowlist
 
     public func saveMITMAllowlist(_ allowlist: [String]) throws {
         let sanitized = sanitizeDomainList(allowlist)
-        let data = try JSONEncoder().encode(sanitized)
-        try saveData(data, to: "mitm_allowlist.json")
+        let data = try makeEncoder().encode(sanitized)
+        sharedUserDefaults.set(data, forKey: DefaultsKey.mitmAllowlist)
     }
 
     public func loadMITMAllowlist() -> [String] {
-        guard let data = try? loadData(from: "mitm_allowlist.json"),
-              let list = try? JSONDecoder().decode([String].self, from: data) else {
-            try? saveMITMAllowlist(["*"])
-            return ["*"]
+        if let data = sharedUserDefaults.data(forKey: DefaultsKey.mitmAllowlist),
+           let list = try? makeDecoder().decode([String].self, from: data) {
+            return sanitizeDomainList(list)
         }
-        return sanitizeDomainList(list)
+
+        // Legacy migration: JSON file in App Group container.
+        if let legacyData = try? loadData(from: mitmAllowlistFileName),
+           let legacy = try? makeDecoder().decode([String].self, from: legacyData) {
+            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.mitmAllowlist)
+            return sanitizeDomainList(legacy)
+        }
+
+        try? saveMITMAllowlist(["*"])
+        return ["*"]
     }
 
     // MARK: - Rewrite Rules Storage
@@ -805,34 +902,25 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Saves network throttling state for the tunnel provider.
     public func saveThrottlingState(_ state: NetworkThrottlingState) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
-        }
-
-        let configURL = container
-            .appendingPathComponent(configDirectory)
-            .appendingPathComponent(throttlingConfigFileName)
-
-        let data = try JSONEncoder().encode(state)
-        try data.write(to: configURL, options: [.atomic])
+        let data = try makeEncoder().encode(state)
+        sharedUserDefaults.set(data, forKey: DefaultsKey.throttlingState)
     }
 
     /// Loads network throttling state.
     public func loadThrottlingState() -> NetworkThrottlingState {
-        guard let container = containerURL else {
-            return .disabled
+        if let data = sharedUserDefaults.data(forKey: DefaultsKey.throttlingState),
+           let state = try? makeDecoder().decode(NetworkThrottlingState.self, from: data) {
+            return state
         }
 
-        let configURL = container
-            .appendingPathComponent(configDirectory)
-            .appendingPathComponent(throttlingConfigFileName)
-
-        guard let data = try? Data(contentsOf: configURL),
-              let state = try? JSONDecoder().decode(NetworkThrottlingState.self, from: data) else {
-            return .disabled
+        // Legacy migration: JSON file in App Group container.
+        if let legacyData = try? loadData(from: throttlingConfigFileName),
+           let legacy = try? makeDecoder().decode(NetworkThrottlingState.self, from: legacyData) {
+            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.throttlingState)
+            return legacy
         }
 
-        return state
+        return .disabled
     }
 
     // MARK: - WebSocket Storage
@@ -1002,10 +1090,11 @@ public class AppGroupStorage: @unchecked Sendable {
     // MARK: - Inter-Process Communication
 
     // Observers for notifications
-    private var requestObserver: NotificationObserver?
-    private var webSocketObserver: NotificationObserver?
-    private var sseObserver: NotificationObserver?
-    private var udpFlowObserver: NotificationObserver?
+    private let notificationObserversLock = NSLock()
+    private var requestObservers: [UUID: NotificationObserver] = [:]
+    private var webSocketObservers: [UUID: NotificationObserver] = [:]
+    private var sseObservers: [UUID: NotificationObserver] = [:]
+    private var udpFlowObservers: [UUID: NotificationObserver] = [:]
 
     /// Notifies the main app that a new request was captured
     private func notifyNewRequest() {
@@ -1040,28 +1129,112 @@ public class AppGroupStorage: @unchecked Sendable {
         CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
     }
 
-    /// Sets up listener for new request notifications (call from main app)
-    public func observeNewRequests(handler: @escaping @Sendable () -> Void) {
-        requestObserver = NotificationObserver()
-        requestObserver?.observe(notificationName: "com.trace.newRequest", handler: handler)
+    /// Sets up listener for new request notifications (call from main app).
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeNewRequests(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.newRequest", handler: handler)
+        notificationObserversLock.lock()
+        requestObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.requestObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingNewRequests() {
+        notificationObserversLock.lock()
+        let observers = Array(requestObservers.values)
+        requestObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
     }
 
     /// Sets up listener for new WebSocket connection notifications (call from main app)
-    public func observeNewWebSockets(handler: @escaping @Sendable () -> Void) {
-        webSocketObserver = NotificationObserver()
-        webSocketObserver?.observe(notificationName: "com.trace.newWebSocket", handler: handler)
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeNewWebSockets(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.newWebSocket", handler: handler)
+        notificationObserversLock.lock()
+        webSocketObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.webSocketObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingNewWebSockets() {
+        notificationObserversLock.lock()
+        let observers = Array(webSocketObservers.values)
+        webSocketObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
     }
 
     /// Sets up listener for new SSE connection notifications (call from main app)
-    public func observeNewSSE(handler: @escaping @Sendable () -> Void) {
-        sseObserver = NotificationObserver()
-        sseObserver?.observe(notificationName: "com.trace.newSSE", handler: handler)
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeNewSSE(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.newSSE", handler: handler)
+        notificationObserversLock.lock()
+        sseObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.sseObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingNewSSE() {
+        notificationObserversLock.lock()
+        let observers = Array(sseObservers.values)
+        sseObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
     }
 
     /// Sets up listener for new UDP flow notifications (call from main app)
-    public func observeNewUDPFlows(handler: @escaping @Sendable () -> Void) {
-        udpFlowObserver = NotificationObserver()
-        udpFlowObserver?.observe(notificationName: "com.trace.newUDPFlow", handler: handler)
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeNewUDPFlows(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.newUDPFlow", handler: handler)
+        notificationObserversLock.lock()
+        udpFlowObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.udpFlowObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingNewUDPFlows() {
+        notificationObserversLock.lock()
+        let observers = Array(udpFlowObservers.values)
+        udpFlowObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
     }
 
     // MARK: - Statistics
@@ -1566,26 +1739,38 @@ extension HTTPMethod: Codable {}
 
 /// Helper class to properly manage CFNotificationCenter observer lifecycle
 public class NotificationObserver {
+    private let lock = NSLock()
     private var observer: UnsafeMutableRawPointer?
     private var handler: (@Sendable () -> Void)?
     private var notificationName: CFString?
 
-    public func observe(notificationName: String, handler: @escaping @Sendable () -> Void) {
-        if let observer, let notificationName = self.notificationName {
-            CFNotificationCenterRemoveObserver(
-                CFNotificationCenterGetDarwinNotifyCenter(),
-                observer,
-                CFNotificationName(notificationName),
-                nil
-            )
-            Unmanaged<NotificationObserver>.fromOpaque(observer).release()
-            self.observer = nil
-            self.notificationName = nil
-        }
+    public func stop() {
+        lock.lock()
+        let observer = observer
+        let notificationName = notificationName
+        self.observer = nil
+        self.notificationName = nil
+        handler = nil
+        lock.unlock()
 
+        guard let observer, let notificationName else { return }
+        CFNotificationCenterRemoveObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            observer,
+            CFNotificationName(notificationName),
+            nil
+        )
+        Unmanaged<NotificationObserver>.fromOpaque(observer).release()
+    }
+
+    public func observe(notificationName: String, handler: @escaping @Sendable () -> Void) {
+        stop()
+
+        lock.lock()
         self.handler = handler
         self.notificationName = notificationName as CFString
         let center = CFNotificationCenterGetDarwinNotifyCenter()
+        lock.unlock()
 
         // Use a weak reference pattern
         let callback: CFNotificationCallback = { _, observer, _, _, _ in
@@ -1597,26 +1782,43 @@ public class NotificationObserver {
             }
         }
 
+        lock.lock()
         self.observer = Unmanaged.passRetained(self).toOpaque()
+        let observer = self.observer
+        let name = self.notificationName
+        lock.unlock()
         CFNotificationCenterAddObserver(
             center,
-            self.observer,
+            observer,
             callback,
-            self.notificationName,
+            name,
             nil,
             .deliverImmediately
         )
     }
 
     deinit {
-        if let observer, let notificationName {
-            CFNotificationCenterRemoveObserver(
-                CFNotificationCenterGetDarwinNotifyCenter(),
-                observer,
-                CFNotificationName(notificationName),
-                nil
-            )
-            Unmanaged<NotificationObserver>.fromOpaque(observer).release()
-        }
+        stop()
+    }
+}
+
+public final class AppGroupStorageObserverToken: @unchecked Sendable {
+    private var cancelHandler: (() -> Void)?
+    private let cancelLock = NSLock()
+
+    public init(_ cancelHandler: @escaping () -> Void) {
+        self.cancelHandler = cancelHandler
+    }
+
+    public func cancel() {
+        cancelLock.lock()
+        let handler = cancelHandler
+        cancelHandler = nil
+        cancelLock.unlock()
+        handler?()
+    }
+
+    deinit {
+        cancel()
     }
 }

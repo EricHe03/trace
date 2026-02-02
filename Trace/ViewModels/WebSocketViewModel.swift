@@ -13,40 +13,44 @@ import TraceCore
 import TraceNetworking
 
 @MainActor
-class WebSocketViewModel: ObservableObject {
+final class WebSocketViewModel: ObservableObject {
     private let storage = AppGroupStorage.shared
+    private var loadTask: Task<Void, Never>?
+    private var storageObserverToken: AppGroupStorageObserverToken?
 
     @Published var connections: [WebSocketConnection] = []
     @Published var searchText: String = ""
     @Published var filterStatus: WebSocketConnectionStatus?
 
     init() {
-        Task {
-            await loadConnections()
-        }
+        scheduleLoad()
 
         // Observe new WebSocket connections from Network Extension
-        storage.observeNewWebSockets { [weak self] in
-            Task { @MainActor in
-                await self?.loadConnections()
+        storageObserverToken = storage.observeNewWebSockets { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.scheduleLoad()
             }
+        }
+    }
+
+    deinit {
+        loadTask?.cancel()
+        storageObserverToken?.cancel()
+        storageObserverToken = nil
+    }
+
+    private func scheduleLoad() {
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in
+            await self?.loadConnections()
         }
     }
 
     func loadConnections() async {
         do {
-            connections = try storage.loadAllWebSocketConnections()
-        } catch {
-            NetworkLog.webSocket.error(
-                "event=websocket.load outcome=failure error=\(error.localizedDescription, privacy: .public)"
-            )
-            connections = []
-        }
-    }
-
-    private func loadConnections() {
-        do {
-            connections = try storage.loadAllWebSocketConnections()
+            var loaded = try storage.loadAllWebSocketConnections()
+            loaded.sort { $0.startTime > $1.startTime }
+            connections = loaded
         } catch {
             NetworkLog.webSocket.error(
                 "event=websocket.load outcome=failure error=\(error.localizedDescription, privacy: .public)"
@@ -71,7 +75,8 @@ class WebSocketViewModel: ObservableObject {
             }
         }
 
-        return filtered.sorted { $0.startTime > $1.startTime }
+        filtered.sort { $0.startTime > $1.startTime }
+        return filtered
     }
 
     func clearConnections() {

@@ -295,5 +295,5 @@ public extension Notification.Name {
     static let viewRequest = Notification.Name("viewRequest")
     static let openTab = Notification.Name("com.trace.openTab")
     static let showFavorites = Notification.Name("com.trace.showFavorites")
-    static let onboardingCompleted = Notification.Name("com.trace.onboardingCompleted")
+    static let onboardingCompleted = Notification.Name("onboardingCompleted")
 }

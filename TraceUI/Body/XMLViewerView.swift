@@ -19,6 +19,8 @@ public struct XMLViewerView: View {
     @State private var parsedXML: XMLNode?
     @State private var parseError: String?
     @State private var expandedNodes: Set<String> = []
+    @State private var isParsing = false
+    @State private var formattedXML: AttributedString?
 
     enum ViewMode: String, CaseIterable {
         case formatted = "Formatted"
@@ -38,6 +40,14 @@ public struct XMLViewerView: View {
 
             Divider()
 
+            if isLargePayload {
+                Label("Large XML detected. Parsing may take longer.", systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+                    .padding(.top, DesignSystem.Spacing.xs)
+            }
+
             ScrollView {
                 Group {
                     switch viewMode {
@@ -52,28 +62,38 @@ public struct XMLViewerView: View {
                 .padding()
             }
         }
-        .onAppear {
-            parseXML()
+        .task(id: xmlString) {
+            await parseAndPrepare()
         }
     }
 
     // MARK: - Formatted View
 
     private var formattedView: some View {
-        Text(attributedXMLString())
-            .font(.system(.caption, design: .monospaced))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .textSelection(.enabled)
+        Group {
+            if isParsing {
+                ProgressView("Parsing…")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(formattedXML ?? attributedXMLString())
+                    .font(DesignSystem.Typography.monospacedFont)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+        }
     }
 
     // MARK: - Tree View
 
     private var treeView: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        LazyVStack(alignment: .leading, spacing: 0) {
             if let root = parsedXML {
                 treeNode(root, level: 0)
             } else if let error = parseError {
                 errorView(error: error)
+            } else if isParsing {
+                ProgressView("Parsing…")
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text("Parsing...")
                     .foregroundStyle(.secondary)
@@ -84,11 +104,15 @@ public struct XMLViewerView: View {
     private func treeNode(_ node: XMLNode, level: Int) -> AnyView {
         let nodeId = "\(node.name)_\(level)_\(node.children.count)_\(node.attributes.count)"
         let isExpanded = expandedNodes.contains(nodeId)
+        let trimmedText = node.text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasText = (trimmedText?.isEmpty == false)
+        let canExpand = !node.children.isEmpty || hasText
 
         return AnyView(
             VStack(alignment: .leading, spacing: DesignSystem.Spacing.xxs) {
                 Button {
-                    withAnimation {
+                    guard canExpand else { return }
+                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                         if isExpanded {
                             expandedNodes.remove(nodeId)
                         } else {
@@ -100,7 +124,7 @@ public struct XMLViewerView: View {
                         Color.clear
                             .frame(width: CGFloat(level) * DesignSystem.Spacing.indent)
 
-                        if !node.children.isEmpty || node.text != nil {
+                        if canExpand {
                             Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
@@ -126,8 +150,8 @@ public struct XMLViewerView: View {
 
                         Spacer()
 
-                        if let text = node.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(30))
+                        if let text = trimmedText, !text.isEmpty {
+                            Text(text.prefix(30))
                                 .font(.system(.caption, design: .monospaced))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -135,17 +159,22 @@ public struct XMLViewerView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .frame(minHeight: DesignSystem.Accessibility.minimumTapTarget, alignment: .leading)
                 .padding(.vertical, DesignSystem.Spacing.xs)
                 .background(isExpanded ? DesignSystem.Colors.surfaceMuted.opacity(0.3) : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.sm))
+                .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") \(node.name)")
+                .accessibilityValue(canExpand ? (isExpanded ? "Expanded" : "Collapsed") : "")
+                .accessibilityHint(canExpand ? "Double tap to \(isExpanded ? "collapse" : "expand")" : "")
 
                 if isExpanded {
-                    if let text = node.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if let text = trimmedText, !text.isEmpty {
                         HStack(spacing: DesignSystem.Spacing.smPlus) {
                             Color.clear
                                 .frame(width: CGFloat(level + 1) * DesignSystem.Spacing.indent + (DesignSystem.Spacing.indent - DesignSystem.Spacing.xxs))
 
-                            Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                            Text(text)
                                 .font(.system(.caption, design: .monospaced))
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
@@ -167,7 +196,7 @@ public struct XMLViewerView: View {
 
     private var rawView: some View {
         Text(xmlString)
-            .font(.system(.caption, design: .monospaced))
+            .font(DesignSystem.Typography.monospacedFont)
             .frame(maxWidth: .infinity, alignment: .leading)
             .textSelection(.enabled)
     }
@@ -193,25 +222,45 @@ public struct XMLViewerView: View {
 
     // MARK: - XML Parsing
 
-    private func parseXML() {
-        let parser = XMLParserHelper(xmlString: xmlString)
-        do {
-            parsedXML = try parser.parse()
-            parseError = nil
+    @MainActor
+    private func parseAndPrepare() async {
+        isParsing = true
+        parsedXML = nil
+        parseError = nil
+        expandedNodes.removeAll()
+        formattedXML = nil
 
-            // Rationale: Expand the root node so the tree view is immediately visible.
-            if let root = parsedXML {
-                expandedNodes.insert("\(root.name)_0_\(root.children.count)_\(root.attributes.count)")
+        let input = xmlString
+        let (root, error, formatted) = await Task.detached(priority: .userInitiated) {
+            let parser = XMLParserHelper(xmlString: input)
+            do {
+                let parsed = try parser.parse()
+                let highlighted = Self.makeAttributedXMLString(from: input)
+                return (parsed, nil as String?, highlighted as AttributedString?)
+            } catch {
+                return (nil as XMLNode?, error.localizedDescription, nil as AttributedString?)
             }
-        } catch {
-            parseError = error.localizedDescription
-            parsedXML = nil
+        }.value
+
+        parsedXML = root
+        parseError = error
+        formattedXML = formatted
+
+        // Rationale: Expand the root node so the tree view is immediately visible.
+        if let root {
+            expandedNodes.insert("\(root.name)_0_\(root.children.count)_\(root.attributes.count)")
         }
+
+        isParsing = false
     }
 
     // MARK: - Syntax Highlighting
 
     private func attributedXMLString() -> AttributedString {
+        Self.makeAttributedXMLString(from: xmlString)
+    }
+
+    private nonisolated static func makeAttributedXMLString(from xmlString: String) -> AttributedString {
         var result = AttributedString(formatXML(xmlString))
 
         if let regex = try? NSRegularExpression(pattern: "</?([\\w:]+)", options: []) {
@@ -221,7 +270,7 @@ public struct XMLViewerView: View {
             for match in matches {
                 if let range = Range(match.range, in: result) {
                     result[range].foregroundColor = DesignSystem.Colors.accent
-                    result[range].font = .system(.caption, design: .monospaced).weight(.bold)
+                    result[range].font = .system(.callout, design: .monospaced).weight(.bold)
                 }
             }
         }
@@ -247,7 +296,7 @@ public struct XMLViewerView: View {
             for match in matches {
                 if let range = Range(match.range, in: result) {
                     result[range].foregroundColor = DesignSystem.Colors.muted
-                    result[range].font = .system(.caption, design: .monospaced).italic()
+                    result[range].font = .system(.callout, design: .monospaced).italic()
                 }
             }
         }
@@ -257,7 +306,7 @@ public struct XMLViewerView: View {
 
     // MARK: - XML Formatting
 
-    private func formatXML(_ xml: String) -> String {
+    private nonisolated static func formatXML(_ xml: String) -> String {
         var formatted = ""
         var indent = 0
         var inTag = false
@@ -300,6 +349,10 @@ public struct XMLViewerView: View {
         return formatted
     }
 
+    private var isLargePayload: Bool {
+        xmlString.utf8.count > 1_000_000
+    }
+
     private func attributesString(_ attributes: [String: String]) -> String {
         attributes.map { "\($0.key)=\"\($0.value)\"" }.joined(separator: " ")
     }
@@ -308,7 +361,7 @@ public struct XMLViewerView: View {
 // MARK: - XML Data Structures
 
 /// Represents a parsed XML element with attributes, text, and children.
-public struct XMLNode {
+public struct XMLNode: Sendable {
     public let name: String
     public var attributes: [String: String]
     public var text: String?

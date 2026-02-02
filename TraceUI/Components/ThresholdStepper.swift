@@ -29,5 +29,8 @@ public struct ThresholdStepper: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .accessibilityLabel(title)
+        .accessibilityValue(DesignSystem.formattedBytes(value))
+        .accessibilityHint("Swipe up or down to adjust")
     }
 }

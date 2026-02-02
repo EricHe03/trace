@@ -182,15 +182,3 @@ private struct PCAPGlobalHeader {
     var snaplen: UInt32 = 65535
     var network: UInt32 = 101
 }
-
-private extension Data {
-    mutating func appendUInt16LE(_ v: UInt16) {
-        var x = v.littleEndian
-        self.append(UnsafeBufferPointer(start: &x, count: 1))
-    }
-
-    mutating func appendUInt32LE(_ v: UInt32) {
-        var x = v.littleEndian
-        self.append(UnsafeBufferPointer(start: &x, count: 1))
-    }
-}
