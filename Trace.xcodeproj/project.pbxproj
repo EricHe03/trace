@@ -28,6 +28,13 @@
 		5F6EDD242F081F82002BB89C /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F6EDD232F081F82002BB89C /* WidgetKit.framework */; };
 		5F6EDD262F081F82002BB89C /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F6EDD252F081F82002BB89C /* SwiftUI.framework */; };
 		5F6EDD372F081F83002BB89C /* TraceWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5F6EDD222F081F82002BB89C /* TraceWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		5F8AABAD2F30A40C000ED152 /* TraceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C12F149C0000D9933A /* TraceCore */; };
+		5F8AABAE2F30A40C000ED152 /* TraceCompression in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C32F149C0000D9933A /* TraceCompression */; };
+		5F8AABAF2F30A40C000ED152 /* TraceSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C52F149C0000D9933A /* TraceSecurity */; };
+		5F8AABB02F30A40C000ED152 /* TraceNetworking in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C72F149C0000D9933A /* TraceNetworking */; };
+		5F8AABB12F30A40C000ED152 /* TraceProxy in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C92F149C0000D9933A /* TraceProxy */; };
+		5F8AABB22F30A40C000ED152 /* TraceFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07CB2F149C0000D9933A /* TraceFeatures */; };
+		5F8AABB32F30A40C000ED152 /* TraceUI in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07B12F149B1000D9933A /* TraceUI */; };
 		5F9A0DAA2F0A123400222223 /* HevSocks5Tunnel in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07CF2F149C0000D9933A /* HevSocks5Tunnel */; };
 		5F9A0DB52F0A123400222224 /* TracePacket in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07CD2F149C0000D9933A /* TracePacket */; };
 		5FCEECDC2F02AE4500D3CD59 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5FCEECDB2F02AE4500D3CD59 /* NetworkExtension.framework */; };
@@ -186,6 +193,13 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5F8AABB32F30A40C000ED152 /* TraceUI in Frameworks */,
+				5F8AABAD2F30A40C000ED152 /* TraceCore in Frameworks */,
+				5F8AABAF2F30A40C000ED152 /* TraceSecurity in Frameworks */,
+				5F8AABB12F30A40C000ED152 /* TraceProxy in Frameworks */,
+				5F8AABB22F30A40C000ED152 /* TraceFeatures in Frameworks */,
+				5F8AABB02F30A40C000ED152 /* TraceNetworking in Frameworks */,
+				5F8AABAE2F30A40C000ED152 /* TraceCompression in Frameworks */,
 				5F9A0DB52F0A123400222224 /* TracePacket in Frameworks */,
 				5F9A0DAA2F0A123400222223 /* HevSocks5Tunnel in Frameworks */,
 			);
@@ -753,7 +767,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Trace/Trace.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = 5M6X766FSQ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -770,7 +784,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.justin.trace;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -790,7 +804,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Trace/Trace.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = 5M6X766FSQ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -807,7 +821,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.justin.trace;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
