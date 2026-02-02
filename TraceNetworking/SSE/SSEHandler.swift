@@ -23,6 +23,10 @@ public class SSEHandler {
     private var onConnectionUpdate: ((SSEConnection) -> Void)?
     private var utf8Remainder = Data()
 
+    private let persistenceQueue = DispatchQueue(label: "com.trace.sse.handler.persist", qos: .utility)
+    private let stateQueue = DispatchQueue(label: "com.trace.sse.handler.state", qos: .utility)
+    private let stateQueueKey = DispatchSpecificKey<Void>()
+
     private let maxEvents = 1000
     private let maxTotalBytes = 10 * 1024 * 1024 // 10MB
 
@@ -49,6 +53,8 @@ public class SSEHandler {
             responseHeaders: responseHeaders,
             totalBytesReceived: 0
         )
+
+        stateQueue.setSpecific(key: stateQueueKey, value: ())
     }
 
     // MARK: - Connection Management
@@ -59,12 +65,13 @@ public class SSEHandler {
     ///   - initialBodyData: Response body bytes already forwarded by the caller that must be parsed
     ///     to preserve event boundaries and UTF-8 state.
     public func start(onUpdate: @escaping (SSEConnection) -> Void, initialBodyData: Data = Data()) {
-        self.onConnectionUpdate = onUpdate
+        withState {
+            self.onConnectionUpdate = onUpdate
+            self.saveConnectionLocked()
 
-        saveConnection()
-
-        if !initialBodyData.isEmpty {
-            parseSSEData(initialBodyData)
+            if !initialBodyData.isEmpty {
+                self.parseSSEDataLocked(initialBodyData)
+            }
         }
 
         readFromServer()
@@ -74,9 +81,11 @@ public class SSEHandler {
 
     /// Closes the SSE connection and persists the final snapshot.
     public func close() {
-        connection.close()
-        saveConnection()
-        onConnectionUpdate = nil
+        withState {
+            self.connection.close()
+            self.saveConnectionLocked()
+            self.onConnectionUpdate = nil
+        }
 
         clientConnection.cancel()
         serverConnection?.cancel()
@@ -106,7 +115,9 @@ public class SSEHandler {
                     }
                 })
 
-                self.parseSSEData(data)
+                self.withState {
+                    self.parseSSEDataLocked(data)
+                }
             }
 
             if !isComplete {
@@ -119,7 +130,7 @@ public class SSEHandler {
 
     // MARK: - SSE Event Parsing
 
-    private func parseSSEData(_ data: Data) {
+    private func parseSSEDataLocked(_ data: Data) {
         connection.totalBytesReceived += data.count
 
         // Rule: Stop parsing when limits are exceeded but keep proxying.
@@ -127,7 +138,7 @@ public class SSEHandler {
             if !connection.isTruncated {
                 connection.isTruncated = true
                 NetworkLog.sse.warning("event=sse.connection_truncated outcome=skipped event_count=\(self.connection.events.count, privacy: .public) bytes=\(self.connection.totalBytesReceived, privacy: .public)")
-                saveConnection()
+                saveConnectionLocked()
             }
             return
         }
@@ -168,41 +179,60 @@ public class SSEHandler {
         }
 
         if !events.isEmpty {
-            saveConnection()
+            saveConnectionLocked()
         }
     }
 
     // MARK: - Storage
 
-    private func saveConnection() {
-        onConnectionUpdate?(connection)
+    private func saveConnectionLocked() {
+        let snapshot = connection
+        onConnectionUpdate?(snapshot)
 
-        do {
-            try AppGroupStorage.shared.saveSSEConnection(connection)
-        } catch {
-            NetworkLog.sse.error("event=sse.storage_save outcome=failure error=\(error, privacy: .public)")
+        persistenceQueue.async {
+            do {
+                try AppGroupStorage.shared.saveSSEConnection(snapshot)
+            } catch {
+                NetworkLog.sse.error("event=sse.storage_save outcome=failure error=\(error, privacy: .public)")
+            }
         }
     }
 
     private func failAndClose() {
-        connection.status = .failed
-        connection.endTime = Date()
-        saveConnection()
-        onConnectionUpdate = nil
+        withState {
+            self.connection.status = .failed
+            self.connection.endTime = Date()
+            self.saveConnectionLocked()
+            self.onConnectionUpdate = nil
+        }
 
         clientConnection.cancel()
         serverConnection?.cancel()
     }
 
+    private func withState(_ work: @escaping () -> Void) {
+        if DispatchQueue.getSpecific(key: stateQueueKey) != nil {
+            work()
+        } else {
+            stateQueue.sync(execute: work)
+        }
+    }
+
     #if DEBUG
     /// Test-only hook to feed SSE bytes without starting network reads.
     func testParseSSEData(_ data: Data) {
-        parseSSEData(data)
+        withState {
+            self.parseSSEDataLocked(data)
+        }
     }
 
     /// Test-only hook to inspect the current connection snapshot.
     func testConnectionSnapshot() -> SSEConnection {
-        connection
+        var snapshot: SSEConnection?
+        withState {
+            snapshot = self.connection
+        }
+        return snapshot ?? connection
     }
     #endif
 }

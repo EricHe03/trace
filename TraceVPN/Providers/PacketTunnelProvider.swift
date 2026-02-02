@@ -1155,7 +1155,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     ///
     /// Discussion: PCAP capture enables offline HTTP/2 frame analysis and is
     /// disabled by default for performance and privacy reasons.
-    private func createPCAPWriterIfNeeded(enabled: Bool) async -> PCAPWriter? {
+    private func createPCAPWriterIfNeeded(enabled: Bool) async -> PCAPWriting? {
         guard enabled else { return nil }
         do {
             let writer = try PCAPWriter(
@@ -1379,7 +1379,7 @@ struct HeartbeatSnapshot: Sendable {
 /// avoid races between IPC handlers, lifecycle events, and background tasks.
 actor PacketTunnelRuntimeState {
     private var proxyServer: MITMProxyServer?
-    private var pcapWriter: PCAPWriter?
+    private var pcapWriter: PCAPWriting?
     private var packetFlowLoop: PacketFlowLoop?
     private var packetCapturePipeline: PacketCapturePipeline?
     private var packetForwarder: PacketForwardingEngine?
@@ -1427,7 +1427,7 @@ actor PacketTunnelRuntimeState {
     ///
     /// Discussion: The proxy server intercepts HTTP/2 frames and can write them
     /// to PCAP, which is separate from packet-level capture.
-    func configureRawCapture(enabled: Bool, limit: UInt64, writer: PCAPWriter?) {
+    func configureRawCapture(enabled: Bool, limit: UInt64, writer: PCAPWriting?) {
         rawCaptureEnabled = enabled
         rawCaptureLimit = limit
         pcapWriter = writer

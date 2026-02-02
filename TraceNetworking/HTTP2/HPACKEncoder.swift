@@ -557,11 +557,9 @@ public class HuffmanDecoder {
 
     /// Decodes Huffman-encoded data using RFC 7541 Appendix B.
     ///
-    /// This implementation uses the nghttp2 Huffman decoding table which provides
-    /// efficient bit-level decoding of HPACK Huffman-encoded strings.
-    ///
-    /// The decoder processes input nibble-by-nibble (4 bits at a time) using a
-    /// finite state automaton (FSA) that walks through the Huffman tree.
+    /// This implementation constructs a decode tree from `huffSymTable` and performs
+    /// bit-by-bit decoding. (A precomputed FSA table also exists in `HPACKHuffmanData.swift`
+    /// but is not currently used by the production decoder.)
     public static func decode(_ data: Data) throws -> String {
         if data.isEmpty {
             return ""

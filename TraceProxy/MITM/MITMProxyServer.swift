@@ -37,7 +37,7 @@ public class MITMProxyServer: @unchecked Sendable {
     // Rationale: Inject the event log to avoid multiple writers racing on the same file.
     private weak var eventLog: NDJSONLogWriter?
     private let throttler = PacketThrottler()
-    private var pcapWriter: PCAPWriter?
+    private var pcapWriter: PCAPWriting?
     private var rawCaptureEnabled = false
     private var rawCaptureLimit: UInt64 = 0
     // Rule: Track bytes written to cap captures and avoid unbounded disk usage.
@@ -58,7 +58,7 @@ public class MITMProxyServer: @unchecked Sendable {
     }
 
     /// Configures raw capture settings.
-    public func configureRawCapture(enabled: Bool, writer: PCAPWriter?, limit: UInt64) {
+    public func configureRawCapture(enabled: Bool, writer: PCAPWriting?, limit: UInt64) {
         performOnQueue {
             self.rawCaptureEnabled = enabled
             self.pcapWriter = writer
@@ -77,24 +77,9 @@ public class MITMProxyServer: @unchecked Sendable {
     private func writeToPCAP(_ data: Data, isRequest: Bool) {
         guard self.rawCaptureEnabled, let writer = self.pcapWriter else { return }
 
-        // Rationale: PCAP expects IP packets, so synthesize minimal IPv4 and TCP headers.
-        var packet = Data()
-
-        let totalLength = UInt16(20 + 20 + data.count) // Includes IP and TCP headers plus payload.
-        let ipHeader = createIPv4Header(
-            totalLength: totalLength,
-            srcIP: isRequest ? Data([127, 0, 0, 1]) : Data([0, 0, 0, 0]),
-            dstIP: isRequest ? Data([0, 0, 0, 0]) : Data([127, 0, 0, 1])
-        )
-        packet.append(ipHeader)
-
-        let tcpHeader = createTCPHeader(
-            srcPort: isRequest ? 12345 : self.port,
-            dstPort: isRequest ? self.port : 12345
-        )
-        packet.append(tcpHeader)
-
-        packet.append(data)
+        guard let packet = PCAPHTTPPacketSynthesizer.makePacket(payload: data, proxyPort: self.port, isRequest: isRequest) else {
+            return
+        }
 
         if self.rawCaptureLimit > 0 {
             let projected = self.rawCaptureBytes + UInt64(packet.count)
@@ -108,50 +93,6 @@ public class MITMProxyServer: @unchecked Sendable {
         }
 
         writer.writePacket(packet)
-    }
-
-    private func createIPv4Header(totalLength: UInt16, srcIP: Data, dstIP: Data) -> Data {
-        var header = Data(count: 20)
-        header[0] = 0x45 // Sets version 4 and IHL 5.
-        header[1] = 0x00 // Sets DSCP/ECN to zero.
-        header[2] = UInt8((totalLength >> 8) & 0xFF)
-        header[3] = UInt8(totalLength & 0xFF)
-        header[4] = 0x00 // Sets the IP ID to zero.
-        header[5] = 0x00
-        header[6] = 0x40 // Sets "don't fragment".
-        header[7] = 0x00 // Sets fragment offset to zero.
-        header[8] = 64 // Sets TTL to 64.
-        header[9] = 6 // Sets protocol to TCP.
-        header[10] = 0x00 // Leaves checksum disabled.
-        header[11] = 0x00
-        header.replaceSubrange(12 ..< 16, with: srcIP)
-        header.replaceSubrange(16 ..< 20, with: dstIP)
-        return header
-    }
-
-    private func createTCPHeader(srcPort: UInt16, dstPort: UInt16) -> Data {
-        var header = Data(count: 20)
-        header[0] = UInt8((srcPort >> 8) & 0xFF)
-        header[1] = UInt8(srcPort & 0xFF)
-        header[2] = UInt8((dstPort >> 8) & 0xFF)
-        header[3] = UInt8(dstPort & 0xFF)
-        header[4] = 0x00 // Sets sequence number to zero.
-        header[5] = 0x00
-        header[6] = 0x00
-        header[7] = 0x01
-        header[8] = 0x00 // Sets ack number to zero.
-        header[9] = 0x00
-        header[10] = 0x00
-        header[11] = 0x00
-        header[12] = 0x50 // Sets data offset to 20 bytes.
-        header[13] = 0x18 // Sets PSH and ACK flags.
-        header[14] = 0xFF // Sets window size.
-        header[15] = 0xFF
-        header[16] = 0x00 // Leaves checksum disabled.
-        header[17] = 0x00
-        header[18] = 0x00 // Sets urgent pointer to zero.
-        header[19] = 0x00
-        return header
     }
 
     // MARK: - Server Lifecycle
@@ -457,6 +398,10 @@ public class MITMProxyServer: @unchecked Sendable {
     }
 
     private func captureRequestToPCAP(_ request: NetworkRequest) {
+        // Rationale: PCAP records are not a canonical "full body" capture format here.
+        // Capture a bounded preview to avoid loading large bodies from disk into memory.
+        let maxBodyPreviewBytes = 16 * 1024
+
         var requestData = Data()
         let urlComponents = URLComponents(string: request.url)
         let requestPath: String = {
@@ -485,7 +430,7 @@ public class MITMProxyServer: @unchecked Sendable {
         if let crlf = "\r\n".data(using: .utf8) {
             requestData.append(crlf)
         }
-        if let body = request.requestBody.getData() {
+        if let body = request.requestBody.getPreview(maxBytes: maxBodyPreviewBytes) {
             requestData.append(body)
         }
         writeToPCAP(requestData, isRequest: true)
@@ -504,7 +449,7 @@ public class MITMProxyServer: @unchecked Sendable {
             if let crlf = "\r\n".data(using: .utf8) {
                 responseData.append(crlf)
             }
-            if let body = request.responseBody.getData() {
+            if let body = request.responseBody.getPreview(maxBytes: maxBodyPreviewBytes) {
                 responseData.append(body)
             }
             writeToPCAP(responseData, isRequest: false)
@@ -3400,220 +3345,6 @@ public struct CapturedRequest {
     public let appliedScriptName: String?
     public let hitBreakpoint: Bool
     public let retryAttempts: Int
-}
-
-// MARK: - Connection Pool
-
-/// Manages a pool of reusable upstream server connections.
-public class ConnectionPool {
-    public nonisolated(unsafe) static let shared = ConnectionPool()
-
-    private var pool: [String: [PooledConnection]] = [:]
-    private let queue = DispatchQueue(label: "com.trace.connectionpool", attributes: .concurrent)
-
-    // Rule: Cap pooled connections per host.
-    private let maxConnectionsPerHost = 6
-    // Rule: Treat connections idle for more than 2 minutes as stale.
-    private let maxIdleTime: TimeInterval = 120
-    // Rule: Treat connections older than 10 minutes as stale.
-    private let maxConnectionAge: TimeInterval = 600
-
-    private var cleanupTimer: DispatchSourceTimer?
-
-    private init() {
-        startCleanupTimer()
-    }
-
-    deinit {
-        cleanupTimer?.cancel()
-    }
-
-    /// Returns a connection from the pool or creates a new one.
-    public func getConnection(host: String, port: UInt16, useTLS: Bool) -> NWConnection? {
-        let key = "\(host):\(port)"
-
-        if let connection = queue.sync(flags: .barrier, execute: { () -> PooledConnection? in
-            guard var connections = pool[key], !connections.isEmpty else {
-                return nil
-            }
-
-            for (index, pooled) in connections.enumerated().reversed() {
-                if pooled.isHealthy {
-                    let connection = connections.remove(at: index)
-                    pool[key] = connections
-                    ProxyLog.mitm.debug("event=proxy.pool_reuse outcome=success key=\(key, privacy: .private(mask: .hash))")
-                    return connection
-                }
-            }
-
-            return nil
-        }) {
-            connection.lastUsed = Date()
-            return connection.connection
-        }
-
-        ProxyLog.mitm.debug("event=proxy.pool_create outcome=pending key=\(key, privacy: .private(mask: .hash))")
-        return createNewConnection(host: host, port: port, useTLS: useTLS)
-    }
-
-    /// Returns a connection to the pool for reuse.
-    public func returnConnection(_ connection: NWConnection, host: String, port: UInt16) {
-        let key = "\(host):\(port)"
-
-        queue.async(flags: .barrier) { [weak self] in
-            guard let self else { return }
-
-            guard connection.state == .ready else {
-                ProxyLog.mitm.debug("event=proxy.pool_return_invalid outcome=skipped state=\(String(describing: connection.state), privacy: .public)")
-                connection.cancel()
-                return
-            }
-
-            var connections = self.pool[key] ?? []
-            guard connections.count < self.maxConnectionsPerHost else {
-                ProxyLog.mitm.debug("event=proxy.pool_full outcome=skipped key=\(key, privacy: .private(mask: .hash))")
-                connection.cancel()
-                return
-            }
-
-            let pooled = PooledConnection(connection: connection, host: host, port: port)
-            connections.append(pooled)
-            self.pool[key] = connections
-
-            ProxyLog.mitm.debug("event=proxy.pool_return outcome=success key=\(key, privacy: .private(mask: .hash)) pool_size=\(connections.count)")
-        }
-    }
-
-    /// Removes and closes a specific connection.
-    public func removeConnection(_ connection: NWConnection, host: String, port: UInt16) {
-        let key = "\(host):\(port)"
-
-        queue.async(flags: .barrier) { [weak self] in
-            guard var connections = self?.pool[key] else { return }
-
-            connections.removeAll { $0.connection === connection }
-            self?.pool[key] = connections
-
-            connection.cancel()
-            ProxyLog.mitm.debug("event=proxy.pool_remove outcome=success key=\(key, privacy: .private(mask: .hash))")
-        }
-    }
-
-    /// Clears all pooled connections.
-    public func clearAll() {
-        queue.async(flags: .barrier) { [weak self] in
-            for (_, connections) in self?.pool ?? [:] {
-                connections.forEach { $0.connection.cancel() }
-            }
-            self?.pool.removeAll()
-            ProxyLog.mitm.info("event=proxy.pool_clear outcome=success")
-        }
-    }
-
-    // MARK: - Private Methods
-
-    private func createNewConnection(host: String, port: UInt16, useTLS: Bool) -> NWConnection? {
-        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
-            ProxyLog.mitm.error("event=proxy.pool_invalid_port outcome=failure port=\(port)")
-            return nil
-        }
-
-        let endpoint = NWEndpoint.hostPort(
-            host: NWEndpoint.Host(host),
-            port: nwPort
-        )
-
-        let parameters: NWParameters
-        if useTLS {
-            let tlsOptions = TLSHandler.createClientTLSOptions(for: host)
-            parameters = NWParameters(tls: tlsOptions, tcp: .init())
-        } else {
-            parameters = .tcp
-        }
-
-        let connection = NWConnection(to: endpoint, using: parameters)
-        connection.start(queue: .global())
-
-        return connection
-    }
-
-    private func startCleanupTimer() {
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + 30, repeating: 30)
-        timer.setEventHandler { [weak self] in
-            self?.cleanupStaleConnections()
-        }
-        timer.resume()
-        cleanupTimer = timer
-    }
-
-    private func cleanupStaleConnections() {
-        queue.async(flags: .barrier) { [weak self] in
-            guard let self else { return }
-
-            let now = Date()
-            var totalRemoved = 0
-
-            for (key, connections) in self.pool {
-                let (healthy, stale) = connections.reduce(
-                    into: ([PooledConnection](), [PooledConnection]())
-                ) { result, pooled in
-                    if pooled.isStale(
-                        now: now, maxIdleTime: self.maxIdleTime, maxAge: self.maxConnectionAge
-                    ) {
-                        result.1.append(pooled)
-                    } else if pooled.isHealthy {
-                        result.0.append(pooled)
-                    } else {
-                        result.1.append(pooled)
-                    }
-                }
-
-                stale.forEach { $0.connection.cancel() }
-                totalRemoved += stale.count
-
-                if healthy.isEmpty {
-                    self.pool.removeValue(forKey: key)
-                } else {
-                    self.pool[key] = healthy
-                }
-            }
-
-            if totalRemoved > 0 {
-                ProxyLog.mitm.debug("event=proxy.pool_cleanup outcome=success count=\(totalRemoved)")
-            }
-        }
-    }
-}
-
-// MARK: - Pooled Connection
-
-/// Represents a connection in the pool with metadata.
-public class PooledConnection {
-    public let connection: NWConnection
-    public let host: String
-    public let port: UInt16
-    public let createdAt: Date
-    public var lastUsed: Date
-
-    public init(connection: NWConnection, host: String, port: UInt16) {
-        self.connection = connection
-        self.host = host
-        self.port = port
-        self.createdAt = Date()
-        self.lastUsed = Date()
-    }
-
-    public var isHealthy: Bool {
-        connection.state == .ready
-    }
-
-    public func isStale(now: Date, maxIdleTime: TimeInterval, maxAge: TimeInterval) -> Bool {
-        let idleTime = now.timeIntervalSince(lastUsed)
-        let age = now.timeIntervalSince(createdAt)
-
-        return idleTime > maxIdleTime || age > maxAge
-    }
 }
 
 // MARK: - Errors
