@@ -61,6 +61,12 @@ final class MITMAutoBypassCache: @unchecked Sendable {
         entries[key] = entry
     }
 
+    func clear() {
+        lock.lock()
+        defer { lock.unlock() }
+        entries.removeAll()
+    }
+
     private func pruneLocked(now: Date) {
         guard !entries.isEmpty else { return }
         entries = entries.filter { _, entry in entry.expiresAt > now }

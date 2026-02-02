@@ -84,4 +84,3 @@ enum PCAPHTTPPacketSynthesizer {
         return header
     }
 }
-

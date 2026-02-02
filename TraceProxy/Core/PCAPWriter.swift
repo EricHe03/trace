@@ -126,4 +126,3 @@ public final class PCAPWriter: PCAPWriting, @unchecked Sendable {
         try handle.write(contentsOf: hdr)
     }
 }
-

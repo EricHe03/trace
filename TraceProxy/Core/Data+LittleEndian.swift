@@ -19,4 +19,3 @@ extension Data {
         self.append(UnsafeBufferPointer(start: &x, count: 1))
     }
 }
-
