@@ -116,11 +116,13 @@ public enum DesignSystem {
         static let backgroundColor: Color = .black
         static let backgroundOpacity: Double = 0.8
         static let foregroundColor: Color = .white
-        static let horizontalPadding: CGFloat = Spacing.md
-        static let verticalPadding: CGFloat = Spacing.sm
+        static let horizontalPadding: CGFloat = Spacing.lg
+        static let verticalPadding: CGFloat = 10
         static let cornerRadius: CGFloat = CornerRadius.md
         public static let bottomPadding: CGFloat = 20
         static let displayDuration: TimeInterval = 2.0
+        static let maxWidthPercentage: CGFloat = 0.8
+        static let lineLimit: Int = 2
     }
 
     // MARK: - Badges & Pills
@@ -170,7 +172,7 @@ public enum DesignSystem {
 
         /// Returns a spring animation that respects the Reduce Motion setting.
         public static var springAnimation: SwiftUI.Animation {
-            UIAccessibility.isReduceMotionEnabled ? .linear(duration: 0) : .spring(response: 0.3, dampingFraction: 0.7)
+            UIAccessibility.isReduceMotionEnabled ? .linear(duration: 0) : .spring(response: 0.3, dampingFraction: 0.95)
         }
 
         /// Returns a transition that respects the Reduce Motion setting.
@@ -479,20 +481,29 @@ struct ToastView: View {
     let message: String
     let onDismiss: () -> Void
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
     var body: some View {
         Button(action: onDismiss) {
             Text(message)
                 .font(.subheadline)
                 .foregroundStyle(DesignSystem.Toast.foregroundColor)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(DesignSystem.Toast.lineLimit)
                 .padding(.horizontal, DesignSystem.Toast.horizontalPadding)
                 .padding(.vertical, DesignSystem.Toast.verticalPadding)
+                .frame(maxWidth: maxWidth)
                 .background(DesignSystem.Toast.backgroundColor.opacity(DesignSystem.Toast.backgroundOpacity))
                 .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(message)
         .accessibilityHint("Dismiss notification")
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+
+    private var maxWidth: CGFloat {
+        let screenWidth = UIScreen.main.bounds.width
+        return screenWidth * DesignSystem.Toast.maxWidthPercentage
     }
 }
 
@@ -513,7 +524,9 @@ private struct ToastModifier: ViewModifier {
                                 .combined(with: AnyTransition.opacity)
                         )
                     )
+                    .padding(.horizontal, DesignSystem.Spacing.lg)
                     .padding(.bottom, bottomPadding)
+                    .animation(DesignSystem.Accessibility.springAnimation, value: message)
                     .onAppear {
                         scheduleAutoDismiss()
                     }
@@ -525,10 +538,11 @@ private struct ToastModifier: ViewModifier {
                     }
             }
         }
+        .animation(DesignSystem.Accessibility.springAnimation, value: message)
     }
 
     private func dismiss() {
-        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+        withAnimation(DesignSystem.Accessibility.springAnimation) {
             message = nil
         }
     }
