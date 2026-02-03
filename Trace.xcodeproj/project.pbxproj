@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5F4B02D42F31783F00DE50A3 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 5F4B02D32F31783F00DE50A3 /* AppIcon.icon */; };
 		5F4B07A62F149B1000D9933A /* TraceCompression in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07A52F149B1000D9933A /* TraceCompression */; };
 		5F4B07A82F149B1000D9933A /* TraceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07A72F149B1000D9933A /* TraceCore */; };
 		5F4B07AA2F149B1000D9933A /* TraceFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07A92F149B1000D9933A /* TraceFeatures */; };
@@ -27,7 +28,6 @@
 		5F6EDD242F081F82002BB89C /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F6EDD232F081F82002BB89C /* WidgetKit.framework */; };
 		5F6EDD262F081F82002BB89C /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F6EDD252F081F82002BB89C /* SwiftUI.framework */; };
 		5F6EDD372F081F83002BB89C /* TraceWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5F6EDD222F081F82002BB89C /* TraceWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		5F848C6E2F30E37000FA9C1E /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 5F848C6D2F30E37000FA9C1E /* AppIcon.icon */; };
 		5F8AABAD2F30A40C000ED152 /* TraceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C12F149C0000D9933A /* TraceCore */; };
 		5F8AABAE2F30A40C000ED152 /* TraceCompression in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C32F149C0000D9933A /* TraceCompression */; };
 		5F8AABAF2F30A40C000ED152 /* TraceSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C52F149C0000D9933A /* TraceSecurity */; };
@@ -89,10 +89,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		5F4B02D32F31783F00DE50A3 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		5F6EDD222F081F82002BB89C /* TraceWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TraceWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F6EDD232F081F82002BB89C /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		5F6EDD252F081F82002BB89C /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
-		5F848C6D2F30E37000FA9C1E /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		5F9567E82F28DEF100CBBAC3 /* Trace.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; name = Trace.xctestplan; path = TraceTests/Trace.xctestplan; sourceTree = "<group>"; };
 		5FCEEC012F0152E400D3CD59 /* Trace.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Trace.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5FCEEC102F0152E600D3CD59 /* TraceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TraceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -242,7 +242,7 @@
 				5F6EDD272F081F82002BB89C /* TraceWidget */,
 				5FCEECDA2F02AE4500D3CD59 /* Frameworks */,
 				5FCEEC022F0152E400D3CD59 /* Products */,
-				5F848C6D2F30E37000FA9C1E /* AppIcon.icon */,
+				5F4B02D32F31783F00DE50A3 /* AppIcon.icon */,
 			);
 			sourceTree = "<group>";
 		};
@@ -481,7 +481,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				5F848C6E2F30E37000FA9C1E /* AppIcon.icon in Resources */,
+				5F4B02D42F31783F00DE50A3 /* AppIcon.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
