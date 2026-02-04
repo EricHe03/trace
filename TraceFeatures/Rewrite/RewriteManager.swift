@@ -20,6 +20,10 @@ public final class RewriteManager: ObservableObject {
     private let baseManager: PersistentCollectionManager<RewriteRule>
     private var cancellables: Set<AnyCancellable> = []
     private let maxBodyModificationBytes = 10 * 1024 * 1024
+    private let ruleStatsFlushIntervalSeconds: TimeInterval = 5
+    private let ruleStatsFlushBatchSize: Int = 100
+    private var pendingRuleStats: [UUID: PendingRuleStats] = [:]
+    private var ruleStatsFlushTask: Task<Void, Never>?
 
     public nonisolated(unsafe) let objectWillChange = ObservableObjectPublisher()
 
@@ -505,7 +509,7 @@ public final class RewriteManager: ObservableObject {
         if originalData.count > maxBodyModificationBytes {
             return
         }
-        let contentType = target == .request ? request.contentType : request.contentType
+        let contentType = resolvedContentType(for: request, target: target)
         if ContentSafety.shouldSkipTextOperation(originalData, contentType: contentType) {
             return
         }
@@ -516,6 +520,15 @@ public final class RewriteManager: ObservableObject {
         } else {
             request.responseBody = BodyStorage.from(data: transformed)
             request.wasRewritten = true
+        }
+    }
+
+    private func resolvedContentType(for request: NetworkRequest, target: ActionTarget) -> String? {
+        switch target {
+        case .request:
+            request.requestHeaders.first(where: { $0.key.lowercased() == "content-type" })?.value
+        case .response:
+            request.responseHeaders.first(where: { $0.key.lowercased() == "content-type" })?.value ?? request.contentType
         }
     }
 
@@ -616,14 +629,69 @@ public final class RewriteManager: ObservableObject {
     }
 
     public func recordRuleHit(_ ruleId: UUID, durationMs: Double) {
-        guard var rule = rules.first(where: { $0.id == ruleId }) else { return }
-        rule.hitCount += 1
-        rule.lastHitAt = Date()
-        if let avg = rule.averageExecutionTimeMs {
-            rule.averageExecutionTimeMs = (avg * Double(rule.hitCount - 1) + durationMs) / Double(rule.hitCount)
-        } else {
-            rule.averageExecutionTimeMs = durationMs
+        let now = Date()
+        var stats = pendingRuleStats[ruleId] ?? PendingRuleStats(hitCount: 0, totalDurationMs: 0, lastHitAt: now)
+        stats.hitCount += 1
+        stats.totalDurationMs += durationMs
+        stats.lastHitAt = max(stats.lastHitAt, now)
+        pendingRuleStats[ruleId] = stats
+
+        let pendingCount = pendingRuleStats.values.reduce(0) { $0 + $1.hitCount }
+        if pendingCount >= ruleStatsFlushBatchSize {
+            flushPendingRuleStats()
+            return
         }
-        baseManager.update(rule)
+
+        scheduleRuleStatsFlushIfNeeded()
+    }
+}
+
+private extension RewriteManager {
+    struct PendingRuleStats {
+        var hitCount: Int
+        var totalDurationMs: Double
+        var lastHitAt: Date
+    }
+
+    func scheduleRuleStatsFlushIfNeeded() {
+        guard ruleStatsFlushTask == nil else { return }
+        ruleStatsFlushTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: UInt64(self.ruleStatsFlushIntervalSeconds * 1_000_000_000))
+            await MainActor.run {
+                self.flushPendingRuleStats()
+            }
+        }
+    }
+
+    func flushPendingRuleStats() {
+        ruleStatsFlushTask?.cancel()
+        ruleStatsFlushTask = nil
+
+        guard !pendingRuleStats.isEmpty else { return }
+        let deltas = pendingRuleStats
+        pendingRuleStats.removeAll(keepingCapacity: true)
+
+        var updated = rules
+        var changed = false
+
+        for index in updated.indices {
+            let id = updated[index].id
+            guard let delta = deltas[id], delta.hitCount > 0 else { continue }
+
+            let previousHitCount = updated[index].hitCount
+            let newHitCount = previousHitCount + delta.hitCount
+
+            let previousTotal = (updated[index].averageExecutionTimeMs ?? 0) * Double(previousHitCount)
+            let newTotal = previousTotal + delta.totalDurationMs
+
+            updated[index].hitCount = newHitCount
+            updated[index].lastHitAt = max(updated[index].lastHitAt ?? delta.lastHitAt, delta.lastHitAt)
+            updated[index].averageExecutionTimeMs = newHitCount > 0 ? (newTotal / Double(newHitCount)) : nil
+            changed = true
+        }
+
+        guard changed else { return }
+        baseManager.importItems(updated, merge: false)
     }
 }

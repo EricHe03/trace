@@ -154,7 +154,8 @@ public class CurlParser {
             }
 
             if !endOfOptions, token == "--next" {
-                if !transfers.last!.urls.isEmpty || !transfers.last!.dataParts.isEmpty || !transfers.last!.formParts.isEmpty || transfers.last!.uploadFile != nil {
+                if let last = transfers.last,
+                   !last.urls.isEmpty || !last.dataParts.isEmpty || !last.formParts.isEmpty || last.uploadFile != nil {
                     transfers.append(TransferState())
                 }
                 continue

@@ -343,7 +343,8 @@ public class ScriptEngine {
             promise.invokeMethod("catch", withArguments: [reject])
 
             if timeout > 0 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
+                Task {
+                    try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                     resumeFailure(ScriptError.executionFailed("Script timed out"))
                 }
             }
