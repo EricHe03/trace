@@ -103,7 +103,7 @@ public class AppGroupStorage: @unchecked Sendable {
         isMisconfigured = true
         if !didLogMisconfiguration {
             didLogMisconfiguration = true
-            CoreLog.storage.error("event=storage.app_group_unavailable outcome=failure app_group=\(appGroupIdentifier, privacy: .private)")
+            CoreLog.storage.error("event=storage.app_group_unavailable outcome=failure app_group=\(self.appGroupIdentifier, privacy: .private)")
         }
         return nil
     }
@@ -128,7 +128,7 @@ public class AppGroupStorage: @unchecked Sendable {
         isMisconfigured = true
         if !didLogMisconfiguration {
             didLogMisconfiguration = true
-            CoreLog.storage.error("event=storage.userdefaults outcome=failure reason=suite_unavailable app_group=\(appGroupIdentifier, privacy: .private)")
+            CoreLog.storage.error("event=storage.userdefaults outcome=failure reason=suite_unavailable app_group=\(self.appGroupIdentifier, privacy: .private)")
         }
         return UserDefaults.standard
     }
@@ -198,7 +198,7 @@ public class AppGroupStorage: @unchecked Sendable {
 
     private func logStorageConfiguration() {
         if isMisconfigured {
-            CoreLog.storage.error("event=storage.init outcome=failure reason=app_group_unavailable app_group=\(appGroupIdentifier, privacy: .private)")
+            CoreLog.storage.error("event=storage.init outcome=failure reason=app_group_unavailable app_group=\(self.appGroupIdentifier, privacy: .private)")
         } else if isUsingFallback {
             CoreLog.storage.warning("event=storage.init outcome=fallback reason=app_group_unavailable")
             if Self.isSimulator {
