@@ -489,8 +489,7 @@ public class X509CertificateBuilder {
 
         // Rule: Only add Basic Constraints for CA certificates.
         // Rationale: Omitting it for leaf certificates avoids "Leaf has invalid basic constraints" errors from iOS trustd.
-        if isCA {
-            let basicConstraints = buildBasicConstraintsExtension(isCA: true)
+        if isCA, let basicConstraints = buildBasicConstraintsExtension(isCA: true) {
             extensions.append(basicConstraints)
         }
 
@@ -521,8 +520,9 @@ public class X509CertificateBuilder {
 
     /// Builds a Basic Constraints extension for CA certificates.
     /// - Important: Leaf certificates must omit this extension to avoid trustd errors.
-    private static func buildBasicConstraintsExtension(isCA: Bool) -> Data {
-        precondition(isCA, "Basic Constraints extension should only be added for CA certificates")
+    private static func buildBasicConstraintsExtension(isCA: Bool) -> Data? {
+        // Defensive: This should only be called for CA certificates.
+        guard isCA else { return nil }
 
         // Rule: cA must be TRUE for CA certificates.
         let bcValue = ASN1Encoder.encodeSequence(Data([0x01, 0x01, 0xFF]))

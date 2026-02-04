@@ -204,10 +204,14 @@ public class MITMProxyServer: @unchecked Sendable {
             self.configuration = config
             // Rule: Transparent TLS mode must be explicitly enabled and defaults to off to match
             // explicit proxy behavior.
-            if let enabled = config["transparentTLSModeEnabled"] as? Bool {
+            let canonicalKey = "transparentTLSModeEnabled"
+            let legacyKey = "enableTransparentTLSMode"
+
+            if let enabled = config[canonicalKey] as? Bool {
                 self.transparentTLSModeEnabled = enabled
-            } else if let enabled = config["enableTransparentTLSMode"] as? Bool {
+            } else if let enabled = config[legacyKey] as? Bool {
                 self.transparentTLSModeEnabled = enabled
+                ProxyLog.mitm.warning("event=proxy.config_legacy_key outcome=success key=\(legacyKey, privacy: .public) mapped_to=\(canonicalKey, privacy: .public)")
             }
             ProxyLog.mitm.debug("event=proxy.config_update outcome=success")
         }

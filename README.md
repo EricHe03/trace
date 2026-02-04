@@ -173,10 +173,10 @@ curl -X POST https://api.example.com/items \
 
 | Setting | Location | Description |
 |---------|----------|-------------|
-| App Group | Build Settings → `APP_GROUP_IDENTIFIER` | Shared storage identifier (defaults to `group.<bundleIdentifier>`) |
+| App Group | Build Settings → `APP_GROUP_IDENTIFIER` (or Info.plist `AppGroupIdentifier`) | Shared storage identifier (defaults to `group.<bundleIdentifier>`) |
 | Bundle IDs | Target settings | Must align across App, VPN extension, and Widget |
 | VPN Bundle ID | `TraceFeatures/VPN/VPNManager.swift:69` | Keep in sync with `TraceVPN` target |
-| Keychain Group | Entitlements | Default: `$(AppIdentifierPrefix)com.justin.trace` |
+| Keychain Group | Entitlements (or Info.plist `TraceKeychainAccessGroup`) | Default: `$(AppIdentifierPrefix)com.justin.trace` |
 
 ### Capture Settings
 

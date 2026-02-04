@@ -48,7 +48,7 @@ struct TraceApp: App {
         .onChangeCompat(of: scenePhase) { newPhase in
             if newPhase == .active {
                 // Rule: Avoid VPN setup before onboarding completion.
-                if UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
+                if OnboardingState.hasCompleted {
                     VPNManager.shared.initializeIfNeeded()
                     updateQuickActions()
                     CertificateManager.shared.checkAndNotifyMismatch()
@@ -81,7 +81,7 @@ struct TraceApp: App {
         if vpnManager.isConnected {
             shortcutItems.append(
                 UIApplicationShortcutItem(
-                    type: "com.trace.stopCapture",
+                    type: TraceQuickActionType.stopCapture,
                     localizedTitle: "Stop Capture",
                     localizedSubtitle: "Stop monitoring traffic",
                     icon: UIApplicationShortcutIcon(systemImageName: "stop.circle.fill"),
@@ -91,7 +91,7 @@ struct TraceApp: App {
         } else {
             shortcutItems.append(
                 UIApplicationShortcutItem(
-                    type: "com.trace.startCapture",
+                    type: TraceQuickActionType.startCapture,
                     localizedTitle: "Start Capture",
                     localizedSubtitle: "Begin monitoring traffic",
                     icon: UIApplicationShortcutIcon(systemImageName: "record.circle"),
@@ -104,7 +104,7 @@ struct TraceApp: App {
             let requestCount = viewModel.sessions.first?.requestCount ?? 0
             shortcutItems.append(
                 UIApplicationShortcutItem(
-                    type: "com.trace.viewLastSession",
+                    type: TraceQuickActionType.viewLastSession,
                     localizedTitle: "Recent Session",
                     localizedSubtitle: "\(requestCount) request\(requestCount == 1 ? "" : "s")",
                     icon: UIApplicationShortcutIcon(systemImageName: "tray.full.fill"),
@@ -117,7 +117,7 @@ struct TraceApp: App {
         if !viewModel.sessions.isEmpty {
             shortcutItems.append(
                 UIApplicationShortcutItem(
-                    type: "com.trace.exportData",
+                    type: TraceQuickActionType.exportData,
                     localizedTitle: "Export Data",
                     localizedSubtitle: "Save session as HAR",
                     icon: UIApplicationShortcutIcon(systemImageName: "square.and.arrow.up"),

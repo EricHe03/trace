@@ -28,12 +28,12 @@ public final class FavoritesManager: ObservableObject {
     }
 
     /// Notification for cross-process updates
-    private let favoritesUpdatedNotificationName = Notification.Name("com.trace.favoritesUpdated")
+    private let favoritesUpdatedNotificationName = Notification.Name.favoritesUpdated
 
     private init() {
         self.baseManager = PersistentCollectionManager(
             fileName: "Favorites.json",
-            notificationName: "com.trace.favoritesUpdated",
+            notificationName: Notification.Name.favoritesUpdated.rawValue,
             logger: FeatureLog.storage,
             itemName: "favorite"
         )

@@ -84,6 +84,15 @@ public class CertificateManager {
 
     /// Provides the shared keychain access group used by the app and VPN extension.
     public static let keychainAccessGroup: String? = {
+        // Prefer explicit configuration for forks and CI signing setups.
+        if let configured = Bundle.main.object(forInfoDictionaryKey: "TraceKeychainAccessGroup") as? String {
+            let trimmed = configured.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, !trimmed.contains("$("), !trimmed.contains("${") {
+                SecurityLog.keychain.info("event=keychain.access_group_resolved outcome=success source=info_plist")
+                return trimmed
+            }
+        }
+
         // Rationale: App and VPN extension must share keychain items to avoid divergent Root CAs.
         #if os(macOS)
         // Rationale: macOS can read entitlements directly.
