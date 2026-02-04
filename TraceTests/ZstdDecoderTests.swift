@@ -62,21 +62,10 @@ final class ZstdDecoderTests: XCTestCase {
 
     // MARK: - Basic Tests
 
-    func testZstdDecoder_EmptyData_ThrowsError() {
+    func testZstdDecoder_EmptyData_ReturnsEmpty() throws {
         let emptyData = Data()
-
-        do {
-            _ = try ZstdDecoder.decompress(emptyData)
-            XCTFail("Expected error to be thrown")
-        } catch let error as CompressionError {
-            if case .invalidInput = error {
-                // Expected error
-            } else {
-                XCTFail("Expected invalidInput error")
-            }
-        } catch {
-            XCTFail("Expected CompressionError, got \(error)")
-        }
+        let result = try ZstdDecoder.decompress(emptyData)
+        XCTAssertTrue(result.isEmpty)
     }
 
     func testZstdDecoder_InvalidData_ThrowsError() {

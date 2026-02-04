@@ -16,14 +16,12 @@ public class StreamingDeflateDecoder: StreamingDecoderProtocol {
     public private(set) var totalBytesIn: Int = 0
     public private(set) var totalBytesOut: Int = 0
     private var didReachStreamEnd: Bool = false
-    private var buffer: Data
 
     /// Creates a decoder with the provided configuration.
     /// - Parameter config: Decoder configuration.
     public init(config: StreamingDecoderConfig = .default) {
         self.config = config
         self.stream = z_stream()
-        self.buffer = Data(capacity: config.chunkSize)
     }
 
     deinit {
@@ -58,11 +56,16 @@ public class StreamingDeflateDecoder: StreamingDecoderProtocol {
         var outputBuffer = [UInt8](repeating: 0, count: config.chunkSize)
 
         try chunk.withUnsafeBytes { (inputPointer: UnsafeRawBufferPointer) in
+            guard let baseAddress = inputPointer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                throw CompressionError.invalidInput("Invalid input buffer")
+            }
+
             stream.avail_in = UInt32(chunk.count)
-            stream.next_in = UnsafeMutablePointer<UInt8>(mutating: inputPointer.baseAddress?.assumingMemoryBound(to: UInt8.self))
+            stream.next_in = UnsafeMutablePointer<UInt8>(mutating: baseAddress)
 
             repeat {
                 try outputBuffer.withUnsafeMutableBufferPointer { outputPointer in
+                    let previousAvailIn = stream.avail_in
                     stream.avail_out = UInt32(config.chunkSize)
                     stream.next_out = outputPointer.baseAddress
 
@@ -86,8 +89,18 @@ public class StreamingDeflateDecoder: StreamingDecoderProtocol {
                     if totalBytesOut > config.maxOutputSize {
                         throw CompressionError.bufferTooSmall("Output exceeded \(config.maxOutputSize) bytes")
                     }
+
+                    // Safety: If we made no progress, bail out to avoid retaining a pointer into the input chunk.
+                    if result == Z_OK, bytesProduced == 0, stream.avail_in == previousAvailIn {
+                        throw CompressionError.decompressionFailed("inflate made no progress (likely truncated or invalid stream)")
+                    }
                 }
-            } while stream.avail_out == 0
+            } while stream.avail_in > 0 && !didReachStreamEnd
+
+            // Streaming contract: do not allow leftover compressed bytes pointing into a chunk that's about to go away.
+            if stream.avail_in > 0 {
+                throw CompressionError.decompressionFailed("Trailing compressed bytes remain after decoding a stream chunk")
+            }
         }
 
         totalBytesIn += chunk.count
@@ -162,6 +175,5 @@ public class StreamingDeflateDecoder: StreamingDecoderProtocol {
         totalBytesIn = 0
         totalBytesOut = 0
         didReachStreamEnd = false
-        buffer.removeAll(keepingCapacity: true)
     }
 }

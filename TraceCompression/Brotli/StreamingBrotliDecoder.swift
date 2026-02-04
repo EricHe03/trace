@@ -20,21 +20,12 @@ public class StreamingBrotliDecoder: StreamingDecoderProtocol {
     private var streamInitialized: Bool = false
 
     private var outputBuffer: UnsafeMutablePointer<UInt8>?
-
-    // Rule: Use a shared placeholder buffer because compression_stream requires non-nil pointers.
-    // Concurrency: The placeholder buffer is read-only and safe to share across threads.
-    private nonisolated(unsafe) static let placeholderBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 1)
+    private var placeholderByte: UInt8 = 0
 
     public init(config: StreamingDecoderConfig = .default) {
         self.config = config
-        // Rule: Initialize with placeholder pointers before a real buffer is allocated.
-        self.stream = compression_stream(
-            dst_ptr: Self.placeholderBuffer,
-            dst_size: 0,
-            src_ptr: UnsafePointer(Self.placeholderBuffer),
-            src_size: 0,
-            state: nil
-        )
+        self.stream = compression_stream()
+        resetStreamToPlaceholder()
     }
 
     deinit {
@@ -50,6 +41,7 @@ public class StreamingBrotliDecoder: StreamingDecoderProtocol {
         guard status != COMPRESSION_STATUS_ERROR else {
             outputBuffer?.deallocate()
             outputBuffer = nil
+            resetStreamToPlaceholder()
             throw CompressionError.initializationFailed("Failed to initialize Brotli decompression stream")
         }
 
@@ -73,7 +65,9 @@ public class StreamingBrotliDecoder: StreamingDecoderProtocol {
         var output = Data()
 
         try chunk.withUnsafeBytes { (inputPointer: UnsafeRawBufferPointer) in
-            guard let baseAddress = inputPointer.baseAddress else { return }
+            guard let baseAddress = inputPointer.baseAddress else {
+                throw CompressionError.invalidInput("Invalid chunk buffer")
+            }
 
             stream.src_ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
             stream.src_size = chunk.count
@@ -168,12 +162,18 @@ public class StreamingBrotliDecoder: StreamingDecoderProtocol {
         isInitialized = false
 
         // Rule: Recreate the stream to avoid "invalid reuse" after a failed init attempt.
-        stream = compression_stream(
-            dst_ptr: Self.placeholderBuffer,
-            dst_size: 0,
-            src_ptr: UnsafePointer(Self.placeholderBuffer),
-            src_size: 0,
-            state: nil
-        )
+        resetStreamToPlaceholder()
+    }
+
+    private func resetStreamToPlaceholder() {
+        withUnsafeMutablePointer(to: &placeholderByte) { placeholderPtr in
+            stream = compression_stream(
+                dst_ptr: placeholderPtr,
+                dst_size: 0,
+                src_ptr: UnsafePointer(placeholderPtr),
+                src_size: 0,
+                state: nil
+            )
+        }
     }
 }

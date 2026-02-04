@@ -132,26 +132,22 @@ final class StreamingDecoderProtocolTests: XCTestCase {
 
         XCTAssertEqual(config.chunkSize, 64 * 1024)
         XCTAssertEqual(config.maxOutputSize, 10 * 1024 * 1024)
-        XCTAssertTrue(config.validateChecksums)
     }
 
     func testStreamingDecoderConfigCustomValues() {
         let config = StreamingDecoderConfig(
             chunkSize: 1024,
-            maxOutputSize: 100000,
-            validateChecksums: false
+            maxOutputSize: 100000
         )
 
         XCTAssertEqual(config.chunkSize, 1024)
         XCTAssertEqual(config.maxOutputSize, 100000)
-        XCTAssertFalse(config.validateChecksums)
     }
 
     func testStreamingDecoderConfigIsSendable() {
         let config = StreamingDecoderConfig(
             chunkSize: 2048,
-            maxOutputSize: 200000,
-            validateChecksums: true
+            maxOutputSize: 200000
         )
 
         Task {
@@ -244,8 +240,7 @@ final class StreamingDecoderProtocolTests: XCTestCase {
     func testProtocolWithCustomConfig() throws {
         let config = StreamingDecoderConfig(
             chunkSize: 1024,
-            maxOutputSize: 100000,
-            validateChecksums: false
+            maxOutputSize: 100000
         )
 
         let decoder: any StreamingDecoderProtocol = StreamingDeflateDecoder(config: config)
@@ -263,8 +258,7 @@ final class StreamingDecoderProtocolTests: XCTestCase {
     func testProtocolEnforcesMaxOutputSize() throws {
         let config = StreamingDecoderConfig(
             chunkSize: 64 * 1024,
-            maxOutputSize: 100,
-            validateChecksums: true
+            maxOutputSize: 100
         )
 
         let decoder: any StreamingDecoderProtocol = StreamingDeflateDecoder(config: config)
@@ -325,7 +319,7 @@ final class StreamingDecoderProtocolTests: XCTestCase {
         }
 
         guard result == Z_STREAM_END else {
-            throw DecompressionError.processingFailed
+            throw CompressionError.decompressionFailed("gzip compression failed for test fixture")
         }
         compressedData.count = bufferSize - Int(stream.avail_out)
         return compressedData

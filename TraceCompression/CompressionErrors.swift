@@ -7,27 +7,6 @@
 
 import Foundation
 
-/// Defines errors for one-shot decompression.
-public enum DecompressionError: LocalizedError {
-    case invalidData
-    case initializationFailed
-    case processingFailed
-    case unknownError
-
-    public var errorDescription: String? {
-        switch self {
-        case .invalidData:
-            "Invalid or corrupted compressed data"
-        case .initializationFailed:
-            "Failed to initialize decompression stream"
-        case .processingFailed:
-            "Decompression processing failed"
-        case .unknownError:
-            "Unknown decompression error occurred"
-        }
-    }
-}
-
 /// Defines errors for streaming compression and decompression.
 public enum CompressionError: LocalizedError {
     case invalidInput(String)

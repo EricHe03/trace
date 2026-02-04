@@ -13,74 +13,91 @@ public class BrotliDecoder {
     /// Decompresses Brotli-compressed data.
     /// - Parameter data: Brotli-compressed data.
     /// - Returns: Decompressed data.
-    /// - Throws: DecompressionError if decompression fails.
+    /// - Throws: CompressionError if decompression fails.
     public static func decompress(_ data: Data) throws -> Data {
+        try decompress(data, maxOutputBytes: nil)
+    }
+
+    /// Decompresses Brotli-compressed data, enforcing an optional output limit.
+    ///
+    /// If `maxOutputBytes` is set and the decompressed output reaches the limit, this returns a truncated
+    /// buffer of exactly `maxOutputBytes` bytes (useful for callers that want a bounded preview).
+    public static func decompress(_ data: Data, maxOutputBytes: Int?) throws -> Data {
         guard !data.isEmpty else { return Data() }
+        if let maxOutputBytes, maxOutputBytes <= 0 { return Data() }
 
-        do {
-            return try data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) -> Data in
-                guard let baseAddress = sourcePtr.baseAddress else {
-                    throw DecompressionError.invalidData
-                }
-
-                let bufferSize = 64 * 1024
-                let destinationBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-                defer { destinationBuffer.deallocate() }
-
-                var stream = compression_stream(
-                    dst_ptr: destinationBuffer,
-                    dst_size: bufferSize,
-                    src_ptr: baseAddress.assumingMemoryBound(to: UInt8.self),
-                    src_size: data.count,
-                    state: nil
-                )
-
-                var status = compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_BROTLI)
-                guard status != COMPRESSION_STATUS_ERROR else {
-                    throw DecompressionError.initializationFailed
-                }
-                defer { compression_stream_destroy(&stream) }
-
-                // Re-set src fields after init (compression_stream_init clears all fields except state)
-                stream.src_ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
-                stream.src_size = data.count
-
-                var output = Data()
-
-                repeat {
-                    stream.dst_ptr = destinationBuffer
-                    stream.dst_size = bufferSize
-
-                    // Always finalize since all input is provided upfront
-                    status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
-
-                    switch status {
-                    case COMPRESSION_STATUS_OK, COMPRESSION_STATUS_END:
-                        let produced = bufferSize - stream.dst_size
-                        if produced > 0 {
-                            output.append(destinationBuffer, count: produced)
-                        } else if status == COMPRESSION_STATUS_OK {
-                            // No progress while processing - likely invalid data
-                            throw DecompressionError.processingFailed
-                        }
-                    case COMPRESSION_STATUS_ERROR:
-                        throw DecompressionError.processingFailed
-                    default:
-                        throw DecompressionError.unknownError
-                    }
-                } while status == COMPRESSION_STATUS_OK
-
-                // Validate that the stream ended cleanly and consumed all input.
-                guard status == COMPRESSION_STATUS_END, stream.src_size == 0 else {
-                    throw DecompressionError.processingFailed
-                }
-
-                return output
+        return try data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) -> Data in
+            guard let baseAddress = sourcePtr.baseAddress else {
+                throw CompressionError.invalidInput("Invalid data buffer")
             }
-        } catch let error as DecompressionError {
-            throw error
-        } catch {
-            throw DecompressionError.unknownError
+
+            let bufferSize = 64 * 1024
+            let destinationBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+            defer { destinationBuffer.deallocate() }
+
+            var stream = compression_stream(
+                dst_ptr: destinationBuffer,
+                dst_size: bufferSize,
+                src_ptr: baseAddress.assumingMemoryBound(to: UInt8.self),
+                src_size: data.count,
+                state: nil
+            )
+
+            var status = compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_BROTLI)
+            guard status != COMPRESSION_STATUS_ERROR else {
+                throw CompressionError.initializationFailed("Failed to initialize Brotli decompression stream")
+            }
+            defer { compression_stream_destroy(&stream) }
+
+            // Re-set src fields after init (compression_stream_init clears all fields except state)
+            stream.src_ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
+            stream.src_size = data.count
+
+            var output = Data()
+            if let maxOutputBytes {
+                output.reserveCapacity(min(maxOutputBytes, bufferSize))
+            }
+
+            repeat {
+                let previousSrcSize = stream.src_size
+                stream.dst_ptr = destinationBuffer
+                stream.dst_size = bufferSize
+
+                // Always finalize since all input is provided upfront
+                status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
+
+                switch status {
+                case COMPRESSION_STATUS_OK, COMPRESSION_STATUS_END:
+                    let produced = bufferSize - stream.dst_size
+                    if produced > 0 {
+                        if let maxOutputBytes {
+                            let remaining = max(0, maxOutputBytes - output.count)
+                            if remaining > 0 {
+                                output.append(destinationBuffer, count: min(produced, remaining))
+                            }
+                        } else {
+                            output.append(destinationBuffer, count: produced)
+                        }
+                    }
+                    if let maxOutputBytes, output.count >= maxOutputBytes {
+                        return output
+                    } else if status == COMPRESSION_STATUS_OK, stream.src_size == previousSrcSize {
+                        // Safety: Avoid infinite loops on malformed/truncated streams.
+                        throw CompressionError.decompressionFailed("Brotli decompression made no progress (likely truncated or invalid stream)")
+                    }
+                case COMPRESSION_STATUS_ERROR:
+                    throw CompressionError.decompressionFailed("Brotli decompression failed")
+                default:
+                    throw CompressionError.unknownError("Unexpected Brotli decompression status \(status)")
+                }
+            } while status == COMPRESSION_STATUS_OK
+
+            // Validate that the stream ended cleanly and consumed all input.
+            guard status == COMPRESSION_STATUS_END, stream.src_size == 0 else {
+                throw CompressionError.decompressionFailed("Brotli decompression did not reach end-of-stream")
+            }
+
+            return output
         }
     }
 

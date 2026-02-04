@@ -157,7 +157,7 @@ final class DeflateDecoderTests: XCTestCase {
         let invalidData = Data([0xFF, 0xFF, 0xFF, 0xFF])
 
         XCTAssertThrowsError(try DeflateDecoder.decompress(invalidData)) { error in
-            XCTAssertTrue(error is DecompressionError)
+            XCTAssertTrue(error is CompressionError)
         }
     }
 
@@ -297,7 +297,7 @@ final class DeflateDecoderTests: XCTestCase {
     private func compressZlib(_ data: Data) throws -> Data {
         try data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) -> Data in
             guard let baseAddress = sourcePtr.bindMemory(to: UInt8.self).baseAddress else {
-                throw DecompressionError.invalidData
+                throw CompressionError.invalidInput("Invalid input buffer")
             }
 
             var stream = z_stream()
@@ -319,13 +319,13 @@ final class DeflateDecoderTests: XCTestCase {
                 Int32(MemoryLayout<z_stream>.size)
             )
             guard initStatus == Z_OK else {
-                throw DecompressionError.initializationFailed
+                throw CompressionError.initializationFailed("deflateInit2 failed with code \(initStatus)")
             }
             defer { deflateEnd(&stream) }
 
             try outBuffer.withUnsafeMutableBytes { buffer in
                 guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
-                    throw DecompressionError.invalidData
+                    throw CompressionError.invalidInput("Invalid output buffer")
                 }
                 stream.next_out = baseAddress
                 stream.avail_out = uInt(bufferSize)
@@ -335,7 +335,7 @@ final class DeflateDecoderTests: XCTestCase {
                 output.append(baseAddress, count: produced)
 
                 guard status == Z_STREAM_END else {
-                    throw DecompressionError.processingFailed
+                    throw CompressionError.decompressionFailed("zlib compression failed for test fixture")
                 }
             }
 
@@ -346,7 +346,7 @@ final class DeflateDecoderTests: XCTestCase {
     private func compressRawDeflate(_ data: Data) throws -> Data {
         try data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) -> Data in
             guard let baseAddress = sourcePtr.bindMemory(to: UInt8.self).baseAddress else {
-                throw DecompressionError.invalidData
+                throw CompressionError.invalidInput("Invalid input buffer")
             }
 
             var stream = z_stream()
@@ -368,13 +368,13 @@ final class DeflateDecoderTests: XCTestCase {
                 Int32(MemoryLayout<z_stream>.size)
             )
             guard initStatus == Z_OK else {
-                throw DecompressionError.initializationFailed
+                throw CompressionError.initializationFailed("deflateInit2 failed with code \(initStatus)")
             }
             defer { deflateEnd(&stream) }
 
             try outBuffer.withUnsafeMutableBytes { buffer in
                 guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
-                    throw DecompressionError.invalidData
+                    throw CompressionError.invalidInput("Invalid output buffer")
                 }
                 stream.next_out = baseAddress
                 stream.avail_out = uInt(bufferSize)
@@ -384,7 +384,7 @@ final class DeflateDecoderTests: XCTestCase {
                 output.append(baseAddress, count: produced)
 
                 guard status == Z_STREAM_END else {
-                    throw DecompressionError.processingFailed
+                    throw CompressionError.decompressionFailed("raw deflate compression failed for test fixture")
                 }
             }
 

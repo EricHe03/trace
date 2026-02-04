@@ -63,7 +63,7 @@ final class CompressionDecoder_BrotliDecoderTests: XCTestCase {
             _ = try BrotliDecoder.decompress(invalidData)
             XCTFail("Expected error to be thrown")
         } catch {
-            XCTAssertTrue(error is DecompressionError)
+            XCTAssertTrue(error is CompressionError)
         }
     }
 
@@ -108,7 +108,7 @@ final class CompressionDecoder_BrotliDecoderTests: XCTestCase {
     private func compressBrotli(_ data: Data) throws -> Data {
         try data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) -> Data in
             guard let baseAddress = sourcePtr.baseAddress else {
-                throw DecompressionError.invalidData
+                throw CompressionError.invalidInput("Invalid input buffer")
             }
 
             let bufferSize = 64 * 1024
@@ -125,7 +125,7 @@ final class CompressionDecoder_BrotliDecoderTests: XCTestCase {
 
             let status = compression_stream_init(&stream, COMPRESSION_STREAM_ENCODE, COMPRESSION_BROTLI)
             guard status != COMPRESSION_STATUS_ERROR else {
-                throw DecompressionError.initializationFailed
+                throw CompressionError.initializationFailed("Failed to initialize Brotli compression stream")
             }
             defer { compression_stream_destroy(&stream) }
 
@@ -222,7 +222,7 @@ final class CompressionDecoder_DeflateDecoderTests: XCTestCase {
             _ = try DeflateDecoder.decompress(invalidData)
             XCTFail("Expected error to be thrown")
         } catch {
-            XCTAssertTrue(error is DecompressionError)
+            XCTAssertTrue(error is CompressionError)
         }
     }
 
@@ -231,7 +231,7 @@ final class CompressionDecoder_DeflateDecoderTests: XCTestCase {
     private func compressZlib(_ data: Data) throws -> Data {
         try data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) -> Data in
             guard let baseAddress = sourcePtr.bindMemory(to: UInt8.self).baseAddress else {
-                throw DecompressionError.invalidData
+                throw CompressionError.invalidInput("Invalid input buffer")
             }
 
             var stream = z_stream()
@@ -253,13 +253,13 @@ final class CompressionDecoder_DeflateDecoderTests: XCTestCase {
                 Int32(MemoryLayout<z_stream>.size)
             )
             guard initStatus == Z_OK else {
-                throw DecompressionError.initializationFailed
+                throw CompressionError.initializationFailed("deflateInit2 failed with code \(initStatus)")
             }
             defer { deflateEnd(&stream) }
 
             try outBuffer.withUnsafeMutableBytes { buffer in
                 guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
-                    throw DecompressionError.invalidData
+                    throw CompressionError.invalidInput("Invalid output buffer")
                 }
                 stream.next_out = baseAddress
                 stream.avail_out = uInt(bufferSize)
@@ -269,7 +269,7 @@ final class CompressionDecoder_DeflateDecoderTests: XCTestCase {
                 output.append(baseAddress, count: produced)
 
                 guard status == Z_STREAM_END else {
-                    throw DecompressionError.processingFailed
+                    throw CompressionError.decompressionFailed("zlib compression failed for test fixture")
                 }
             }
 
@@ -280,7 +280,7 @@ final class CompressionDecoder_DeflateDecoderTests: XCTestCase {
     private func compressRawDeflate(_ data: Data) throws -> Data {
         try data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) -> Data in
             guard let baseAddress = sourcePtr.bindMemory(to: UInt8.self).baseAddress else {
-                throw DecompressionError.invalidData
+                throw CompressionError.invalidInput("Invalid input buffer")
             }
 
             var stream = z_stream()
@@ -302,13 +302,13 @@ final class CompressionDecoder_DeflateDecoderTests: XCTestCase {
                 Int32(MemoryLayout<z_stream>.size)
             )
             guard initStatus == Z_OK else {
-                throw DecompressionError.initializationFailed
+                throw CompressionError.initializationFailed("deflateInit2 failed with code \(initStatus)")
             }
             defer { deflateEnd(&stream) }
 
             try outBuffer.withUnsafeMutableBytes { buffer in
                 guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
-                    throw DecompressionError.invalidData
+                    throw CompressionError.invalidInput("Invalid output buffer")
                 }
                 stream.next_out = baseAddress
                 stream.avail_out = uInt(bufferSize)
@@ -318,7 +318,7 @@ final class CompressionDecoder_DeflateDecoderTests: XCTestCase {
                 output.append(baseAddress, count: produced)
 
                 guard status == Z_STREAM_END else {
-                    throw DecompressionError.processingFailed
+                    throw CompressionError.decompressionFailed("raw deflate compression failed for test fixture")
                 }
             }
 
@@ -330,47 +330,8 @@ final class CompressionDecoder_DeflateDecoderTests: XCTestCase {
 // MARK: - CompressionErrors Tests
 
 final class CompressionDecoder_CompressionErrorsTests: XCTestCase {
-    func testDecompressionError_InvalidData_HasCorrectDescription() {
-        // Given
-        let error = DecompressionError.invalidData
-
-        // When
-        let description = error.errorDescription
-
-        // Then
-        XCTAssertEqual(description, "Invalid or corrupted compressed data")
-    }
-
-    func testDecompressionError_InitializationFailed_HasCorrectDescription() {
-        // Given
-        let error = DecompressionError.initializationFailed
-
-        // When
-        let description = error.errorDescription
-
-        // Then
-        XCTAssertEqual(description, "Failed to initialize decompression stream")
-    }
-
-    func testDecompressionError_ProcessingFailed_HasCorrectDescription() {
-        // Given
-        let error = DecompressionError.processingFailed
-
-        // When
-        let description = error.errorDescription
-
-        // Then
-        XCTAssertEqual(description, "Decompression processing failed")
-    }
-
-    func testDecompressionError_UnknownError_HasCorrectDescription() {
-        // Given
-        let error = DecompressionError.unknownError
-
-        // When
-        let description = error.errorDescription
-
-        // Then
-        XCTAssertEqual(description, "Unknown decompression error occurred")
+    func testCompressionError_HasDescription() {
+        let error = CompressionError.decompressionFailed("Decompression processing failed")
+        XCTAssertEqual(error.errorDescription, "Decompression processing failed")
     }
 }
