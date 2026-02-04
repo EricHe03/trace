@@ -34,15 +34,32 @@ public enum CompressionHelper {
 
     public static func decompress(data: Data, algorithm: String?, maxOutputBytes: Int? = nil) -> Data? {
         let algo = algorithm?.lowercased() ?? "deflate"
+        let detectionLimit = maxOutputBytes.map { $0 == Int.max ? Int.max : ($0 + 1) }
         switch algo {
         case "deflate", "zlib":
+            #if canImport(TraceCompression)
+            if let decompressed = try? DeflateDecoder.decompress(data, maxOutputBytes: detectionLimit) {
+                if let maxOutputBytes, decompressed.count > maxOutputBytes { return nil }
+                return decompressed
+            }
+            return nil
+            #else
             return decompress(data: data, algorithm: COMPRESSION_ZLIB, maxOutputBytes: maxOutputBytes)
+            #endif
         case "gzip":
-            guard let stripped = stripGzipWrapper(from: data) else { return nil }
+            guard let stripped = GzipWrapper.strip(from: data) else { return nil }
+            #if canImport(TraceCompression)
+            if let decompressed = try? DeflateDecoder.decompress(stripped, maxOutputBytes: detectionLimit) {
+                if let maxOutputBytes, decompressed.count > maxOutputBytes { return nil }
+                return decompressed
+            }
+            return nil
+            #else
             return decompress(data: stripped, algorithm: COMPRESSION_ZLIB, maxOutputBytes: maxOutputBytes)
+            #endif
         case "br", "brotli":
             #if canImport(TraceCompression)
-            if let decompressed = try? BrotliDecoder.decompress(data) {
+            if let decompressed = try? BrotliDecoder.decompress(data, maxOutputBytes: detectionLimit) {
                 if let maxOutputBytes, decompressed.count > maxOutputBytes { return nil }
                 return decompressed
             }
@@ -144,16 +161,6 @@ public enum CompressionHelper {
         let bound = n + (n >> 12) + (n >> 14) + (n >> 25) + 13
         if bound >= Int64(Int.max) { return Int.max }
         return Int(bound)
-    }
-
-    private static func stripGzipWrapper(from data: Data) -> Data? {
-        guard data.count > 18 else { return nil }
-        guard data[0] == 0x1F, data[1] == 0x8B else { return nil }
-        let headerLength = 10
-        let footerLength = 8
-        guard data.count > headerLength + footerLength else { return nil }
-        let deflatedRange = headerLength ..< (data.count - footerLength)
-        return data.subdata(in: deflatedRange)
     }
 
     private static func wrapGzip(_ deflated: Data, originalSize: Int, crc32: UInt32) -> Data {

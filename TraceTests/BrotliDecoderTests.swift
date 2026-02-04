@@ -98,7 +98,7 @@ final class BrotliDecoderTests: XCTestCase {
         let invalidData = Data([0xFF, 0xFF, 0xFF, 0xFF])
 
         XCTAssertThrowsError(try BrotliDecoder.decompress(invalidData)) { error in
-            XCTAssertTrue(error is DecompressionError)
+            XCTAssertTrue(error is CompressionError)
         }
     }
 
@@ -234,7 +234,7 @@ final class BrotliDecoderTests: XCTestCase {
     private func compressBrotli(_ data: Data) throws -> Data {
         try data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) -> Data in
             guard let baseAddress = sourcePtr.baseAddress else {
-                throw DecompressionError.invalidData
+                throw CompressionError.invalidInput("Invalid input buffer")
             }
 
             let bufferSize = 64 * 1024
@@ -251,7 +251,7 @@ final class BrotliDecoderTests: XCTestCase {
 
             let status = compression_stream_init(&stream, COMPRESSION_STREAM_ENCODE, COMPRESSION_BROTLI)
             guard status != COMPRESSION_STATUS_ERROR else {
-                throw DecompressionError.initializationFailed
+                throw CompressionError.initializationFailed("Failed to initialize Brotli compression stream")
             }
             defer { compression_stream_destroy(&stream) }
 

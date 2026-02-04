@@ -13,16 +13,25 @@ public class DeflateDecoder {
     /// Decompresses raw or zlib-wrapped DEFLATE data.
     /// - Parameter data: DEFLATE-compressed data, with or without a zlib wrapper.
     /// - Returns: Decompressed data.
-    /// - Throws: DecompressionError if decompression fails.
+    /// - Throws: CompressionError if decompression fails.
     public static func decompress(_ data: Data) throws -> Data {
+        try decompress(data, maxOutputBytes: nil)
+    }
+
+    /// Decompresses raw or zlib-wrapped DEFLATE data, enforcing an optional output limit.
+    ///
+    /// If `maxOutputBytes` is set and the decompressed output reaches the limit, this returns a truncated
+    /// buffer of exactly `maxOutputBytes` bytes (useful for callers that want a bounded preview).
+    public static func decompress(_ data: Data, maxOutputBytes: Int?) throws -> Data {
         guard !data.isEmpty else { return Data() }
+        if let maxOutputBytes, maxOutputBytes <= 0 { return Data() }
 
         // Tradeoff: Try zlib-wrapped DEFLATE first because Content-Encoding: deflate commonly uses it.
         if hasZlibWrapper(data) {
-            if let result = try? decompressZlib(data) { return result }
+            if let result = try? decompressZlib(data, maxOutputBytes: maxOutputBytes) { return result }
         }
 
-        return try decompressRaw(data)
+        return try decompressRaw(data, maxOutputBytes: maxOutputBytes)
     }
 
     private static func hasZlibWrapper(_ data: Data) -> Bool {
@@ -40,18 +49,18 @@ public class DeflateDecoder {
         return check % 31 == 0
     }
 
-    private static func decompressZlib(_ data: Data) throws -> Data {
-        try decompressWithZlib(data, windowBits: MAX_WBITS)
+    private static func decompressZlib(_ data: Data, maxOutputBytes: Int?) throws -> Data {
+        try decompressWithZlib(data, windowBits: MAX_WBITS, maxOutputBytes: maxOutputBytes)
     }
 
-    private static func decompressRaw(_ data: Data) throws -> Data {
-        try decompressWithZlib(data, windowBits: -MAX_WBITS)
+    private static func decompressRaw(_ data: Data, maxOutputBytes: Int?) throws -> Data {
+        try decompressWithZlib(data, windowBits: -MAX_WBITS, maxOutputBytes: maxOutputBytes)
     }
 
-    private static func decompressWithZlib(_ data: Data, windowBits: Int32) throws -> Data {
+    private static func decompressWithZlib(_ data: Data, windowBits: Int32, maxOutputBytes: Int?) throws -> Data {
         try data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) -> Data in
             guard let baseAddress = sourcePtr.bindMemory(to: UInt8.self).baseAddress else {
-                throw DecompressionError.invalidData
+                throw CompressionError.invalidInput("Invalid data buffer")
             }
 
             var stream = z_stream()
@@ -60,19 +69,23 @@ public class DeflateDecoder {
 
             let initStatus = inflateInit2_(&stream, windowBits, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
             guard initStatus == Z_OK else {
-                throw DecompressionError.initializationFailed
+                throw CompressionError.initializationFailed("inflateInit2 failed with code \(initStatus)")
             }
             defer { inflateEnd(&stream) }
 
             var output = Data()
+            if let maxOutputBytes {
+                output.reserveCapacity(min(maxOutputBytes, 64 * 1024))
+            }
             let bufferSize = 64 * 1024
             var outBuffer = [UInt8](repeating: 0, count: bufferSize)
 
             var status: Int32 = Z_OK
+            var didHitLimit = false
             repeat {
                 try outBuffer.withUnsafeMutableBytes { buffer in
                     guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
-                        throw DecompressionError.invalidData
+                        throw CompressionError.invalidInput("Invalid output buffer")
                     }
                     stream.next_out = baseAddress
                     stream.avail_out = uInt(bufferSize)
@@ -83,19 +96,33 @@ public class DeflateDecoder {
                     case Z_OK, Z_STREAM_END:
                         let produced = bufferSize - Int(stream.avail_out)
                         if produced > 0 {
-                            output.append(baseAddress, count: produced)
+                            if let maxOutputBytes {
+                                let remaining = max(0, maxOutputBytes - output.count)
+                                if remaining > 0 {
+                                    output.append(baseAddress, count: min(produced, remaining))
+                                }
+                            } else {
+                                output.append(baseAddress, count: produced)
+                            }
+                        }
+                        if let maxOutputBytes, output.count >= maxOutputBytes {
+                            didHitLimit = true
                         }
                     case Z_BUF_ERROR:
                         // If we're out of input but not at stream end, treat as corrupted/truncated.
-                        throw DecompressionError.processingFailed
+                        throw CompressionError.decompressionFailed("inflate reported Z_BUF_ERROR (truncated or corrupted stream)")
                     default:
-                        throw DecompressionError.processingFailed
+                        throw CompressionError.decompressionFailed("inflate failed with code \(status)")
                     }
+                }
+                if didHitLimit {
+                    // Bounded decode: return a truncated preview once we've hit the limit.
+                    return output
                 }
             } while status == Z_OK
 
             guard status == Z_STREAM_END, stream.avail_in == 0 else {
-                throw DecompressionError.processingFailed
+                throw CompressionError.decompressionFailed("inflate did not reach end-of-stream")
             }
 
             return output
