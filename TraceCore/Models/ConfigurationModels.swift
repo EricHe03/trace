@@ -228,12 +228,7 @@ public struct RewriteRule: Codable, Identifiable, Sendable {
         case .wildcard:
             return matchesWildcard(subject, pattern: pattern)
         case .regex:
-            let options: NSRegularExpression.Options = isHostMatch ? [.caseInsensitive] : []
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else {
-                return false
-            }
-            let range = NSRange(subject.startIndex..., in: subject)
-            return regex.firstMatch(in: subject, range: range) != nil
+            return RegexMatcher.safeMatch(pattern: pattern, in: subject, caseSensitive: !isHostMatch)
         }
     }
 
@@ -241,13 +236,7 @@ public struct RewriteRule: Codable, Identifiable, Sendable {
         var regexPattern = NSRegularExpression.escapedPattern(for: pattern)
         regexPattern = regexPattern.replacingOccurrences(of: "\\*", with: ".*")
         regexPattern = "^" + regexPattern + "$"
-
-        guard let regex = try? NSRegularExpression(pattern: regexPattern, options: .caseInsensitive) else {
-            return false
-        }
-
-        let range = NSRange(url.startIndex..., in: url)
-        return regex.firstMatch(in: url, range: range) != nil
+        return RegexMatcher.safeMatch(pattern: regexPattern, in: url, caseSensitive: false)
     }
 }
 
@@ -512,11 +501,7 @@ public struct HostEntry: Codable, Identifiable, Equatable {
             let pattern = hostname
                 .replacingOccurrences(of: ".", with: "\\.")
                 .replacingOccurrences(of: "*", with: ".*")
-
-            if let regex = try? NSRegularExpression(pattern: "^\(pattern)$", options: .caseInsensitive) {
-                let range = NSRange(targetHostname.startIndex..., in: targetHostname)
-                return regex.firstMatch(in: targetHostname, range: range) != nil
-            }
+            return RegexMatcher.safeMatch(pattern: "^\(pattern)$", in: targetHostname, caseSensitive: false)
         }
 
         return false
@@ -785,11 +770,7 @@ public struct RequestMap: Codable, Identifiable, Sendable {
         case .wildcard:
             return matchesWildcard(url, pattern: matchPattern)
         case .regex:
-            guard let regex = try? NSRegularExpression(pattern: matchPattern, options: []) else {
-                return false
-            }
-            let range = NSRange(url.startIndex..., in: url)
-            return regex.firstMatch(in: url, range: range) != nil
+            return RegexMatcher.safeMatch(pattern: matchPattern, in: url, caseSensitive: true)
         }
     }
 
@@ -797,13 +778,7 @@ public struct RequestMap: Codable, Identifiable, Sendable {
         var regexPattern = NSRegularExpression.escapedPattern(for: pattern)
         regexPattern = regexPattern.replacingOccurrences(of: "\\*", with: ".*")
         regexPattern = "^" + regexPattern + "$"
-
-        guard let regex = try? NSRegularExpression(pattern: regexPattern, options: .caseInsensitive) else {
-            return false
-        }
-
-        let range = NSRange(url.startIndex..., in: url)
-        return regex.firstMatch(in: url, range: range) != nil
+        return RegexMatcher.safeMatch(pattern: regexPattern, in: url, caseSensitive: false)
     }
 
     public static func fromRequest(_ request: NetworkRequest, name: String? = nil) -> RequestMap {
@@ -933,12 +908,7 @@ public struct Script: Codable, Identifiable, Sendable {
         case .wildcard:
             return matchesWildcard(subject, pattern: pattern)
         case .regex:
-            let options: NSRegularExpression.Options = isHostMatch ? [.caseInsensitive] : []
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else {
-                return false
-            }
-            let range = NSRange(subject.startIndex..., in: subject)
-            return regex.firstMatch(in: subject, range: range) != nil
+            return RegexMatcher.safeMatch(pattern: pattern, in: subject, caseSensitive: !isHostMatch)
         }
     }
 
@@ -946,13 +916,7 @@ public struct Script: Codable, Identifiable, Sendable {
         var regexPattern = NSRegularExpression.escapedPattern(for: pattern)
         regexPattern = regexPattern.replacingOccurrences(of: "\\*", with: ".*")
         regexPattern = "^" + regexPattern + "$"
-
-        guard let regex = try? NSRegularExpression(pattern: regexPattern, options: .caseInsensitive) else {
-            return false
-        }
-
-        let range = NSRange(url.startIndex..., in: url)
-        return regex.firstMatch(in: url, range: range) != nil
+        return RegexMatcher.safeMatch(pattern: regexPattern, in: url, caseSensitive: false)
     }
 
     public static var templates: [Script] {
@@ -1117,11 +1081,7 @@ public struct BreakpointConfiguration: Codable, Equatable, Sendable {
         case .wildcard:
             return matchesWildcard(url, pattern: pattern)
         case .regex:
-            guard let regex = try? NSRegularExpression(pattern: pattern) else {
-                return false
-            }
-            let range = NSRange(url.startIndex..., in: url)
-            return regex.firstMatch(in: url, range: range) != nil
+            return RegexMatcher.safeMatch(pattern: pattern, in: url, caseSensitive: true)
         }
     }
 
@@ -1129,13 +1089,7 @@ public struct BreakpointConfiguration: Codable, Equatable, Sendable {
         var regexPattern = NSRegularExpression.escapedPattern(for: pattern)
         regexPattern = regexPattern.replacingOccurrences(of: "\\*", with: ".*")
         regexPattern = "^" + regexPattern + "$"
-
-        guard let regex = try? NSRegularExpression(pattern: regexPattern, options: .caseInsensitive) else {
-            return false
-        }
-
-        let range = NSRange(url.startIndex..., in: url)
-        return regex.firstMatch(in: url, range: range) != nil
+        return RegexMatcher.safeMatch(pattern: regexPattern, in: url, caseSensitive: false)
     }
 }
 

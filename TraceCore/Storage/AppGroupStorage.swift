@@ -103,15 +103,11 @@ public class AppGroupStorage: @unchecked Sendable {
     }
 
     private func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
+        JSONCoding.makeEncoder()
     }
 
     private func makeDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
+        JSONCoding.makeDecoder()
     }
 
     /// Clears UserDefaults-backed settings (does not delete captured requests).

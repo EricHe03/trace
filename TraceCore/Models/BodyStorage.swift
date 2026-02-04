@@ -723,18 +723,7 @@ public enum BodyStorage: Codable, Equatable {
 
     /// Resolve the container used for body files, respecting the configured App Group and fallback.
     private static func bodyContainerURL() -> URL? {
-        if let groupContainer = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: AppGroupConfiguration.appGroupIdentifier
-        ) {
-            return groupContainer
-        }
-
-        // Fallback to the same location AppGroupStorage uses for simulator/test environments.
-        if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            return documentsURL.appendingPathComponent("AppGroupFallback")
-        }
-
-        return nil
+        AppGroupStorage.shared.containerURL
     }
 
     /// Delete file if stored as file

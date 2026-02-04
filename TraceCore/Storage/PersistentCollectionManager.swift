@@ -91,13 +91,10 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
 
     /// Delete items at indices
     public func delete(at indices: IndexSet) {
-        var newItems: [T] = []
-        for (index, item) in items.enumerated() {
-            if !indices.contains(index) {
-                newItems.append(item)
-            }
+        for index in indices.sorted(by: >) {
+            guard items.indices.contains(index) else { continue }
+            items.remove(at: index)
         }
-        items = newItems
         saveItems()
     }
 
@@ -118,7 +115,7 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
     private func loadItems() {
         do {
             let data = try storage.loadData(from: fileName)
-            items = try JSONDecoder().decode([T].self, from: data)
+            items = try JSONCoding.decode([T].self, from: data)
             logger.info(
                 "\(LogEvent.storage("load").success().with("item_type", value: self.itemName).count(self.items.count))"
             )
@@ -145,8 +142,7 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
 
     private func saveItems() {
         do {
-            let encoder = JSONEncoder()
-            let data = try encoder.encode(items)
+            let data = try JSONCoding.makeEncoder().encode(items)
             try storage.saveData(data, to: fileName)
             lastKnownFileModificationDate = storage.configFileModificationDate(for: fileName)
 
@@ -189,7 +185,7 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
 
     /// Export items to JSON file
     public func exportItems() throws -> URL {
-        let data = try JSONEncoder().encode(items)
+        let data = try JSONCoding.makeEncoder().encode(items)
         let timestamp = Date().timeIntervalSince1970
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(itemName.capitalized)s_\(timestamp).json")
@@ -200,7 +196,7 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
     /// Import items from JSON file
     public func importItems(from url: URL, merge: Bool = true) throws {
         let data = try Data(contentsOf: url)
-        let importedItems = try JSONDecoder().decode([T].self, from: data)
+        let importedItems = try JSONCoding.decode([T].self, from: data)
         importItems(importedItems, merge: merge)
     }
 
@@ -224,7 +220,7 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
     /// Export items to JSON data
     public func exportData() -> Data? {
         do {
-            let encoder = JSONEncoder()
+            let encoder = JSONCoding.makeEncoder()
             encoder.outputFormatting = .prettyPrinted
             return try encoder.encode(items)
         } catch {
@@ -237,7 +233,7 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
 
     /// Import items from JSON data
     public func importData(from data: Data, merge: Bool = true) throws {
-        let importedItems = try JSONDecoder().decode([T].self, from: data)
+        let importedItems = try JSONCoding.decode([T].self, from: data)
         importItems(importedItems, merge: merge)
     }
 
