@@ -15,6 +15,7 @@ final class ConnectionDetailViewModelTests: XCTestCase {
 
     var viewModel: ConnectionDetailViewModel!
     var mockRecord: PacketFlowRecord!
+    var tempDirectory: URL!
 
     override func setUp() {
         super.setUp()
@@ -39,9 +40,15 @@ final class ConnectionDetailViewModelTests: XCTestCase {
             tcpMetrics: nil
         )
         viewModel = ConnectionDetailViewModel(record: mockRecord)
+
+        tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
     }
 
     override func tearDown() {
+        if let tempDirectory {
+            try? FileManager.default.removeItem(at: tempDirectory)
+        }
         viewModel = nil
         mockRecord = nil
         super.tearDown()
@@ -221,6 +228,179 @@ final class ConnectionDetailViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.loadError)
     }
 
+    // MARK: - PCAP Analysis Behavior
+
+    func testLoadFromPCAPNoPacketsForFlowSetsError() async throws {
+        let now = Date()
+        let record = PacketFlowRecord(
+            id: UUID(),
+            sourceIP: "192.168.1.100",
+            destinationIP: "93.184.216.34",
+            sourcePort: 54321,
+            destinationPort: 443,
+            transport: .tcp,
+            bytesFromSource: 0,
+            bytesToSource: 0,
+            packetsFromSource: 0,
+            packetsToSource: 0,
+            startTime: now,
+            lastSeen: now,
+            isClosed: false,
+            connectionState: .unknown,
+            tcpHandshake: nil,
+            tcpTermination: nil,
+            tcpMetrics: nil
+        )
+        let vm = ConnectionDetailViewModel(record: record)
+
+        // Packet does NOT match the flow (different port).
+        let nonMatchingPacket = makeIPv4TCPPacket(
+            srcIP: "192.168.1.100",
+            dstIP: "93.184.216.34",
+            srcPort: 11111,
+            dstPort: 443,
+            flags: 0x02
+        )
+        let url = try createMockPCAPFile(
+            withPackets: [(timestamp: now, data: nonMatchingPacket)]
+        )
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?
+            .uint64Value ?? 0
+        let file = PCAPFileItem(url: url, size: size, modified: now)
+
+        vm.loadFromPCAP(file)
+        try await waitForLoadingToFinish(vm)
+
+        XCTAssertNil(vm.analysis)
+        XCTAssertEqual(vm.loadError, "No packets found for this connection in the selected PCAP.")
+    }
+
+    func testLoadFromPCAPTruncatedEOFStillReturnsAnalysis() async throws {
+        let now = Date()
+        let record = PacketFlowRecord(
+            id: UUID(),
+            sourceIP: "192.168.1.100",
+            destinationIP: "93.184.216.34",
+            sourcePort: 54321,
+            destinationPort: 443,
+            transport: .tcp,
+            bytesFromSource: 0,
+            bytesToSource: 0,
+            packetsFromSource: 0,
+            packetsToSource: 0,
+            startTime: now,
+            lastSeen: now,
+            isClosed: false,
+            connectionState: .unknown,
+            tcpHandshake: nil,
+            tcpTermination: nil,
+            tcpMetrics: nil
+        )
+        let vm = ConnectionDetailViewModel(record: record)
+
+        let matchingSyn = makeIPv4TCPPacket(
+            srcIP: "192.168.1.100",
+            dstIP: "93.184.216.34",
+            srcPort: 54321,
+            dstPort: 443,
+            flags: 0x02
+        )
+
+        // Add a trailing truncated record after a valid packet.
+        let url = try createMockPCAPFile(
+            withPackets: [(timestamp: now, data: matchingSyn)],
+            trailingTruncatedRecord: (timestamp: now, declaredLength: 60, actualData: Data(repeating: 0xAA, count: 8))
+        )
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?
+            .uint64Value ?? 0
+        let file = PCAPFileItem(url: url, size: size, modified: now)
+
+        vm.loadFromPCAP(file)
+        try await waitForLoadingToFinish(vm)
+
+        XCTAssertNil(vm.loadError)
+        XCTAssertNotNil(vm.analysis)
+        XCTAssertFalse(vm.analysis?.packets.isEmpty ?? true)
+        XCTAssertNotNil(vm.analysis?.handshake?.synTime)
+    }
+
+    func testAutoLoadSkippedForUDPRecord() {
+        let now = Date()
+        let record = PacketFlowRecord(
+            id: UUID(),
+            sourceIP: "1.1.1.1",
+            destinationIP: "8.8.8.8",
+            sourcePort: 12345,
+            destinationPort: 53,
+            transport: .udp,
+            startTime: now,
+            lastSeen: now,
+            isClosed: false,
+            connectionState: .unknown,
+            tcpHandshake: nil,
+            tcpTermination: nil,
+            tcpMetrics: nil
+        )
+        let vm = ConnectionDetailViewModel(record: record)
+
+        vm.autoLoadPCAPIfPossible()
+
+        XCTAssertFalse(vm.isLoading)
+        XCTAssertNil(vm.analysis)
+        XCTAssertNil(vm.loadError)
+    }
+
+    func testAutoLoadRespectsAutoAnalyzeMaxBytes() throws {
+        // This test is only deterministic when there are no other eligible raw captures present.
+        guard let container = AppGroupStorage.shared.containerURL else {
+            XCTFail("Missing container URL")
+            return
+        }
+
+        let maxBytes: UInt64 = 25 * 1_048_576
+        let existingRaw = AppGroupStorage.shared.packetCaptureFiles(prefixes: ["capture_raw_packets"])
+        let hasEligibleExistingCapture = existingRaw.contains { url in
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?
+                .uint64Value ?? 0
+            return size > 0 && size <= maxBytes
+        }
+        if hasEligibleExistingCapture {
+            throw XCTSkip("Skipping: existing raw captures make auto-load nondeterministic in this environment.")
+        }
+
+        let bigURL = container.appendingPathComponent("capture_raw_packets_big.pcap")
+        FileManager.default.createFile(atPath: bigURL.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: bigURL)
+        // 26 MB (auto limit is 25 MB).
+        try handle.seek(toOffset: UInt64(26 * 1_048_576 - 1))
+        try handle.write(contentsOf: Data([0x00]))
+        try handle.close()
+        defer { try? FileManager.default.removeItem(at: bigURL) }
+
+        let now = Date()
+        let record = PacketFlowRecord(
+            id: UUID(),
+            sourceIP: "192.168.1.100",
+            destinationIP: "93.184.216.34",
+            sourcePort: 54321,
+            destinationPort: 443,
+            transport: .tcp,
+            startTime: now,
+            lastSeen: now,
+            isClosed: false,
+            connectionState: .unknown,
+            tcpHandshake: nil,
+            tcpTermination: nil,
+            tcpMetrics: nil
+        )
+        let vm = ConnectionDetailViewModel(record: record)
+
+        vm.autoLoadPCAPIfPossible()
+
+        XCTAssertFalse(vm.isLoading)
+        XCTAssertNil(vm.analysis)
+    }
+
     // MARK: - Multiple File Tests
 
     func testMultiplePCAPFiles() {
@@ -240,5 +420,154 @@ final class ConnectionDetailViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.pcapFiles.count, 2)
         XCTAssertEqual(viewModel.pcapFiles[0].size, 1024)
         XCTAssertEqual(viewModel.pcapFiles[1].size, 2048)
+    }
+}
+
+// MARK: - Test Helpers
+
+private extension ConnectionDetailViewModelTests {
+    func waitForLoadingToFinish(_ vm: ConnectionDetailViewModel, timeout: TimeInterval = 2.0) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while vm.isLoading {
+            if Date() > deadline {
+                XCTFail("Timed out waiting for PCAP analysis")
+                return
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
+    func createMockPCAPFile(
+        withPackets packets: [(timestamp: Date, data: Data)],
+        trailingTruncatedRecord: (timestamp: Date, declaredLength: Int, actualData: Data)? = nil
+    ) throws -> URL {
+        let url = tempDirectory.appendingPathComponent("test_\(UUID().uuidString).pcap")
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+
+        // Global header (little-endian, LINKTYPE_RAW).
+        var header = Data()
+        header.appendUInt32LE(0xA1B2_C3D4)
+        header.appendUInt16LE(2)
+        header.appendUInt16LE(4)
+        header.appendUInt32LE(0)
+        header.appendUInt32LE(0)
+        header.appendUInt32LE(65535)
+        header.appendUInt32LE(101)
+        try handle.write(contentsOf: header)
+
+        for packet in packets {
+            try writeRecord(handle: handle, timestamp: packet.timestamp, declaredLength: packet.data.count, data: packet.data)
+        }
+
+        if let trailingTruncatedRecord {
+            try writeRecord(
+                handle: handle,
+                timestamp: trailingTruncatedRecord.timestamp,
+                declaredLength: trailingTruncatedRecord.declaredLength,
+                data: trailingTruncatedRecord.actualData
+            )
+        }
+
+        return url
+    }
+
+    func writeRecord(handle: FileHandle, timestamp: Date, declaredLength: Int, data: Data) throws {
+        let seconds = UInt32(timestamp.timeIntervalSince1970)
+        let usec = UInt32((timestamp.timeIntervalSince1970 - Double(seconds)) * 1_000_000.0)
+
+        var recordHeader = Data()
+        recordHeader.appendUInt32LE(seconds)
+        recordHeader.appendUInt32LE(usec)
+        recordHeader.appendUInt32LE(UInt32(declaredLength))
+        recordHeader.appendUInt32LE(UInt32(declaredLength))
+        try handle.write(contentsOf: recordHeader)
+        try handle.write(contentsOf: data)
+    }
+
+    func makeIPv4TCPPacket(
+        srcIP: String,
+        dstIP: String,
+        srcPort: UInt16,
+        dstPort: UInt16,
+        seq: UInt32 = 1,
+        ack: UInt32 = 0,
+        flags: UInt8,
+        payload: Data = Data()
+    ) -> Data {
+        let src = ipv4Bytes(srcIP)
+        let dst = ipv4Bytes(dstIP)
+
+        let ipHeaderLen = 20
+        let tcpHeaderLen = 20
+        let totalLen = ipHeaderLen + tcpHeaderLen + payload.count
+
+        var packet = Data()
+        packet.reserveCapacity(totalLen)
+
+        // IPv4 header
+        var ipHeader = Data(count: ipHeaderLen)
+        ipHeader[0] = 0x45 // v4, IHL=5
+        ipHeader[1] = 0x00
+        ipHeader[2] = UInt8((totalLen >> 8) & 0xFF)
+        ipHeader[3] = UInt8(totalLen & 0xFF)
+        ipHeader[4] = 0x00
+        ipHeader[5] = 0x00
+        ipHeader[6] = 0x40 // DF
+        ipHeader[7] = 0x00
+        ipHeader[8] = 64 // TTL
+        ipHeader[9] = 6 // TCP
+        ipHeader[10] = 0x00
+        ipHeader[11] = 0x00
+        ipHeader.replaceSubrange(12 ..< 16, with: src)
+        ipHeader.replaceSubrange(16 ..< 20, with: dst)
+        packet.append(ipHeader)
+
+        // TCP header (minimal)
+        var tcpHeader = Data(count: tcpHeaderLen)
+        tcpHeader[0] = UInt8((srcPort >> 8) & 0xFF)
+        tcpHeader[1] = UInt8(srcPort & 0xFF)
+        tcpHeader[2] = UInt8((dstPort >> 8) & 0xFF)
+        tcpHeader[3] = UInt8(dstPort & 0xFF)
+        tcpHeader[4] = UInt8((seq >> 24) & 0xFF)
+        tcpHeader[5] = UInt8((seq >> 16) & 0xFF)
+        tcpHeader[6] = UInt8((seq >> 8) & 0xFF)
+        tcpHeader[7] = UInt8(seq & 0xFF)
+        tcpHeader[8] = UInt8((ack >> 24) & 0xFF)
+        tcpHeader[9] = UInt8((ack >> 16) & 0xFF)
+        tcpHeader[10] = UInt8((ack >> 8) & 0xFF)
+        tcpHeader[11] = UInt8(ack & 0xFF)
+        tcpHeader[12] = 0x50 // data offset=5 (20 bytes)
+        tcpHeader[13] = flags & 0x3F
+        tcpHeader[14] = 0xFF
+        tcpHeader[15] = 0xFF
+        tcpHeader[16] = 0x00
+        tcpHeader[17] = 0x00
+        tcpHeader[18] = 0x00
+        tcpHeader[19] = 0x00
+        packet.append(tcpHeader)
+
+        packet.append(payload)
+        return packet
+    }
+
+    func ipv4Bytes(_ ip: String) -> Data {
+        let parts = ip.split(separator: ".").compactMap { UInt8($0) }
+        precondition(parts.count == 4, "Invalid IPv4: \(ip)")
+        return Data(parts)
+    }
+}
+
+private extension Data {
+    mutating func appendUInt16LE(_ value: UInt16) {
+        var v = value.littleEndian
+        append(UnsafeBufferPointer(start: &v, count: 1))
+    }
+
+    mutating func appendUInt32LE(_ value: UInt32) {
+        var v = value.littleEndian
+        append(UnsafeBufferPointer(start: &v, count: 1))
     }
 }
