@@ -45,13 +45,14 @@ public struct StreamingDecoderConfig: Sendable {
     /// Maximum output size in bytes before the decoder fails.
     public let maxOutputSize: Int
 
-    /// Indicates whether checksums are validated when supported.
-    public let validateChecksums: Bool
-
     /// Provides the default streaming configuration.
     public static let `default` = StreamingDecoderConfig(
         chunkSize: 64 * 1024,
-        maxOutputSize: 10 * 1024 * 1024,
-        validateChecksums: true
+        maxOutputSize: 10 * 1024 * 1024
     )
+
+    public init(chunkSize: Int, maxOutputSize: Int) {
+        self.chunkSize = chunkSize
+        self.maxOutputSize = maxOutputSize
+    }
 }

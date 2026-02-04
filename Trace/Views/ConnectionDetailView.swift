@@ -34,6 +34,12 @@ struct ConnectionDetailView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("Connection Details")
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: viewModel.record.id) {
+            viewModel.autoLoadPCAPIfPossible()
+        }
+        .onDisappear {
+            viewModel.cancelPCAPAnalysis()
+        }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button("Load PCAP") {

@@ -6,7 +6,9 @@
 //
 
 import Foundation
+#if canImport(SwiftUI)
 import SwiftUI
+#endif
 
 public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public let id: UUID
@@ -729,6 +731,7 @@ public enum StatusColor {
     case warning
     case unknown
 
+    #if canImport(SwiftUI)
     public var swiftUIColor: Color {
         switch self {
         case .success: .green
@@ -740,6 +743,7 @@ public enum StatusColor {
         case .unknown: .secondary
         }
     }
+    #endif
 }
 
 public struct RedirectInfo: Identifiable, Codable, Hashable, Sendable {

@@ -276,13 +276,16 @@ public enum Punycode {
     }
 
     private static func encodeDigit(_ digit: Int) -> Character {
-        if digit < 26 {
+        let scalarValue: Int = if digit < 26 {
             // a-z
-            Character(UnicodeScalar(digit + 97)!)
+            digit + 97
         } else {
             // 0-9
-            Character(UnicodeScalar(digit - 26 + 48)!)
+            digit - 26 + 48
         }
+
+        // Defensive: The mapping above always yields valid ASCII scalars.
+        return Character(UnicodeScalar(scalarValue) ?? "?")
     }
 
     private static func decodeDigit(_ char: Character) -> Int? {

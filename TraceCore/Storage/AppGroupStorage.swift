@@ -27,6 +27,14 @@ public class AppGroupStorage: @unchecked Sendable {
         #endif
     }()
 
+    private static let isRunningTests: Bool = {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }()
+
+    private static var allowsFallbackStorage: Bool {
+        isSimulator || isRunningTests
+    }
+
     /// Shared App Group identifier (must match entitlements for app + extension)
     private let appGroupIdentifier = AppGroupStorage.appGroupIdentifier
 
@@ -62,20 +70,28 @@ public class AppGroupStorage: @unchecked Sendable {
         ]
     }
 
-    /// Whether we're using fallback storage (local instead of App Group)
+    /// Whether we're using fallback storage (tests/simulator only).
     private(set) var isUsingFallback = false
+
+    /// Whether the app group container/defaults are unavailable on a real device build.
+    private(set) var isMisconfigured = false
 
     /// Cached container URL to prevent repeated app group lookups
     private var _cachedContainerURL: URL?
+    private let containerURLLock = NSLock()
+    private var didLogMisconfiguration = false
 
     public var containerURL: URL? {
+        containerURLLock.lock()
+        defer { containerURLLock.unlock() }
+
         // Return cached value if available
         if let cached = _cachedContainerURL {
             return cached
         }
 
-        if Self.isSimulator {
-            return fallbackContainerURL()
+        if Self.allowsFallbackStorage {
+            return fallbackContainerURLLocked()
         }
 
         // Try to get App Group container first
@@ -84,7 +100,12 @@ public class AppGroupStorage: @unchecked Sendable {
             return appGroupURL
         }
 
-        return fallbackContainerURL()
+        isMisconfigured = true
+        if !didLogMisconfiguration {
+            didLogMisconfiguration = true
+            CoreLog.storage.error("event=storage.app_group_unavailable outcome=failure app_group=\(appGroupIdentifier, privacy: .private)")
+        }
+        return nil
     }
 
     public init() {
@@ -98,20 +119,26 @@ public class AppGroupStorage: @unchecked Sendable {
         if let defaults = UserDefaults(suiteName: appGroupIdentifier) {
             return defaults
         }
-        CoreLog.storage.warning("event=storage.userdefaults outcome=fallback reason=suite_unavailable")
+        if Self.allowsFallbackStorage {
+            isUsingFallback = true
+            CoreLog.storage.warning("event=storage.userdefaults outcome=fallback reason=suite_unavailable")
+            return UserDefaults.standard
+        }
+
+        isMisconfigured = true
+        if !didLogMisconfiguration {
+            didLogMisconfiguration = true
+            CoreLog.storage.error("event=storage.userdefaults outcome=failure reason=suite_unavailable app_group=\(appGroupIdentifier, privacy: .private)")
+        }
         return UserDefaults.standard
     }
 
     private func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
+        JSONCoding.makeEncoder()
     }
 
     private func makeDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
+        JSONCoding.makeDecoder()
     }
 
     /// Clears UserDefaults-backed settings (does not delete captured requests).
@@ -170,7 +197,9 @@ public class AppGroupStorage: @unchecked Sendable {
     }
 
     private func logStorageConfiguration() {
-        if isUsingFallback {
+        if isMisconfigured {
+            CoreLog.storage.error("event=storage.init outcome=failure reason=app_group_unavailable app_group=\(appGroupIdentifier, privacy: .private)")
+        } else if isUsingFallback {
             CoreLog.storage.warning("event=storage.init outcome=fallback reason=app_group_unavailable")
             if Self.isSimulator {
                 CoreLog.storage.info("event=storage.init_note reason=simulator_expected")
@@ -191,7 +220,7 @@ public class AppGroupStorage: @unchecked Sendable {
         // fallback storage mechanism. The containerURL is cached to minimize these lookups.
     }
 
-    private func fallbackContainerURL() -> URL? {
+    private func fallbackContainerURLLocked() -> URL? {
         isUsingFallback = true
         let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
         let fallbackURL = documentsURL?.appendingPathComponent("AppGroupFallback")

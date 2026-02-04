@@ -253,8 +253,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
 
         let config = StreamingDecoderConfig(
             chunkSize: 1024,
-            maxOutputSize: 100000,
-            validateChecksums: false
+            maxOutputSize: 100000
         )
 
         let decoder = StreamingZstdDecoder(config: config)
@@ -275,8 +274,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
 
         let config = StreamingDecoderConfig(
             chunkSize: 64 * 1024,
-            maxOutputSize: 100,
-            validateChecksums: true
+            maxOutputSize: 100
         )
 
         let decoder = StreamingZstdDecoder(config: config)
@@ -359,7 +357,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
 
     private func compressZstd(_ data: Data) throws -> Data {
         guard let algorithm = ZstdCompressionAlgorithm.supportedAlgorithm else {
-            throw DecompressionError.initializationFailed
+            throw CompressionError.initializationFailed("Zstandard compression is unavailable on this SDK")
         }
 
         let maxSize = max(data.count * 8, 1024)
@@ -388,6 +386,6 @@ final class StreamingZstdDecoderTests: XCTestCase {
             bufferSize *= 2
         }
 
-        throw DecompressionError.processingFailed
+        throw CompressionError.decompressionFailed("Zstandard compression failed for test fixture")
     }
 }

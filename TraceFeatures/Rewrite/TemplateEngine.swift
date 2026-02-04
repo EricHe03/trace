@@ -17,11 +17,17 @@ public struct TemplateContext: Sendable {
 }
 
 public final class TemplateEngine {
+    private static let tokenRegex: NSRegularExpression? = {
+        let pattern = #"\{\{\s*([^\}]+)\s*\}\}"#
+        return try? NSRegularExpression(pattern: pattern)
+    }()
+
+    private static let isoFormatter: ISO8601DateFormatter = .init()
+
     public init() {}
 
     public func render(_ template: String, context: TemplateContext) -> String {
-        let pattern = #"\{\{\s*([^\}]+)\s*\}\}"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+        guard let regex = Self.tokenRegex else {
             return template
         }
 
@@ -29,23 +35,24 @@ public final class TemplateEngine {
         let matches = regex.matches(in: template, range: range)
         guard !matches.isEmpty else { return template }
 
+        let now = Date()
         var result = template
         for match in matches.reversed() {
             guard let tokenRange = Range(match.range(at: 1), in: result),
                   let fullRange = Range(match.range(at: 0), in: result) else { continue }
             let token = String(result[tokenRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-            let replacement = resolveToken(token, context: context)
+            let replacement = resolveToken(token, context: context, now: now)
             result.replaceSubrange(fullRange, with: replacement)
         }
         return result
     }
 
-    private func resolveToken(_ token: String, context: TemplateContext) -> String {
+    private func resolveToken(_ token: String, context: TemplateContext, now: Date) -> String {
         switch token {
         case "timestamp":
-            return String(Int(Date().timeIntervalSince1970))
+            return String(Int(now.timeIntervalSince1970))
         case "isoDate":
-            return ISO8601DateFormatter().string(from: Date())
+            return Self.isoFormatter.string(from: now)
         case "randomInt":
             return String(Int.random(in: 0 ... 999_999))
         case "randomUUID":

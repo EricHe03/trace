@@ -10,52 +10,6 @@ import XCTest
 
 final class CompressionErrorsTests: XCTestCase {
 
-    // MARK: - DecompressionError Tests
-
-    func testDecompressionErrorInvalidData() {
-        let error = DecompressionError.invalidData
-
-        XCTAssertEqual(error.errorDescription, "Invalid or corrupted compressed data")
-    }
-
-    func testDecompressionErrorInitializationFailed() {
-        let error = DecompressionError.initializationFailed
-
-        XCTAssertEqual(error.errorDescription, "Failed to initialize decompression stream")
-    }
-
-    func testDecompressionErrorProcessingFailed() {
-        let error = DecompressionError.processingFailed
-
-        XCTAssertEqual(error.errorDescription, "Decompression processing failed")
-    }
-
-    func testDecompressionErrorUnknownError() {
-        let error = DecompressionError.unknownError
-
-        XCTAssertEqual(error.errorDescription, "Unknown decompression error occurred")
-    }
-
-    func testDecompressionErrorAsLocalizedError() {
-        let error: LocalizedError = DecompressionError.invalidData
-
-        XCTAssertNotNil(error.errorDescription)
-        XCTAssertEqual(error.errorDescription, "Invalid or corrupted compressed data")
-    }
-
-    func testDecompressionErrorCanBeThrown() {
-        func throwsError() throws {
-            throw DecompressionError.processingFailed
-        }
-
-        XCTAssertThrowsError(try throwsError()) { error in
-            XCTAssertTrue(error is DecompressionError)
-            if let decompError = error as? DecompressionError {
-                XCTAssertEqual(decompError.errorDescription, "Decompression processing failed")
-            }
-        }
-    }
-
     // MARK: - CompressionError Tests
 
     func testCompressionErrorInvalidInput() {
@@ -218,20 +172,6 @@ final class CompressionErrorsTests: XCTestCase {
         }
     }
 
-    func testDecompressionErrorDescriptionsAreNotEmpty() {
-        let errors: [DecompressionError] = [
-            .invalidData,
-            .initializationFailed,
-            .processingFailed,
-            .unknownError
-        ]
-
-        for error in errors {
-            XCTAssertNotNil(error.errorDescription)
-            XCTAssertFalse(error.errorDescription!.isEmpty)
-        }
-    }
-
     // MARK: - Error Usage Tests
 
     func testCompressionErrorWithDifferentMessages() {
@@ -262,18 +202,4 @@ final class CompressionErrorsTests: XCTestCase {
         }
     }
 
-    func testDecompressionErrorInRealWorldScenario() {
-        func processData() throws {
-            throw DecompressionError.processingFailed
-        }
-
-        do {
-            try processData()
-            XCTFail("Expected error to be thrown")
-        } catch DecompressionError.processingFailed {
-            // Expected
-        } catch {
-            XCTFail("Expected DecompressionError.processingFailed")
-        }
-    }
 }

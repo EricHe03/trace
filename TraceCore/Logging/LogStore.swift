@@ -90,8 +90,8 @@ public actor LogStore {
         if let appGroupID {
             self.appGroupID = appGroupID
         } else {
-            // Attempt to use the standard Trace app group.
-            self.appGroupID = "group.com.justin.trace"
+            // Use the same centralized configuration as the rest of Trace.
+            self.appGroupID = AppGroupConfiguration.appGroupIdentifier
         }
     }
 
@@ -127,7 +127,12 @@ public actor LogStore {
 
         // Merge VPN extension logs if requested.
         if includeVPNLogs {
-            let vpnLogs = await fetchVPNLogs(since: startDate, minimumLevel: minimumLevel)
+            // Bound work and memory for potentially-large NDJSON files.
+            let vpnLogs = await fetchVPNLogs(
+                since: startDate,
+                minimumLevel: minimumLevel,
+                maxEntries: max(1000, limit * 5)
+            )
             allLogs.append(contentsOf: vpnLogs)
         }
 
@@ -317,7 +322,8 @@ public actor LogStore {
     /// Fetches logs from the VPN extension NDJSON file.
     private func fetchVPNLogs(
         since startDate: Date,
-        minimumLevel _: OSLogType
+        minimumLevel: OSLogType,
+        maxEntries: Int
     ) async -> [LogEntry] {
         guard let appGroupID,
               let containerURL = FileManager.default.containerURL(
@@ -334,38 +340,86 @@ public actor LogStore {
         }
 
         do {
-            let data = try Data(contentsOf: fileURL)
-            let lines = String(data: data, encoding: .utf8)?
-                .components(separatedBy: .newlines)
-                .filter { !$0.isEmpty } ?? []
-
             let decoder = JSONDecoder()
             var entries: [LogEntry] = []
+            entries.reserveCapacity(min(maxEntries, 5000))
 
-            for line in lines {
-                guard let lineData = line.data(using: .utf8) else { continue }
+            let handle = try FileHandle(forReadingFrom: fileURL)
+            defer { try? handle.close() }
 
-                do {
-                    let event = try decoder.decode(VPNLogEvent.self, from: lineData)
+            let maxLineBytes = 256 * 1024
+            let chunkSize = 64 * 1024
+            var buffer = Data()
+
+            while let chunk = try handle.read(upToCount: chunkSize), !chunk.isEmpty {
+                buffer.append(chunk)
+
+                while true {
+                    guard let newlineIndex = buffer.firstIndex(of: 0x0A) else { break }
+                    let lineData = buffer.prefix(upTo: newlineIndex)
+                    buffer.removeSubrange(...newlineIndex)
+
+                    if lineData.isEmpty { continue }
+                    if lineData.count > maxLineBytes { continue }
+
+                    guard let line = String(data: lineData, encoding: .utf8) else { continue }
+                    if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+
+                    guard let jsonData = line.data(using: .utf8) else { continue }
+                    guard let event = try? decoder.decode(VPNLogEvent.self, from: jsonData) else { continue }
+
                     let timestamp = Date(timeIntervalSince1970: event.ts)
-
-                    // Filter by date.
                     guard timestamp >= startDate else { continue }
 
-                    let entry = LogEntry(
-                        timestamp: timestamp,
-                        level: mapVPNLogType(event.type),
-                        category: "VPN.Extension",
-                        message: event.msg,
-                        requestId: nil,
-                        file: "",
-                        function: "",
-                        line: 0
+                    let level = mapVPNLogType(event.type)
+                    guard level.severity >= minimumLevel.severity else { continue }
+
+                    entries.append(
+                        LogEntry(
+                            timestamp: timestamp,
+                            level: level,
+                            category: "VPN.Extension",
+                            message: event.msg,
+                            requestId: nil,
+                            file: "",
+                            function: "",
+                            line: 0
+                        )
                     )
-                    entries.append(entry)
-                } catch {
-                    // Skip malformed lines.
-                    continue
+
+                    if entries.count > maxEntries {
+                        // Keep memory bounded; the caller will sort/prefix anyway.
+                        entries.removeFirst(entries.count - maxEntries)
+                    }
+                }
+            }
+
+            // Process trailing data without newline.
+            if !buffer.isEmpty, buffer.count <= maxLineBytes,
+               let line = String(data: buffer, encoding: .utf8),
+               !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let jsonData = line.data(using: .utf8),
+               let event = try? decoder.decode(VPNLogEvent.self, from: jsonData) {
+                let timestamp = Date(timeIntervalSince1970: event.ts)
+                if timestamp >= startDate {
+                    let level = mapVPNLogType(event.type)
+                    if level.severity >= minimumLevel.severity {
+                        entries.append(
+                            LogEntry(
+                                timestamp: timestamp,
+                                level: level,
+                                category: "VPN.Extension",
+                                message: event.msg,
+                                requestId: nil,
+                                file: "",
+                                function: "",
+                                line: 0
+                            )
+                        )
+                        if entries.count > maxEntries {
+                            entries.removeFirst(entries.count - maxEntries)
+                        }
+                    }
                 }
             }
 

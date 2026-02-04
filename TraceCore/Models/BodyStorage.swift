@@ -270,20 +270,24 @@ public enum BodyStorage: Codable, Equatable {
 
     /// Decompress gzip-encoded data
     private static func decompressGzip(_ data: Data, maxOutputBytes: Int? = nil) -> Data? {
-        guard let deflated = stripGzipWrapper(from: data),
-              let inflated = decompress(data: deflated, algorithm: COMPRESSION_ZLIB, maxOutputBytes: maxOutputBytes) else {
-            return nil
-        }
-        return inflated
+        guard let deflated = GzipWrapper.strip(from: data) else { return nil }
+        return decompressDeflate(deflated, maxOutputBytes: maxOutputBytes)
     }
 
     /// Decompress Brotli-encoded data
     private static func decompressBrotli(_ data: Data, maxOutputBytes: Int? = nil) -> Data? {
-        decompress(data: data, algorithm: COMPRESSION_BROTLI, maxOutputBytes: maxOutputBytes)
+        #if canImport(TraceCompression)
+        return try? BrotliDecoder.decompress(data, maxOutputBytes: maxOutputBytes)
+        #else
+        return decompress(data: data, algorithm: COMPRESSION_BROTLI, maxOutputBytes: maxOutputBytes)
+        #endif
     }
 
     /// Decompress DEFLATE-encoded data
     private static func decompressDeflate(_ data: Data, maxOutputBytes: Int? = nil) -> Data? {
+        #if canImport(TraceCompression)
+        return try? DeflateDecoder.decompress(data, maxOutputBytes: maxOutputBytes)
+        #else
         guard !data.isEmpty else { return Data() }
 
         let maxOutput = maxOutputBytes ?? Int.max
@@ -348,6 +352,7 @@ public enum BodyStorage: Codable, Equatable {
 
             return output
         }
+        #endif
     }
 
     /// Decompress data with multiple encodings applied in sequence
@@ -407,50 +412,6 @@ public enum BodyStorage: Codable, Equatable {
         // Rule: RFC 1950 requires (CMF << 8 | FLG) to be a multiple of 31.
         let check = (UInt16(cmf) << 8) | UInt16(flg)
         return check % 31 == 0
-    }
-
-    /// Remove gzip header/trailer, returning the raw DEFLATE payload.
-    private static func stripGzipWrapper(from data: Data) -> Data? {
-        // Minimum gzip header is 10 bytes + 8-byte footer (CRC32 + ISIZE)
-        guard data.count > 18 else { return nil }
-
-        // Byte offsets
-        var index = 10 // Skip ID1, ID2, CM, FLG, MTIME(4), XFL, OS
-        let flags = data[3]
-
-        // FEXTRA
-        if flags & 0x04 != 0 {
-            guard index + 2 <= data.count else { return nil }
-            let xlen = Int(data[index]) | (Int(data[index + 1]) << 8)
-            index += 2 + xlen
-        }
-
-        // FNAME
-        if flags & 0x08 != 0 {
-            while index < data.count && data[index] != 0 {
-                index += 1
-            }
-            index += 1
-        }
-
-        // FCOMMENT
-        if flags & 0x10 != 0 {
-            while index < data.count && data[index] != 0 {
-                index += 1
-            }
-            index += 1
-        }
-
-        // FHCRC
-        if flags & 0x02 != 0 {
-            index += 2
-        }
-
-        let footerLength = 8 // CRC32 + ISIZE
-        guard index + footerLength <= data.count else { return nil }
-
-        let deflatedRange = index ..< (data.count - footerLength)
-        return data.subdata(in: deflatedRange)
     }
 
     /// Generic decompression helper using Apple's Compression framework.
@@ -723,18 +684,7 @@ public enum BodyStorage: Codable, Equatable {
 
     /// Resolve the container used for body files, respecting the configured App Group and fallback.
     private static func bodyContainerURL() -> URL? {
-        if let groupContainer = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: AppGroupConfiguration.appGroupIdentifier
-        ) {
-            return groupContainer
-        }
-
-        // Fallback to the same location AppGroupStorage uses for simulator/test environments.
-        if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            return documentsURL.appendingPathComponent("AppGroupFallback")
-        }
-
-        return nil
+        AppGroupStorage.shared.containerURL
     }
 
     /// Delete file if stored as file

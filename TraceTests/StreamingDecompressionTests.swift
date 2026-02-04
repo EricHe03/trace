@@ -226,8 +226,9 @@ final class StreamingDecompressionTests: XCTestCase {
         let decoder = StreamingZstdDecoder()
         try decoder.initialize()
 
-        _ = try decoder.decompress(chunk: compressed)
-        let result = try decoder.finalize()
+        let chunk = try decoder.decompress(chunk: compressed)
+        let final = try decoder.finalize()
+        let result = chunk + final
 
         XCTAssertEqual(result, original)
     }
@@ -256,8 +257,7 @@ final class StreamingDecompressionTests: XCTestCase {
     func testStreamingDecoder_CustomConfig_Respected() throws {
         let config = StreamingDecoderConfig(
             chunkSize: 1024,
-            maxOutputSize: 10000,
-            validateChecksums: false
+            maxOutputSize: 10000
         )
 
         let decoder = StreamingDeflateDecoder(config: config)

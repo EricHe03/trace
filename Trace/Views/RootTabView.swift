@@ -100,7 +100,7 @@ struct RootTabView: View {
     }
 
     private func checkOnboarding() {
-        let hasCompleted = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+        let hasCompleted = UserDefaults.standard.bool(forKey: TraceUserDefaultsKey.hasCompletedOnboarding)
         if !hasCompleted {
             showingOnboarding = true
         } else {
@@ -349,13 +349,15 @@ struct SettingsTabView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    Link(destination: URL(string: "https://github.com")!) {
-                        HStack {
-                            Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
-                            Spacer()
-                            Image(systemName: "arrow.up.forward.square.fill")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    if let githubURL = URL(string: "https://github.com/Trace-iOS/Trace") {
+                        Link(destination: githubURL) {
+                            HStack {
+                                Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
+                                Spacer()
+                                Image(systemName: "arrow.up.forward.square.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
 
@@ -366,7 +368,7 @@ struct SettingsTabView: View {
                     }
 
                     Button {
-                        UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
+                        UserDefaults.standard.set(false, forKey: TraceUserDefaultsKey.hasCompletedOnboarding)
                         showingOnboarding = true
                     } label: {
                         Label("Show Onboarding", systemImage: "arrow.counterclockwise")

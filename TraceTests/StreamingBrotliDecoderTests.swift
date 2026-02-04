@@ -225,8 +225,7 @@ final class StreamingBrotliDecoderTests: XCTestCase {
     func testStreamingBrotliCustomConfig() throws {
         let config = StreamingDecoderConfig(
             chunkSize: 1024,
-            maxOutputSize: 100000,
-            validateChecksums: false
+            maxOutputSize: 100000
         )
 
         let decoder = StreamingBrotliDecoder(config: config)
@@ -245,8 +244,7 @@ final class StreamingBrotliDecoderTests: XCTestCase {
     func testStreamingBrotliMaxOutputSizeExceeded() throws {
         let config = StreamingDecoderConfig(
             chunkSize: 64 * 1024,
-            maxOutputSize: 100,
-            validateChecksums: true
+            maxOutputSize: 100
         )
 
         let decoder = StreamingBrotliDecoder(config: config)
@@ -308,7 +306,7 @@ final class StreamingBrotliDecoderTests: XCTestCase {
     private func compressBrotli(_ data: Data) throws -> Data {
         try data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) -> Data in
             guard let baseAddress = sourcePtr.baseAddress else {
-                throw DecompressionError.invalidData
+                throw CompressionError.invalidInput("Invalid input buffer")
             }
 
             let bufferSize = 64 * 1024
@@ -325,7 +323,7 @@ final class StreamingBrotliDecoderTests: XCTestCase {
 
             let status = compression_stream_init(&stream, COMPRESSION_STREAM_ENCODE, COMPRESSION_BROTLI)
             guard status != COMPRESSION_STATUS_ERROR else {
-                throw DecompressionError.initializationFailed
+                throw CompressionError.initializationFailed("Failed to initialize Brotli compression stream")
             }
             defer { compression_stream_destroy(&stream) }
 

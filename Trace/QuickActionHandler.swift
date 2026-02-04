@@ -28,20 +28,25 @@ class QuickActionHandler {
         _ shortcutItem: UIApplicationShortcutItem,
         viewModel: CaptureViewModel
     ) async -> Bool {
+        // Rule: Avoid triggering VPN permission prompts before onboarding completes.
+        if !OnboardingState.hasCompleted {
+            return false
+        }
+
         switch shortcutItem.type {
-        case "com.trace.startCapture":
+        case TraceQuickActionType.startCapture:
             await startCapture()
             return true
 
-        case "com.trace.stopCapture":
+        case TraceQuickActionType.stopCapture:
             stopCapture()
             return true
 
-        case "com.trace.viewLastSession":
+        case TraceQuickActionType.viewLastSession:
             viewLastSession(viewModel: viewModel)
             return true
 
-        case "com.trace.exportData":
+        case TraceQuickActionType.exportData:
             await exportData(viewModel: viewModel)
             return true
 

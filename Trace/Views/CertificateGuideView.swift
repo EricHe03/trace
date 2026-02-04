@@ -533,9 +533,12 @@ struct CertificateGuideView: View {
                 CertificateManager.shared.saveKnownFingerprint()
             }
 
+            // Note: Root CA status touches keychain and should not be computed on the main thread.
+            let status = CertificateManager.shared.checkRootCAStatus()
+
             DispatchQueue.main.async {
                 self.isCertificateTrusted = trusted
-                self.rootCAStatus = CertificateManager.shared.checkRootCAStatus()
+                self.rootCAStatus = status
             }
         }
     }
