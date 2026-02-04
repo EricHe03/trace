@@ -56,6 +56,10 @@ final class ConnectionDetailViewModel: ObservableObject {
     @Published var analysis: ConnectionPCAPAnalysis?
     private var analysisTask: Task<Void, Never>?
     private var analysisWorkTask: Task<ConnectionPCAPAnalysis, Error>?
+    private var didAttemptAutoLoadPCAP = false
+
+    private let rawPacketPCAPPrefixes = ["capture_raw_packets"]
+    private let autoAnalyzeMaxBytes: UInt64 = 25 * 1_048_576 // 25 MB
 
     init(record: PacketFlowRecord) {
         self.record = record
@@ -66,45 +70,129 @@ final class ConnectionDetailViewModel: ObservableObject {
         analysisWorkTask?.cancel()
     }
 
+    func cancelPCAPAnalysis() {
+        analysisTask?.cancel()
+        analysisWorkTask?.cancel()
+        analysisTask = nil
+        analysisWorkTask = nil
+        isLoading = false
+    }
+
     func refreshPCAPFiles() {
-        let urls = AppGroupStorage.shared.packetCaptureFiles()
-        pcapFiles = urls.map { url in
+        pcapFiles = rawPacketPCAPFiles()
+    }
+
+    func loadFromPCAP(_ file: PCAPFileItem) {
+        loadFromPCAPCandidates([file], initiator: .manual)
+    }
+
+    func autoLoadPCAPIfPossible() {
+        guard !didAttemptAutoLoadPCAP else { return }
+        didAttemptAutoLoadPCAP = true
+
+        guard record.transport == .tcp else { return }
+        guard analysis == nil else { return }
+
+        let candidates = rawPacketPCAPFiles()
+            .filter { $0.size > 0 && $0.size <= autoAnalyzeMaxBytes }
+        guard !candidates.isEmpty else { return }
+
+        loadFromPCAPCandidates(candidates, initiator: .auto)
+    }
+
+    private enum PCAPLoadInitiator {
+        case auto
+        case manual
+    }
+
+    private func loadFromPCAPCandidates(_ candidates: [PCAPFileItem], initiator: PCAPLoadInitiator) {
+        analysisTask?.cancel()
+        analysisWorkTask?.cancel()
+
+        isLoading = true
+        loadError = nil
+        analysis = nil
+
+        let capturedRecord = record
+
+        analysisTask = Task { @MainActor in
+            defer { isLoading = false }
+
+            var lastError: Error?
+
+            for candidate in candidates {
+                do {
+                    let analysis = try await analyze(record: capturedRecord, url: candidate.url)
+                    if analysis.packets.isEmpty {
+                        throw PCAPFlowAnalyzerError.noPacketsForFlow
+                    }
+                    self.analysis = analysis
+                    return
+                } catch is CancellationError {
+                    self.analysis = nil
+                    return
+                } catch {
+                    lastError = error
+                    if shouldTryNextCandidate(error: error, initiator: initiator) {
+                        continue
+                    }
+                    if initiator == .manual {
+                        self.loadError = error.localizedDescription
+                    }
+                    return
+                }
+            }
+
+            if initiator == .manual, let lastError {
+                self.loadError = lastError.localizedDescription
+            }
+        }
+    }
+
+    private func analyze(record: PacketFlowRecord, url: URL) async throws -> ConnectionPCAPAnalysis {
+        let work = Task.detached(priority: .utility) {
+            let analyzer = try PCAPFlowAnalyzer(record: record)
+            return try analyzer.analyze(url: url)
+        }
+        analysisWorkTask = work
+        defer {
+            analysisWorkTask = nil
+        }
+
+        return try await withTaskCancellationHandler {
+            try await work.value
+        } onCancel: {
+            work.cancel()
+        }
+    }
+
+    private func shouldTryNextCandidate(error: Error, initiator: PCAPLoadInitiator) -> Bool {
+        if initiator == .auto,
+           let typed = error as? PCAPFlowAnalyzerError,
+           typed == .noPacketsForFlow {
+            return true
+        }
+        return false
+    }
+
+    private func rawPacketPCAPFiles() -> [PCAPFileItem] {
+        let urls = AppGroupStorage.shared.packetCaptureFiles(prefixes: rawPacketPCAPPrefixes)
+        return urls.map { url in
             let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?
                 .uint64Value ?? 0
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             return PCAPFileItem(url: url, size: size, modified: modified)
         }
     }
+}
 
-    func loadFromPCAP(_ file: PCAPFileItem) {
-        analysisTask?.cancel()
-        analysisWorkTask?.cancel()
-        isLoading = true
-        loadError = nil
+enum PCAPFlowAnalyzerError: LocalizedError, Equatable {
+    case noPacketsForFlow
 
-        let capturedRecord = record
-        let capturedURL = file.url
-
-        analysisTask = Task { @MainActor in
-            defer { isLoading = false }
-            do {
-                let work = Task.detached(priority: .utility) {
-                    let analyzer = try PCAPFlowAnalyzer(record: capturedRecord)
-                    return try analyzer.analyze(url: capturedURL)
-                }
-                analysisWorkTask = work
-                let analysis = try await withTaskCancellationHandler {
-                    try await work.value
-                } onCancel: {
-                    work.cancel()
-                }
-                try Task.checkCancellation()
-                self.analysis = analysis
-            } catch is CancellationError {
-                self.analysis = nil
-            } catch {
-                self.loadError = error.localizedDescription
-            }
+    var errorDescription: String? {
+        switch self {
+        case .noPacketsForFlow:
+            return "No packets found for this connection in the selected PCAP."
         }
     }
 }
@@ -113,6 +201,10 @@ private final class PCAPFlowAnalyzer {
     private struct EndpointKey: Hashable {
         let ip: String
         let port: UInt16
+    }
+
+    private enum ScanControl: Error {
+        case reachedEndOfWindow
     }
 
     private struct RecentSegment {
@@ -168,10 +260,24 @@ private final class PCAPFlowAnalyzer {
         let endpointA = EndpointKey(ip: record.sourceIP, port: record.sourcePort)
         let endpointB = EndpointKey(ip: record.destinationIP, port: record.destinationPort)
 
-        try reader.forEachPacket(throwing: { packet in
-            if Task.isCancelled {
-                throw CancellationError()
-            }
+        let timeSlack: TimeInterval = 15
+        let lowerBound = min(record.startTime, record.lastSeen).addingTimeInterval(-timeSlack)
+        let upperBound = max(record.startTime, record.lastSeen).addingTimeInterval(timeSlack)
+        var didMatchAnyPacket = false
+
+        do {
+            try reader.forEachPacket(throwing: { packet in
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+
+                if packet.timestamp < lowerBound {
+                    return
+                }
+                if packet.timestamp > upperBound {
+                    throw ScanControl.reachedEndOfWindow
+                }
+
             guard let ipPacket = IPPacketParser.parse(packet.data) else { return }
             guard ipPacket.transport == .tcp else { return }
             guard let tcpPacket = TCPParser.parse(ipPacket.payload) else { return }
@@ -179,6 +285,7 @@ private final class PCAPFlowAnalyzer {
             let src = EndpointKey(ip: ipPacket.source.description, port: tcpPacket.sourcePort)
             let dst = EndpointKey(ip: ipPacket.destination.description, port: tcpPacket.destinationPort)
             guard (src == endpointA && dst == endpointB) || (src == endpointB && dst == endpointA) else { return }
+            didMatchAnyPacket = true
 
             if tcpPacket.flags.contains(.syn) && !tcpPacket.flags.contains(.ack) {
                 if clientEndpoint == nil {
@@ -275,7 +382,20 @@ private final class PCAPFlowAnalyzer {
                     }
                 }
             }
-        })
+            })
+        } catch ScanControl.reachedEndOfWindow {
+            // Best-effort: stop scanning once we pass the connection's time window.
+        } catch PCAPReaderError.truncatedRecord {
+            // Best-effort: capture file may be actively written; treat trailing truncation as EOF.
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw error
+        }
+
+        guard didMatchAnyPacket else {
+            throw PCAPFlowAnalyzerError.noPacketsForFlow
+        }
 
         if connectionState == .unknown {
             if !rstSeen.isEmpty {
