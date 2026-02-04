@@ -79,7 +79,7 @@ public enum RequestMatcher {
         if !criteria.headers.isEmpty {
             let headerValues = normalizedHeaders(from: request, target: target)
             for matcher in criteria.headers {
-                let matched = matchesHeader(matcher, headers: headerValues)
+                let matched = matchesHeader(matcher.normalized(), headers: headerValues)
                 results.append(matched)
                 details.append(MatcherEvaluation(matcher: "header:\(matcher.name)", passed: matched))
             }
@@ -88,7 +88,7 @@ public enum RequestMatcher {
         if !criteria.queryParams.isEmpty {
             let queryItems = parsedQueryItems(from: request.url)
             for matcher in criteria.queryParams {
-                let matched = matchesQueryParam(matcher, items: queryItems)
+                let matched = matchesQueryParam(matcher.normalized(), items: queryItems)
                 results.append(matched)
                 details.append(MatcherEvaluation(matcher: "query:\(matcher.name)", passed: matched))
             }
@@ -102,7 +102,9 @@ public enum RequestMatcher {
         }
 
         if !criteria.contentTypes.isEmpty {
-            let contentType = request.contentType ?? headerValue(for: "content-type", request: request, target: target) ?? ""
+            // `request.contentType` is extracted from response headers; only use it for response matching.
+            let extracted = (target == .response) ? request.contentType : nil
+            let contentType = extracted ?? headerValue(for: "content-type", request: request, target: target) ?? ""
             let matched = criteria.contentTypes.contains { $0.matches(contentType) }
             results.append(matched)
             details.append(MatcherEvaluation(matcher: "contentType", passed: matched, message: contentType))
@@ -132,51 +134,52 @@ public enum RequestMatcher {
         }
     }
 
-    private static func normalizedHeaders(from request: NetworkRequest, target: MatchTarget) -> [String: String] {
+    private static func normalizedHeaders(from request: NetworkRequest, target: MatchTarget) -> [String: [String]] {
         let headers = (target == .request) ? request.requestHeaders : request.responseHeaders
-        var dict: [String: String] = [:]
+        var dict: [String: [String]] = [:]
         for header in headers {
-            dict[header.key.lowercased()] = header.value
+            dict[header.key.lowercased(), default: []].append(header.value)
         }
         return dict
     }
 
-    private static func matchesHeader(_ matcher: HeaderMatcher, headers: [String: String]) -> Bool {
+    private static func matchesHeader(_ matcher: HeaderMatcher, headers: [String: [String]]) -> Bool {
         let name = matcher.name.lowercased()
-        let value = headers[name]
-        return matchesCondition(matcher.condition, value: value, matcher: matcher.matcher)
+        let values = headers[name] ?? []
+        return matchesCondition(matcher.condition, values: values, matcher: matcher.matcher)
     }
 
     private static func matchesQueryParam(_ matcher: QueryParamMatcher, items: [URLQueryItem]) -> Bool {
         let matches = items.filter { $0.name == matcher.name }
-        let value = matches.first?.value
-        return matchesCondition(matcher.condition, value: value, matcher: matcher.matcher, exists: !matches.isEmpty)
+        let values = matches.compactMap(\.value)
+        return matchesCondition(matcher.condition, values: values, matcher: matcher.matcher, exists: !matches.isEmpty)
     }
 
     private static func matchesCondition(
         _ condition: MatchCondition,
-        value: String?,
+        values: [String],
         matcher: StringMatcher?,
         exists: Bool? = nil
     ) -> Bool {
-        let valueExists = exists ?? (value != nil)
+        let valueExists = exists ?? !values.isEmpty
         switch condition {
         case .exists:
             return valueExists
         case .notExists:
             return !valueExists
         case .equals:
-            guard let matcher else { return false }
-            return value.map { matcher.matches($0) } ?? false
+            guard valueExists, let matcher else { return false }
+            return values.contains(where: { matcher.matches($0) })
         case .notEquals:
-            guard let matcher else { return false }
-            return !(value.map { matcher.matches($0) } ?? false)
+            // Note: Use `.notExists` to match absence explicitly.
+            guard valueExists, let matcher else { return false }
+            return !values.contains(where: { matcher.matches($0) })
         case .contains:
-            guard let matcher else { return false }
-            return value.map { matcher.matches($0) } ?? false
+            guard valueExists, let matcher else { return false }
+            return values.contains(where: { matcher.matches($0) })
         case .regex:
-            guard let matcher else { return false }
-            return value.map { matcher.matches($0) } ?? false
+            guard valueExists, let matcher else { return false }
+            return values.contains(where: { matcher.matches($0) })
         }
     }
 
@@ -222,5 +225,39 @@ public enum RequestMatcher {
     private static func headerValue(for name: String, request: NetworkRequest, target: MatchTarget) -> String? {
         let headers = target == .request ? request.requestHeaders : request.responseHeaders
         return headers.first(where: { $0.key.lowercased() == name.lowercased() })?.value
+    }
+}
+
+private extension HeaderMatcher {
+    func normalized() -> HeaderMatcher {
+        guard var matcher else { return self }
+        switch condition {
+        case .equals, .notEquals:
+            matcher.matchType = .exact
+        case .contains:
+            matcher.matchType = .contains
+        case .regex:
+            matcher.matchType = .regex
+        case .exists, .notExists:
+            break
+        }
+        return HeaderMatcher(name: name, matcher: matcher, condition: condition)
+    }
+}
+
+private extension QueryParamMatcher {
+    func normalized() -> QueryParamMatcher {
+        guard var matcher else { return self }
+        switch condition {
+        case .equals, .notEquals:
+            matcher.matchType = .exact
+        case .contains:
+            matcher.matchType = .contains
+        case .regex:
+            matcher.matchType = .regex
+        case .exists, .notExists:
+            break
+        }
+        return QueryParamMatcher(name: name, matcher: matcher, condition: condition)
     }
 }

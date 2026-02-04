@@ -5,7 +5,6 @@
 //  Created by Justin on 2026/01/11.
 //
 
-import CryptoKit
 import Foundation
 import OSLog
 
@@ -376,9 +375,7 @@ public struct LogEvent: CustomStringConvertible {
     }
 
     private static func hashValue(_ value: String) -> String {
-        let digest = SHA256.hash(data: Data(value.utf8))
-        let hex = digest.map { String(format: "%02x", $0) }.joined()
-        return String(hex.prefix(16))
+        LogRedaction.hash(value, prefixLength: 16)
     }
 }
 

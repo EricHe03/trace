@@ -37,7 +37,9 @@ public struct ContentValidator {
         }
 
         do {
-            _ = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+            // Note: JSONSerialization operates on bytes; ensure our BOM removal is reflected in the payload.
+            let sanitizedData = sanitized.data(using: .utf8) ?? data
+            _ = try JSONSerialization.jsonObject(with: sanitizedData, options: [.fragmentsAllowed])
             return ValidationResult(isValid: true)
         } catch {
             return ValidationResult(isValid: false, errors: [error.localizedDescription], canAutoFix: false)
