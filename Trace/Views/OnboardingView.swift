@@ -106,7 +106,7 @@ struct OnboardingView: View {
     }
 
     private func completeOnboarding() {
-        UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
+        UserDefaults.standard.set(true, forKey: TraceUserDefaultsKey.hasCompletedOnboarding)
         NotificationCenter.default.post(name: .onboardingCompleted, object: nil)
         onComplete()
         dismiss()

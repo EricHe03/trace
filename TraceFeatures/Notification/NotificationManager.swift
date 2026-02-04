@@ -289,11 +289,4 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     }
 }
 
-// MARK: - Notification Names
-
-public extension Notification.Name {
-    static let viewRequest = Notification.Name("viewRequest")
-    static let openTab = Notification.Name("com.trace.openTab")
-    static let showFavorites = Notification.Name("com.trace.showFavorites")
-    static let onboardingCompleted = Notification.Name("onboardingCompleted")
-}
+// Note: Notification.Name constants live in TraceCore (`TraceCore/Utilities/TraceIdentifiers.swift`).

@@ -27,12 +27,12 @@ public final class HostsManager: ObservableObject {
     }
 
     /// Notification for cross-process updates
-    private let hostsUpdatedNotificationName = Notification.Name("com.trace.hostsUpdated")
+    private let hostsUpdatedNotificationName = Notification.Name.hostsUpdated
 
     private init() {
         self.baseManager = PersistentCollectionManager(
             fileName: "HostEntries.json",
-            notificationName: "com.trace.hostsUpdated",
+            notificationName: Notification.Name.hostsUpdated.rawValue,
             logger: FeatureLog.storage,
             itemName: "entry"
         )

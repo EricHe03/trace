@@ -28,6 +28,8 @@ enum PacketTunnelProviderError: LocalizedError {
     case networkSettingsFailed(underlying: Error)
     /// Indicates full-tunnel mode is missing SOCKS5 forwarding configuration.
     case missingSocks5Configuration
+    /// Indicates the shared App Group container/defaults are unavailable.
+    case appGroupUnavailable(appGroupID: String)
 
     var errorDescription: String? {
         switch self {
@@ -37,6 +39,8 @@ enum PacketTunnelProviderError: LocalizedError {
             "Failed to apply network settings: \(underlying.localizedDescription)"
         case .missingSocks5Configuration:
             "Full-tunnel mode requires a SOCKS5 host and port"
+        case let .appGroupUnavailable(appGroupID):
+            "App Group is unavailable: \(appGroupID)"
         }
     }
 }
@@ -219,6 +223,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             "event=vpn.tunnel_task_begin id=\(invocationID, privacy: .public)"
         )
 
+        try validateSharedStorage()
+
         let captureConfig = AppGroupStorage.shared.loadConfiguration()
         self.currentCaptureMode = captureConfig.captureMode
 
@@ -293,6 +299,25 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
 
         loadInitialThrottlingState()
+    }
+
+    private func validateSharedStorage() throws {
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return
+        }
+
+        let appGroupID = AppGroupConfiguration.appGroupIdentifier
+        guard !appGroupID.isEmpty else {
+            throw PacketTunnelProviderError.appGroupUnavailable(appGroupID: appGroupID)
+        }
+
+        guard FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) != nil else {
+            throw PacketTunnelProviderError.appGroupUnavailable(appGroupID: appGroupID)
+        }
+
+        guard UserDefaults(suiteName: appGroupID) != nil else {
+            throw PacketTunnelProviderError.appGroupUnavailable(appGroupID: appGroupID)
+        }
     }
 
     /// Stops the VPN tunnel when the system deactivates the VPN.

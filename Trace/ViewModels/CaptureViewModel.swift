@@ -490,7 +490,7 @@ final class CaptureViewModel: ObservableObject {
 
         // Observe favorites updates to invalidate filter cache
         let favoritesObserver = NotificationCenter.default.addObserver(
-            forName: Notification.Name("com.trace.favoritesUpdated"),
+            forName: .favoritesUpdated,
             object: nil,
             queue: .main
         ) { [weak self] _ in

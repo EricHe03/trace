@@ -58,6 +58,8 @@ public final class WidgetActionHandler {
 
     @MainActor
     private func startCaptureIfNeeded() {
+        // Rule: Avoid triggering VPN permission prompts before onboarding completes.
+        guard OnboardingState.hasCompleted else { return }
         guard !VPNManager.shared.isConnected else { return }
         Task {
             do {
@@ -81,29 +83,29 @@ public final class WidgetActionHandler {
         switch rawValue {
         case "capture":
             NotificationCenter.default.post(
-                name: Notification.Name("com.trace.openTab"),
+                name: .openTab,
                 object: nil,
                 userInfo: ["tab": "network"]
             )
         case "tools":
             NotificationCenter.default.post(
-                name: Notification.Name("com.trace.openTab"),
+                name: .openTab,
                 object: nil,
                 userInfo: ["tab": "tools"]
             )
         case "settings":
             NotificationCenter.default.post(
-                name: Notification.Name("com.trace.openTab"),
+                name: .openTab,
                 object: nil,
                 userInfo: ["tab": "settings"]
             )
         case "favorites":
             NotificationCenter.default.post(
-                name: Notification.Name("com.trace.openTab"),
+                name: .openTab,
                 object: nil,
                 userInfo: ["tab": "network"]
             )
-            NotificationCenter.default.post(name: Notification.Name("com.trace.showFavorites"), object: nil)
+            NotificationCenter.default.post(name: .showFavorites, object: nil)
         default:
             break
         }
