@@ -20,16 +20,25 @@ public class StreamingBrotliDecoder: StreamingDecoderProtocol {
     private var streamInitialized: Bool = false
 
     private var outputBuffer: UnsafeMutablePointer<UInt8>?
-    private var placeholderByte: UInt8 = 0
+    private let placeholderBuffer: UnsafeMutablePointer<UInt8>
 
     public init(config: StreamingDecoderConfig = .default) {
         self.config = config
-        self.stream = compression_stream()
-        resetStreamToPlaceholder()
+        self.placeholderBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 1)
+        self.placeholderBuffer.initialize(repeating: 0, count: 1)
+        self.stream = compression_stream(
+            dst_ptr: placeholderBuffer,
+            dst_size: 0,
+            src_ptr: UnsafePointer(placeholderBuffer),
+            src_size: 0,
+            state: nil
+        )
     }
 
     deinit {
         cleanup()
+        placeholderBuffer.deinitialize(count: 1)
+        placeholderBuffer.deallocate()
     }
 
     public func initialize() throws {
@@ -116,7 +125,7 @@ public class StreamingBrotliDecoder: StreamingDecoderProtocol {
         var output = Data()
 
         // Rule: Use an empty source to signal end of input to the stream.
-        stream.src_ptr = UnsafePointer(Self.placeholderBuffer)
+        stream.src_ptr = UnsafePointer(placeholderBuffer)
         stream.src_size = 0
 
         var status: compression_status
@@ -166,14 +175,12 @@ public class StreamingBrotliDecoder: StreamingDecoderProtocol {
     }
 
     private func resetStreamToPlaceholder() {
-        withUnsafeMutablePointer(to: &placeholderByte) { placeholderPtr in
-            stream = compression_stream(
-                dst_ptr: placeholderPtr,
-                dst_size: 0,
-                src_ptr: UnsafePointer(placeholderPtr),
-                src_size: 0,
-                state: nil
-            )
-        }
+        stream = compression_stream(
+            dst_ptr: placeholderBuffer,
+            dst_size: 0,
+            src_ptr: UnsafePointer(placeholderBuffer),
+            src_size: 0,
+            state: nil
+        )
     }
 }

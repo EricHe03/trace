@@ -20,7 +20,13 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
     private let baseManager: PersistentCollectionManager<Script>
     private let scriptEngine: ScriptEngine?
     private let executionMutex = ScriptExecutionMutex()
-    private let executionCountBuffer: ScriptExecutionCountBuffer
+    private lazy var executionCountBuffer: ScriptExecutionCountBuffer = ScriptExecutionCountBuffer(
+        flushIntervalSeconds: 5,
+        flushBatchSize: 100
+    ) { [weak self] deltas in
+        guard let self else { return }
+        await self.applyExecutionCountDeltas(deltas)
+    }
     private var cancellables: Set<AnyCancellable> = []
     private let asyncScriptTimeout: TimeInterval = 2.0
 
@@ -41,13 +47,6 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
         self.scriptEngine = ScriptEngine()
         if scriptEngine == nil {
             FeatureLog.script.warning("event=script.engine_init outcome=failure reason=context_creation_failed")
-        }
-        self.executionCountBuffer = ScriptExecutionCountBuffer(
-            flushIntervalSeconds: 5,
-            flushBatchSize: 100
-        ) { [weak self] deltas in
-            guard let self else { return }
-            await self.applyExecutionCountDeltas(deltas)
         }
 
         // Forward changes from the underlying store for SwiftUI observation.
@@ -199,7 +198,7 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
             return request
         }
 
-        return await executionMutex.withLock {
+        return await withExecutionLock {
             guard !scripts.isEmpty else { return request }
 
             var executedScriptIds: [UUID] = []
@@ -307,7 +306,7 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
             return request
         }
 
-        return await executionMutex.withLock {
+        return await withExecutionLock {
             guard !scripts.isEmpty else { return request }
 
             var executedScriptIds: [UUID] = []
@@ -410,31 +409,36 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
 }
 
 private extension ScriptManager {
-    func withExecutionLockSync<T>(_ operation: @escaping () throws -> T) -> T? {
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Result<T, Error>?
+    func withExecutionLock<T>(_ operation: () async throws -> T) async rethrows -> T {
+        await executionMutex.lock()
+        do {
+            let value = try await operation()
+            await executionMutex.unlock()
+            return value
+        } catch {
+            await executionMutex.unlock()
+            throw error
+        }
+    }
 
-        Task {
-            do {
-                let value = try await executionMutex.withLock {
-                    try operation()
-                }
-                result = .success(value)
-            } catch {
-                result = .failure(error)
+    func withExecutionLockSync<T>(_ operation: @escaping () throws -> T) -> T? {
+        let lockSemaphore = DispatchSemaphore(value: 0)
+        Task { [executionMutex] in
+            await executionMutex.lock()
+            lockSemaphore.signal()
+        }
+        lockSemaphore.wait()
+
+        defer {
+            Task { [executionMutex] in
+                await executionMutex.unlock()
             }
-            semaphore.signal()
         }
 
-        semaphore.wait()
-
-        switch result {
-        case let .success(value):
-            return value
-        case .failure:
+        do {
+            return try operation()
+        } catch {
             // All callers already handle failure as a logged error; treat as "no change".
-            return nil
-        case .none:
             return nil
         }
     }
@@ -444,7 +448,7 @@ private actor ScriptExecutionMutex {
     private var isLocked = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
-    func withLock<T>(_ operation: () async throws -> T) async rethrows -> T {
+    func lock() async {
         if isLocked {
             await withCheckedContinuation { continuation in
                 waiters.append(continuation)
@@ -452,16 +456,14 @@ private actor ScriptExecutionMutex {
         } else {
             isLocked = true
         }
+    }
 
-        defer {
-            if waiters.isEmpty {
-                isLocked = false
-            } else {
-                waiters.removeFirst().resume()
-            }
+    func unlock() {
+        if waiters.isEmpty {
+            isLocked = false
+        } else {
+            waiters.removeFirst().resume()
         }
-
-        return try await operation()
     }
 }
 

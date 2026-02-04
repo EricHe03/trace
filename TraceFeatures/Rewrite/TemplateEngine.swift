@@ -22,7 +22,7 @@ public final class TemplateEngine {
         return try? NSRegularExpression(pattern: pattern)
     }()
 
-    private static let isoFormatter: ISO8601DateFormatter = .init()
+    private static var isoFormatter: ISO8601DateFormatter { .init() }
 
     public init() {}
 
