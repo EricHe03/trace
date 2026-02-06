@@ -12,6 +12,7 @@ import TraceUI
 struct SSEListView: View {
     @StateObject private var viewModel = SSEViewModel()
     @State private var showingFilters = false
+    @State private var showingClearAllAlert = false
     @State private var selectedConnection: SSEConnection?
 
     var body: some View {
@@ -52,7 +53,7 @@ struct SSEListView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button(role: .destructive) {
-                            viewModel.clearConnections()
+                            showingClearAllAlert = true
                         } label: {
                             Label("Clear All", systemImage: "trash")
                         }
@@ -75,6 +76,14 @@ struct SSEListView: View {
             }
             .sheet(isPresented: $showingFilters) {
                 SSEFiltersView(viewModel: viewModel)
+            }
+            .alert("Clear All SSE Connections", isPresented: $showingClearAllAlert) {
+                Button("Cancel", role: .cancel) {}
+                Button("Clear", role: .destructive) {
+                    viewModel.clearConnections()
+                }
+            } message: {
+                Text("Are you sure you want to clear all \(viewModel.connections.count) SSE connections? This action cannot be undone.")
             }
         }
     }

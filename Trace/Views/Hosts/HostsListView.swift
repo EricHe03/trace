@@ -19,6 +19,7 @@ struct HostsListView: View {
     @State private var filterStatus: FilterStatus = .all
     @State private var showingImport = false
     @State private var shareSheetItem: ShareSheetItem?
+    @State private var showingClearAllAlert = false
     @State private var toastMessage: String?
 
     enum FilterStatus: String, CaseIterable {
@@ -154,13 +155,11 @@ struct HostsListView: View {
                         Divider()
 
                         Button(role: .destructive) {
-                            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                                hostsManager.clearAll()
-                                showToast(message: "All entries cleared")
-                            }
+                            showingClearAllAlert = true
                         } label: {
                             Label("Clear All", systemImage: "trash")
                         }
+                        .disabled(hostsManager.entries.isEmpty)
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -184,6 +183,17 @@ struct HostsListView: View {
             }
             .shareSheet(item: $shareSheetItem)
             .toast(message: $toastMessage)
+            .alert("Clear All Host Entries", isPresented: $showingClearAllAlert) {
+                Button("Cancel", role: .cancel) {}
+                Button("Clear", role: .destructive) {
+                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+                        hostsManager.clearAll()
+                        showToast(message: "All entries cleared")
+                    }
+                }
+            } message: {
+                Text("Are you sure you want to clear all \(hostsManager.entries.count) host entries? This action cannot be undone.")
+            }
         }
     }
 

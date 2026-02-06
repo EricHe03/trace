@@ -22,6 +22,7 @@ struct NetworkView: View {
     @State private var showingRequestBuilder = false
     @State private var showingFavorites = false
     @State private var showingCurlImport = false
+    @State private var showingClearAllAlert = false
     @State private var showingVPNSetupAlert = false
     @State private var toastMessage: String?
     @State private var shareSheetItem: ShareSheetItem?
@@ -84,6 +85,14 @@ struct NetworkView: View {
                 sseViewModel: sseViewModel,
                 scheduleRebuild: scheduleEventRebuild
             ))
+            .alert("Clear All Network Activity", isPresented: $showingClearAllAlert) {
+                Button("Cancel", role: .cancel) {}
+                Button("Clear", role: .destructive) {
+                    clearAllData()
+                }
+            } message: {
+                Text("Are you sure you want to clear all captured requests, WebSocket connections, and SSE connections? This action cannot be undone.")
+            }
     }
 
     private var curlImportView: some View {
@@ -174,7 +183,7 @@ struct NetworkView: View {
                 onToggleFilters: { showingFilters = true },
                 onShowFavorites: { showingFavorites = true },
                 onShowCurlImport: { showingCurlImport = true },
-                onClearAll: clearAllData
+                onClearAll: { showingClearAllAlert = true }
             )
         }
         .overlay {

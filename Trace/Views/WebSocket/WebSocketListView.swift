@@ -12,6 +12,7 @@ import TraceUI
 struct WebSocketListView: View {
     @StateObject private var viewModel = WebSocketViewModel()
     @State private var showingFilters = false
+    @State private var showingClearAllAlert = false
     @State private var selectedConnection: WebSocketConnection?
 
     var body: some View {
@@ -52,7 +53,7 @@ struct WebSocketListView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button(role: .destructive) {
-                            viewModel.clearConnections()
+                            showingClearAllAlert = true
                         } label: {
                             Label("Clear All", systemImage: "trash")
                         }
@@ -75,6 +76,14 @@ struct WebSocketListView: View {
             }
             .sheet(isPresented: $showingFilters) {
                 WebSocketFiltersView(viewModel: viewModel)
+            }
+            .alert("Clear All WebSocket Connections", isPresented: $showingClearAllAlert) {
+                Button("Cancel", role: .cancel) {}
+                Button("Clear", role: .destructive) {
+                    viewModel.clearConnections()
+                }
+            } message: {
+                Text("Are you sure you want to clear all \(viewModel.connections.count) WebSocket connections? This action cannot be undone.")
             }
         }
     }

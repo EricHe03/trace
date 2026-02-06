@@ -19,6 +19,7 @@ struct ScriptListView: View {
     @State private var searchText = ""
     @State private var filterScriptType: ScriptType?
     @State private var showingImport = false
+    @State private var showingClearAllAlert = false
     @State private var toastMessage: String?
 
     var filteredScripts: [Script] {
@@ -131,11 +132,11 @@ struct ScriptListView: View {
                         Divider()
 
                         Button(role: .destructive) {
-                            scriptManager.clearAllScripts()
-                            showToast(message: "All scripts cleared")
+                            showingClearAllAlert = true
                         } label: {
                             Label("Clear All", systemImage: "trash")
                         }
+                        .disabled(scriptManager.scripts.isEmpty)
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -166,6 +167,15 @@ struct ScriptListView: View {
                 handleImport(result)
             }
             .toast(message: $toastMessage)
+            .alert("Clear All Scripts", isPresented: $showingClearAllAlert) {
+                Button("Cancel", role: .cancel) {}
+                Button("Clear", role: .destructive) {
+                    scriptManager.clearAllScripts()
+                    showToast(message: "All scripts cleared")
+                }
+            } message: {
+                Text("Are you sure you want to clear all \(scriptManager.scripts.count) scripts? This action cannot be undone.")
+            }
         }
     }
 
