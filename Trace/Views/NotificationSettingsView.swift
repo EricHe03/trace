@@ -12,6 +12,8 @@ import TraceUI
 struct NotificationSettingsView: View {
     @ObservedObject private var settings = NotificationSettings.shared
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
+    @State private var isRequestingPermission = false
+
     var body: some View {
         Form {
             // Permission Status Section
@@ -22,7 +24,22 @@ struct NotificationSettingsView: View {
                     Text(statusText)
                         .font(.subheadline)
                     Spacer()
-                    if notificationStatus == .denied {
+                    if notificationStatus == .notDetermined {
+                        Button {
+                            requestNotificationPermission()
+                        } label: {
+                            if isRequestingPermission {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text("Enable")
+                            }
+                        }
+                        .font(.caption)
+                        .disabled(isRequestingPermission)
+                        .accessibilityLabel("Enable notifications")
+                        .accessibilityHint("Shows the system permission alert for notifications")
+                    } else if notificationStatus == .denied {
                         Button("Open Settings") {
                             NotificationManager.shared.openNotificationSettings()
                         }
@@ -137,6 +154,23 @@ struct NotificationSettingsView: View {
         notificationStatus = await NotificationManager.shared.checkAuthorizationStatus()
     }
 
+    private func requestNotificationPermission() {
+        isRequestingPermission = true
+
+        Task {
+            do {
+                try await NotificationManager.shared.requestAuthorization()
+            } catch {
+                // If the request fails or is interrupted, status refresh reflects current state.
+            }
+
+            await checkNotificationStatus()
+            await MainActor.run {
+                isRequestingPermission = false
+            }
+        }
+    }
+
     private var statusIcon: String {
         switch notificationStatus {
         case .authorized, .provisional:
@@ -174,7 +208,7 @@ struct NotificationSettingsView: View {
         case .denied:
             return "Notifications Disabled"
         case .notDetermined:
-            return "Permission Not Requested"
+            return "Notifications Not Enabled"
         case .provisional:
             return "Provisional Authorization"
         case .ephemeral:
@@ -191,7 +225,7 @@ struct NotificationSettingsView: View {
         case .denied:
             return "Notifications are disabled. Open Settings to enable them."
         case .notDetermined:
-            return "Permission will be requested when the app launches."
+            return "Trace requests notification permission only after you tap Enable."
         case .provisional:
             return "Notifications are delivered quietly (provisional authorization). You can change delivery style in Settings."
         case .ephemeral:
