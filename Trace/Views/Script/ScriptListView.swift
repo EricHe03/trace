@@ -116,8 +116,6 @@ struct ScriptListView: View {
                             Label("Load Template", systemImage: "doc.text")
                         }
 
-                        Divider()
-
                         Button {
                             showingImport = true
                         } label: {

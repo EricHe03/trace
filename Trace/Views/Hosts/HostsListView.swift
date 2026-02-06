@@ -119,8 +119,6 @@ struct HostsListView: View {
                             Label("Add Entry", systemImage: "plus")
                         }
 
-                        Divider()
-
                         Button {
                             showingImport = true
                         } label: {

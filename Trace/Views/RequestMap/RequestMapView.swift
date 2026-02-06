@@ -126,8 +126,6 @@ struct RequestMapView: View {
                             Label("Add Map", systemImage: "plus")
                         }
 
-                        Divider()
-
                         Button {
                             showingImport = true
                         } label: {
