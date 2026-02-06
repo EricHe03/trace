@@ -27,13 +27,17 @@ enum GzipWrapper {
 
         // FNAME
         if flags & 0x08 != 0 {
-            while index < data.count, data[index] != 0 { index += 1 }
+            while index < data.count, data[index] != 0 {
+                index += 1
+            }
             index += 1
         }
 
         // FCOMMENT
         if flags & 0x10 != 0 {
-            while index < data.count, data[index] != 0 { index += 1 }
+            while index < data.count, data[index] != 0 {
+                index += 1
+            }
             index += 1
         }
 
@@ -49,4 +53,3 @@ enum GzipWrapper {
         return data.subdata(in: deflatedRange)
     }
 }
-

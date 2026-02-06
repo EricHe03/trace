@@ -51,9 +51,9 @@ public enum RegexMatcher {
         // spawning background work that would continue after returning.
         switch safeMatchDetailed(pattern: pattern, in: value, caseSensitive: caseSensitive) {
         case let .success(matched):
-            return matched
+            matched
         case .failure:
-            return false
+            false
         }
     }
 }

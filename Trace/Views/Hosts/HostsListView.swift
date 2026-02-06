@@ -184,9 +184,7 @@ struct HostsListView: View {
             ) { result in
                 handleImport(result: result)
             }
-            .sheet(item: $shareSheetItem) { item in
-                ShareSheetContainer(items: item.items)
-            }
+            .shareSheet(item: $shareSheetItem)
             .toast(message: $toastMessage)
         }
     }

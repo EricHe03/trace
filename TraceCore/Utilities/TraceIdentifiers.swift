@@ -55,4 +55,3 @@ public enum OnboardingState {
         UserDefaults.standard.bool(forKey: TraceUserDefaultsKey.hasCompletedOnboarding)
     }
 }
-

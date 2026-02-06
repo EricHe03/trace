@@ -146,9 +146,7 @@ struct UDPFlowDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
-        .sheet(item: $shareSheetItem) { item in
-            ShareSheetContainer(items: item.items)
-        }
+        .shareSheet(item: $shareSheetItem)
         .toast(message: $toastMessage)
     }
 
