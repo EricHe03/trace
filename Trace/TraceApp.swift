@@ -133,6 +133,31 @@ struct TraceApp: App {
         guard url.scheme == "trace" else { return }
 
         switch url.host {
+        case "capture":
+            NotificationCenter.default.post(
+                name: .openTab,
+                object: nil,
+                userInfo: ["tab": "network"]
+            )
+        case "tools":
+            NotificationCenter.default.post(
+                name: .openTab,
+                object: nil,
+                userInfo: ["tab": "tools"]
+            )
+        case "settings":
+            NotificationCenter.default.post(
+                name: .openTab,
+                object: nil,
+                userInfo: ["tab": "settings"]
+            )
+        case "favorites":
+            NotificationCenter.default.post(
+                name: .openTab,
+                object: nil,
+                userInfo: ["tab": "network"]
+            )
+            NotificationCenter.default.post(name: .showFavorites, object: nil)
         case "lastSession":
             if let lastSession = viewModel.sessions.first {
                 viewModel.selectedSession = lastSession
