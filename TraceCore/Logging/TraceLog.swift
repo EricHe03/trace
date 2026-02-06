@@ -481,30 +481,32 @@ public extension Logger {
     /// Logs a structured event at info level.
     @inlinable
     func info(_ event: LogEvent) {
-        info("\(event.description)")
+        // Rationale: `LogEvent.description` is a runtime string, which OSLog treats as private by default.
+        // `LogEvent` already applies its own privacy policy (public/hash/redacted) within `description`.
+        info("\(event.description, privacy: .public)")
     }
 
     /// Logs a structured event at debug level.
     @inlinable
     func debug(_ event: LogEvent) {
-        debug("\(event.description)")
+        debug("\(event.description, privacy: .public)")
     }
 
     /// Logs a structured event at warning level (OSLog .default).
     @inlinable
     func warning(_ event: LogEvent) {
-        warning("\(event.description)")
+        warning("\(event.description, privacy: .public)")
     }
 
     /// Logs a structured event at error level.
     @inlinable
     func error(_ event: LogEvent) {
-        error("\(event.description)")
+        error("\(event.description, privacy: .public)")
     }
 
     /// Logs a structured event at fault level.
     @inlinable
     func fault(_ event: LogEvent) {
-        fault("\(event.description)")
+        fault("\(event.description, privacy: .public)")
     }
 }

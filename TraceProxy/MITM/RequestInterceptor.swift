@@ -541,6 +541,20 @@ public actor RequestInterceptor {
         let simulationActions = simulationActions(for: modifiedRequest, type: .modifyResponse, target: .response)
         _ = await applyNetworkSimulation(actions: simulationActions, request: &modifiedRequest, target: .response)
 
+        // QUIC hardening: prevent HTTP/3 upgrades when QUIC is blocked.
+        if await HardeningConfig.shared.blockQUIC,
+           modifiedRequest.url.lowercased().hasPrefix("https://") {
+            let hadAltSvc = modifiedRequest.responseHeaders.contains { $0.key.lowercased() == "alt-svc" }
+            modifiedRequest.responseHeaders.removeAll { $0.key.lowercased() == "alt-svc" }
+            modifiedRequest.responseHeaders.append(TraceHTTPHeader(key: "Alt-Svc", value: "clear"))
+
+            if debugLoggingEnabled || (hadAltSvc && logSampler.shouldLog(key: "hardening.alt_svc_clear", first: 5, every: 500)) {
+                ProxyLog.interceptor.info(
+                    "event=hardening.alt_svc_clear outcome=success had_alt_svc=\(hadAltSvc) url=\(modifiedRequest.url, privacy: .private(mask: .hash)) request_id=\(flowIdString, privacy: .public)"
+                )
+            }
+        }
+
         // Phase 10: Breakpoint (Response)
         let breakpointStart = DispatchTime.now()
         var didPauseForResponseBreakpoint = false

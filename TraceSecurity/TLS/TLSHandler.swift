@@ -75,10 +75,74 @@ public class TLSHandler {
     public static let supportedALPNProtocols: [String] = ["h2", "http/1.1"]
 
     private nonisolated(unsafe) static var certificateCache: [String: CachedCertificate] = [:]
+    private struct LeafTrustPreflight: Sendable {
+        let ok: Bool
+        let detail: String?
+        let expiresAt: Date
+    }
+
+    // Rationale: Leaf trust evaluation can be moderately expensive; cache results briefly to avoid
+    // repeating evaluations during bursts of CONNECTs to the same host.
+    private nonisolated(unsafe) static var leafTrustPreflightCache: [String: LeafTrustPreflight] = [:]
+    private static let leafTrustPreflightTTL: TimeInterval = 10 * 60
     private static let cacheQueue = DispatchQueue(label: "com.trace.tls.cache", attributes: .concurrent)
     public static let certificateLifetime: TimeInterval = 3600
 
     // MARK: - TLS Server (for client connections)
+
+    /// Preflights whether we should bypass MITM for a domain based on local leaf trust evaluation.
+    ///
+    /// Discussion:
+    /// Some domains (notably those with system-level pinning requirements) will never accept a
+    /// user-installed Root CA. When we detect that our generated leaf fails trust evaluation,
+    /// we should bypass MITM early (before performing expensive upstream TLS handshakes) and
+    /// fall back to a passthrough tunnel.
+    ///
+    /// - Returns: A failure detail string (e.g. `leaf_trust_failed:...`) when MITM should be bypassed.
+    ///            Returns `nil` when MITM can proceed.
+    public static func preflightServerLeafTrust(for domain: String) -> String? {
+        guard !domain.isEmpty else { return "leaf_trust_empty_domain" }
+
+        if let cached = getLeafTrustPreflight(for: domain) {
+            if cached.ok {
+                setLastServerTLSOptionsError(nil)
+                return nil
+            }
+            let detail = cached.detail ?? "leaf_trust_failed:unknown"
+            setLastServerTLSOptionsError(detail)
+            return detail
+        }
+
+        setLastServerTLSOptionsError(nil)
+
+        if let cached = getCachedCertificate(for: domain), !cached.isExpired {
+            if debugValidateLeafCertificate(certificate: cached.certificate, domain: domain) {
+                setLeafTrustPreflight(ok: true, detail: nil, for: domain)
+                return nil
+            }
+            let detail = lastServerTLSOptionsError() ?? "leaf_trust_failed:unknown"
+            setLeafTrustPreflight(ok: false, detail: detail, for: domain)
+            return detail
+        }
+
+        do {
+            let (certificate, privateKey) = try CertificateManager.shared.generateCertificateForDomain(domain)
+            let ok = debugValidateLeafCertificate(certificate: certificate, domain: domain)
+            if ok {
+                cacheCertificate(certificate: certificate, privateKey: privateKey, for: domain)
+                setLeafTrustPreflight(ok: true, detail: nil, for: domain)
+                return nil
+            }
+            let detail = lastServerTLSOptionsError() ?? "leaf_trust_failed:unknown"
+            setLeafTrustPreflight(ok: false, detail: detail, for: domain)
+            return detail
+        } catch {
+            let message = "leaf_trust_failed:certificate_generate_failed:\(String(describing: error))"
+            setLastServerTLSOptionsError(message)
+            setLeafTrustPreflight(ok: false, detail: message, for: domain)
+            return message
+        }
+    }
 
     /// Creates TLS options for accepting client connections.
     /// Uses our generated certificate for the target domain (with caching).
@@ -105,7 +169,26 @@ public class TLSHandler {
                 )
 
                 // Rationale: Root CA trust can change, so revalidate cached leafs before reuse.
-                let leafTrustOK = debugValidateLeafCertificate(certificate: cached.certificate, domain: domain)
+                // Optimization: Use a short-lived preflight cache to avoid repeating trust evaluation during bursts.
+                let leafTrustOK: Bool
+                if let preflight = getLeafTrustPreflight(for: domain) {
+                    if preflight.ok {
+                        leafTrustOK = true
+                    } else {
+                        let detail = preflight.detail ?? "leaf_trust_failed:unknown"
+                        setLastServerTLSOptionsError(detail)
+                        leafTrustOK = false
+                    }
+                } else {
+                    let ok = debugValidateLeafCertificate(certificate: cached.certificate, domain: domain)
+                    if ok {
+                        setLeafTrustPreflight(ok: true, detail: nil, for: domain)
+                    } else {
+                        let detail = lastServerTLSOptionsError() ?? "leaf_trust_failed:unknown"
+                        setLeafTrustPreflight(ok: false, detail: detail, for: domain)
+                    }
+                    leafTrustOK = ok
+                }
                 if !leafTrustOK {
                     if warningThrottle.shouldLog(key: "tls.leaf_trust.failure.\(domain)", minInterval: 30) {
                         SecurityLog.tls.warning(
@@ -162,10 +245,13 @@ public class TLSHandler {
                             .with("action", value: "bypass_mitm")
                     )
                 }
+                let detail = lastServerTLSOptionsError() ?? "leaf_trust_failed:unknown"
+                setLeafTrustPreflight(ok: false, detail: detail, for: domain)
                 return nil
             }
 
             cacheCertificate(certificate: certificate, privateKey: privateKey, for: domain)
+            setLeafTrustPreflight(ok: true, detail: nil, for: domain)
             sampledDebug(
                 key: "tls.cache_store.\(domain)",
                 event: LogEvent.tls("cache_store")
@@ -423,6 +509,28 @@ public class TLSHandler {
         }
     }
 
+    private static func getLeafTrustPreflight(for domain: String) -> LeafTrustPreflight? {
+        let key = domain.lowercased()
+        let now = Date()
+        return cacheQueue.sync {
+            guard let entry = leafTrustPreflightCache[key] else { return nil }
+            guard entry.expiresAt > now else { return nil }
+            return entry
+        }
+    }
+
+    private static func setLeafTrustPreflight(ok: Bool, detail: String?, for domain: String) {
+        let key = domain.lowercased()
+        let entry = LeafTrustPreflight(
+            ok: ok,
+            detail: detail,
+            expiresAt: Date().addingTimeInterval(leafTrustPreflightTTL)
+        )
+        cacheQueue.async(flags: .barrier) {
+            leafTrustPreflightCache[key] = entry
+        }
+    }
+
     private static func cacheCertificate(certificate: SecCertificate, privateKey: SecKey, for domain: String) {
         cacheQueue.async(flags: .barrier) {
             certificateCache[domain] = CachedCertificate(
@@ -467,7 +575,11 @@ public class TLSHandler {
 
     /// Creates TLS options for connecting to upstream servers.
     /// - Important: Uses system trust evaluation without pinning.
-    public static func createClientTLSOptions(for domain: String, alpnProtocols: [String]? = nil) -> NWProtocolTLS.Options {
+    public static func createClientTLSOptions(
+        for domain: String,
+        alpnProtocols: [String]? = nil,
+        onTrustFailure: (@Sendable (_ domain: String, _ errorDescription: String, _ errorCode: Int) -> Void)? = nil
+    ) -> NWProtocolTLS.Options {
         if TLSLog.verboseEnabled {
             SecurityLog.tls.debug(
                 "event=tls.client_options outcome=pending domain=\(domain, privacy: .private(mask: .hash))"
@@ -531,6 +643,7 @@ public class TLSHandler {
                     } else {
                         let errorDesc = (error as Error?)?.localizedDescription ?? "unknown error"
                         let errorCode = (error as Error?)?._code ?? -1
+                        onTrustFailure?(domain, errorDesc, errorCode)
                         if warningThrottle.shouldLog(key: "tls.verify_server.failure.\(domain)", minInterval: 30) {
                             SecurityLog.tls.warning("event=tls.verify_server outcome=failure domain=\(domain, privacy: .private(mask: .hash)) error=\(errorDesc) code=\(errorCode)")
                             SecurityLog.tls.error("event=tls.verify_server action=reject domain=\(domain, privacy: .private(mask: .hash))")

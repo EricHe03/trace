@@ -31,7 +31,7 @@ struct CaptureSettingsView: View {
             }
 
             if config.captureMode == .fullTunnel {
-                Section("SOCKS5 Forwarder") {
+                Section("SOCKS5 Forwarder (Optional)") {
                     TextField("Host", text: $config.fullTunnelSocks5Host)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -42,7 +42,7 @@ struct CaptureSettingsView: View {
                         .accessibilityLabel("SOCKS5 port")
 
                     Label {
-                        Text("Full-tunnel mode forwards all device traffic to the configured SOCKS5 server. Only use a server you trust.")
+                        Text("Leave host empty to use Trace's built-in local SOCKS5 server. Set host and port only when using an external SOCKS5 server.")
                     } icon: {
                         Image(systemName: "exclamationmark.shield.fill")
                     }
@@ -64,7 +64,7 @@ struct CaptureSettingsView: View {
                     Toggle("Enable IPv6", isOn: $config.fullTunnelIPv6Enabled)
                         .accessibilityLabel("Enable IPv6")
 
-                    Text("Disable only if your SOCKS5 server or upstream network does not support IPv6.")
+                    Text("Disable only if your SOCKS5 path does not support IPv6.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -78,7 +78,7 @@ struct CaptureSettingsView: View {
                     .pickerStyle(.segmented)
                     .accessibilityLabel("UDP forwarding mode")
 
-                    Text("HEV-only sends all UDP through the SOCKS5 tunnel. Split forwards UDP/443 via HEV and other UDP directly.")
+                    Text("HEV-only sends all UDP through the active SOCKS5 tunnel. Split forwards UDP/443 via HEV and other UDP directly.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -131,23 +131,29 @@ struct CaptureSettingsView: View {
         guard !isSaving else { return }
 
         let trimmedHost = config.fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPortText = socksPortText.trimmingCharacters(in: .whitespacesAndNewlines)
         var updated = config
 
         if config.captureMode == .fullTunnel {
-            guard !trimmedHost.isEmpty else {
-                if showErrors {
-                    toastMessage = "Enter a SOCKS5 host for full-tunnel mode."
-                }
-                return
-            }
-            guard let port = UInt16(socksPortText), port > 0 else {
-                if showErrors {
-                    toastMessage = "Enter a valid SOCKS5 port (1-65535)."
-                }
-                return
-            }
             updated.fullTunnelSocks5Host = trimmedHost
-            updated.fullTunnelSocks5Port = port
+            if trimmedPortText.isEmpty {
+                updated.fullTunnelSocks5Port = 0
+            } else {
+                guard let port = UInt16(trimmedPortText), port > 0 else {
+                    if showErrors {
+                        toastMessage = "Enter a valid SOCKS5 port (1-65535)."
+                    }
+                    return
+                }
+                updated.fullTunnelSocks5Port = port
+            }
+
+            if !trimmedHost.isEmpty, updated.fullTunnelSocks5Port == 0 {
+                if showErrors {
+                    toastMessage = "Enter a SOCKS5 port for the custom host."
+                }
+                return
+            }
         }
 
         isSaving = true
