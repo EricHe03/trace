@@ -94,7 +94,7 @@ struct SSEDetailView: View {
             }
         }
         .sheet(item: $selectedEvent) { event in
-            SSEEventDetailSheet(event: event)
+            SSEEventDetailView(event: event)
         }
         .sheet(isPresented: $showingFilters) {
             SSEEventFiltersView(
@@ -117,9 +117,9 @@ struct SSEDetailView: View {
         // Apply search filter
         if !searchText.isEmpty {
             filtered = filtered.filter { event in
-                event.data.localizedCaseInsensitiveContains(searchText) ||
-                    event.eventType?.localizedCaseInsensitiveContains(searchText) == true ||
-                    event.eventId?.localizedCaseInsensitiveContains(searchText) == true
+                event.data.localizedStandardContains(searchText) ||
+                    event.eventType?.localizedStandardContains(searchText) == true ||
+                    event.eventId?.localizedStandardContains(searchText) == true
             }
         }
 
@@ -160,6 +160,21 @@ struct SSEDetailView: View {
 
     private func formattedDuration(_ duration: TimeInterval) -> String {
         DesignSystem.formattedDuration(duration)
+    }
+}
+
+/// Resolves a live SSE connection snapshot from the shared view model to avoid stale detail data.
+struct LiveSSEDetailView: View {
+    let connectionID: UUID
+    let fallbackConnection: SSEConnection
+    @ObservedObject var viewModel: SSEViewModel
+
+    private var resolvedConnection: SSEConnection {
+        viewModel.connections.first(where: { $0.id == connectionID }) ?? fallbackConnection
+    }
+
+    var body: some View {
+        SSEDetailView(connection: resolvedConnection)
     }
 }
 
@@ -208,95 +223,6 @@ struct SSEConnectionEventRow: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, DesignSystem.Spacing.xs)
-    }
-}
-
-struct SSEEventDetailSheet: View {
-    let event: ServerSentEvent
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: DesignSystem.Spacing.lg) {
-                    // Metadata
-                    GroupBox("Metadata") {
-                        VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-                            if let eventType = event.eventType {
-                                HStack {
-                                    Text("Event Type:")
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Text(eventType)
-                                        .fontWeight(.medium)
-                                }
-
-                                Divider()
-                            }
-
-                            if let eventId = event.eventId {
-                                HStack {
-                                    Text("Event ID:")
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Text(eventId)
-                                        .fontWeight(.medium)
-                                }
-
-                                Divider()
-                            }
-
-                            HStack {
-                                Text("Size:")
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text(event.sizeString)
-                                    .fontWeight(.medium)
-                            }
-
-                            Divider()
-
-                            HStack {
-                                Text("Timestamp:")
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text(event.timestamp, format: .dateTime)
-                                    .fontWeight(.medium)
-                            }
-
-                            if let retry = event.retry {
-                                Divider()
-                                HStack {
-                                    Text("Retry:")
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Text("\(retry) ms")
-                                        .fontWeight(.medium)
-                                }
-                            }
-                        }
-                    }
-
-                    // Data
-                    GroupBox("Data") {
-                        Text(event.data)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .padding()
-            }
-            .navigationTitle("Event Details")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
-        }
     }
 }
 

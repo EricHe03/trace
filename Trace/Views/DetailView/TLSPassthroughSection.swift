@@ -15,17 +15,10 @@ struct TLSPassthroughSection: View {
 
     var body: some View {
         if request.isTLSPassthrough {
-            VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
-                // Header
-                HStack {
-                    Image(systemName: request.isPinningLikely ? "lock.shield" : "lock.open")
-                        .foregroundStyle(request.isPinningLikely ? DesignSystem.Colors.danger : DesignSystem.Colors.warning)
-                        .accessibilityHidden(true)
-                    Text(request.isPinningLikely ? "Certificate Pinning Detected" : "TLS Not Decrypted")
-                        .font(.headline)
-                }
-
-                // Explanation
+            SectionCard(
+                title: request.isPinningLikely ? "Certificate Pinning Detected" : "TLS Not Decrypted",
+                systemImage: request.isPinningLikely ? "lock.shield" : "lock.open"
+            ) {
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
                     if request.isPinningLikely {
                         explanationText(
@@ -48,7 +41,6 @@ struct TLSPassthroughSection: View {
                             description: request.tlsPassthroughReason ?? "HTTPS decryption was bypassed for this request."
                         )
 
-                        // Possible reasons
                         Text("Possible reasons:")
                             .font(.subheadline)
                             .fontWeight(.medium)
@@ -64,12 +56,10 @@ struct TLSPassthroughSection: View {
                         .padding(.leading, DesignSystem.Spacing.sm)
                     }
                 }
+                .padding(DesignSystem.Spacing.md)
+                .background((request.isPinningLikely ? DesignSystem.Colors.danger : DesignSystem.Colors.warning).opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
             }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.lg)
-                    .fill((request.isPinningLikely ? DesignSystem.Colors.danger : DesignSystem.Colors.warning).opacity(0.1))
-            )
         }
     }
 

@@ -84,10 +84,9 @@ struct SSEConnectionRow: View {
     let connection: SSEConnection
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignSystem.Spacing.smPlus) {
-            HStack {
-                Text(connection.status.displayName)
-                    .badgeStyle(backgroundColor: statusColor)
+        VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
+            HStack(spacing: DesignSystem.Spacing.smPlus) {
+                statusBadge(text: connection.status.displayName, background: statusColor)
 
                 Text("\(connection.eventCount) events")
                     .font(.caption)
@@ -95,13 +94,13 @@ struct SSEConnectionRow: View {
 
                 if connection.isTruncated {
                     Text("TRUNCATED")
-                        .font(.caption)
+                        .font(DesignSystem.Badge.font)
+                        .fontWeight(DesignSystem.Badge.fontWeight)
                         .foregroundStyle(.primary)
                         .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
                         .padding(.vertical, DesignSystem.Badge.verticalPadding)
-                        .frame(minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget)
                         .background(DesignSystem.Colors.warning.opacity(0.15))
-                        .cornerRadius(DesignSystem.Badge.cornerRadius)
+                        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
                 }
 
                 Spacer()
@@ -118,15 +117,15 @@ struct SSEConnectionRow: View {
                 .lineLimit(2)
 
             HStack {
-                Text(connection.startTime, style: .relative) + Text(" ago")
+                Text(connection.startTime, style: .relative)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.tertiary)
 
                 Spacer()
 
                 Text(connection.totalBytesString)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.vertical, DesignSystem.Spacing.rowVertical)
@@ -136,6 +135,17 @@ struct SSEConnectionRow: View {
 
     private var statusColor: Color {
         DesignSystem.Colors.statusColor(for: connection.status.color)
+    }
+
+    private func statusBadge(text: String, background: Color) -> some View {
+        Text(text)
+            .font(DesignSystem.Badge.font)
+            .fontWeight(DesignSystem.Badge.fontWeight)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(background)
+            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
     }
 }
 

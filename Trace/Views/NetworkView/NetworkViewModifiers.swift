@@ -44,17 +44,23 @@ struct EventRebuildModifier: ViewModifier {
     let scheduleRebuild: () -> Void
 
     func body(content: Content) -> some View {
-        let filteredRequestIds = viewModel.filteredRequests.map(\.id)
-        let webSocketIds = webSocketViewModel.connections.map(\.id)
-        let sseConnectionIds = sseViewModel.connections.map(\.id)
+        let requestSignatures = viewModel.filteredRequests.map {
+            "\($0.id.uuidString):\($0.statusCode ?? -1):\($0.duration):\($0.responseSize ?? -1)"
+        }
+        let webSocketSignatures = webSocketViewModel.connections.map {
+            "\($0.id.uuidString):\($0.status.rawValue):\($0.messageCount):\($0.endTime?.timeIntervalSince1970 ?? -1)"
+        }
+        let sseConnectionSignatures = sseViewModel.connections.map {
+            "\($0.id.uuidString):\($0.status.rawValue):\($0.eventCount):\($0.totalBytesReceived):\($0.isTruncated):\($0.endTime?.timeIntervalSince1970 ?? -1)"
+        }
 
-        let step1 = content.onChangeCompat(of: filteredRequestIds) {
+        let step1 = content.onChangeCompat(of: requestSignatures) {
             scheduleRebuild()
         }
-        let step2 = step1.onChangeCompat(of: webSocketIds) {
+        let step2 = step1.onChangeCompat(of: webSocketSignatures) {
             scheduleRebuild()
         }
-        let step3 = step2.onChangeCompat(of: sseConnectionIds) {
+        let step3 = step2.onChangeCompat(of: sseConnectionSignatures) {
             scheduleRebuild()
         }
         let step4 = step3.onChangeCompat(of: viewModel.searchText) {

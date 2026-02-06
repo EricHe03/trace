@@ -37,7 +37,7 @@ struct NetworkEventRow<ContextMenu: View>: View {
             }
 
         case let .sse(connection):
-            NavigationLink(destination: SSEDetailView(connection: connection)) {
+            NavigationLink(destination: LiveSSEDetailView(connectionID: connection.id, fallbackConnection: connection, viewModel: sseViewModel)) {
                 SSEConnectionRow(connection: connection)
             }
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {

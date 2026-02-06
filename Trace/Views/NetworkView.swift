@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import OSLog
 import TraceCore
 import TraceFeatures
 import TraceUI
@@ -108,6 +109,7 @@ struct NetworkView: View {
     }
 
     private func performInitialLoad() async {
+        FeatureLog.capture.info("event=network_view.perform_initial_load outcome=start has_loaded=\(self.hasLoaded, privacy: .public)")
         if !hasLoaded {
             await loadAllData()
             hasLoaded = true
@@ -248,9 +250,11 @@ struct NetworkView: View {
     // MARK: - Data Loading
 
     private func loadAllData() async {
+        FeatureLog.capture.info("event=network_view.load_all_data outcome=start")
         await viewModel.reloadRequests()
         await webSocketViewModel.loadConnections()
         await sseViewModel.loadConnections()
+        FeatureLog.capture.info("event=network_view.load_all_data outcome=complete")
     }
 
     // MARK: - Computed Properties
