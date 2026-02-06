@@ -489,6 +489,8 @@ public class ProxyConnection: @unchecked Sendable {
     private var pauseClientReads = false
     private var isHandingOffToTLS = false
     private var isPassthroughTunnel = false
+    private var passthroughBytesClientToServer: UInt64 = 0
+    private var passthroughBytesServerToClient: UInt64 = 0
     private var targetHost: String?
     private var targetPort: UInt16 = 80
     private var webSocketHandler: WebSocketHandler?
@@ -679,7 +681,7 @@ public class ProxyConnection: @unchecked Sendable {
             let hasTlsProxy = self.tlsProxyConnection != nil
             let hasServerConn = self.serverConnection != nil
             ProxyLog.mitm.info(
-                "event=proxy.connection_close_begin host=\(host, privacy: .private(mask: .hash)) has_tls_proxy=\(hasTlsProxy) has_server_conn=\(hasServerConn) is_https=\(self.isHTTPS) is_passthrough=\(self.isPassthroughTunnel)"
+                "event=proxy.connection_close_begin host=\(host, privacy: .private(mask: .hash)) has_tls_proxy=\(hasTlsProxy) has_server_conn=\(hasServerConn) is_https=\(self.isHTTPS) is_passthrough=\(self.isPassthroughTunnel) connection_id=\(self.connectionId) passthrough_bytes_up=\(self.passthroughBytesClientToServer) passthrough_bytes_down=\(self.passthroughBytesServerToClient)"
             )
 
             self.tlsProxyConnection?.close()
@@ -817,6 +819,7 @@ public class ProxyConnection: @unchecked Sendable {
 
             let tlsProxy = TLSProxyConnection(
                 clientConnection: self.clientConnection,
+                connectionId: self.connectionId,
                 targetHost: sniHost,
                 targetPort: 443,
                 upstreamHost: upstreamHost,
@@ -1093,6 +1096,31 @@ public class ProxyConnection: @unchecked Sendable {
                 }
 
                 if allowMITM {
+                    let preflightStart = CFAbsoluteTimeGetCurrent()
+                    if let detail = TLSHandler.preflightServerLeafTrust(for: targetHost) {
+                        let preflightMs = Int((CFAbsoluteTimeGetCurrent() - preflightStart) * 1000)
+                        let reason = "tls_server_tls_options_create_failed:\(detail)"
+                        ProxyLog.mitm.info(
+                            "event=proxy.mitm_bypass outcome=skipped host=\(targetHost, privacy: .private(mask: .hash)) port=\(self.targetPort) mode=connect preflight_ms=\(preflightMs) reason=\(reason, privacy: .public)"
+                        )
+                        Task { await ProxyNetworkMetrics.shared.recordMITMBypassed() }
+                        let targetHash = LogRedaction.hash(targetHost)
+                        self.eventLog?.append(
+                            type: "mitm_bypass",
+                            msg: "\(targetHash):\(self.targetPort) reason=\(reason)"
+                        )
+                        self.maybeRecordMITMAutoBypass(host: targetHost, reason: reason)
+                        self.emitNotDecryptableTLSRequest(
+                            host: targetHost,
+                            port: self.targetPort,
+                            reason: "CONNECT \(reason)"
+                        )
+                        self.startPassthroughTunnel(host: targetHost, port: self.targetPort, initialData: remainingData)
+                        return
+                    }
+                }
+
+                if allowMITM {
                     ProxyLog.mitm.info(
                         "event=proxy.mitm_start outcome=pending host=\(targetHost, privacy: .private(mask: .hash)) port=\(self.targetPort) mode=connect"
                     )
@@ -1120,6 +1148,7 @@ public class ProxyConnection: @unchecked Sendable {
 
                     let tlsProxy = TLSProxyConnection(
                         clientConnection: self.clientConnection,
+                        connectionId: self.connectionId,
                         targetHost: targetHost,
                         targetPort: self.targetPort,
                         upstreamHost: upstreamHost,
@@ -1274,6 +1303,7 @@ public class ProxyConnection: @unchecked Sendable {
                 self.eventLog?.append(type: "passthrough_ready", msg: "\(capturedHash):\(capturedPort)")
                 if !initialData.isEmpty {
                     ProxyLog.mitm.debug("event=proxy.passthrough_send_initial host=\(capturedHost, privacy: .private(mask: .hash)) bytes=\(initialData.count)")
+                    self.passthroughBytesClientToServer += UInt64(initialData.count)
                     self.sendToServer(initialData, completion: .contentProcessed { _ in })
                 }
                 self.pipeClientToServer()
@@ -1310,11 +1340,23 @@ public class ProxyConnection: @unchecked Sendable {
             guard let self else { return }
             guard !self.isClosed else { return }
             if let error {
+                if self.isRetryableStreamReadError(error) {
+                    if self.logThrottle.shouldLog(key: "proxy.passthrough_client_read.retry.\(self.connectionId)", minInterval: 5) {
+                        ProxyLog.mitm.debug(
+                            "event=proxy.passthrough_client_read outcome=retry reason=transient_error error=\(error.localizedDescription, privacy: .public)"
+                        )
+                    }
+                    self.queue.asyncAfter(deadline: .now() + 0.02) { [weak self] in
+                        self?.pipeClientToServer()
+                    }
+                    return
+                }
                 ProxyLog.mitm.error("event=proxy.passthrough_client_read outcome=failure error=\(error.localizedDescription, privacy: .public)")
                 self.close()
                 return
             }
             if let data, !data.isEmpty {
+                self.passthroughBytesClientToServer += UInt64(data.count)
                 self.sendToServer(data, completion: .contentProcessed { _ in })
             }
             if isComplete {
@@ -1331,11 +1373,23 @@ public class ProxyConnection: @unchecked Sendable {
             guard let self else { return }
             guard !self.isClosed else { return }
             if let error {
+                if self.isRetryableStreamReadError(error) {
+                    if self.logThrottle.shouldLog(key: "proxy.passthrough_server_read.retry.\(self.connectionId)", minInterval: 5) {
+                        ProxyLog.mitm.debug(
+                            "event=proxy.passthrough_server_read outcome=retry reason=transient_error error=\(error.localizedDescription, privacy: .public)"
+                        )
+                    }
+                    self.queue.asyncAfter(deadline: .now() + 0.02) { [weak self] in
+                        self?.pipeServerToClient()
+                    }
+                    return
+                }
                 ProxyLog.mitm.error("event=proxy.passthrough_server_read outcome=failure error=\(error.localizedDescription, privacy: .public)")
                 self.close()
                 return
             }
             if let data, !data.isEmpty {
+                self.passthroughBytesServerToClient += UInt64(data.count)
                 self.sendToClient(data, completion: .contentProcessed { _ in })
             }
             if isComplete {
@@ -1344,6 +1398,14 @@ public class ProxyConnection: @unchecked Sendable {
                 self.pipeServerToClient()
             }
         }
+    }
+
+    /// Network.framework can surface transient POSIX stream-read errors while the socket remains usable.
+    /// Treat these as retryable to avoid tearing down fallback passthrough connections prematurely.
+    private func isRetryableStreamReadError(_ error: Error) -> Bool {
+        guard let nwError = error as? NWError else { return false }
+        guard case let .posix(code) = nwError else { return false }
+        return code == .ENODATA || code == .EAGAIN || code == .EINTR
     }
 
     private func handleHTTPSData() {
@@ -3293,6 +3355,21 @@ public class ProxyConnection: @unchecked Sendable {
 
         // Rule: Do not auto-bypass when the likely cause is user/device trust configuration.
         if r.contains("ca_not_trusted") {
+            return
+        }
+
+        let isUpstreamTrustFailure =
+            r.contains("tls_upstream_hostname_mismatch") ||
+            r.contains("tls_upstream_trust_failed")
+
+        if isUpstreamTrustFailure {
+            let normalized = r.contains("hostname_mismatch")
+                ? "upstream hostname mismatch"
+                : "upstream trust failure"
+            MITMAutoBypassCache.shared.record(host: host, reason: normalized)
+            ProxyLog.mitm.info("event=proxy.mitm_auto_bypass outcome=success host=\(host, privacy: .private(mask: .hash)) reason=\(normalized, privacy: .public)")
+            let hostHash = LogRedaction.hash(host)
+            eventLog?.append(type: "mitm_auto_bypass", msg: "\(hostHash) reason=\(normalized)")
             return
         }
 

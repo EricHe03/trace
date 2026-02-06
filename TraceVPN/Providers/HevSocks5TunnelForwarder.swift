@@ -322,7 +322,10 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         let host = NWEndpoint.Host(socks5Host)
         let parameters = NWParameters.tcp
         let connection = NWConnection(host: host, port: port, using: parameters)
-        let queue = tunnelQueue
+        // Important: Use a separate queue from `tunnelQueue`.
+        // `tunnelQueue` runs `hev_socks5_tunnel_main_from_str` which is a long-running blocking call,
+        // so using it here would prevent state updates and timeouts from firing.
+        let queue = DispatchQueue(label: "com.trace.vpn.socks5_udp_probe", qos: .utility)
         let timeout = DispatchSource.makeTimerSource(queue: queue)
         var completed = false
         let finish: @Sendable (Socks5UDPSupport) -> Void = { supported in

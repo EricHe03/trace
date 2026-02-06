@@ -190,6 +190,68 @@ final class PacketTunnelProviderTests: XCTestCase {
         XCTAssertTrue(settings.tunnelEnabled)
     }
 
+    func testSocksEndpointSourceUsesEmbeddedWhenHostAndPortMissing() {
+        let source = selectSocksEndpointSource(host: "", port: 0)
+        XCTAssertEqual(source, .embedded)
+    }
+
+    func testSocksEndpointSourceUsesEmbeddedWhenHostMissingButPortPresent() {
+        let source = selectSocksEndpointSource(host: "   ", port: 1080)
+        XCTAssertEqual(source, .embedded)
+    }
+
+    func testSocksEndpointSourceUsesEmbeddedWhenHostPresentButPortMissing() {
+        let source = selectSocksEndpointSource(host: "127.0.0.1", port: 0)
+        XCTAssertEqual(source, .embedded)
+    }
+
+    func testSocksEndpointSourceUsesConfiguredWhenHostAndPortPresent() {
+        let source = selectSocksEndpointSource(host: "127.0.0.1", port: 1080)
+        XCTAssertEqual(source, .configured)
+    }
+
+    func testDecideUDPForwardingHevOnlyFallsBackToDirectWhenTunnelUDPUnsupported() {
+        let decision = PacketFlowLoop.decideUDPForwarding(
+            udpForwarderAvailable: true,
+            mode: .hevOnly,
+            sourcePort: 50_000,
+            destinationPort: 443,
+            blockQUICEnabled: false,
+            tunnelUDPSupported: false
+        )
+
+        XCTAssertEqual(decision.decision, .forwardDirect)
+        XCTAssertTrue(decision.isQUIC)
+    }
+
+    func testDecideUDPForwardingSplitFallsBackToDirectForQUICWhenTunnelUDPUnsupported() {
+        let decision = PacketFlowLoop.decideUDPForwarding(
+            udpForwarderAvailable: true,
+            mode: .split,
+            sourcePort: 50_000,
+            destinationPort: 443,
+            blockQUICEnabled: false,
+            tunnelUDPSupported: false
+        )
+
+        XCTAssertEqual(decision.decision, .forwardDirect)
+        XCTAssertTrue(decision.isQUIC)
+    }
+
+    func testDecideUDPForwardingHevOnlyUsesTunnelWhenTunnelUDPSupported() {
+        let decision = PacketFlowLoop.decideUDPForwarding(
+            udpForwarderAvailable: true,
+            mode: .hevOnly,
+            sourcePort: 50_000,
+            destinationPort: 443,
+            blockQUICEnabled: false,
+            tunnelUDPSupported: true
+        )
+
+        XCTAssertEqual(decision.decision, .forwardTunnel)
+        XCTAssertTrue(decision.isQUIC)
+    }
+
     func testDNSSettings() {
         struct DNSSettings {
             let servers: [String]
