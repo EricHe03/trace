@@ -13,6 +13,18 @@ struct SessionSectionHeader: View {
     let group: SessionGroup
 
     var body: some View {
+        Group {
+            if group.session.isActive {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    headerContent(durationText: group.session.durationString(relativeTo: context.date))
+                }
+            } else {
+                headerContent(durationText: group.session.durationString)
+            }
+        }
+    }
+
+    private func headerContent(durationText: String) -> some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
             HStack {
                 Image(systemName: group.session.isActive ? "record.circle" : "checkmark.circle")
@@ -22,7 +34,7 @@ struct SessionSectionHeader: View {
             }
             HStack(spacing: 12) {
                 Label("\(group.requestCount) requests", systemImage: "number")
-                Label(group.session.durationString, systemImage: "clock")
+                Label(durationText, systemImage: "clock")
                 Label(group.totalSizeString, systemImage: "arrow.down.circle")
             }
             .font(.caption)
@@ -30,7 +42,7 @@ struct SessionSectionHeader: View {
         }
         .padding(.vertical, DesignSystem.Spacing.xs)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(group.session.displayName), \(group.session.isActive ? "Active" : "Completed") session, \(group.requestCount) requests, \(group.session.durationString), \(group.totalSizeString)")
+        .accessibilityLabel("\(group.session.displayName), \(group.session.isActive ? "Active" : "Completed") session, \(group.requestCount) requests, \(durationText), \(group.totalSizeString)")
         .accessibilityAddTraits(.isHeader)
     }
 }

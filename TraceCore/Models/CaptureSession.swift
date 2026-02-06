@@ -21,7 +21,7 @@ public struct CaptureSession: Codable, Identifiable, Equatable, Sendable {
 
     public var duration: TimeInterval {
         let end = endTime ?? Date()
-        return end.timeIntervalSince(startTime)
+        return max(0, end.timeIntervalSince(startTime))
     }
 
     private static func makeDisplayDateFormatter() -> DateFormatter {
@@ -49,8 +49,7 @@ public struct CaptureSession: Codable, Identifiable, Equatable, Sendable {
         Self.makeRelativeFormatter().localizedString(for: startTime, relativeTo: Date())
     }
 
-    public var durationString: String {
-        let duration = self.duration
+    private static func formatDuration(_ duration: TimeInterval) -> String {
         let hours = Int(duration) / 3600
         let minutes = Int(duration) / 60 % 60
         let seconds = Int(duration) % 60
@@ -62,6 +61,16 @@ public struct CaptureSession: Codable, Identifiable, Equatable, Sendable {
         } else {
             return String(format: "%ds", seconds)
         }
+    }
+
+    public func durationString(relativeTo referenceDate: Date) -> String {
+        let end = endTime ?? referenceDate
+        let duration = max(0, end.timeIntervalSince(startTime))
+        return Self.formatDuration(duration)
+    }
+
+    public var durationString: String {
+        durationString(relativeTo: Date())
     }
 
     public init(id: UUID = UUID(), name: String? = nil, startTime: Date = Date(), endTime: Date? = nil, requestCount: Int = 0, totalDataTransferred: Int64 = 0) {
