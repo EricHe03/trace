@@ -23,7 +23,7 @@ struct NetworkView: View {
     @State private var showingCurlImport = false
     @State private var showingVPNSetupAlert = false
     @State private var toastMessage: String?
-    @State private var selectedRequest: NetworkRequest?
+    @State private var shareSheetItem: ShareSheetItem?
     @State private var requestToOpen: NetworkRequest?
     @State private var hasLoaded = false
     @State private var cachedEvents: [NetworkEvent] = []
@@ -66,9 +66,7 @@ struct NetworkView: View {
             .sheet(isPresented: $showingCurlImport) {
                 curlImportView
             }
-            .sheet(item: $selectedRequest) { request in
-                shareSheet(for: request)
-            }
+            .shareSheet(item: $shareSheetItem)
             .modifier(RequestNavigationDestinationModifier(requestToOpen: $requestToOpen))
             .toast(message: $toastMessage, bottomPadding: 80)
             .modifier(RequestSelectionModifier(
@@ -91,10 +89,6 @@ struct NetworkView: View {
         CurlImportView { request in
             actions.importCurlRequest(request)
         }
-    }
-
-    private func shareSheet(for request: NetworkRequest) -> some View {
-        ShareSheetContainer(items: actions.shareItems(for: request))
     }
 
     private struct RequestNavigationDestinationModifier: ViewModifier {
@@ -141,7 +135,7 @@ struct NetworkView: View {
                         effectiveGroupingMode: effectiveGroupingMode,
                         onToggleFavorite: { actions.toggleFavorite($0) },
                         onDeleteRequest: { actions.deleteRequest($0) },
-                        onShareRequest: { actions.shareRequest($0, selectedRequest: $selectedRequest) },
+                        onShareRequest: { shareSheetItem = ShareSheetItem(actions.shareItems(for: $0)) },
                         contextMenuContent: contextMenuContent
                     )
                 }

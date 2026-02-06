@@ -15,7 +15,7 @@ import TraceUI
 struct DetailView: View {
     let request: NetworkRequest
     @State private var selectedTab: DetailTab = .overview
-    @State private var showingShareSheet = false
+    @State private var shareSheetItem: ShareSheetItem?
     @State private var showingRequestBuilder = false
     @State private var showingReplayResponse = false
     @StateObject private var executor = RequestExecutor()
@@ -30,8 +30,6 @@ struct DetailView: View {
     @State private var isResponseBodyPreview = false
     @State private var isLoadingRequestBody = false
     @State private var isLoadingResponseBody = false
-    @State private var showingShareResponseBody = false
-    @State private var showingShareRequestBody = false
 
     enum DetailTab: String, CaseIterable {
         case overview = "Overview"
@@ -59,7 +57,7 @@ struct DetailView: View {
                 onReplay: { replayRequest() },
                 onCopyURL: { copyToClipboard(request.url) },
                 onCopyCURL: { copyRequestAsCurl() },
-                onShare: { showingShareSheet = true },
+                onShare: { shareFullRequest() },
                 isLoading: executor.isLoading
             )
             .padding(.horizontal)
@@ -148,14 +146,14 @@ struct DetailView: View {
                     Divider()
 
                     Button {
-                        showingShareSheet = true
+                        shareFullRequest()
                     } label: {
                         Label("Share Full Request", systemImage: "square.and.arrow.up")
                     }
 
                     if !request.responseBody.isEmpty {
                         Button {
-                            showingShareResponseBody = true
+                            shareSheetItem = ShareSheetItem(ShareHelper.shareItemsForResponseBody(from: request))
                         } label: {
                             Label("Share Response Body", systemImage: "arrow.down.doc")
                         }
@@ -163,7 +161,7 @@ struct DetailView: View {
 
                     if !request.requestBody.isEmpty {
                         Button {
-                            showingShareRequestBody = true
+                            shareSheetItem = ShareSheetItem(ShareHelper.shareItemsForRequestBody(from: request))
                         } label: {
                             Label("Share Request Body", systemImage: "arrow.up.doc")
                         }
@@ -173,15 +171,7 @@ struct DetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingShareSheet) {
-            ShareSheetContainer(
-                items: [
-                    formatRequestForSharing(),
-                    CurlCommandGenerator.generate(from: request)
-                ],
-                applicationActivities: ActivityHelper.customActivitiesForRequest()
-            )
-        }
+        .shareSheet(item: $shareSheetItem)
         .sheet(isPresented: $showingRequestBuilder) {
             RequestBuilderView(existingRequest: request)
         }
@@ -202,16 +192,16 @@ struct DetailView: View {
             }
         }
         .toast(message: $toastMessage)
-        .sheet(isPresented: $showingShareResponseBody) {
-            ShareSheetContainer(
-                items: ShareHelper.shareItemsForResponseBody(from: request)
-            )
-        }
-        .sheet(isPresented: $showingShareRequestBody) {
-            ShareSheetContainer(
-                items: ShareHelper.shareItemsForRequestBody(from: request)
-            )
-        }
+    }
+
+    private func shareFullRequest() {
+        shareSheetItem = ShareSheetItem(
+            [
+                formatRequestForSharing(),
+                CurlCommandGenerator.generate(from: request)
+            ],
+            applicationActivities: ActivityHelper.customActivitiesForRequest()
+        )
     }
 
     private func copyToClipboard(_ text: String) {
@@ -592,7 +582,15 @@ struct DetailView: View {
             } else {
                 let contentType: String? = request.requestHeaders.first { $0.key.lowercased() == "content-type" }?.value
                 let copyAction = requestBodyText.map { text in { copyToClipboard(text) } }
-                let shareAction = { showingShareRequestBody = true }
+                let shareAction = {
+                    shareSheetItem = ShareSheetItem(
+                        ShareHelper.shareItemsForRequestBody(
+                            from: request,
+                            bodyText: requestBodyText,
+                            bodyData: requestBodyRawData
+                        )
+                    )
+                }
                 BodySection(
                     title: "Request Body",
                     content: requestBodyText ?? "",
@@ -626,7 +624,15 @@ struct DetailView: View {
                 let contentDisposition: String? = request.responseHeaders.first { $0.key.lowercased() == "content-disposition" }?.value
                 let fileName = Self.attachmentFileName(from: contentDisposition)
                 let copyAction = responseBodyText.map { text in { copyToClipboard(text) } }
-                let shareAction = { showingShareResponseBody = true }
+                let shareAction = {
+                    shareSheetItem = ShareSheetItem(
+                        ShareHelper.shareItemsForResponseBody(
+                            from: request,
+                            bodyText: responseBodyText,
+                            bodyData: responseBodyRawData
+                        )
+                    )
+                }
                 BodySection(
                     title: "Response Body",
                     content: responseBodyText ?? "",

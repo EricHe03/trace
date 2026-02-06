@@ -27,9 +27,7 @@ public class AppGroupStorage: @unchecked Sendable {
         #endif
     }()
 
-    private static let isRunningTests: Bool = {
-        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-    }()
+    private static let isRunningTests: Bool = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
 
     private static var allowsFallbackStorage: Bool {
         isSimulator || isRunningTests

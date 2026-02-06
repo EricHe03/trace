@@ -82,12 +82,7 @@ struct CertificateGuideView: View {
             }
             .navigationTitle(showReinstallWizard ? "Re-install Certificate" : "HTTPS Certificate")
             .navigationBarTitleDisplayMode(.inline)
-            .onChangeCompat(of: shareSheetItem?.id) {
-                guard let item = shareSheetItem else { return }
-                ShareHelper.presentShareSheet(items: item.items) {
-                    shareSheetItem = nil
-                }
-            }
+            .shareSheet(item: $shareSheetItem)
             .onAppear {
                 checkTrustStatus()
             }

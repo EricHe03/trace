@@ -91,9 +91,7 @@ struct UDPFlowsView: View {
                 UDPFlowFiltersView(viewModel: viewModel)
             }
         }
-        .sheet(item: $shareSheetItem) { item in
-            ShareSheetContainer(items: item.items)
-        }
+        .shareSheet(item: $shareSheetItem)
         .confirmationDialog("Export UDP Flows", isPresented: $showingExport, titleVisibility: .visible) {
             Button("Export CSV") {
                 exportCSV()

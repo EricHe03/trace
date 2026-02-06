@@ -192,7 +192,7 @@ enum PCAPFlowAnalyzerError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .noPacketsForFlow:
-            return "No packets found for this connection in the selected PCAP."
+            "No packets found for this connection in the selected PCAP."
         }
     }
 }
@@ -278,110 +278,110 @@ private final class PCAPFlowAnalyzer {
                     throw ScanControl.reachedEndOfWindow
                 }
 
-            guard let ipPacket = IPPacketParser.parse(packet.data) else { return }
-            guard ipPacket.transport == .tcp else { return }
-            guard let tcpPacket = TCPParser.parse(ipPacket.payload) else { return }
+                guard let ipPacket = IPPacketParser.parse(packet.data) else { return }
+                guard ipPacket.transport == .tcp else { return }
+                guard let tcpPacket = TCPParser.parse(ipPacket.payload) else { return }
 
-            let src = EndpointKey(ip: ipPacket.source.description, port: tcpPacket.sourcePort)
-            let dst = EndpointKey(ip: ipPacket.destination.description, port: tcpPacket.destinationPort)
-            guard (src == endpointA && dst == endpointB) || (src == endpointB && dst == endpointA) else { return }
-            didMatchAnyPacket = true
+                let src = EndpointKey(ip: ipPacket.source.description, port: tcpPacket.sourcePort)
+                let dst = EndpointKey(ip: ipPacket.destination.description, port: tcpPacket.destinationPort)
+                guard (src == endpointA && dst == endpointB) || (src == endpointB && dst == endpointA) else { return }
+                didMatchAnyPacket = true
 
-            if tcpPacket.flags.contains(.syn) && !tcpPacket.flags.contains(.ack) {
-                if clientEndpoint == nil {
-                    clientEndpoint = FlowEndpoint(ip: src.ip, port: src.port)
-                    serverEndpoint = FlowEndpoint(ip: dst.ip, port: dst.port)
-                }
-                if handshake.synTime == nil {
-                    handshake.synTime = packet.timestamp
-                }
-                handshake.clientOptions = optionSummary(from: tcpPacket.options)
-                if let ws = tcpPacket.options.windowScale {
-                    windowScaleByEndpoint[src] = ws
-                }
-                connectionState = .connecting
-            } else if tcpPacket.flags.contains(.syn) && tcpPacket.flags.contains(.ack) {
-                if handshake.synAckTime == nil {
-                    handshake.synAckTime = packet.timestamp
-                    if let synTime = handshake.synTime {
-                        handshake.synRtt = packet.timestamp.timeIntervalSince(synTime)
+                if tcpPacket.flags.contains(.syn) && !tcpPacket.flags.contains(.ack) {
+                    if clientEndpoint == nil {
+                        clientEndpoint = FlowEndpoint(ip: src.ip, port: src.port)
+                        serverEndpoint = FlowEndpoint(ip: dst.ip, port: dst.port)
+                    }
+                    if handshake.synTime == nil {
+                        handshake.synTime = packet.timestamp
+                    }
+                    handshake.clientOptions = optionSummary(from: tcpPacket.options)
+                    if let ws = tcpPacket.options.windowScale {
+                        windowScaleByEndpoint[src] = ws
+                    }
+                    connectionState = .connecting
+                } else if tcpPacket.flags.contains(.syn) && tcpPacket.flags.contains(.ack) {
+                    if handshake.synAckTime == nil {
+                        handshake.synAckTime = packet.timestamp
+                        if let synTime = handshake.synTime {
+                            handshake.synRtt = packet.timestamp.timeIntervalSince(synTime)
+                        }
+                    }
+                    handshake.serverOptions = optionSummary(from: tcpPacket.options)
+                    if let ws = tcpPacket.options.windowScale {
+                        windowScaleByEndpoint[src] = ws
                     }
                 }
-                handshake.serverOptions = optionSummary(from: tcpPacket.options)
-                if let ws = tcpPacket.options.windowScale {
-                    windowScaleByEndpoint[src] = ws
+
+                if tcpPacket.flags.contains(.ack),
+                   handshake.synAckTime != nil,
+                   handshake.ackTime == nil,
+                   isClientEndpoint(src, client: clientEndpoint) {
+                    handshake.ackTime = packet.timestamp
+                    connectionState = .established
                 }
-            }
 
-            if tcpPacket.flags.contains(.ack),
-               handshake.synAckTime != nil,
-               handshake.ackTime == nil,
-               isClientEndpoint(src, client: clientEndpoint) {
-                handshake.ackTime = packet.timestamp
-                connectionState = .established
-            }
-
-            if tcpPacket.flags.contains(.fin) {
-                finSeen.insert(src)
-                if isClientEndpoint(src, client: clientEndpoint) {
-                    termination.finFromClientTime = termination.finFromClientTime ?? packet.timestamp
-                } else {
-                    termination.finFromServerTime = termination.finFromServerTime ?? packet.timestamp
+                if tcpPacket.flags.contains(.fin) {
+                    finSeen.insert(src)
+                    if isClientEndpoint(src, client: clientEndpoint) {
+                        termination.finFromClientTime = termination.finFromClientTime ?? packet.timestamp
+                    } else {
+                        termination.finFromServerTime = termination.finFromServerTime ?? packet.timestamp
+                    }
                 }
-            }
 
-            if tcpPacket.flags.contains(.rst) {
-                rstSeen.insert(src)
-                if isClientEndpoint(src, client: clientEndpoint) {
-                    termination.rstFromClientTime = termination.rstFromClientTime ?? packet.timestamp
-                } else {
-                    termination.rstFromServerTime = termination.rstFromServerTime ?? packet.timestamp
+                if tcpPacket.flags.contains(.rst) {
+                    rstSeen.insert(src)
+                    if isClientEndpoint(src, client: clientEndpoint) {
+                        termination.rstFromClientTime = termination.rstFromClientTime ?? packet.timestamp
+                    } else {
+                        termination.rstFromServerTime = termination.rstFromServerTime ?? packet.timestamp
+                    }
+                    connectionState = .reset
                 }
-                connectionState = .reset
-            }
 
-            let context = MetricsUpdateContext(
-                src: src,
-                dst: dst,
-                tcpPacket: tcpPacket,
-                timestamp: packet.timestamp,
-                client: clientEndpoint,
-                server: serverEndpoint
-            )
-            updateMetrics(
-                metrics: &metrics,
-                endpointTrackers: &endpointTrackers,
-                windowScaleByEndpoint: &windowScaleByEndpoint,
-                context: context
-            )
-
-            if packets.count < maxPacketSummaries {
-                let summary = buildPacketSummary(
-                    endpointTrackers: endpointTrackers,
+                let context = MetricsUpdateContext(
                     src: src,
+                    dst: dst,
                     tcpPacket: tcpPacket,
                     timestamp: packet.timestamp,
                     client: clientEndpoint,
                     server: serverEndpoint
                 )
-                packets.append(summary)
-            }
+                updateMetrics(
+                    metrics: &metrics,
+                    endpointTrackers: &endpointTrackers,
+                    windowScaleByEndpoint: &windowScaleByEndpoint,
+                    context: context
+                )
 
-            let outputs = reassembler.process(ipPacket: ipPacket, tcpPacket: tcpPacket)
-            for output in outputs where !output.data.isEmpty {
-                let direction = directionForEndpoint(src, client: clientEndpoint, server: serverEndpoint, record: record)
-                if direction == .clientToServer || direction == .sourceToDestination {
-                    if streamClientToServer.count < maxStreamBytes {
-                        let remaining = maxStreamBytes - streamClientToServer.count
-                        streamClientToServer.append(output.data.prefix(remaining))
-                    }
-                } else {
-                    if streamServerToClient.count < maxStreamBytes {
-                        let remaining = maxStreamBytes - streamServerToClient.count
-                        streamServerToClient.append(output.data.prefix(remaining))
+                if packets.count < maxPacketSummaries {
+                    let summary = buildPacketSummary(
+                        endpointTrackers: endpointTrackers,
+                        src: src,
+                        tcpPacket: tcpPacket,
+                        timestamp: packet.timestamp,
+                        client: clientEndpoint,
+                        server: serverEndpoint
+                    )
+                    packets.append(summary)
+                }
+
+                let outputs = reassembler.process(ipPacket: ipPacket, tcpPacket: tcpPacket)
+                for output in outputs where !output.data.isEmpty {
+                    let direction = directionForEndpoint(src, client: clientEndpoint, server: serverEndpoint, record: record)
+                    if direction == .clientToServer || direction == .sourceToDestination {
+                        if streamClientToServer.count < maxStreamBytes {
+                            let remaining = maxStreamBytes - streamClientToServer.count
+                            streamClientToServer.append(output.data.prefix(remaining))
+                        }
+                    } else {
+                        if streamServerToClient.count < maxStreamBytes {
+                            let remaining = maxStreamBytes - streamServerToClient.count
+                            streamServerToClient.append(output.data.prefix(remaining))
+                        }
                     }
                 }
-            }
             })
         } catch ScanControl.reachedEndOfWindow {
             // Best-effort: stop scanning once we pass the connection's time window.
