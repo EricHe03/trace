@@ -1735,9 +1735,15 @@ public class TLSProxyConnection: @unchecked Sendable {
                         var initial = Data()
                         if buffering { initial.append(bufferedHTTP1ResponseRaw) }
                         initial.append(serverBuffer)
+                        let statusMessage: String? = {
+                            let parts = statusLine.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+                            return (parts.count >= 3) ? String(parts[2]) : nil
+                        }()
                         startSSEStream(
                             request: request,
                             responseHeaders: headers,
+                            statusCode: statusCode,
+                            statusMessage: statusMessage,
                             initialData: initial,
                             initialBodyData: initialBodyData
                         )
@@ -2202,6 +2208,8 @@ public class TLSProxyConnection: @unchecked Sendable {
     private func startSSEStream(
         request: CapturedHTTP1Request,
         responseHeaders: [TraceHTTPHeader],
+        statusCode: Int?,
+        statusMessage: String?,
         initialData: Data,
         initialBodyData: Data
     ) {
@@ -2222,6 +2230,12 @@ public class TLSProxyConnection: @unchecked Sendable {
         }
 
         let requestHeaders = request.headers.map { TraceHTTPHeader(key: $0.key, value: $0.value) }
+        let responseHeadersDict = responseHeaders.reduce(into: [String: String]()) { dict, header in
+            dict[header.key] = header.value
+        }
+        let requestCharset = BodyStorage.extractCharset(from: request.headers)
+        let requestContentEncoding = request.headers.first(where: { $0.key.lowercased() == "content-encoding" })?.value
+        let responseCharset = BodyStorage.extractCharset(from: responseHeadersDict)
         let handler = SSEHandler(
             clientConnection: clientTLS,
             serverConnection: serverTLS,
@@ -2229,7 +2243,73 @@ public class TLSProxyConnection: @unchecked Sendable {
             requestHeaders: requestHeaders,
             responseHeaders: responseHeaders
         )
-        handler.start(onUpdate: { _ in }, initialBodyData: initialBodyData)
+        var capturePublishThrottle = SSECapturePublishThrottle()
+        handler.start(onUpdate: { [weak self] connection in
+            guard let self else { return }
+            guard capturePublishThrottle.shouldPublish(connection: connection) else { return }
+            self.executeOnQueue { [weak self] in
+                guard let self else { return }
+
+                let requestBodyStorage: BodyStorage = {
+                    guard self.captureBodies, self.maxCapturedBodyBytes > 0 else { return .empty }
+                    if let data = request.bodyData, !data.isEmpty {
+                        return BodyStorage.from(
+                            data: Data(data.prefix(self.maxCapturedBodyBytes)),
+                            charset: requestCharset,
+                            maxSize: self.maxCapturedBodyBytes,
+                            contentEncoding: requestContentEncoding
+                        )
+                    }
+                    if let body = request.body, !body.isEmpty {
+                        return BodyStorage.from(
+                            string: body,
+                            charset: requestCharset,
+                            maxSize: self.maxCapturedBodyBytes
+                        )
+                    }
+                    return .empty
+                }()
+
+                let responseBodyStorage: BodyStorage = {
+                    guard self.captureBodies, self.maxCapturedBodyBytes > 0 else { return .empty }
+                    let payload = SSEPayloadSerializer.serialize(events: connection.events)
+                    guard !payload.isEmpty else { return .empty }
+                    return BodyStorage.from(
+                        string: payload,
+                        charset: responseCharset,
+                        maxSize: self.maxCapturedBodyBytes
+                    )
+                }()
+
+                var networkRequest = NetworkRequest(
+                    id: request.id,
+                    url: request.url,
+                    method: HTTPMethod(rawValue: request.method) ?? .get,
+                    statusCode: statusCode,
+                    statusMessage: statusMessage,
+                    timestamp: request.startTime,
+                    duration: Date().timeIntervalSince(request.startTime),
+                    requestHeaders: requestHeaders,
+                    responseHeaders: responseHeaders,
+                    requestBody: requestBodyStorage,
+                    responseBody: responseBodyStorage,
+                    protocolVersion: .http11,
+                    tlsInfo: self.upstreamTLSInfo
+                )
+                networkRequest.wasRewritten = request.wasRewritten
+                networkRequest.isMocked = request.isMocked
+                networkRequest.isReplayed = request.isReplayed
+                networkRequest.appliedScriptName = request.appliedScriptName
+                networkRequest.hitBreakpoint = request.hitBreakpoint
+                networkRequest.retryAttempts = request.retryAttempts
+                networkRequest.extractHTTPFields()
+                NetworkThrottlingController.shared.applyMetadata(to: &networkRequest)
+
+                DispatchQueue.main.async { [weak self] in
+                    self?.onRequestCaptured?(networkRequest)
+                }
+            }
+        }, initialBodyData: initialBodyData)
         sseHandler = handler
 
         // Clear local HTTP state; SSEHandler owns the stream now.
@@ -2309,6 +2389,30 @@ public class TLSProxyConnection: @unchecked Sendable {
         return data
     }
 
+    private func headerValue(_ name: String, in headers: [String: String]) -> String? {
+        headers.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value
+    }
+
+    private func removeHeader(_ name: String, from headers: inout [String: String]) {
+        if let key = headers.keys.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+            headers.removeValue(forKey: key)
+        }
+    }
+
+    private func normalizeSSERequestEncodings(method: String, headers: inout [String: String]) {
+        guard method.caseInsensitiveCompare("GET") == .orderedSame else { return }
+        guard let accept = headerValue("accept", in: headers)?.lowercased(),
+              accept.contains("text/event-stream")
+        else {
+            return
+        }
+
+        // Rationale: Compressed SSE payloads are often not incrementally parseable in the proxy.
+        // Request identity encoding so event parsing remains transparent and reliable.
+        removeHeader("accept-encoding", from: &headers)
+        headers["Accept-Encoding"] = "identity"
+    }
+
     private func buildForwardHTTP1Data(
         method: String,
         absoluteURL: String,
@@ -2362,6 +2466,7 @@ public class TLSProxyConnection: @unchecked Sendable {
         if !body.isEmpty {
             headers["Content-Length"] = "\(body.count)"
         }
+        normalizeSSERequestEncodings(method: method, headers: &headers)
 
         let forwardHeaders = headers
         let headerList = headers.map { TraceHTTPHeader(key: $0.key, value: $0.value) }

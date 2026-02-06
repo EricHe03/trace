@@ -2506,18 +2506,83 @@ public class ProxyConnection: @unchecked Sendable {
                 : Data()
 
         let responseHeaders = parseResponseHeaders(headersString)
-        let requestHeaders =
-            capturedRequest.map { capturedRequestHeaders(from: $0.headers) } ?? []
+        guard let activeRequest = capturedRequest else { return }
+
+        let requestHeaders = capturedRequestHeaders(from: activeRequest.headers)
+        let capturedResponseHeaders = capturedResponseHeaders(responseHeaders)
+        let requestCharset = BodyStorage.extractCharset(from: activeRequest.headers)
+        let requestContentEncoding = activeRequest.headers.first(where: { $0.key.lowercased() == "content-encoding" })?.value
+        let responseCharset = BodyStorage.extractCharset(from: responseHeaders)
+        let (statusCode, statusMessage) = parseStatusLine(from: headersString)
 
         let handler = SSEHandler(
             clientConnection: clientConnection,
             serverConnection: serverConnection,
-            url: capturedRequest?.url ?? "",
+            url: activeRequest.url,
             requestHeaders: requestHeaders,
-            responseHeaders: capturedResponseHeaders(responseHeaders)
+            responseHeaders: capturedResponseHeaders
         )
 
-        handler.start(onUpdate: { _ in }, initialBodyData: initialBodyData)
+        var capturePublishThrottle = SSECapturePublishThrottle()
+        handler.start(onUpdate: { [weak self] connection in
+            guard let self else { return }
+            guard capturePublishThrottle.shouldPublish(connection: connection) else { return }
+            self.performOnQueue {
+                let requestBodyStorage: BodyStorage = {
+                    guard self.captureBodies, self.maxCapturedBodyBytes > 0 else { return .empty }
+                    if let data = activeRequest.bodyData, !data.isEmpty {
+                        return BodyStorage.from(
+                            data: data,
+                            charset: requestCharset,
+                            maxSize: self.maxCapturedBodyBytes,
+                            contentEncoding: requestContentEncoding
+                        )
+                    }
+                    if let body = activeRequest.body, !body.isEmpty {
+                        return BodyStorage.from(
+                            string: body,
+                            charset: requestCharset,
+                            maxSize: self.maxCapturedBodyBytes
+                        )
+                    }
+                    return .empty
+                }()
+
+                let responseBodyStorage: BodyStorage = {
+                    guard self.captureBodies, self.maxCapturedBodyBytes > 0 else { return .empty }
+                    let ssePayload = SSEPayloadSerializer.serialize(events: connection.events)
+                    guard !ssePayload.isEmpty else { return .empty }
+                    return BodyStorage.from(
+                        string: ssePayload,
+                        charset: responseCharset,
+                        maxSize: self.maxCapturedBodyBytes
+                    )
+                }()
+
+                var networkRequest = NetworkRequest(
+                    id: activeRequest.id,
+                    url: activeRequest.url,
+                    method: HTTPMethod(rawValue: activeRequest.method) ?? .get,
+                    statusCode: statusCode,
+                    statusMessage: statusMessage,
+                    timestamp: activeRequest.startTime,
+                    duration: Date().timeIntervalSince(activeRequest.startTime),
+                    requestHeaders: requestHeaders,
+                    responseHeaders: capturedResponseHeaders,
+                    requestBody: requestBodyStorage,
+                    responseBody: responseBodyStorage
+                )
+                networkRequest.wasRewritten = activeRequest.wasRewritten
+                networkRequest.isMocked = activeRequest.isMocked
+                networkRequest.isReplayed = activeRequest.isReplayed
+                networkRequest.appliedScriptName = activeRequest.appliedScriptName
+                networkRequest.hitBreakpoint = activeRequest.hitBreakpoint
+                networkRequest.retryAttempts = activeRequest.retryAttempts
+                networkRequest.extractHTTPFields()
+                NetworkThrottlingController.shared.applyMetadata(to: &networkRequest)
+                self.onRequestCaptured?(networkRequest)
+            }
+        }, initialBodyData: initialBodyData)
 
         sseHandler = handler
 
@@ -2526,6 +2591,16 @@ public class ProxyConnection: @unchecked Sendable {
         requestBuffer.removeAll()
         responseBuffer.removeAll()
         capturedRequest = nil
+    }
+
+    private func parseStatusLine(from headersString: String) -> (Int?, String?) {
+        guard let statusLine = headersString.components(separatedBy: "\r\n").first else {
+            return (nil, nil)
+        }
+        let parts = statusLine.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+        let code = (parts.count >= 2) ? Int(parts[1]) : nil
+        let message = (parts.count >= 3) ? String(parts[2]) : nil
+        return (code, message)
     }
 
     private func handleWebSocketUpgrade(_ request: ParsedHTTPRequest, body: Data) {
@@ -2832,6 +2907,17 @@ public class ProxyConnection: @unchecked Sendable {
             if lower == "content-length" { return false }
             if lower == "transfer-encoding" { return false }
             return true
+        }
+
+        if method.caseInsensitiveCompare("GET") == .orderedSame,
+           let accept = headers.first(where: { $0.key.caseInsensitiveCompare("accept") == .orderedSame })?.value.lowercased(),
+           accept.contains("text/event-stream")
+        {
+            // Rationale: Keep SSE responses uncompressed so incremental parsing can emit events live.
+            if let acceptEncodingKey = headers.keys.first(where: { $0.caseInsensitiveCompare("accept-encoding") == .orderedSame }) {
+                headers.removeValue(forKey: acceptEncodingKey)
+            }
+            headers["Accept-Encoding"] = "identity"
         }
 
         let hostHeaderValue: String = if resolved.port == 80 {

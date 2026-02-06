@@ -504,11 +504,87 @@ final class SSEHandlerTests: XCTestCase {
         XCTAssertEqual(snapshot.events.count, 1000)
         XCTAssertTrue(snapshot.isTruncated)
     }
+
+    func testSSEHandler_ParsesGzipCompressedSSEPayload() {
+        let handler = makeTestSSEHandler(
+            responseHeaders: [TraceHTTPHeader(key: "Content-Encoding", value: "gzip")]
+        )
+
+        let payload = Data("data: compressed-event\n\n".utf8)
+        guard let compressed = CompressionHelper.compress(data: payload, algorithm: "gzip") else {
+            XCTFail("Failed to gzip payload in test setup")
+            return
+        }
+
+        handler.testParseSSEData(compressed)
+
+        let snapshot = handler.testConnectionSnapshot()
+        XCTAssertEqual(snapshot.events.count, 1)
+        XCTAssertEqual(snapshot.events.first?.data, "compressed-event")
+    }
+
+    func testSSEHandler_ParsesChunkedSSEPayloadAcrossFrames() {
+        let handler = makeTestSSEHandler(
+            responseHeaders: [TraceHTTPHeader(key: "Transfer-Encoding", value: "chunked")]
+        )
+
+        let payload = Data("data: chunked-event\n\n".utf8)
+        let chunkedPayload = makeChunkedPayload(from: payload, preferredChunkSizes: [5, 2, 7])
+        let splitIndex = chunkedPayload.count / 2
+
+        handler.testParseSSEData(Data(chunkedPayload.prefix(splitIndex)))
+        handler.testParseSSEData(Data(chunkedPayload.dropFirst(splitIndex)))
+
+        let snapshot = handler.testConnectionSnapshot()
+        XCTAssertEqual(snapshot.events.count, 1)
+        XCTAssertEqual(snapshot.events.first?.data, "chunked-event")
+    }
+
+    func testSSEHandler_ParsesChunkedGzipCompressedSSEPayload() {
+        let handler = makeTestSSEHandler(
+            responseHeaders: [
+                TraceHTTPHeader(key: "Transfer-Encoding", value: "chunked"),
+                TraceHTTPHeader(key: "Content-Encoding", value: "gzip")
+            ]
+        )
+
+        let payload = Data("data: chunked-gzip-event\n\n".utf8)
+        guard let compressed = CompressionHelper.compress(data: payload, algorithm: "gzip") else {
+            XCTFail("Failed to gzip payload in test setup")
+            return
+        }
+
+        let chunkedPayload = makeChunkedPayload(from: compressed, preferredChunkSizes: [3, 11, 5])
+        let firstSplit = chunkedPayload.count / 3
+        let secondSplit = (chunkedPayload.count * 2) / 3
+        handler.testParseSSEData(Data(chunkedPayload.prefix(firstSplit)))
+        handler.testParseSSEData(Data(chunkedPayload[firstSplit ..< secondSplit]))
+        handler.testParseSSEData(Data(chunkedPayload.dropFirst(secondSplit)))
+
+        let snapshot = handler.testConnectionSnapshot()
+        XCTAssertEqual(snapshot.events.count, 1)
+        XCTAssertEqual(snapshot.events.first?.data, "chunked-gzip-event")
+    }
+
+    func testSSEHandler_FallsBackToRawParsingWhenChunkedDecodingFails() {
+        let handler = makeTestSSEHandler(
+            responseHeaders: [TraceHTTPHeader(key: "Transfer-Encoding", value: "chunked")]
+        )
+
+        // This payload is intentionally not chunk-framed. The handler should fall back to raw parsing.
+        handler.testParseSSEData(Data("data: fallback-one\r\n\r\n".utf8))
+        handler.testParseSSEData(Data("data: fallback-two\r\n\r\n".utf8))
+
+        let snapshot = handler.testConnectionSnapshot()
+        XCTAssertEqual(snapshot.events.count, 2)
+        XCTAssertEqual(snapshot.events[0].data, "fallback-one")
+        XCTAssertEqual(snapshot.events[1].data, "fallback-two")
+    }
 #endif
 }
 
 #if DEBUG
-private func makeTestSSEHandler() -> SSEHandler {
+private func makeTestSSEHandler(responseHeaders: [TraceHTTPHeader] = []) -> SSEHandler {
     let client = NWConnection(
         host: NWEndpoint.Host("localhost"),
         port: NWEndpoint.Port(integerLiteral: 80),
@@ -519,7 +595,32 @@ private func makeTestSSEHandler() -> SSEHandler {
         serverConnection: nil,
         url: "https://example.com/events",
         requestHeaders: [],
-        responseHeaders: []
+        responseHeaders: responseHeaders
     )
+}
+
+private func makeChunkedPayload(from body: Data, preferredChunkSizes: [Int]) -> Data {
+    guard !body.isEmpty else {
+        return Data("0\r\n\r\n".utf8)
+    }
+
+    var result = Data()
+    var cursor = 0
+    var chunkIndex = 0
+    while cursor < body.count {
+        let remaining = body.count - cursor
+        let preferred = chunkIndex < preferredChunkSizes.count ? preferredChunkSizes[chunkIndex] : remaining
+        let chunkSize = min(max(1, preferred), remaining)
+        let sizeLine = String(chunkSize, radix: 16, uppercase: true)
+        result.append(Data(sizeLine.utf8))
+        result.append(Data("\r\n".utf8))
+        result.append(body.subdata(in: cursor ..< (cursor + chunkSize)))
+        result.append(Data("\r\n".utf8))
+        cursor += chunkSize
+        chunkIndex += 1
+    }
+
+    result.append(Data("0\r\n\r\n".utf8))
+    return result
 }
 #endif
