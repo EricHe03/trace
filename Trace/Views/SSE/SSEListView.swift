@@ -12,6 +12,7 @@ import TraceUI
 struct SSEListView: View {
     @StateObject private var viewModel = SSEViewModel()
     @State private var showingFilters = false
+    @State private var showingClearAllAlert = false
     @State private var selectedConnection: SSEConnection?
 
     var body: some View {
@@ -52,7 +53,7 @@ struct SSEListView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button(role: .destructive) {
-                            viewModel.clearConnections()
+                            showingClearAllAlert = true
                         } label: {
                             Label("Clear All", systemImage: "trash")
                         }
@@ -76,6 +77,14 @@ struct SSEListView: View {
             .sheet(isPresented: $showingFilters) {
                 SSEFiltersView(viewModel: viewModel)
             }
+            .alert("Clear All SSE Connections", isPresented: $showingClearAllAlert) {
+                Button("Cancel", role: .cancel) {}
+                Button("Clear", role: .destructive) {
+                    viewModel.clearConnections()
+                }
+            } message: {
+                Text("Are you sure you want to clear all \(viewModel.connections.count) SSE connections? This action cannot be undone.")
+            }
         }
     }
 }
@@ -84,10 +93,9 @@ struct SSEConnectionRow: View {
     let connection: SSEConnection
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignSystem.Spacing.smPlus) {
-            HStack {
-                Text(connection.status.displayName)
-                    .badgeStyle(backgroundColor: statusColor)
+        VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
+            HStack(spacing: DesignSystem.Spacing.smPlus) {
+                statusBadge(text: connection.status.displayName, background: statusColor)
 
                 Text("\(connection.eventCount) events")
                     .font(.caption)
@@ -95,13 +103,13 @@ struct SSEConnectionRow: View {
 
                 if connection.isTruncated {
                     Text("TRUNCATED")
-                        .font(.caption)
+                        .font(DesignSystem.Badge.font)
+                        .fontWeight(DesignSystem.Badge.fontWeight)
                         .foregroundStyle(.primary)
                         .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
                         .padding(.vertical, DesignSystem.Badge.verticalPadding)
-                        .frame(minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget)
                         .background(DesignSystem.Colors.warning.opacity(0.15))
-                        .cornerRadius(DesignSystem.Badge.cornerRadius)
+                        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
                 }
 
                 Spacer()
@@ -118,15 +126,15 @@ struct SSEConnectionRow: View {
                 .lineLimit(2)
 
             HStack {
-                Text(connection.startTime, style: .relative) + Text(" ago")
+                Text(connection.startTime, style: .relative)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.tertiary)
 
                 Spacer()
 
                 Text(connection.totalBytesString)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.vertical, DesignSystem.Spacing.rowVertical)
@@ -136,6 +144,17 @@ struct SSEConnectionRow: View {
 
     private var statusColor: Color {
         DesignSystem.Colors.statusColor(for: connection.status.color)
+    }
+
+    private func statusBadge(text: String, background: Color) -> some View {
+        Text(text)
+            .font(DesignSystem.Badge.font)
+            .fontWeight(DesignSystem.Badge.fontWeight)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(background)
+            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
     }
 }
 

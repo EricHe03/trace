@@ -127,10 +127,10 @@ let package = Package(
         ),
 
         // TraceNetworking: Protocol parsers (HTTP, HTTP2, WebSocket, etc.)
-        // Dependencies: TraceCore
+        // Dependencies: TraceCore, TraceCompression
         .target(
             name: "TraceNetworking",
-            dependencies: ["TraceCore"],
+            dependencies: ["TraceCore", "TraceCompression"],
             path: "TraceNetworking"
         ),
 

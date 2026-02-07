@@ -13,6 +13,7 @@ struct UDPFlowsView: View {
     @StateObject private var viewModel = UDPFlowsViewModel()
     @State private var showingFilters = false
     @State private var showingExport = false
+    @State private var showingClearAllAlert = false
     @State private var shareSheetItem: ShareSheetItem?
     @State private var toastMessage: String?
 
@@ -79,7 +80,7 @@ struct UDPFlowsView: View {
 
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(role: .destructive) {
-                    viewModel.clearAll()
+                    showingClearAllAlert = true
                 } label: {
                     Label("Clear", systemImage: "trash")
                 }
@@ -100,6 +101,14 @@ struct UDPFlowsView: View {
                 exportJSON()
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .alert("Clear All UDP Flows", isPresented: $showingClearAllAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear", role: .destructive) {
+                viewModel.clearAll()
+            }
+        } message: {
+            Text("Are you sure you want to clear all \(viewModel.flows.count) UDP flows? This action cannot be undone.")
         }
         .overlay {
             if viewModel.flows.isEmpty {

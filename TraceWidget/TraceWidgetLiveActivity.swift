@@ -48,8 +48,7 @@ struct TraceWidgetLiveActivity: Widget {
                 }
 
                 DynamicIslandExpandedRegion(.center) {
-                    if let method = context.state.lastRequestMethod,
-                       let host = context.state.lastRequestHost {
+                    if let method = context.state.lastRequestMethod {
                         HStack(spacing: 4) {
                             Text(method)
                                 .font(.system(size: 9, weight: .bold))
@@ -59,7 +58,7 @@ struct TraceWidgetLiveActivity: Widget {
                                 .background(methodColor(method))
                                 .cornerRadius(3)
 
-                            Text(host)
+                            Text("Recent request")
                                 .font(.system(size: 10))
                                 .foregroundColor(.primary)
                                 .lineLimit(1)
@@ -182,8 +181,7 @@ struct LiveActivityLockScreenView: View {
                         .foregroundColor(.secondary)
                 }
 
-                if let method = context.state.lastRequestMethod,
-                   let host = context.state.lastRequestHost {
+                if let method = context.state.lastRequestMethod {
                     HStack(spacing: 4) {
                         Text("Last:")
                             .font(.system(size: 10))
@@ -197,7 +195,7 @@ struct LiveActivityLockScreenView: View {
                             .background(methodColor(method))
                             .cornerRadius(3)
 
-                        Text(host)
+                        Text("Details hidden")
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
                             .lineLimit(1)

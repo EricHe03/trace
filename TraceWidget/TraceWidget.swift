@@ -66,6 +66,12 @@ struct WidgetRequest: Identifiable, Codable {
         default: .gray
         }
     }
+
+    /// Returns a privacy-safe host label suitable for glanceable surfaces.
+    var redactedHost: String { "Endpoint hidden" }
+
+    /// Returns a privacy-safe path label suitable for glanceable surfaces.
+    var redactedPath: String { "Path hidden" }
 }
 
 // MARK: - Timeline Provider
@@ -232,7 +238,6 @@ struct TraceWidgetEntryView: View {
                 SmallWidgetView(data: entry.data, configuration: entry.configuration)
             }
         }
-        .widgetAccentable()
     }
 }
 
@@ -658,8 +663,8 @@ struct AccessoryRectangularView: View {
                 Spacer()
             }
 
-            if let lastRequest = data.recentRequests.first {
-                Text(lastRequest.host)
+            if data.recentRequests.first != nil {
+                Text("Recent network activity")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -718,7 +723,7 @@ struct RequestRowCompact: View {
     var body: some View {
         HStack(spacing: 6) {
             Text(request.method)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 11, weight: .bold))
                 .foregroundColor(.white)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 3)
@@ -726,7 +731,7 @@ struct RequestRowCompact: View {
                 .cornerRadius(4)
                 .widgetAccentable()
 
-            Text(request.host)
+            Text(request.redactedHost)
                 .font(.system(size: 11))
                 .foregroundColor(.primary)
                 .lineLimit(1)
@@ -748,23 +753,10 @@ struct RequestRowCompact: View {
 struct RequestRowDetailed: View {
     let request: WidgetRequest
 
-    /// Formats the time elapsed since the request as a short string.
-    var timeAgo: String {
-        let interval = Date().timeIntervalSince(request.timestamp)
-        // Rationale: Keep units coarse to avoid truncating labels in compact layouts.
-        if interval < 60 {
-            return "\(Int(interval))s"
-        } else if interval < 3600 {
-            return "\(Int(interval / 60))m"
-        } else {
-            return "\(Int(interval / 3600))h"
-        }
-    }
-
     var body: some View {
         HStack(spacing: 6) {
             Text(request.method)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 11, weight: .bold))
                 .foregroundColor(.white)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 3)
@@ -773,12 +765,12 @@ struct RequestRowDetailed: View {
                 .widgetAccentable()
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(request.host)
+                Text(request.redactedHost)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.primary)
                     .lineLimit(1)
 
-                Text(request.path)
+                Text(request.redactedPath)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -794,7 +786,7 @@ struct RequestRowDetailed: View {
                         .widgetAccentable()
                 }
 
-                Text(timeAgo)
+                Text(request.timestamp, style: .relative)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
@@ -806,22 +798,11 @@ struct RequestRowDetailed: View {
 // MARK: - Widget Configuration
 
 /// Defines the main network monitor widget with multiple families and configurations.
-@available(iOS 17.0, iOSApplicationExtension 17.0, *)
 struct TraceWidget: Widget {
     let kind: String = "TraceWidget"
 
-    var body: some WidgetConfiguration {
-        AppIntentConfiguration(
-            kind: kind,
-            intent: ConfigurationAppIntent.self,
-            provider: Provider()
-        ) { entry in
-            TraceWidgetEntryView(entry: entry)
-                .traceWidgetContainerBackgroundIfAvailable()
-        }
-        .configurationDisplayName("Network Monitor")
-        .description("View captured network requests and monitor traffic activity.")
-        .supportedFamilies([
+    private var supportedFamilies: [WidgetFamily] {
+        [
             .systemSmall,
             .systemMedium,
             .systemLarge,
@@ -829,13 +810,8 @@ struct TraceWidget: Widget {
             .accessoryCircular,
             .accessoryRectangular,
             .accessoryInline
-        ])
+        ]
     }
-}
-
-/// Legacy widget configuration for iOS 16.
-struct LegacyTraceWidget: Widget {
-    let kind: String = "TraceWidget"
 
     var body: some WidgetConfiguration {
         StaticConfiguration(
@@ -847,15 +823,7 @@ struct LegacyTraceWidget: Widget {
         }
         .configurationDisplayName("Network Monitor")
         .description("View captured network requests and monitor traffic activity.")
-        .supportedFamilies([
-            .systemSmall,
-            .systemMedium,
-            .systemLarge,
-            .systemExtraLarge,
-            .accessoryCircular,
-            .accessoryRectangular,
-            .accessoryInline
-        ])
+        .supportedFamilies(supportedFamilies)
     }
 }
 

@@ -17,7 +17,7 @@ struct OverviewSection: View {
             // TLS Passthrough / Pinning explanation (shown prominently at top)
             TLSPassthroughSection(request: request)
 
-            InfoCard(title: "General") {
+            SectionCard(title: "General") {
                 InfoRow(label: "URL", value: request.url)
                 Divider()
                 InfoRow(label: "Method", value: request.method.rawValue)
@@ -57,7 +57,7 @@ struct OverviewSection: View {
 
             // Redirect Information
             if !request.redirectChain.isEmpty {
-                InfoCard(title: request.redirectChain.count > 1 ? "Redirects" : "Redirect") {
+                SectionCard(title: request.redirectChain.count > 1 ? "Redirects" : "Redirect") {
                     VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
                         Text("LOCATION")
                             .font(.caption)
@@ -84,7 +84,7 @@ struct OverviewSection: View {
                 }
             } else if request.statusColor == .redirect,
                       let locationURL = request.responseHeaders.first(where: { $0.key.lowercased() == "location" })?.value {
-                InfoCard(title: "Redirect") {
+                SectionCard(title: "Redirect") {
                     VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
                         Text("LOCATION")
                             .font(.caption)
@@ -103,7 +103,7 @@ struct OverviewSection: View {
 
             // HTTP Fields
             if hasHTTPFields {
-                InfoCard(title: "HTTP Fields") {
+                SectionCard(title: "HTTP Fields") {
                     ForEach(Array(httpFieldSections.enumerated()), id: \.element.id) { index, section in
                         if index > 0 {
                             Divider()
@@ -115,7 +115,7 @@ struct OverviewSection: View {
 
             // TLS Alerts
             if let tlsAlerts = request.tlsAlerts, !tlsAlerts.isEmpty {
-                InfoCard(title: "TLS Alerts") {
+                SectionCard(title: "TLS Alerts") {
                     ForEach(Array(tlsAlerts.enumerated()), id: \.element.id) { index, alert in
                         if index > 0 {
                             Divider()
@@ -144,7 +144,7 @@ struct OverviewSection: View {
 
             // Advanced Timing Information
             if let timing = request.timingPhases {
-                InfoCard(title: "Performance Timing") {
+                SectionCard(title: "Performance Timing") {
                     if let dns = timing.dnsLookup {
                         InfoRow(label: "DNS Lookup", value: String(format: "%.2f ms", dns * 1000))
                         Divider()

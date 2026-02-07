@@ -114,8 +114,6 @@ struct RewriteRulesView: View {
                             Label("Add Rule", systemImage: "plus")
                         }
 
-                        Divider()
-
                         Button {
                             showingImport = true
                         } label: {

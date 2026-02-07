@@ -14,6 +14,7 @@ struct FavoritesListView: View {
     @ObservedObject private var favoritesManager = FavoritesManager.shared
     @State private var searchText = ""
     @State private var editingFavorite: Favorite?
+    @State private var showingClearAllAlert = false
     @State private var toastMessage: String?
     @Environment(\.dismiss) private var dismiss: DismissAction
 
@@ -67,10 +68,7 @@ struct FavoritesListView: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
                     Button(role: .destructive) {
-                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                            favoritesManager.clearAll()
-                            showToast(message: "All favorites cleared")
-                        }
+                        showingClearAllAlert = true
                     } label: {
                         Label("Clear All", systemImage: "trash")
                     }
@@ -86,6 +84,17 @@ struct FavoritesListView: View {
             FavoriteEditorView(favorite: favorite)
         }
         .toast(message: $toastMessage)
+        .alert("Clear All Favorites", isPresented: $showingClearAllAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear", role: .destructive) {
+                withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+                    favoritesManager.clearAll()
+                    showToast(message: "All favorites cleared")
+                }
+            }
+        } message: {
+            Text("Are you sure you want to clear all \(favoritesManager.favorites.count) favorites? This action cannot be undone.")
+        }
     }
 
     private var emptyStateView: some View {
