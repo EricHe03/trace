@@ -31,4 +31,3 @@ public struct LoadingPlaceholderCard: View {
         }
     }
 }
-

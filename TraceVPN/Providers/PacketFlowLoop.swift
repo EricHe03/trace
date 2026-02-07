@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/01/19.
 //
 
-import Foundation
 import Darwin
+import Foundation
 import NetworkExtension
 import OSLog
 import TraceCore
@@ -326,7 +326,7 @@ final class PacketFlowLoop {
                             switch decision.decision {
                             case .forwardDirect:
                                 if !self.tunnelUDPSupported,
-                                   (self.udpForwardingMode == .hevOnly || (self.udpForwardingMode == .split && decision.isQUIC)),
+                                   self.udpForwardingMode == .hevOnly || (self.udpForwardingMode == .split && decision.isQUIC),
                                    self.logSampler.shouldLog(event: "vpn.udp_forward_fallback", key: "direct", first: 3, every: 200) {
                                     VPNLog.tunnel.warning(
                                         "event=vpn.udp_forward_fallback outcome=success mode=\(self.udpForwardingMode.rawValue, privacy: .public) action=direct reason=tunnel_udp_unsupported"

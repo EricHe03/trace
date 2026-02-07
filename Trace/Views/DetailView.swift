@@ -349,4 +349,3 @@ struct DetailView: View {
         DetailView(request: sampleRequest)
     }
 }
-

@@ -234,4 +234,3 @@ private struct FallbackLoadResult {
     let events: [ServerSentEvent]
     let shouldContinuePolling: Bool
 }
-

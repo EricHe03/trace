@@ -225,7 +225,7 @@ private final class ConnectionReader: @unchecked Sendable {
         return data
     }
 
-    func readSome(maximum: Int = 65_536) async throws -> Data {
+    func readSome(maximum: Int = 65536) async throws -> Data {
         if !buffer.isEmpty {
             let data = buffer
             buffer.removeAll(keepingCapacity: true)
@@ -793,9 +793,9 @@ private final class Socks5UDPRelay: @unchecked Sendable {
     private func endpointKey(_ endpoint: NWEndpoint) -> String {
         switch endpoint {
         case let .hostPort(host, port):
-            return "\(host):\(port.rawValue)"
+            "\(host):\(port.rawValue)"
         default:
-            return "\(endpoint)"
+            "\(endpoint)"
         }
     }
 

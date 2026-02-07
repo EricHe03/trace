@@ -2911,8 +2911,7 @@ public class ProxyConnection: @unchecked Sendable {
 
         if method.caseInsensitiveCompare("GET") == .orderedSame,
            let accept = headers.first(where: { $0.key.caseInsensitiveCompare("accept") == .orderedSame })?.value.lowercased(),
-           accept.contains("text/event-stream")
-        {
+           accept.contains("text/event-stream") {
             // Rationale: Keep SSE responses uncompressed so incremental parsing can emit events live.
             if let acceptEncodingKey = headers.keys.first(where: { $0.caseInsensitiveCompare("accept-encoding") == .orderedSame }) {
                 headers.removeValue(forKey: acceptEncodingKey)

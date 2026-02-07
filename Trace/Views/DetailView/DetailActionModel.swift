@@ -16,7 +16,9 @@ enum DetailAction: String, Identifiable, CaseIterable {
     case shareResponseBody
     case shareRequestBody
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var title: String {
         switch self {
@@ -79,4 +81,3 @@ enum DetailActionModel {
         return actions
     }
 }
-

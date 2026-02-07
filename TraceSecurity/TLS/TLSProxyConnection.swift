@@ -996,7 +996,7 @@ public class TLSProxyConnection: @unchecked Sendable {
                 guard let self else { return }
                 let host = self.targetHost
                 let code = errorCode
-                let reason: String = if code == Int(errSecHostNameMismatch) {
+                let reason = if code == Int(errSecHostNameMismatch) {
                     "tls_upstream_hostname_mismatch code=\(code)"
                 } else {
                     "tls_upstream_trust_failed code=\(code)"
