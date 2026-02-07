@@ -18,6 +18,7 @@ struct RequestMapView: View {
     @State private var searchText = ""
     @State private var sortOrder: SortOrder = .mostRecent
     @State private var showingImport = false
+    @State private var showingClearAllAlert = false
     @State private var toastMessage: String?
 
     enum SortOrder: String, CaseIterable {
@@ -126,8 +127,6 @@ struct RequestMapView: View {
                             Label("Add Map", systemImage: "plus")
                         }
 
-                        Divider()
-
                         Button {
                             showingImport = true
                         } label: {
@@ -143,11 +142,11 @@ struct RequestMapView: View {
                         Divider()
 
                         Button(role: .destructive) {
-                            mapManager.clearAllMaps()
-                            showToast(message: "All maps cleared")
+                            showingClearAllAlert = true
                         } label: {
                             Label("Clear All", systemImage: "trash")
                         }
+                        .disabled(mapManager.maps.isEmpty)
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -170,6 +169,15 @@ struct RequestMapView: View {
                 handleImport(result)
             }
             .toast(message: $toastMessage)
+            .alert("Clear All Request Maps", isPresented: $showingClearAllAlert) {
+                Button("Cancel", role: .cancel) {}
+                Button("Clear", role: .destructive) {
+                    mapManager.clearAllMaps()
+                    showToast(message: "All maps cleared")
+                }
+            } message: {
+                Text("Are you sure you want to clear all \(mapManager.maps.count) request maps? This action cannot be undone.")
+            }
         }
     }
 

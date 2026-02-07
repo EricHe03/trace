@@ -20,7 +20,7 @@ public struct CompressionInfoView: View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
             HStack {
                 Image(systemName: compressionInfo.decompressionSuccess ? "archivebox.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(compressionInfo.decompressionSuccess ? .green : .orange)
+                    .foregroundStyle(compressionInfo.decompressionSuccess ? DesignSystem.Colors.success : DesignSystem.Colors.warning)
                 Text("Compression")
                     .font(.headline)
                 Spacer()
@@ -65,7 +65,7 @@ public struct CompressionInfoView: View {
                         Spacer()
                         Text(String(format: "%.1fx", 1.0 / compressionInfo.ratio))
                             .font(.system(.body, design: .monospaced))
-                            .foregroundStyle(.green)
+                            .foregroundStyle(DesignSystem.Colors.success)
                     }
 
                     HStack {
@@ -75,7 +75,7 @@ public struct CompressionInfoView: View {
                         Spacer()
                         Text(String(format: "%.1f%%", compressionInfo.savingsPercentage))
                             .font(.system(.body, design: .monospaced))
-                            .foregroundStyle(.green)
+                            .foregroundStyle(DesignSystem.Colors.success)
                     }
 
                     if let decompressionTime = compressionInfo.decompressionTime {
@@ -94,11 +94,11 @@ public struct CompressionInfoView: View {
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
                     HStack {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(DesignSystem.Colors.warning)
                         Text("Decompression Failed")
                             .font(.caption)
                             .fontWeight(.semibold)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(DesignSystem.Colors.warning)
                     }
 
                     Text("The body data could not be decompressed. Displaying raw compressed data.")
@@ -106,14 +106,19 @@ public struct CompressionInfoView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(DesignSystem.Spacing.sm)
-                .background(Color.orange.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .background(DesignSystem.Colors.warning.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.sm))
             }
         }
         .padding()
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .shadow(color: .black.opacity(0.05), radius: 2, y: 1)
+        .background(DesignSystem.Colors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.lg))
+        .shadow(
+            color: DesignSystem.Shadow.sm.color,
+            radius: DesignSystem.Shadow.sm.radius,
+            x: DesignSystem.Shadow.sm.x,
+            y: DesignSystem.Shadow.sm.y
+        )
     }
 
     @ViewBuilder
@@ -139,13 +144,13 @@ public struct CompressionInfoView: View {
     private func algorithmColor(for algorithm: String) -> Color {
         switch algorithm.lowercased() {
         case "gzip", "x-gzip":
-            .blue
+            DesignSystem.Colors.accent
         case "br", "brotli":
-            .purple
+            DesignSystem.Colors.accentAlt
         case "deflate":
-            .indigo
+            DesignSystem.Colors.info
         default:
-            .gray
+            DesignSystem.Colors.muted
         }
     }
 }

@@ -20,13 +20,14 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
     private let baseManager: PersistentCollectionManager<Script>
     private let scriptEngine: ScriptEngine?
     private let executionMutex = ScriptExecutionMutex()
-    private lazy var executionCountBuffer: ScriptExecutionCountBuffer = ScriptExecutionCountBuffer(
+    private lazy var executionCountBuffer: ScriptExecutionCountBuffer = .init(
         flushIntervalSeconds: 5,
         flushBatchSize: 100
     ) { [weak self] deltas in
         guard let self else { return }
         await self.applyExecutionCountDeltas(deltas)
     }
+
     private var cancellables: Set<AnyCancellable> = []
     private let asyncScriptTimeout: TimeInterval = 2.0
 

@@ -23,6 +23,7 @@ final class SSEViewModel: ObservableObject {
     @Published var filterStatus: SSEConnectionStatus?
 
     init() {
+        NetworkLog.sse.info("event=sse_viewmodel.init outcome=success")
         scheduleLoad()
 
         // Observe new SSE connections from Network Extension
@@ -47,13 +48,15 @@ final class SSEViewModel: ObservableObject {
     }
 
     func loadConnections() async {
+        NetworkLog.sse.info("event=sse_viewmodel.load_connections outcome=start")
         do {
             var loaded = try storage.loadAllSSEConnections()
             loaded.sort { $0.startTime > $1.startTime }
             connections = loaded
+            NetworkLog.sse.info("event=sse_viewmodel.load_connections outcome=success count=\(loaded.count, privacy: .public)")
         } catch {
             NetworkLog.sse.error(
-                "event=sse.load outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                "event=sse_viewmodel.load_connections outcome=failure error=\(error.localizedDescription, privacy: .public)"
             )
             connections = []
         }

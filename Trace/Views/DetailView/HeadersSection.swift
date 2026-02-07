@@ -15,7 +15,7 @@ struct HeadersSection: View {
     var body: some View {
         VStack(spacing: DesignSystem.Spacing.lg) {
             if !headers.isEmpty {
-                InfoCard(title: "Headers") {
+                SectionCard(title: "Headers") {
                     ForEach(Array(headers.enumerated()), id: \.element.id) { index, header in
                         if index > 0 {
                             Divider()

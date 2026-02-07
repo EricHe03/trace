@@ -193,14 +193,9 @@ struct SettingsTabView: View {
     @Binding var showingOnboarding: Bool
     @State private var showingClearAlert = false
     @State private var showingHARImport = false
-    @State private var harShareItem: ShareURLItem?
+    @State private var shareSheetItem: ShareSheetItem?
     @State private var toastMessage: String?
     @ObservedObject private var vpnManager = VPNManager.shared
-
-    private struct ShareURLItem: Identifiable {
-        let id = UUID()
-        let url: URL
-    }
 
     var body: some View {
         NavigationStack {
@@ -387,9 +382,7 @@ struct SettingsTabView: View {
             } message: {
                 Text("Are you sure you want to clear all captured requests? This action cannot be undone.")
             }
-            .sheet(item: $harShareItem) { item in
-                ShareSheetContainer(items: [item.url])
-            }
+            .shareSheet(item: $shareSheetItem)
             .fileImporter(
                 isPresented: $showingHARImport,
                 allowedContentTypes: {
@@ -412,7 +405,7 @@ struct SettingsTabView: View {
     private func exportToHAR() {
         do {
             let url = try HARExporter.exportToFile(requests: viewModel.requests)
-            harShareItem = ShareURLItem(url: url)
+            shareSheetItem = ShareSheetItem([url])
         } catch {
             withAnimation(DesignSystem.Accessibility.preferredAnimation) {
                 toastMessage = "Export failed: \(error.localizedDescription)"

@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import OSLog
 import TraceCore
 import TraceFeatures
 import TraceUI
@@ -21,9 +22,10 @@ struct NetworkView: View {
     @State private var showingRequestBuilder = false
     @State private var showingFavorites = false
     @State private var showingCurlImport = false
+    @State private var showingClearAllAlert = false
     @State private var showingVPNSetupAlert = false
     @State private var toastMessage: String?
-    @State private var selectedRequest: NetworkRequest?
+    @State private var shareSheetItem: ShareSheetItem?
     @State private var requestToOpen: NetworkRequest?
     @State private var hasLoaded = false
     @State private var cachedEvents: [NetworkEvent] = []
@@ -66,9 +68,7 @@ struct NetworkView: View {
             .sheet(isPresented: $showingCurlImport) {
                 curlImportView
             }
-            .sheet(item: $selectedRequest) { request in
-                shareSheet(for: request)
-            }
+            .shareSheet(item: $shareSheetItem)
             .modifier(RequestNavigationDestinationModifier(requestToOpen: $requestToOpen))
             .toast(message: $toastMessage, bottomPadding: 80)
             .modifier(RequestSelectionModifier(
@@ -85,16 +85,20 @@ struct NetworkView: View {
                 sseViewModel: sseViewModel,
                 scheduleRebuild: scheduleEventRebuild
             ))
+            .alert("Clear All Network Activity", isPresented: $showingClearAllAlert) {
+                Button("Cancel", role: .cancel) {}
+                Button("Clear", role: .destructive) {
+                    clearAllData()
+                }
+            } message: {
+                Text("Are you sure you want to clear all captured requests, WebSocket connections, and SSE connections? This action cannot be undone.")
+            }
     }
 
     private var curlImportView: some View {
         CurlImportView { request in
             actions.importCurlRequest(request)
         }
-    }
-
-    private func shareSheet(for request: NetworkRequest) -> some View {
-        ShareSheetContainer(items: actions.shareItems(for: request))
     }
 
     private struct RequestNavigationDestinationModifier: ViewModifier {
@@ -114,6 +118,7 @@ struct NetworkView: View {
     }
 
     private func performInitialLoad() async {
+        FeatureLog.capture.info("event=network_view.perform_initial_load outcome=start has_loaded=\(self.hasLoaded, privacy: .public)")
         if !hasLoaded {
             await loadAllData()
             hasLoaded = true
@@ -141,7 +146,7 @@ struct NetworkView: View {
                         effectiveGroupingMode: effectiveGroupingMode,
                         onToggleFavorite: { actions.toggleFavorite($0) },
                         onDeleteRequest: { actions.deleteRequest($0) },
-                        onShareRequest: { actions.shareRequest($0, selectedRequest: $selectedRequest) },
+                        onShareRequest: { shareSheetItem = ShareSheetItem(actions.shareItems(for: $0)) },
                         contextMenuContent: contextMenuContent
                     )
                 }
@@ -178,7 +183,7 @@ struct NetworkView: View {
                 onToggleFilters: { showingFilters = true },
                 onShowFavorites: { showingFavorites = true },
                 onShowCurlImport: { showingCurlImport = true },
-                onClearAll: clearAllData
+                onClearAll: { showingClearAllAlert = true }
             )
         }
         .overlay {
@@ -254,9 +259,11 @@ struct NetworkView: View {
     // MARK: - Data Loading
 
     private func loadAllData() async {
+        FeatureLog.capture.info("event=network_view.load_all_data outcome=start")
         await viewModel.reloadRequests()
         await webSocketViewModel.loadConnections()
         await sseViewModel.loadConnections()
+        FeatureLog.capture.info("event=network_view.load_all_data outcome=complete")
     }
 
     // MARK: - Computed Properties

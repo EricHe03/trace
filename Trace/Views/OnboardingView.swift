@@ -23,7 +23,7 @@ struct OnboardingView: View {
     @ObservedObject private var vpnManager = VPNManager.shared
     var onComplete: () -> Void
 
-    private let totalPages = 5
+    private let totalPages = 4
 
     var body: some View {
         ZStack {
@@ -31,18 +31,15 @@ struct OnboardingView: View {
                 OnboardingPageView(
                     icon: "network",
                     title: "Welcome to Trace",
-                    description: "A powerful network debugging tool that captures and analyzes HTTP/HTTPS traffic from your device",
+                    description: "Capture and inspect HTTP and HTTPS traffic directly on your device.",
                     iconColor: DesignSystem.Colors.accent
                 )
                 .tag(0)
 
-                NotificationSetupPageView()
-                    .tag(1)
-
                 OnboardingPageView(
                     icon: "shield.checkered",
                     title: "Install Certificate",
-                    description: "To capture HTTPS traffic, you need to install and trust our certificate. This is required for SSL/TLS decryption.",
+                    description: "To inspect HTTPS payloads, install and trust the Trace certificate. You can do this now or later in Settings.",
                     iconColor: DesignSystem.Colors.success,
                     actionLabel: isCertificateTrusted ? nil : "Install Certificate",
                     action: {
@@ -52,19 +49,19 @@ struct OnboardingView: View {
                     statusSystemImage: isCertificateTrusted ? "checkmark.circle.fill" : nil,
                     statusColor: isCertificateTrusted ? DesignSystem.Colors.success : nil
                 )
-                .tag(2)
+                .tag(1)
 
                 VPNSetupPageView(
                     vpnManager: vpnManager,
                     setupComplete: $vpnSetupComplete,
                     setupError: $vpnSetupError
                 )
-                .tag(3)
+                .tag(2)
 
                 FeaturesPageView {
                     completeOnboarding()
                 }
-                .tag(4)
+                .tag(3)
             }
             .tabViewStyle(.page)
             .indexViewStyle(.page(backgroundDisplayMode: .always))
@@ -73,7 +70,7 @@ struct OnboardingView: View {
                 HStack {
                     Spacer()
                     if currentPage < totalPages - 1 {
-                        Button("Skip") {
+                        Button("Skip Setup") {
                             completeOnboarding()
                         }
                         .foregroundStyle(.secondary)
@@ -117,150 +114,6 @@ struct OnboardingView: View {
             let trusted = CertificateManager.shared.isRootCATrusted()
             DispatchQueue.main.async {
                 isCertificateTrusted = trusted
-            }
-        }
-    }
-}
-
-// MARK: - Notification Setup Page
-
-struct NotificationSetupPageView: View {
-    @State private var notificationStatus: NotificationStatus = .notDetermined
-    @State private var isRequesting = false
-
-    enum NotificationStatus {
-        case notDetermined
-        case authorized
-        case denied
-    }
-
-    var body: some View {
-        VStack(spacing: DesignSystem.Spacing.xl) {
-            Spacer()
-
-            Image(systemName: statusIcon)
-                .font(.system(size: DesignSystem.IconSize.hero))
-                .foregroundStyle(statusColor)
-                .traceBounceSymbolEffectIfAvailable()
-                .padding(.bottom, DesignSystem.Spacing.lg)
-
-            Text("Enable Notifications")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-                .multilineTextAlignment(.center)
-
-            Text("Get notified when capture events occur, requests are blocked, or when important updates are available.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, DesignSystem.Spacing.xxxl)
-                .fixedSize(horizontal: false, vertical: true)
-
-            // Status indicator
-            if notificationStatus == .authorized {
-                Label("Notifications Enabled", systemImage: "checkmark.circle.fill")
-                    .font(.headline)
-                    .foregroundStyle(DesignSystem.Colors.success)
-                    .padding(.top, DesignSystem.Spacing.md)
-            } else if notificationStatus == .denied {
-                Label("Notifications Disabled", systemImage: "bell.slash.fill")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, DesignSystem.Spacing.md)
-            }
-
-            // Action button
-            if notificationStatus == .notDetermined {
-                Button {
-                    requestNotificationPermission()
-                } label: {
-                    if isRequesting {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    } else {
-                        Text("Enable Notifications")
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-                .primaryActionButton(tint: DesignSystem.Colors.accent)
-                .padding(.horizontal, DesignSystem.Spacing.xxxl)
-                .padding(.top, DesignSystem.Spacing.lg)
-                .disabled(isRequesting)
-
-                Button("Maybe Later") {
-                    notificationStatus = .denied
-                }
-                .foregroundStyle(.secondary)
-                .padding(.top, DesignSystem.Spacing.sm)
-            } else if notificationStatus == .denied {
-                Text("You can enable notifications later in Settings")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, DesignSystem.Spacing.sm)
-            }
-
-            Spacer()
-            Spacer()
-        }
-        .padding()
-        .onAppear {
-            Task {
-                await refreshNotificationStatus()
-            }
-        }
-    }
-
-    private var statusIcon: String {
-        switch notificationStatus {
-        case .notDetermined:
-            "bell.badge"
-        case .authorized:
-            "bell.badge.fill"
-        case .denied:
-            "bell.slash"
-        }
-    }
-
-    private var statusColor: Color {
-        switch notificationStatus {
-        case .notDetermined:
-            DesignSystem.Colors.accent
-        case .authorized:
-            DesignSystem.Colors.success
-        case .denied:
-            .secondary
-        }
-    }
-
-    private func requestNotificationPermission() {
-        isRequesting = true
-        Task {
-            do {
-                try await NotificationManager.shared.requestAuthorization()
-            } catch {
-                CoreLog.lifecycle.warning(
-                    "event=app.notification_permission outcome=failure error=\(error.localizedDescription, privacy: .public)"
-                )
-            }
-            await refreshNotificationStatus()
-            await MainActor.run {
-                isRequesting = false
-            }
-        }
-    }
-
-    private func refreshNotificationStatus() async {
-        let status = await NotificationManager.shared.checkAuthorizationStatus()
-        await MainActor.run {
-            switch status {
-            case .authorized, .provisional, .ephemeral:
-                notificationStatus = .authorized
-            case .denied:
-                notificationStatus = .denied
-            case .notDetermined:
-                notificationStatus = .notDetermined
-            @unknown default:
-                notificationStatus = .notDetermined
             }
         }
     }

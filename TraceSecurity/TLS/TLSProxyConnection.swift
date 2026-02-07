@@ -241,6 +241,7 @@ public class TLSProxyConnection: @unchecked Sendable {
     public var onHTTP2StreamClosed: ((UInt32) -> Void)?
     public var onHTTP2StreamsActiveChanged: ((Int) -> Void)?
 
+    private let connectionId: Int?
     private var isActive = false
     private var isBridging = false
     private let queue = DispatchQueue(label: "com.trace.tlsproxy", qos: .userInitiated)
@@ -257,8 +258,19 @@ public class TLSProxyConnection: @unchecked Sendable {
     private let handshakeTimeoutSeconds: TimeInterval = 10
     private let throttler = TLSStreamThrottler()
 
+    private var proxyStartTime: CFAbsoluteTime?
+    private var upstreamConnectStartTime: CFAbsoluteTime?
+    private var upstreamConnectWatchdog: DispatchWorkItem?
+    private var lastUpstreamStateLabel: String = "unknown"
+
+    private var bytesDecryptedFromClient: UInt64 = 0
+    private var bytesDecryptedFromServer: UInt64 = 0
+    private var bytesSentToUpstream: UInt64 = 0
+    private var bytesSentToClient: UInt64 = 0
+
     public init(
         clientConnection: NWConnection,
+        connectionId: Int? = nil,
         targetHost: String,
         targetPort: UInt16 = 443,
         upstreamHost: String? = nil,
@@ -279,6 +291,7 @@ public class TLSProxyConnection: @unchecked Sendable {
         self.maxResponseBufferSize = headerAllowance + (self.captureBodies ? bodyPreviewBytes : 0)
 
         self.clientConnection = clientConnection
+        self.connectionId = connectionId
         self.targetHost = targetHost
         self.targetPort = targetPort
         self.upstreamHost = upstreamHost ?? targetHost
@@ -405,8 +418,11 @@ public class TLSProxyConnection: @unchecked Sendable {
             SecurityLog.tls.warning(
                 LogEvent.tls("handshake_timeout")
                     .with("host", value: host, privacy: .hash)
+                    .with("connection_id", value: self.connectionId)
                     .with("upstream", value: upstream)
                     .with("client", value: client)
+                    .with("upstream_state", value: self.lastUpstreamStateLabel)
+                    .with("pending_client_bytes", value: self.pendingClientData.count)
             )
             self.close(reason: .failure("tls_handshake_timeout upstream=\(upstream) client=\(client)"))
         }
@@ -417,6 +433,45 @@ public class TLSProxyConnection: @unchecked Sendable {
     private func cancelHandshakeTimeout() {
         handshakeTimeoutWorkItem?.cancel()
         handshakeTimeoutWorkItem = nil
+    }
+
+    private func scheduleUpstreamConnectWatchdog(after delay: TimeInterval = 1.5) {
+        cancelUpstreamConnectWatchdog()
+        guard let start = upstreamConnectStartTime else { return }
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isActive else { return }
+            guard !self.upstreamReady else { return }
+            let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - start) * 1000)
+            SecurityLog.tls.warning(
+                LogEvent.tls("upstream_connect_stall")
+                    .outcome(.pending)
+                    .with("host", value: self.targetHost, privacy: .hash)
+                    .with("connection_id", value: self.connectionId)
+                    .with("elapsed_ms", value: elapsedMs)
+                    .with("state", value: self.lastUpstreamStateLabel)
+                    .with("pending_client_bytes", value: self.pendingClientData.count)
+            )
+
+            // Re-arm while still stalled to give a breadcrumb trail without flooding.
+            self.scheduleUpstreamConnectWatchdog(after: 5)
+        }
+
+        upstreamConnectWatchdog = work
+        queue.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func cancelUpstreamConnectWatchdog() {
+        upstreamConnectWatchdog?.cancel()
+        upstreamConnectWatchdog = nil
+    }
+
+    /// Network.framework may surface transient POSIX read errors while a stream is still usable.
+    /// Treat these as retryable to avoid premature bridge teardown during handshake transitions.
+    private func isTransientReceiveError(_ error: Error) -> Bool {
+        guard let nwError = error as? NWError else { return false }
+        guard case let .posix(code) = nwError else { return false }
+        return code == .ENODATA || code == .EAGAIN || code == .EINTR
     }
 
     private func checkHandshakeCompleteAndCancelTimeout() {
@@ -431,14 +486,16 @@ public class TLSProxyConnection: @unchecked Sendable {
     public func start() {
         executeOnQueue { [weak self] in
             guard let self else { return }
+            self.proxyStartTime = CFAbsoluteTimeGetCurrent()
             SecurityLog.tls.info(
-                "event=tls.proxy_start outcome=pending host=\(self.targetHost, privacy: .private(mask: .hash)) port=\(self.targetPort) upstream_host=\(self.upstreamHost, privacy: .private(mask: .hash)) upstream_port=\(self.upstreamPort)"
+                "event=tls.proxy_start outcome=pending host=\(self.targetHost, privacy: .private(mask: .hash)) port=\(self.targetPort) upstream_host=\(self.upstreamHost, privacy: .private(mask: .hash)) upstream_port=\(self.upstreamPort) connection_id=\(self.connectionId ?? -1)"
             )
             sampledDebug(
                 LogEvent.tls("proxy_step")
                     .with("step", value: 0)
                     .with("action", value: "buffer_client_hello")
                     .with("pending_data_bytes", value: self.pendingClientData.count)
+                    .with("connection_id", value: self.connectionId)
             )
 
             self.isActive = true
@@ -475,6 +532,7 @@ public class TLSProxyConnection: @unchecked Sendable {
                         LogEvent.tls("interception_check")
                             .with("host", value: self?.targetHost ?? "unknown", privacy: .hash)
                             .with("active", value: interceptionActive)
+                            .with("connection_id", value: self?.connectionId)
                     )
 
                     self?.executeOnQueue { [weak self] in
@@ -498,6 +556,7 @@ public class TLSProxyConnection: @unchecked Sendable {
                                 .with("request_alpn", value: requestALPN.joined(separator: ","), privacy: .hash)
                                 .with("force_http1", value: forceHTTP1)
                                 .with("interception_active", value: interceptionActive)
+                                .with("connection_id", value: self.connectionId)
                         )
 
                         // Step 1: Create TLS client connection to real server (upstream) first.
@@ -530,6 +589,7 @@ public class TLSProxyConnection: @unchecked Sendable {
             }
             self.isActive = false
             self.cancelHandshakeTimeout()
+            self.cancelUpstreamConnectWatchdog()
             self.stopHTTP2CapturePipeline()
             self.cleanupActiveHTTP1ResponseBodyCapture()
 
@@ -540,9 +600,14 @@ public class TLSProxyConnection: @unchecked Sendable {
             let isHTTP2 = self.isHTTP2
             let upstreamReady = self.upstreamReady
             let clientReady = self.clientHandshakeReady
+            let durationMs: Int? = if let start = self.proxyStartTime {
+                Int((CFAbsoluteTimeGetCurrent() - start) * 1000)
+            } else {
+                nil
+            }
 
             SecurityLog.tls.info(
-                "event=tls.proxy_close_begin host=\(self.targetHost, privacy: .private(mask: .hash)) upstream_ready=\(upstreamReady) client_ready=\(clientReady) is_http2=\(isHTTP2) has_client_conn=\(hasClientConn) has_server_conn=\(hasServerConn) has_listener=\(hasListener) has_bridge=\(hasBridge)"
+                "event=tls.proxy_close_begin host=\(self.targetHost, privacy: .private(mask: .hash)) upstream_ready=\(upstreamReady) client_ready=\(clientReady) is_http2=\(isHTTP2) has_client_conn=\(hasClientConn) has_server_conn=\(hasServerConn) has_listener=\(hasListener) has_bridge=\(hasBridge) connection_id=\(self.connectionId ?? -1) duration_ms=\(durationMs ?? -1) bytes_client_in=\(self.bytesDecryptedFromClient) bytes_server_in=\(self.bytesDecryptedFromServer) bytes_upstream_out=\(self.bytesSentToUpstream) bytes_client_out=\(self.bytesSentToClient) pending_client_bytes=\(self.pendingClientData.count)"
             )
 
             if let manager = self.http2StreamManager {
@@ -830,7 +895,7 @@ public class TLSProxyConnection: @unchecked Sendable {
             switch state {
             case .ready:
                 SecurityLog.tls.info(
-                    "event=tls.bridge_ready host=\(self?.targetHost ?? "", privacy: .private(mask: .hash))"
+                    "event=tls.bridge_ready host=\(self?.targetHost ?? "", privacy: .private(mask: .hash)) connection_id=\(self?.connectionId ?? -1)"
                 )
                 if let pending = self?.pendingClientData, !pending.isEmpty {
                     bridgeConnection.send(content: pending, completion: .contentProcessed { _ in })
@@ -881,6 +946,20 @@ public class TLSProxyConnection: @unchecked Sendable {
             guard let self, self.isActive else { return }
 
             if let error {
+                if self.isTransientReceiveError(error) {
+                    if self.logThrottle.shouldLog(
+                        key: "tls.bridge_read.retry.\(self.connectionId ?? -1)",
+                        minInterval: 5
+                    ) {
+                        SecurityLog.tls.debug(
+                            "event=tls.bridge_read outcome=retry host=\(self.targetHost, privacy: .private(mask: .hash)) connection_id=\(self.connectionId ?? -1) error=\(error.localizedDescription, privacy: .public)"
+                        )
+                    }
+                    self.queue.asyncAfter(deadline: .now() + 0.02) { [weak self] in
+                        self?.startBridging(from: source, to: destination)
+                    }
+                    return
+                }
                 SecurityLog.tls.error("event=tls.bridge_read outcome=failure error=\(error.localizedDescription)")
                 self.close(reason: .failure("tls_bridge_read_failed"))
                 return
@@ -899,8 +978,10 @@ public class TLSProxyConnection: @unchecked Sendable {
     // MARK: - TLS Client Setup (for server connection)
 
     private func createTLSClientConnection(requestedALPNProtocols: [String]) {
+        upstreamConnectStartTime = CFAbsoluteTimeGetCurrent()
+        lastUpstreamStateLabel = "init"
         SecurityLog.tls.info(
-            "event=tls.upstream_connect_begin sni=\(self.targetHost, privacy: .private(mask: .hash)) connect_host=\(self.upstreamHost, privacy: .private(mask: .hash)) port=\(self.upstreamPort) alpn=\(requestedALPNProtocols.joined(separator: ","), privacy: .private(mask: .hash))"
+            "event=tls.upstream_connect_begin sni=\(self.targetHost, privacy: .private(mask: .hash)) connect_host=\(self.upstreamHost, privacy: .private(mask: .hash)) port=\(self.upstreamPort) alpn=\(requestedALPNProtocols.joined(separator: ","), privacy: .private(mask: .hash)) connection_id=\(self.connectionId ?? -1)"
         )
         upstreamReady = false
 
@@ -908,7 +989,30 @@ public class TLSProxyConnection: @unchecked Sendable {
             LogEvent.tls("creating_client_tls_options")
                 .with("sni", value: self.targetHost, privacy: .hash)
         )
-        let tlsOptions = TLSHandler.createClientTLSOptions(for: targetHost, alpnProtocols: requestedALPNProtocols)
+        let tlsOptions = TLSHandler.createClientTLSOptions(
+            for: targetHost,
+            alpnProtocols: requestedALPNProtocols,
+            onTrustFailure: { [weak self] _, _, errorCode in
+                guard let self else { return }
+                let host = self.targetHost
+                let code = errorCode
+                let reason: String = if code == Int(errSecHostNameMismatch) {
+                    "tls_upstream_hostname_mismatch code=\(code)"
+                } else {
+                    "tls_upstream_trust_failed code=\(code)"
+                }
+                self.executeOnQueue { [weak self] in
+                    guard let self, self.isActive else { return }
+                    guard !self.upstreamReady else { return }
+                    SecurityLog.tls.warning(
+                        LogEvent.tls("upstream_trust_failed")
+                            .with("host", value: host, privacy: .hash)
+                            .with("reason", value: reason, privacy: .hash)
+                    )
+                    self.close(reason: .failure(reason))
+                }
+            }
+        )
         let parameters = NWParameters(tls: tlsOptions, tcp: .init())
 
         guard let port = NWEndpoint.Port(rawValue: self.upstreamPort) else {
@@ -922,7 +1026,7 @@ public class TLSProxyConnection: @unchecked Sendable {
             port: port
         )
         SecurityLog.tls.info(
-            "event=tls.upstream_endpoint_created sni=\(self.targetHost, privacy: .private(mask: .hash)) connect_host=\(self.upstreamHost, privacy: .private(mask: .hash)) port=\(self.upstreamPort)"
+            "event=tls.upstream_endpoint_created sni=\(self.targetHost, privacy: .private(mask: .hash)) connect_host=\(self.upstreamHost, privacy: .private(mask: .hash)) port=\(self.upstreamPort) connection_id=\(self.connectionId ?? -1)"
         )
 
         let connection = NWConnection(to: endpoint, using: parameters)
@@ -930,15 +1034,24 @@ public class TLSProxyConnection: @unchecked Sendable {
         connection.stateUpdateHandler = { [weak self] state in
             switch state {
             case .setup:
+                self?.lastUpstreamStateLabel = "setup"
                 self?.sampledDebug(LogEvent.tls("upstream_state").with("state", value: "setup"))
 
             case .preparing:
+                self?.lastUpstreamStateLabel = "preparing"
                 self?.sampledDebug(LogEvent.tls("upstream_state").with("state", value: "preparing"))
 
             case .ready:
                 guard let self, self.isActive else { return }
+                self.lastUpstreamStateLabel = "ready"
+                self.cancelUpstreamConnectWatchdog()
+                let connectMs: Int? = if let start = self.upstreamConnectStartTime {
+                    Int((CFAbsoluteTimeGetCurrent() - start) * 1000)
+                } else {
+                    nil
+                }
                 SecurityLog.tls.info(
-                    "event=tls.upstream_ready host=\(self.targetHost ?? "", privacy: .private(mask: .hash))"
+                    "event=tls.upstream_ready host=\(self.targetHost ?? "", privacy: .private(mask: .hash)) connection_id=\(self.connectionId ?? -1) connect_ms=\(connectMs ?? -1)"
                 )
                 self.serverALPN = TLSHandler.getNegotiatedALPN(from: connection)
                 self.sampledDebug(
@@ -998,6 +1111,7 @@ public class TLSProxyConnection: @unchecked Sendable {
                 self.readDecryptedFromServer()
 
             case let .waiting(error):
+                self?.lastUpstreamStateLabel = "waiting"
                 if let self, self.logThrottle.shouldLog(
                     key: "tls.upstream_state.waiting.\(self.targetHost ?? "unknown")",
                     minInterval: 5
@@ -1007,15 +1121,18 @@ public class TLSProxyConnection: @unchecked Sendable {
                         LogEvent.tls("upstream_state")
                             .with("state", value: "waiting")
                             .with("host", value: host, privacy: .hash)
+                            .with("connection_id", value: self.connectionId)
                             .with("error", value: error.localizedDescription)
                     )
                 }
 
             case let .failed(error):
+                self?.lastUpstreamStateLabel = "failed"
                 SecurityLog.tls.error("event=tls.upstream_connect outcome=failure error=\(error.localizedDescription)")
                 self?.close(reason: .failure("tls_client_connection_failed:\(error.localizedDescription)"))
 
             case .cancelled:
+                self?.lastUpstreamStateLabel = "cancelled"
                 self?.sampledDebug(LogEvent.tls("upstream_state").with("state", value: "cancelled"))
                 // Treat unexpected upstream cancellation as a failure so the caller can fall back.
                 guard let self else { return }
@@ -1030,6 +1147,7 @@ public class TLSProxyConnection: @unchecked Sendable {
 
         connection.start(queue: queue)
         self.tlsClientConnection = connection
+        scheduleUpstreamConnectWatchdog(after: 1.5)
         sampledDebug(LogEvent.tls("upstream_started").with("action", value: "awaiting_handshake"))
     }
 
@@ -1260,6 +1378,7 @@ public class TLSProxyConnection: @unchecked Sendable {
             }
 
             if let data, !data.isEmpty {
+                self.bytesDecryptedFromClient += UInt64(data.count)
                 self.clientBuffer.append(data)
                 self.handleDecryptedClientData()
             }
@@ -1291,6 +1410,7 @@ public class TLSProxyConnection: @unchecked Sendable {
             }
 
             if let data, !data.isEmpty {
+                self.bytesDecryptedFromServer += UInt64(data.count)
                 self.serverBuffer.append(data)
                 self.handleDecryptedServerData()
             }
@@ -1615,9 +1735,15 @@ public class TLSProxyConnection: @unchecked Sendable {
                         var initial = Data()
                         if buffering { initial.append(bufferedHTTP1ResponseRaw) }
                         initial.append(serverBuffer)
+                        let statusMessage: String? = {
+                            let parts = statusLine.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+                            return (parts.count >= 3) ? String(parts[2]) : nil
+                        }()
                         startSSEStream(
                             request: request,
                             responseHeaders: headers,
+                            statusCode: statusCode,
+                            statusMessage: statusMessage,
                             initialData: initial,
                             initialBodyData: initialBodyData
                         )
@@ -2043,12 +2169,28 @@ public class TLSProxyConnection: @unchecked Sendable {
     }
 
     private func forwardHTTP1ToServer(_ data: Data) {
-        guard let connection = tlsClientConnection, !data.isEmpty else { return }
+        guard !data.isEmpty else { return }
+        guard let connection = tlsClientConnection else {
+            if logThrottle.shouldLog(key: "tls.forward_server_skipped.http1.\(connectionId ?? -1)", minInterval: 5) {
+                SecurityLog.tls.warning(
+                    "event=tls.forward_server_skipped outcome=skipped proto=http1 reason=no_tls_client_connection host=\(self.targetHost, privacy: .private(mask: .hash)) connection_id=\(self.connectionId ?? -1) bytes=\(data.count)"
+                )
+            }
+            return
+        }
         sendToServer(data, connection: connection, logEvent: "tls.forward_request")
     }
 
     private func forwardHTTP1ToClient(_ data: Data) {
-        guard let connection = tlsServerConnection, !data.isEmpty else { return }
+        guard !data.isEmpty else { return }
+        guard let connection = tlsServerConnection else {
+            if logThrottle.shouldLog(key: "tls.forward_client_skipped.http1.\(connectionId ?? -1)", minInterval: 5) {
+                SecurityLog.tls.warning(
+                    "event=tls.forward_client_skipped outcome=skipped proto=http1 reason=no_tls_server_connection host=\(self.targetHost, privacy: .private(mask: .hash)) connection_id=\(self.connectionId ?? -1) bytes=\(data.count)"
+                )
+            }
+            return
+        }
         sendToClient(data, connection: connection, logEvent: "tls.forward_response")
     }
 
@@ -2066,6 +2208,8 @@ public class TLSProxyConnection: @unchecked Sendable {
     private func startSSEStream(
         request: CapturedHTTP1Request,
         responseHeaders: [TraceHTTPHeader],
+        statusCode: Int?,
+        statusMessage: String?,
         initialData: Data,
         initialBodyData: Data
     ) {
@@ -2086,6 +2230,12 @@ public class TLSProxyConnection: @unchecked Sendable {
         }
 
         let requestHeaders = request.headers.map { TraceHTTPHeader(key: $0.key, value: $0.value) }
+        let responseHeadersDict = responseHeaders.reduce(into: [String: String]()) { dict, header in
+            dict[header.key] = header.value
+        }
+        let requestCharset = BodyStorage.extractCharset(from: request.headers)
+        let requestContentEncoding = request.headers.first(where: { $0.key.lowercased() == "content-encoding" })?.value
+        let responseCharset = BodyStorage.extractCharset(from: responseHeadersDict)
         let handler = SSEHandler(
             clientConnection: clientTLS,
             serverConnection: serverTLS,
@@ -2093,7 +2243,73 @@ public class TLSProxyConnection: @unchecked Sendable {
             requestHeaders: requestHeaders,
             responseHeaders: responseHeaders
         )
-        handler.start(onUpdate: { _ in }, initialBodyData: initialBodyData)
+        var capturePublishThrottle = SSECapturePublishThrottle()
+        handler.start(onUpdate: { [weak self] connection in
+            guard let self else { return }
+            guard capturePublishThrottle.shouldPublish(connection: connection) else { return }
+            self.executeOnQueue { [weak self] in
+                guard let self else { return }
+
+                let requestBodyStorage: BodyStorage = {
+                    guard self.captureBodies, self.maxCapturedBodyBytes > 0 else { return .empty }
+                    if let data = request.bodyData, !data.isEmpty {
+                        return BodyStorage.from(
+                            data: Data(data.prefix(self.maxCapturedBodyBytes)),
+                            charset: requestCharset,
+                            maxSize: self.maxCapturedBodyBytes,
+                            contentEncoding: requestContentEncoding
+                        )
+                    }
+                    if let body = request.body, !body.isEmpty {
+                        return BodyStorage.from(
+                            string: body,
+                            charset: requestCharset,
+                            maxSize: self.maxCapturedBodyBytes
+                        )
+                    }
+                    return .empty
+                }()
+
+                let responseBodyStorage: BodyStorage = {
+                    guard self.captureBodies, self.maxCapturedBodyBytes > 0 else { return .empty }
+                    let payload = SSEPayloadSerializer.serialize(events: connection.events)
+                    guard !payload.isEmpty else { return .empty }
+                    return BodyStorage.from(
+                        string: payload,
+                        charset: responseCharset,
+                        maxSize: self.maxCapturedBodyBytes
+                    )
+                }()
+
+                var networkRequest = NetworkRequest(
+                    id: request.id,
+                    url: request.url,
+                    method: HTTPMethod(rawValue: request.method) ?? .get,
+                    statusCode: statusCode,
+                    statusMessage: statusMessage,
+                    timestamp: request.startTime,
+                    duration: Date().timeIntervalSince(request.startTime),
+                    requestHeaders: requestHeaders,
+                    responseHeaders: responseHeaders,
+                    requestBody: requestBodyStorage,
+                    responseBody: responseBodyStorage,
+                    protocolVersion: .http11,
+                    tlsInfo: self.upstreamTLSInfo
+                )
+                networkRequest.wasRewritten = request.wasRewritten
+                networkRequest.isMocked = request.isMocked
+                networkRequest.isReplayed = request.isReplayed
+                networkRequest.appliedScriptName = request.appliedScriptName
+                networkRequest.hitBreakpoint = request.hitBreakpoint
+                networkRequest.retryAttempts = request.retryAttempts
+                networkRequest.extractHTTPFields()
+                NetworkThrottlingController.shared.applyMetadata(to: &networkRequest)
+
+                DispatchQueue.main.async { [weak self] in
+                    self?.onRequestCaptured?(networkRequest)
+                }
+            }
+        }, initialBodyData: initialBodyData)
         sseHandler = handler
 
         // Clear local HTTP state; SSEHandler owns the stream now.
@@ -2173,6 +2389,30 @@ public class TLSProxyConnection: @unchecked Sendable {
         return data
     }
 
+    private func headerValue(_ name: String, in headers: [String: String]) -> String? {
+        headers.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value
+    }
+
+    private func removeHeader(_ name: String, from headers: inout [String: String]) {
+        if let key = headers.keys.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+            headers.removeValue(forKey: key)
+        }
+    }
+
+    private func normalizeSSERequestEncodings(method: String, headers: inout [String: String]) {
+        guard method.caseInsensitiveCompare("GET") == .orderedSame else { return }
+        guard let accept = headerValue("accept", in: headers)?.lowercased(),
+              accept.contains("text/event-stream")
+        else {
+            return
+        }
+
+        // Rationale: Compressed SSE payloads are often not incrementally parseable in the proxy.
+        // Request identity encoding so event parsing remains transparent and reliable.
+        removeHeader("accept-encoding", from: &headers)
+        headers["Accept-Encoding"] = "identity"
+    }
+
     private func buildForwardHTTP1Data(
         method: String,
         absoluteURL: String,
@@ -2226,6 +2466,7 @@ public class TLSProxyConnection: @unchecked Sendable {
         if !body.isEmpty {
             headers["Content-Length"] = "\(body.count)"
         }
+        normalizeSSERequestEncodings(method: method, headers: &headers)
 
         let forwardHeaders = headers
         let headerList = headers.map { TraceHTTPHeader(key: $0.key, value: $0.value) }
@@ -3212,13 +3453,15 @@ public class TLSProxyConnection: @unchecked Sendable {
         )
 
         guard clientALPN == serverALPN else {
-            SecurityLog.tls.error("event=tls.alpn_mismatch host=\(self.targetHost, privacy: .private(mask: .hash)) client=\(clientALPN) server=\(serverALPN) action=close")
+            SecurityLog.tls.error(
+                "event=tls.alpn_mismatch host=\(self.targetHost, privacy: .private(mask: .hash)) client=\(clientALPN) server=\(serverALPN) action=close connection_id=\(self.connectionId ?? -1)"
+            )
             close(reason: .failure("alpn_mismatch_client_\(clientALPN)_server_\(serverALPN)"))
             return
         }
 
         SecurityLog.tls.info(
-            "event=tls.alpn_reconcile outcome=success host=\(self.targetHost, privacy: .private(mask: .hash)) protocol=\(clientALPN, privacy: .private(mask: .hash))"
+            "event=tls.alpn_reconcile outcome=success host=\(self.targetHost, privacy: .private(mask: .hash)) protocol=\(clientALPN, privacy: .private(mask: .hash)) connection_id=\(self.connectionId ?? -1)"
         )
 
         if clientALPN == "h2" {
@@ -3380,20 +3623,44 @@ public class TLSProxyConnection: @unchecked Sendable {
     }
 
     private func forwardHTTP2ToServer(_ data: Data) {
-        guard let connection = tlsClientConnection, !data.isEmpty else { return }
+        guard !data.isEmpty else { return }
+        guard let connection = tlsClientConnection else {
+            if logThrottle.shouldLog(key: "tls.forward_server_skipped.http2.\(connectionId ?? -1)", minInterval: 5) {
+                SecurityLog.tls.warning(
+                    "event=tls.forward_server_skipped outcome=skipped proto=http2 reason=no_tls_client_connection host=\(self.targetHost, privacy: .private(mask: .hash)) connection_id=\(self.connectionId ?? -1) bytes=\(data.count)"
+                )
+            }
+            return
+        }
         sendToServer(data, connection: connection, logEvent: "tls.http2_forward_server")
     }
 
     private func forwardHTTP2ToClient(_ data: Data) {
-        guard let connection = tlsServerConnection, !data.isEmpty else { return }
+        guard !data.isEmpty else { return }
+        guard let connection = tlsServerConnection else {
+            if logThrottle.shouldLog(key: "tls.forward_client_skipped.http2.\(connectionId ?? -1)", minInterval: 5) {
+                SecurityLog.tls.warning(
+                    "event=tls.forward_client_skipped outcome=skipped proto=http2 reason=no_tls_server_connection host=\(self.targetHost, privacy: .private(mask: .hash)) connection_id=\(self.connectionId ?? -1) bytes=\(data.count)"
+                )
+            }
+            return
+        }
         sendToClient(data, connection: connection, logEvent: "tls.http2_forward_client")
     }
 
     private func sendToServer(_ data: Data, connection: NWConnection, logEvent: String) {
         throttler.process(packet: data, direction: .upload) { [weak self] in
+            self?.executeOnQueue { [weak self] in
+                guard let self, self.isActive else { return }
+                self.bytesSentToUpstream += UInt64(data.count)
+            }
             connection.send(content: data, completion: .contentProcessed { error in
                 if let error {
-                    SecurityLog.tls.error("event=\(logEvent) outcome=failure error=\(error.localizedDescription)")
+                    let host = self?.targetHost ?? "unknown"
+                    let connId = self?.connectionId ?? -1
+                    SecurityLog.tls.error(
+                        "event=\(logEvent) outcome=failure host=\(host, privacy: .private(mask: .hash)) connection_id=\(connId) error=\(error.localizedDescription)"
+                    )
                     self?.close()
                 }
             })
@@ -3402,9 +3669,17 @@ public class TLSProxyConnection: @unchecked Sendable {
 
     private func sendToClient(_ data: Data, connection: NWConnection, logEvent: String) {
         throttler.process(packet: data, direction: .download) { [weak self] in
+            self?.executeOnQueue { [weak self] in
+                guard let self, self.isActive else { return }
+                self.bytesSentToClient += UInt64(data.count)
+            }
             connection.send(content: data, completion: .contentProcessed { error in
                 if let error {
-                    SecurityLog.tls.error("event=\(logEvent) outcome=failure error=\(error.localizedDescription)")
+                    let host = self?.targetHost ?? "unknown"
+                    let connId = self?.connectionId ?? -1
+                    SecurityLog.tls.error(
+                        "event=\(logEvent) outcome=failure host=\(host, privacy: .private(mask: .hash)) connection_id=\(connId) error=\(error.localizedDescription)"
+                    )
                     self?.close()
                 }
             })

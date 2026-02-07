@@ -17,13 +17,12 @@ struct SSEEventDetailView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.lg) {
-                    // Metadata
-                    GroupBox("Metadata") {
+                    SectionCard(title: "Metadata", systemImage: "info.circle") {
                         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
                             if let eventType = event.eventType {
                                 HStack {
                                     Text("Event Type:")
-                                        .foregroundStyle(.secondary)
+                                    .foregroundStyle(.secondary)
                                     Spacer()
                                     Text(eventType)
                                         .fontWeight(.medium)
@@ -75,8 +74,7 @@ struct SSEEventDetailView: View {
                         }
                     }
 
-                    // Data
-                    GroupBox("Data") {
+                    SectionCard(title: "Data", systemImage: "text.justify.left") {
                         Text(event.data)
                             .font(.system(.body, design: .monospaced))
                             .textSelection(.enabled)

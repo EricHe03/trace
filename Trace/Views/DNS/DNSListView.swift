@@ -19,6 +19,7 @@ struct DNSListView: View {
     @State private var selectedMessageID: DNSMessage.ID?
     @State private var showingFilters = false
     @State private var showingExport = false
+    @State private var showingClearAllAlert = false
 
     var body: some View {
         NavigationSplitView {
@@ -61,6 +62,14 @@ struct DNSListView: View {
             }
             .sheet(isPresented: $showingExport) {
                 DNSExportView(viewModel: viewModel)
+            }
+            .alert("Clear All DNS Queries", isPresented: $showingClearAllAlert) {
+                Button("Cancel", role: .cancel) {}
+                Button("Clear", role: .destructive) {
+                    viewModel.clearAll()
+                }
+            } message: {
+                Text("Are you sure you want to clear all \(viewModel.messages.count) DNS queries? This action cannot be undone.")
             }
         } detail: {
             if let message = selectedMessage {
@@ -146,10 +155,11 @@ struct DNSListView: View {
             .help("Export DNS data")
 
             Button(role: .destructive) {
-                viewModel.clearAll()
+                showingClearAllAlert = true
             } label: {
                 Label("Clear All", systemImage: "trash")
             }
+            .disabled(viewModel.messages.isEmpty)
             .help("Clear all DNS messages")
         }
     }

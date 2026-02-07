@@ -481,17 +481,16 @@ struct ToastView: View {
     let message: String
     let onDismiss: () -> Void
 
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-
     var body: some View {
         Button(action: onDismiss) {
             Text(message)
                 .font(.subheadline)
                 .foregroundStyle(DesignSystem.Toast.foregroundColor)
+                .multilineTextAlignment(.center)
                 .lineLimit(DesignSystem.Toast.lineLimit)
+                .frame(width: textWidth, alignment: .center)
                 .padding(.horizontal, DesignSystem.Toast.horizontalPadding)
                 .padding(.vertical, DesignSystem.Toast.verticalPadding)
-                .frame(maxWidth: maxWidth)
                 .background(DesignSystem.Toast.backgroundColor.opacity(DesignSystem.Toast.backgroundOpacity))
                 .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
         }
@@ -504,6 +503,15 @@ struct ToastView: View {
     private var maxWidth: CGFloat {
         let screenWidth = UIScreen.main.bounds.width
         return screenWidth * DesignSystem.Toast.maxWidthPercentage
+    }
+
+    private var textWidth: CGFloat {
+        let textPadding = DesignSystem.Toast.horizontalPadding * 2
+        let availableTextWidth = max(maxWidth - textPadding, 1)
+        let toastFont = UIFont.preferredFont(forTextStyle: .subheadline)
+        let measuredTextWidth = ceil((message as NSString).size(withAttributes: [.font: toastFont]).width)
+
+        return min(measuredTextWidth, availableTextWidth)
     }
 }
 

@@ -2,7 +2,7 @@
 //  CaptureSessionTests.swift
 //  TraceTests
 //
-//  Created by Claude on 2026/02/01.
+//  Created by Justin on 2026/02/01.
 //
 
 import XCTest
@@ -130,6 +130,24 @@ final class CaptureSessionTests: XCTestCase {
 
         let durationString = session.durationString
         XCTAssertEqual(durationString, "0s")
+    }
+
+    func testDurationStringRelativeToReferenceDateWhenActive() {
+        let referenceDate = Date(timeIntervalSince1970: 10_000)
+        let startTime = referenceDate.addingTimeInterval(-125) // 2m 5s
+        let session = CaptureSession(startTime: startTime, endTime: nil)
+
+        let durationString = session.durationString(relativeTo: referenceDate)
+        XCTAssertEqual(durationString, "2m 5s")
+    }
+
+    func testDurationStringClampsNegativeDurations() {
+        let startTime = Date(timeIntervalSince1970: 2_000)
+        let endTime = Date(timeIntervalSince1970: 1_000)
+        let session = CaptureSession(startTime: startTime, endTime: endTime)
+
+        XCTAssertEqual(session.duration, 0)
+        XCTAssertEqual(session.durationString, "0s")
     }
 
     func testDisplayNameWithCustomName() {

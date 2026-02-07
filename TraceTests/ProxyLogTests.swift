@@ -2,7 +2,7 @@
 //  ProxyLogTests.swift
 //  TraceTests
 //
-//  Created by Claude on 2026-02-01.
+//  Created by Justin on 2026-02-01.
 //
 
 import XCTest

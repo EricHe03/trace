@@ -8,6 +8,7 @@
 import Foundation
 import Network
 import TraceCore
+import TraceCompression
 
 /// Manages Server-Sent Events connections and streaming.
 ///
@@ -22,6 +23,10 @@ public class SSEHandler {
     private var sseParser: SSEParser
     private var onConnectionUpdate: ((SSEConnection) -> Void)?
     private var utf8Remainder = Data()
+    private var isChunkedDecodeEnabled: Bool
+    private let contentEncodingAlgorithm: String?
+    private var chunkedDecoder = ChunkedTransferDecoder()
+    private var contentDecoder: (any StreamingDecoderProtocol)?
 
     private let persistenceQueue = DispatchQueue(label: "com.trace.sse.handler.persist", qos: .utility)
     private let stateQueue = DispatchQueue(label: "com.trace.sse.handler.state", qos: .utility)
@@ -43,6 +48,13 @@ public class SSEHandler {
         self.url = url
         self.connectionID = UUID()
         self.sseParser = SSEParser()
+        let hasChunkedTransferEncoding = responseHeaders.contains {
+            $0.key.lowercased() == "transfer-encoding" &&
+                $0.value.lowercased().contains("chunked")
+        }
+        self.isChunkedDecodeEnabled = hasChunkedTransferEncoding
+        let contentEncodingHeader = responseHeaders.first { $0.key.lowercased() == "content-encoding" }?.value
+        self.contentEncodingAlgorithm = Self.normalizedCompressionAlgorithm(from: contentEncodingHeader)
 
         self.connection = SSEConnection(
             id: connectionID,
@@ -55,6 +67,24 @@ public class SSEHandler {
         )
 
         stateQueue.setSpecific(key: stateQueueKey, value: ())
+
+        if let contentEncodingAlgorithm {
+            do {
+                contentDecoder = try Self.makeStreamingDecoder(
+                    algorithm: contentEncodingAlgorithm,
+                    maxOutputBytes: maxTotalBytes
+                )
+            } catch {
+                NetworkLog.sse.warning("event=sse.content_decoder_init outcome=failure algorithm=\(contentEncodingAlgorithm, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        if let contentEncodingAlgorithm {
+            NetworkLog.sse.info("event=sse.content_encoding_detected outcome=success algorithm=\(contentEncodingAlgorithm, privacy: .public)")
+        } else if let contentEncodingHeader,
+                  !Self.isIdentityContentEncoding(contentEncodingHeader) {
+            NetworkLog.sse.warning("event=sse.content_encoding_detected outcome=unsupported encoding=\(contentEncodingHeader, privacy: .public)")
+        }
     }
 
     // MARK: - Connection Management
@@ -82,6 +112,7 @@ public class SSEHandler {
     /// Closes the SSE connection and persists the final snapshot.
     public func close() {
         withState {
+            self.flushContentDecoderLocked()
             self.connection.close()
             self.saveConnectionLocked()
             self.onConnectionUpdate = nil
@@ -143,6 +174,45 @@ public class SSEHandler {
             return
         }
 
+        if isChunkedDecodeEnabled {
+            let (_, parseError) = chunkedDecoder.feed(data) { [self] chunk in
+                parseBodyPayloadLocked(chunk)
+            }
+            if parseError {
+                NetworkLog.sse.warning("event=sse.chunked_decode outcome=fallback_to_raw url=\(self.url, privacy: .private(mask: .hash))")
+                isChunkedDecodeEnabled = false
+                parseBodyPayloadLocked(data)
+            }
+            return
+        }
+
+        parseBodyPayloadLocked(data)
+    }
+
+    private func parseBodyPayloadLocked(_ data: Data) {
+        guard !data.isEmpty else { return }
+
+        guard let contentEncodingAlgorithm, let contentDecoder else {
+            parseDecodedSSEPayloadLocked(data)
+            return
+        }
+
+        do {
+            let decoded = try contentDecoder.decompress(chunk: data)
+            if !decoded.isEmpty {
+                parseDecodedSSEPayloadLocked(decoded)
+            }
+        } catch {
+            // If decoding fails, continue with raw parsing to preserve capture visibility.
+            NetworkLog.sse.warning("event=sse.content_decode outcome=fallback_to_raw algorithm=\(contentEncodingAlgorithm, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            self.contentDecoder = nil
+            parseDecodedSSEPayloadLocked(data)
+        }
+    }
+
+    private func parseDecodedSSEPayloadLocked(_ data: Data) {
+        guard !data.isEmpty else { return }
+
         // Rule: Preserve UTF-8 boundary state across chunks.
         let combined = utf8Remainder + data
         let dataString: String
@@ -179,7 +249,162 @@ public class SSEHandler {
         }
 
         if !events.isEmpty {
+            NetworkLog.sse.info("event=sse.events_parsed outcome=success parsed_count=\(events.count, privacy: .public) total_events=\(self.connection.events.count, privacy: .public)")
             saveConnectionLocked()
+        }
+    }
+
+    private static func normalizedCompressionAlgorithm(from contentEncodingHeader: String?) -> String? {
+        guard let contentEncodingHeader else { return nil }
+        let tokens = contentEncodingHeader
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty && $0 != "identity" }
+
+        guard tokens.count == 1, let token = tokens.first else { return nil }
+        switch token {
+        case "gzip", "x-gzip":
+            return "gzip"
+        case "deflate", "zlib":
+            return "deflate"
+        case "br", "brotli":
+            return "br"
+        default:
+            return nil
+        }
+    }
+
+    private static func isIdentityContentEncoding(_ contentEncodingHeader: String) -> Bool {
+        let tokens = contentEncodingHeader
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+
+        guard !tokens.isEmpty else { return true }
+        return tokens.allSatisfy { $0 == "identity" }
+    }
+
+    private static func makeStreamingDecoder(
+        algorithm: String,
+        maxOutputBytes: Int
+    ) throws -> any StreamingDecoderProtocol {
+        let config = StreamingDecoderConfig(
+            chunkSize: 64 * 1024,
+            maxOutputSize: maxOutputBytes
+        )
+
+        let decoder: any StreamingDecoderProtocol
+        switch algorithm {
+        case "gzip", "deflate":
+            decoder = StreamingDeflateDecoder(config: config)
+        case "br":
+            decoder = StreamingBrotliDecoder(config: config)
+        default:
+            throw NSError(
+                domain: "SSEHandler",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Unsupported content encoding: \(algorithm)"]
+            )
+        }
+
+        try decoder.initialize()
+        return decoder
+    }
+
+    private func flushContentDecoderLocked() {
+        guard let contentDecoder else { return }
+        defer { self.contentDecoder = nil }
+
+        do {
+            let trailingDecoded = try contentDecoder.finalize()
+            if !trailingDecoded.isEmpty {
+                parseDecodedSSEPayloadLocked(trailingDecoded)
+            }
+        } catch {
+            NetworkLog.sse.warning("event=sse.content_decode_finalize outcome=failure error=\(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private struct ChunkedTransferDecoder {
+        private var pending = Data()
+        private var currentChunkSize: Int?
+        private(set) var isComplete = false
+
+        mutating func feed(
+            _ data: Data,
+            onBodyChunk: (Data) -> Void
+        ) -> (complete: Bool, parseError: Bool) {
+            guard !data.isEmpty else { return (isComplete, false) }
+            pending.append(data)
+
+            var index = 0
+            let crlf = Data([0x0D, 0x0A])
+            let terminator = Data([0x0D, 0x0A, 0x0D, 0x0A])
+
+            while index < pending.count, !isComplete {
+                if currentChunkSize == nil {
+                    guard let sizeRange = pending.range(of: crlf, options: [], in: index ..< pending.count) else {
+                        break
+                    }
+
+                    let sizeLineData = pending.subdata(in: index ..< sizeRange.lowerBound)
+                    let sizeString = String(decoding: sizeLineData, as: UTF8.self)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let sizeToken = sizeString.split(separator: ";", maxSplits: 1).first ?? Substring()
+                    guard let size = Int(sizeToken, radix: 16) else {
+                        return (isComplete, true)
+                    }
+
+                    currentChunkSize = size
+                    index = sizeRange.upperBound
+
+                    if size == 0 {
+                        if let trailerEnd = pending.range(of: terminator, options: [], in: index ..< pending.count) {
+                            index = trailerEnd.upperBound
+                            isComplete = true
+                            currentChunkSize = nil
+                            break
+                        }
+
+                        let crlfEnd = index + 2
+                        if crlfEnd <= pending.count, pending[index ..< crlfEnd] == crlf {
+                            index = crlfEnd
+                            isComplete = true
+                            currentChunkSize = nil
+                            break
+                        }
+
+                        break
+                    }
+                } else if let size = currentChunkSize {
+                    let remaining = pending.count - index
+                    let needed = size + 2
+                    guard remaining >= needed else {
+                        break
+                    }
+
+                    if size > 0 {
+                        let chunkStart = index
+                        let chunkEnd = index + size
+                        onBodyChunk(pending.subdata(in: chunkStart ..< chunkEnd))
+                    }
+
+                    let crlfStart = index + size
+                    let crlfEnd = crlfStart + 2
+                    guard crlfEnd <= pending.count, pending[crlfStart ..< crlfEnd] == crlf else {
+                        return (isComplete, true)
+                    }
+
+                    index = crlfEnd
+                    currentChunkSize = nil
+                }
+            }
+
+            if index > 0, index <= pending.count {
+                pending.removeSubrange(0 ..< index)
+            }
+
+            return (isComplete, false)
         }
     }
 
@@ -187,19 +412,22 @@ public class SSEHandler {
 
     private func saveConnectionLocked() {
         let snapshot = connection
+        NetworkLog.sse.info("event=sse.save_connection_locked outcome=start connection_id=\(snapshot.id.uuidString, privacy: .public) event_count=\(snapshot.events.count, privacy: .public)")
         onConnectionUpdate?(snapshot)
 
         persistenceQueue.async {
             do {
                 try AppGroupStorage.shared.saveSSEConnection(snapshot)
+                NetworkLog.sse.info("event=sse.storage_save outcome=success connection_id=\(snapshot.id.uuidString, privacy: .public)")
             } catch {
-                NetworkLog.sse.error("event=sse.storage_save outcome=failure error=\(error, privacy: .public)")
+                NetworkLog.sse.error("event=sse.storage_save outcome=failure connection_id=\(snapshot.id.uuidString, privacy: .public) error=\(error, privacy: .public)")
             }
         }
     }
 
     private func failAndClose() {
         withState {
+            self.flushContentDecoderLocked()
             self.connection.status = .failed
             self.connection.endTime = Date()
             self.saveConnectionLocked()

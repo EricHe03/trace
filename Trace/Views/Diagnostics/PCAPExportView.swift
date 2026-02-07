@@ -183,15 +183,6 @@ struct PCAPExportView: View {
         }
         .navigationTitle("Packet Captures")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    loadFiles()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-            }
-        }
         .onAppear {
             loadSettings()
             loadFiles()
@@ -199,9 +190,7 @@ struct PCAPExportView: View {
         .refreshable {
             loadFiles()
         }
-        .sheet(item: $shareSheetItem) { item in
-            ShareSheetContainer(items: item.items)
-        }
+        .shareSheet(item: $shareSheetItem)
         .alert("Delete Packet Capture", isPresented: $showingDeleteAlert) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {

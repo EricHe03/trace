@@ -27,9 +27,7 @@ public class AppGroupStorage: @unchecked Sendable {
         #endif
     }()
 
-    private static let isRunningTests: Bool = {
-        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-    }()
+    private static let isRunningTests: Bool = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
 
     private static var allowsFallbackStorage: Bool {
         isSimulator || isRunningTests
@@ -1039,6 +1037,7 @@ public class AppGroupStorage: @unchecked Sendable {
     /// Saves an SSE connection to the shared container
     public func saveSSEConnection(_ connection: SSEConnection) throws {
         guard let container = containerURL else {
+            CoreLog.storage.error("event=storage.save_sse outcome=failure error=container_not_found")
             throw StorageError.containerNotFound
         }
 
@@ -1059,12 +1058,14 @@ public class AppGroupStorage: @unchecked Sendable {
     /// Loads all SSE connections from the shared container
     public func loadAllSSEConnections() throws -> [SSEConnection] {
         guard let container = containerURL else {
+            CoreLog.storage.error("event=storage.load_sse outcome=failure error=container_not_found")
             throw StorageError.containerNotFound
         }
 
         let sseURL = container.appendingPathComponent(sseDirectory)
 
         guard FileManager.default.fileExists(atPath: sseURL.path) else {
+            CoreLog.storage.info("event=storage.load_sse outcome=success count=0 reason=directory_not_found")
             return []
         }
 
@@ -1083,8 +1084,12 @@ public class AppGroupStorage: @unchecked Sendable {
             if let data = try? Data(contentsOf: fileURL),
                let connection = try? decoder.decode(SSEConnection.self, from: data) {
                 connections.append(connection)
+            } else {
+                CoreLog.storage.warning("event=storage.load_sse_file outcome=failure file=\(fileURL.lastPathComponent, privacy: .public)")
             }
         }
+
+        CoreLog.storage.info("event=storage.load_sse outcome=success count=\(connections.count, privacy: .public)")
 
         // Sort by start time, most recent first
         return connections.sorted { $0.startTime > $1.startTime }
@@ -1217,6 +1222,7 @@ public class AppGroupStorage: @unchecked Sendable {
     public func observeNewSSE(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
         let id = UUID()
         let observer = NotificationObserver()
+        CoreLog.storage.info("event=storage.observe_new_sse outcome=start observer_id=\(id.uuidString, privacy: .public)")
         observer.observe(notificationName: "com.trace.newSSE", handler: handler)
         notificationObserversLock.lock()
         sseObservers[id] = observer
