@@ -96,8 +96,8 @@ struct NetworkView: View {
     }
 
     private var curlImportView: some View {
-        CurlImportView { request in
-            actions.importCurlRequest(request)
+        CurlImportView { command in
+            actions.importCurlCommand(command)
         }
     }
 

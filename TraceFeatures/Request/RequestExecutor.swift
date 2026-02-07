@@ -64,7 +64,7 @@ public final class RequestExecutor: ObservableObject {
         }
 
         var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = request.method.rawValue
+        urlRequest.httpMethod = request.methodRaw ?? request.method.rawValue
         urlRequest.timeoutInterval = 30
 
         for header in request.headers {
@@ -94,6 +94,7 @@ public final class RequestExecutor: ObservableObject {
             var networkRequest = NetworkRequest(
                 url: url.absoluteString,
                 method: request.method,
+                requestMethodRaw: request.methodRaw,
                 statusCode: httpResponse.statusCode,
                 timestamp: startTime,
                 duration: duration,
@@ -259,6 +260,7 @@ public enum RequestExecutionError: LocalizedError {
 public struct RequestBuilder {
     public var url: String
     public var method: HTTPMethod
+    public var methodRaw: String?
     public var headers: [String: String]
     public var body: String?
     public var protocolVersion: HTTPProtocolVersion?
@@ -267,6 +269,7 @@ public struct RequestBuilder {
     public init(
         url: String,
         method: HTTPMethod = .get,
+        methodRaw: String? = nil,
         headers: [String: String] = [:],
         body: String? = nil,
         protocolVersion: HTTPProtocolVersion? = nil,
@@ -274,6 +277,7 @@ public struct RequestBuilder {
     ) {
         self.url = url
         self.method = method
+        self.methodRaw = methodRaw
         self.headers = headers
         self.body = body
         self.protocolVersion = protocolVersion
@@ -285,6 +289,7 @@ public struct RequestBuilder {
     public init(from request: NetworkRequest) {
         self.url = request.url
         self.method = request.method
+        self.methodRaw = request.requestMethodRaw
         self.protocolVersion = request.protocolVersion
         self.followRedirects = true
 
@@ -303,6 +308,7 @@ public struct RequestBuilder {
         let request = NetworkRequest(
             url: url,
             method: method,
+            requestMethodRaw: methodRaw,
             statusCode: nil,
             statusMessage: nil,
             timestamp: Date(),
@@ -319,7 +325,8 @@ public struct RequestBuilder {
     /// Exports the request as raw HTTP/1.1 text.
     /// - Returns: The raw HTTP/1.1 request.
     public func toHTTPRaw() -> String {
-        var raw = "\(method.rawValue) \(url) HTTP/1.1\r\n"
+        let methodToken = methodRaw.flatMap { $0.isEmpty ? nil : $0 } ?? method.rawValue
+        var raw = "\(methodToken) \(url) HTTP/1.1\r\n"
 
         for (key, value) in headers {
             raw += "\(key): \(value)\r\n"

@@ -115,18 +115,35 @@ struct NetworkViewActions {
         return [curl]
     }
 
-    func importCurlRequest(_ request: NetworkRequest) {
+    func importCurlCommand(_ command: String) {
         Task {
+            let result = await CurlCommandExecutor().execute(command)
+            let successful = result.transfers.compactMap(\.request)
+
             do {
-                let executor = RequestExecutor()
-                let response = try await executor.replay(request)
-                try AppGroupStorage.shared.saveRequest(response)
+                for request in successful {
+                    try AppGroupStorage.shared.saveRequest(request)
+                }
                 await viewModel.reloadRequests()
+
                 await MainActor.run {
-                    DesignSystem.Haptics.success()
-                    viewModel.selectedRequestId = response.id
-                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                        toastMessage.wrappedValue = "Imported and sent cURL request"
+                    if let selected = successful.last {
+                        viewModel.selectedRequestId = selected.id
+                    }
+
+                    if successful.isEmpty {
+                        DesignSystem.Haptics.error()
+                        let firstError = result.transfers.compactMap(\.errorMessage).first
+                            ?? result.allDiagnostics.first?.message
+                            ?? "No transfer executed"
+                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+                            toastMessage.wrappedValue = "Import failed: \(firstError)"
+                        }
+                    } else {
+                        DesignSystem.Haptics.success()
+                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+                            toastMessage.wrappedValue = "Imported \(result.succeededCount) transfer(s), failed \(result.failedCount)"
+                        }
                     }
                 }
             } catch {

@@ -12,12 +12,12 @@ import TraceFeatures
 public struct CurlImportView: View {
     @Environment(\.dismiss) private var dismiss: DismissAction
     @State private var curlCommand = ""
-    @State private var parsedRequest: NetworkRequest?
+    @State private var analyzedPlan: CurlCommandPlan?
     @State private var toastMessage: String?
 
-    public var onImport: ((NetworkRequest) -> Void)?
+    public var onImport: ((String) -> Void)?
 
-    public init(onImport: ((NetworkRequest) -> Void)? = nil) {
+    public init(onImport: ((String) -> Void)? = nil) {
         self.onImport = onImport
     }
 
@@ -28,7 +28,7 @@ public struct CurlImportView: View {
                     Label("Import cURL Command", systemImage: "square.and.arrow.down")
                         .font(.headline)
 
-                    Text("Paste a cURL command to import it as a request. Most common options are supported.")
+                    Text("Paste a cURL command to analyze and execute with fail-fast diagnostics.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -55,13 +55,17 @@ public struct CurlImportView: View {
                 }
 
                 Button {
-                    parseCommand()
+                    analyzeCommand()
                 } label: {
-                    Label("Parse", systemImage: "arrow.right.circle.fill")
+                    Label("Analyze", systemImage: "checklist")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(curlCommand.isEmpty)
+
+                if let plan = analyzedPlan {
+                    analysisSummary(plan: plan)
+                }
 
                 Spacer()
             }
@@ -77,12 +81,12 @@ public struct CurlImportView: View {
 
                 ToolbarItem(placement: .primaryAction) {
                     Button("Import") {
-                        if let request = parsedRequest {
-                            onImport?(request)
+                        if let plan = analyzedPlan, !plan.hasBlockingDiagnostics {
+                            onImport?(curlCommand)
                             dismiss()
                         }
                     }
-                    .disabled(parsedRequest == nil)
+                    .disabled(importDisabled)
                 }
             }
             .toast(message: $toastMessage)
@@ -90,16 +94,73 @@ public struct CurlImportView: View {
         }
     }
 
-    private func parseCommand() {
-        do {
-            parsedRequest = try CurlParser.parse(curlCommand)
-            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                toastMessage = "Parsed successfully"
+    private var importDisabled: Bool {
+        guard let plan = analyzedPlan else { return true }
+        return plan.hasBlockingDiagnostics
+    }
+
+    private func analysisSummary(plan: CurlCommandPlan) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Analysis")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+
+            Text("Transfers: \(plan.transfers.count)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if plan.diagnostics.isEmpty {
+                Text("No diagnostics")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(plan.diagnostics) { diagnostic in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(diagnostic.severity.rawValue.uppercased())
+                                    .font(.caption2)
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(color(for: diagnostic.severity))
+                                    .frame(width: 56, alignment: .leading)
+
+                                Text(diagnostic.message)
+                                    .font(.caption)
+                                    .foregroundStyle(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 140)
             }
-        } catch {
-            parsedRequest = nil
-            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                toastMessage = "Parse error: \(error.localizedDescription)"
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color(.systemGray6))
+        .cornerRadius(10)
+    }
+
+    private func color(for severity: CurlDiagnosticSeverity) -> Color {
+        switch severity {
+        case .info:
+            .blue
+        case .warning:
+            .orange
+        case .error:
+            .red
+        }
+    }
+
+    private func analyzeCommand() {
+        let plan = CurlCommandExecutor().analyze(curlCommand)
+        analyzedPlan = plan
+
+        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+            if plan.hasBlockingDiagnostics {
+                toastMessage = "Blocking issues: \(plan.blockingDiagnostics.count)"
+            } else {
+                toastMessage = "Ready: \(plan.transfers.count) transfer(s)"
             }
         }
     }
