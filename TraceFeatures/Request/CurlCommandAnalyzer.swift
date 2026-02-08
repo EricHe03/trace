@@ -954,6 +954,7 @@ public final class CurlCommandAnalyzer {
             if !currentToken.isEmpty {
                 tokens.append(currentToken)
                 currentToken = ""
+                justClosedQuote = false
             }
         }
 

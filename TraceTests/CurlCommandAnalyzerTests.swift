@@ -160,6 +160,30 @@ final class CurlCommandAnalyzerTests: XCTestCase {
         XCTAssertEqual(plan.transfers[0].argv, ["-H", "X Name: value with space", "https://example.com"])
     }
 
+    func testAnalyzeMultilineCommandWithLineContinuationAfterQuotedValues() {
+        let analyzer = CurlCommandAnalyzer(capabilities: .parityValidation)
+        let command = """
+        curl -X POST -H 'Content-Type: application/json' \
+             -d '{"hello":"world"}' \
+             https://httpbin.org/post
+        """
+
+        let plan = analyzer.analyze(command)
+
+        XCTAssertEqual(plan.transfers.count, 1)
+        XCTAssertFalse(plan.hasBlockingDiagnostics)
+        XCTAssertEqual(
+            plan.transfers[0].argv,
+            [
+                "-X", "POST",
+                "-H", "Content-Type: application/json",
+                "-d", "{\"hello\":\"world\"}",
+                "https://httpbin.org/post",
+            ]
+        )
+        XCTAssertFalse(plan.transfers[0].argv.contains(""))
+    }
+
     func testAnalyzeEmitsFeatureDiagnosticsWhenRuntimeFlagsAreDisabled() {
         let analyzer = CurlCommandAnalyzer(capabilities: makeFeatureLimitedRuntimeCapabilities())
 

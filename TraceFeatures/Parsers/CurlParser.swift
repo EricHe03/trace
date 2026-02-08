@@ -215,6 +215,7 @@ public class CurlParser {
             if !currentToken.isEmpty {
                 tokens.append(currentToken)
                 currentToken = ""
+                justClosedQuote = false
             }
         }
 
