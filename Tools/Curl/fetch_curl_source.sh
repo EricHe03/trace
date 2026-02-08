@@ -8,10 +8,10 @@ set -euo pipefail
 VERSION="${1:-8.18.0}"
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SOURCE_MODE="${2:-submodule}"
-DEST_DIR="$ROOT_DIR/ThirdParty/curl/upstream"
+DEST_DIR="$ROOT_DIR/ThirdParty/curl"
 SNAPSHOT_DIR="$ROOT_DIR/ThirdParty/curl/snapshots/curl-${VERSION}"
 TMP_DIR="$(mktemp -d)"
-SUBMODULE_PATH="ThirdParty/curl/upstream"
+SUBMODULE_PATH="ThirdParty/curl"
 TAG="curl-${VERSION//./_}"
 VENDOR_HEADER="$ROOT_DIR/ThirdParty/curl-shim/include/trace_curl_vendor.h"
 

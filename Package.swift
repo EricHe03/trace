@@ -152,7 +152,7 @@ let package = Package(
             publicHeadersPath: "include",
             cSettings: [
                 .headerSearchPath("include"),
-                .headerSearchPath("../curl/upstream/include")
+                .headerSearchPath("../curl/include")
             ]
         ),
 

@@ -62,7 +62,7 @@ Use the helper script to retarget the curl submodule to a specific release tag:
 ```bash
 ./Tools/Curl/fetch_curl_source.sh 8.18.0 submodule
 ./Tools/Curl/verify_curl_vendor_sync.sh
-git add ThirdParty/curl/upstream .gitmodules ThirdParty/curl-shim/include/trace_curl_vendor.h
+git add ThirdParty/curl .gitmodules ThirdParty/curl-shim/include/trace_curl_vendor.h
 ```
 
 ## Quick Start
@@ -116,7 +116,7 @@ Trace/
 ├── TraceTests/             # Unit tests
 ├── TraceUITests/           # UI tests
 ├── ThirdParty/hev-socks5-tunnel/  # Git submodule used by full-tunnel forwarding
-└── ThirdParty/curl/upstream/      # Git submodule for pinned curl tool/lib sources
+└── ThirdParty/curl/               # Git submodule for pinned curl tool/lib sources
 ```
 
 ## Testing

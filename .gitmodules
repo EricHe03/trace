@@ -1,6 +1,6 @@
 [submodule "ThirdParty/hev-socks5-tunnel"]
 	path = ThirdParty/hev-socks5-tunnel
 	url = https://github.com/heiher/hev-socks5-tunnel.git
-[submodule "ThirdParty/curl/upstream"]
-	path = ThirdParty/curl/upstream
+[submodule "ThirdParty/curl"]
+	path = ThirdParty/curl
 	url = https://github.com/curl/curl.git

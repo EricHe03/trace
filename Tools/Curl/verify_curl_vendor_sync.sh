@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-SUBMODULE_DIR="$ROOT_DIR/ThirdParty/curl/upstream"
+SUBMODULE_DIR="$ROOT_DIR/ThirdParty/curl"
 VENDOR_HEADER="$ROOT_DIR/ThirdParty/curl-shim/include/trace_curl_vendor.h"
 
 if [ ! -d "$SUBMODULE_DIR" ]; then
