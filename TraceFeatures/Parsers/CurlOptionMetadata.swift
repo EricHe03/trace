@@ -33,6 +33,7 @@ public struct CurlOptionMetadata: Codable, Equatable, Sendable {
 
 public enum CurlOptionMetadataRegistry {
     static let globalOptions: Set<String> = [
+        "-#",
         "--fail-early",
         "--libcurl",
         "--parallel",
@@ -50,6 +51,9 @@ public enum CurlOptionMetadataRegistry {
         "--trace-ids",
         "--trace-time",
         "--verbose",
+        "-S",
+        "-Z",
+        "-v",
     ]
 
     public static func metadata(for option: String) -> CurlOptionMetadata? {

@@ -12,6 +12,7 @@ struct ParsedOptionDefinitions {
     var options: Set<String> = []
     var required: Set<String> = []
     var optional: Set<String> = []
+    var aliasesByOption: [String: Set<String>] = [:]
 }
 
 enum GeneratorError: Error {
@@ -101,22 +102,24 @@ func parseOptionDefinitions(from manpage: String) -> ParsedOptionDefinitions {
             capture($0, 1, in: spec)
         }
         guard !options.isEmpty else { continue }
+        let optionSet = Set(options)
 
-        for option in options {
+        for option in optionSet {
             parsed.options.insert(option)
+            parsed.aliasesByOption[option, default: []].formUnion(optionSet)
         }
 
         let hasRequiredValue = requiredRegex.firstMatch(in: spec, range: NSRange(spec.startIndex..., in: spec)) != nil
         let hasOptionalValue = optionalRegex.firstMatch(in: spec, range: NSRange(spec.startIndex..., in: spec)) != nil
 
         if hasRequiredValue {
-            for option in options {
+            for option in optionSet {
                 parsed.required.insert(option)
             }
         }
 
         if hasOptionalValue {
-            for option in options {
+            for option in optionSet {
                 parsed.optional.insert(option)
             }
         }
@@ -125,7 +128,7 @@ func parseOptionDefinitions(from manpage: String) -> ParsedOptionDefinitions {
     return parsed
 }
 
-func parseGlobalOptions(from manpage: String) -> Set<String> {
+func parseGlobalOptions(from manpage: String, aliasesByOption: [String: Set<String>]) -> Set<String> {
     let globalRegex = regex(#"The following options are global:(.*?)</p>"#, options: [.dotMatchesLineSeparators])
     guard let match = matches(globalRegex, in: manpage).first,
           let section = capture(match, 1, in: manpage)
@@ -140,7 +143,12 @@ func parseGlobalOptions(from manpage: String) -> Set<String> {
             globals.insert(token)
         }
     }
-    return globals
+
+    var expandedGlobals = globals
+    for option in globals {
+        expandedGlobals.formUnion(aliasesByOption[option] ?? [])
+    }
+    return expandedGlobals
 }
 
 func optionListLiteral(_ options: [String]) -> String {
@@ -272,7 +280,7 @@ func main() throws {
     }
 
     let parsed = parseOptionDefinitions(from: manpage)
-    let globals = parseGlobalOptions(from: manpage).sorted()
+    let globals = parseGlobalOptions(from: manpage, aliasesByOption: parsed.aliasesByOption).sorted()
 
     try writeRegistry(
         path: config.registryOutputPath,

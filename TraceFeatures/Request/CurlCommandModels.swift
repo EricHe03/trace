@@ -44,9 +44,20 @@ public struct CurlDiagnostic: Identifiable, Codable, Equatable, Sendable {
 }
 
 public struct CurlCommandTransferPlan: Identifiable, Codable, Equatable, Sendable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case index
+        case command
+        case argv
+        case urls
+        case effectiveOptions
+    }
+
     public let id: UUID
     public let index: Int
     public let command: String
+    /// Tokenized argv payload (without the leading `curl`) used by runtime execution.
+    public let argv: [String]
     public let urls: [String]
     public let effectiveOptions: [String: [String]]
 
@@ -54,14 +65,38 @@ public struct CurlCommandTransferPlan: Identifiable, Codable, Equatable, Sendabl
         id: UUID = UUID(),
         index: Int,
         command: String,
+        argv: [String] = [],
         urls: [String],
         effectiveOptions: [String: [String]] = [:]
     ) {
         self.id = id
         self.index = index
         self.command = command
+        self.argv = argv
         self.urls = urls
         self.effectiveOptions = effectiveOptions
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        index = try container.decode(Int.self, forKey: .index)
+        command = try container.decode(String.self, forKey: .command)
+        argv = try container.decodeIfPresent([String].self, forKey: .argv) ?? []
+        urls = try container.decode([String].self, forKey: .urls)
+        effectiveOptions = try container.decode([String: [String]].self, forKey: .effectiveOptions)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(index, forKey: .index)
+        try container.encode(command, forKey: .command)
+        if !argv.isEmpty {
+            try container.encode(argv, forKey: .argv)
+        }
+        try container.encode(urls, forKey: .urls)
+        try container.encode(effectiveOptions, forKey: .effectiveOptions)
     }
 }
 

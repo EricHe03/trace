@@ -77,6 +77,28 @@ final class CurlCommandExecutorTests: XCTestCase {
         XCTAssertEqual(mockExecutor.executedURLs, ["https://one.example", "https://two.example", "https://three.example"])
         XCTAssertTrue(result.transfers.contains { $0.errorMessage != nil })
     }
+
+    func testExecuteRunsAllURLsWhenCommandContainsMultipleURLsWithoutNext() async {
+        let mockExecutor = MockTransferExecutor()
+        let analyzer = CurlCommandAnalyzer(
+            capabilities: CurlRuntimeCapabilities(
+                backendName: "Test",
+                supportedProtocols: ["http", "https"],
+                supportedOptions: CurlOptionRegistry.allOptions
+            )
+        )
+        let executor = CurlCommandExecutor(
+            analyzer: analyzer,
+            requestExecutorFactory: { mockExecutor }
+        )
+
+        let result = await executor.execute("curl https://one.example https://two.example")
+
+        XCTAssertEqual(result.succeededCount, 2)
+        XCTAssertEqual(result.failedCount, 0)
+        XCTAssertEqual(mockExecutor.executedURLs, ["https://one.example", "https://two.example"])
+        XCTAssertEqual(result.transfers.count, 2)
+    }
 }
 
 @MainActor

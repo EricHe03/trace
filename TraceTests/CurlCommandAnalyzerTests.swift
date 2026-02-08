@@ -42,6 +42,79 @@ final class CurlCommandAnalyzerTests: XCTestCase {
         XCTAssertEqual(shortNextPlan.transfers[1].urls, ["https://two.example"])
     }
 
+    func testAnalyzeSplitsMultipleURLsIntoSeparateTransfers() {
+        let analyzer = CurlCommandAnalyzer(capabilities: .parityValidation)
+
+        let plan = analyzer.analyze("curl --header X-Test:1 https://one.example https://two.example")
+
+        XCTAssertEqual(plan.transfers.count, 2)
+        XCTAssertEqual(plan.transfers[0].urls, ["https://one.example"])
+        XCTAssertEqual(plan.transfers[1].urls, ["https://two.example"])
+        XCTAssertEqual(plan.transfers[0].effectiveOptions["--header"], ["X-Test:1"])
+        XCTAssertEqual(plan.transfers[1].effectiveOptions["--header"], ["X-Test:1"])
+        XCTAssertEqual(plan.transfers[0].argv, ["--header", "X-Test:1", "https://one.example"])
+        XCTAssertEqual(plan.transfers[1].argv, ["--header", "X-Test:1", "https://two.example"])
+    }
+
+    func testAnalyzeCarriesGlobalOptionsAcrossNextPartitions() {
+        let analyzer = CurlCommandAnalyzer(capabilities: .parityValidation)
+
+        let plan = analyzer.analyze("curl --verbose https://one.example --next https://two.example")
+
+        XCTAssertEqual(plan.transfers.count, 2)
+        XCTAssertEqual(plan.transfers[0].effectiveOptions["--verbose"], ["true"])
+        XCTAssertEqual(plan.transfers[1].effectiveOptions["--verbose"], ["true"])
+        XCTAssertTrue(plan.transfers[0].command.contains("--verbose"))
+        XCTAssertTrue(plan.transfers[1].command.contains("--verbose"))
+    }
+
+    func testAnalyzeCarriesShortGlobalOptionsAcrossNextPartitions() {
+        let analyzer = CurlCommandAnalyzer(capabilities: .parityValidation)
+
+        let plan = analyzer.analyze("curl -v https://one.example --next https://two.example")
+
+        XCTAssertEqual(plan.transfers.count, 2)
+        XCTAssertEqual(plan.transfers[0].effectiveOptions["-v"], ["true"])
+        XCTAssertEqual(plan.transfers[1].effectiveOptions["-v"], ["true"])
+        XCTAssertTrue(plan.transfers[0].command.contains("-v"))
+        XCTAssertTrue(plan.transfers[1].command.contains("-v"))
+    }
+
+    func testAnalyzeIncludesOptionsAppearingAfterURL() {
+        let analyzer = CurlCommandAnalyzer(capabilities: .parityValidation)
+
+        let plan = analyzer.analyze("curl https://one.example -H X-Trace:1")
+
+        XCTAssertEqual(plan.transfers.count, 1)
+        XCTAssertEqual(plan.transfers[0].urls, ["https://one.example"])
+        XCTAssertEqual(plan.transfers[0].effectiveOptions["-H"], ["X-Trace:1"])
+        XCTAssertTrue(plan.transfers[0].command.contains("-H"))
+    }
+
+    func testAnalyzeAssignsOutputOptionsPerURLInOrder() {
+        let analyzer = CurlCommandAnalyzer(capabilities: .parityValidation)
+
+        let plan = analyzer.analyze("curl -o first.txt -o second.txt https://one.example https://two.example")
+
+        XCTAssertEqual(plan.transfers.count, 2)
+        XCTAssertEqual(plan.transfers[0].effectiveOptions["-o"], ["first.txt"])
+        XCTAssertEqual(plan.transfers[1].effectiveOptions["-o"], ["second.txt"])
+        XCTAssertTrue(plan.transfers[0].command.contains("first.txt"))
+        XCTAssertTrue(plan.transfers[1].command.contains("second.txt"))
+    }
+
+    func testAnalyzeAssignsUploadOptionsPerURLInOrder() {
+        let analyzer = CurlCommandAnalyzer(capabilities: .parityValidation)
+
+        let plan = analyzer.analyze("curl -T one.bin -T two.bin https://one.example https://two.example")
+
+        XCTAssertEqual(plan.transfers.count, 2)
+        XCTAssertEqual(plan.transfers[0].effectiveOptions["-T"], ["one.bin"])
+        XCTAssertEqual(plan.transfers[1].effectiveOptions["-T"], ["two.bin"])
+        XCTAssertTrue(plan.transfers[0].command.contains("one.bin"))
+        XCTAssertTrue(plan.transfers[1].command.contains("two.bin"))
+    }
+
     func testAnalyzeFailsFastForUnsupportedBackendOption() {
         let analyzer = CurlCommandAnalyzer(capabilities: .urlSession)
 
@@ -76,6 +149,15 @@ final class CurlCommandAnalyzerTests: XCTestCase {
 
         XCTAssertTrue(plan.hasBlockingDiagnostics)
         XCTAssertTrue(plan.diagnostics.contains { $0.option == "--variable" && $0.message.contains("Invalid variable") })
+    }
+
+    func testAnalyzePreservesQuotedArgumentValuesInArgv() {
+        let analyzer = CurlCommandAnalyzer(capabilities: .parityValidation)
+
+        let plan = analyzer.analyze("curl -H 'X Name: value with space' https://example.com")
+
+        XCTAssertEqual(plan.transfers.count, 1)
+        XCTAssertEqual(plan.transfers[0].argv, ["-H", "X Name: value with space", "https://example.com"])
     }
 }
 

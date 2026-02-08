@@ -55,6 +55,16 @@ open Trace.xcodeproj
 5. If you change the VPN extension bundle ID, also update `providerBundleIdentifier` in `TraceFeatures/VPN/VPNManager.swift`.
 6. Build and run on a physical device.
 
+### Updating pinned curl sources
+
+Use the helper script to retarget the curl submodule to a specific release tag:
+
+```bash
+./Tools/Curl/fetch_curl_source.sh 8.18.0 submodule
+./Tools/Curl/verify_curl_vendor_sync.sh
+git add ThirdParty/curl/upstream .gitmodules ThirdParty/curl-shim/include/trace_curl_vendor.h
+```
+
 ## Quick Start
 
 1. Complete onboarding:
@@ -105,7 +115,8 @@ Trace/
 ├── TraceUI/                # Shared UI components/utilities
 ├── TraceTests/             # Unit tests
 ├── TraceUITests/           # UI tests
-└── ThirdParty/hev-socks5-tunnel/  # Git submodule used by full-tunnel forwarding
+├── ThirdParty/hev-socks5-tunnel/  # Git submodule used by full-tunnel forwarding
+└── ThirdParty/curl/upstream/      # Git submodule for pinned curl tool/lib sources
 ```
 
 ## Testing
@@ -127,6 +138,9 @@ xcodebuild test \
 - Certificate pinning/custom trust validation prevents HTTPS MITM decryption.
 - QUIC/HTTP3 is not decrypted; optional QUIC blocking can force HTTP/2 in many cases.
 - Packet-tunnel behavior cannot be fully validated in iOS Simulator.
+- Full cURL runtime argument/protocol parity currently relies on the simulator/macOS
+  backend path with dynamic host capability probing; device builds keep URLSession
+  fallback diagnostics.
 
 ## Contributing
 

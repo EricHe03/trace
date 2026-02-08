@@ -45,7 +45,8 @@ final class CurlOptionRegistryParityTests: XCTestCase {
 
     func testGlobalOptionMetadataMatchesManpageGlobalList() throws {
         let manpage = try loadManpage()
-        let expectedGlobal = parseGlobalOptions(from: manpage)
+        let parsed = parseOptionDefinitions(from: manpage)
+        let expectedGlobal = parseGlobalOptions(from: manpage, aliasesByOption: parsed.aliasesByOption)
 
         XCTAssertEqual(expectedGlobal, CurlOptionMetadataRegistry.globalOptions)
     }
@@ -56,6 +57,7 @@ private extension CurlOptionRegistryParityTests {
         var options: Set<String> = []
         var required: Set<String> = []
         var optional: Set<String> = []
+        var aliasesByOption: [String: Set<String>] = [:]
     }
 
     func loadManpage() throws -> String {
@@ -86,20 +88,23 @@ private extension CurlOptionRegistryParityTests {
             }
 
             guard !options.isEmpty else { continue }
-            for option in options {
+            let optionSet = Set(options)
+
+            for option in optionSet {
                 parsed.options.insert(option)
+                parsed.aliasesByOption[option, default: []].formUnion(optionSet)
             }
 
             let hasRequiredValue = requiredRegex.firstMatch(in: spec, range: NSRange(spec.startIndex..., in: spec)) != nil
             let hasOptionalValue = optionalRegex.firstMatch(in: spec, range: NSRange(spec.startIndex..., in: spec)) != nil
 
             if hasRequiredValue {
-                for option in options {
+                for option in optionSet {
                     parsed.required.insert(option)
                 }
             }
             if hasOptionalValue {
-                for option in options {
+                for option in optionSet {
                     parsed.optional.insert(option)
                 }
             }
@@ -108,7 +113,7 @@ private extension CurlOptionRegistryParityTests {
         return parsed
     }
 
-    func parseGlobalOptions(from manpage: String) -> Set<String> {
+    func parseGlobalOptions(from manpage: String, aliasesByOption: [String: Set<String>]) -> Set<String> {
         let pattern = #"The following options are global:(.*?)</p>"#
         let regex = try! NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) // swiftlint:disable:this force_try
         guard let match = regex.matches(in: manpage, range: NSRange(manpage.startIndex..., in: manpage)).first,
@@ -129,7 +134,11 @@ private extension CurlOptionRegistryParityTests {
             options.insert(token)
         }
 
-        return options
+        var expanded = options
+        for option in options {
+            expanded.formUnion(aliasesByOption[option] ?? [])
+        }
+        return expanded
     }
 
     func htmlDecoded(_ string: String) -> String {

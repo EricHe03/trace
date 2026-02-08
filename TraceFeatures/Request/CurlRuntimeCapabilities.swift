@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if canImport(TraceCurlRuntime)
+import TraceCurlRuntime
+#endif
 
 public struct CurlRuntimeCapabilities: Sendable {
     public let backendName: String
@@ -88,4 +91,29 @@ public extension CurlRuntimeCapabilities {
         ],
         supportedOptions: CurlOptionRegistry.allOptions
     )
+
+    static var resolvedDefault: CurlRuntimeCapabilities {
+        #if canImport(TraceCurlRuntime)
+        let report = CurlRuntimeBridge.currentReport()
+        if report.available, report.supportsCLIExecution {
+            let protocols = report.supportedProtocols.isEmpty ? parityValidation.supportedProtocols : report.supportedProtocols
+            let runtimeKnownOptions = report.supportedOptions.intersection(CurlOptionRegistry.allOptions)
+            let supportedOptions = runtimeKnownOptions.isEmpty ? CurlOptionRegistry.allOptions : runtimeKnownOptions
+            let backendSuffix = runtimeKnownOptions == CurlOptionRegistry.allOptions ? "" : " (partial option set)"
+            return .init(
+                backendName: report.backendName + backendSuffix,
+                supportedProtocols: protocols,
+                supportedOptions: supportedOptions
+            )
+        }
+        if report.available, !report.supportsCLIExecution {
+            return .init(
+                backendName: "\(report.backendName) -> URLSession fallback",
+                supportedProtocols: urlSession.supportedProtocols,
+                supportedOptions: urlSession.supportedOptions
+            )
+        }
+        #endif
+        return .urlSession
+    }
 }

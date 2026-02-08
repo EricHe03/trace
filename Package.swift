@@ -82,6 +82,10 @@ let package = Package(
             targets: ["TraceFeatures"]
         ),
         .library(
+            name: "TraceCurlRuntime",
+            targets: ["TraceCurlRuntime"]
+        ),
+        .library(
             name: "TraceUI",
             targets: ["TraceUI"]
         ),
@@ -139,6 +143,24 @@ let package = Package(
             name: "TracePacket",
             dependencies: ["TraceCore"],
             path: "TracePacket"
+        ),
+
+        // CCurlShim: C ABI shim for vendored curl integration.
+        .target(
+            name: "CCurlShim",
+            path: "ThirdParty/curl-shim",
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("include"),
+                .headerSearchPath("../curl/upstream/include")
+            ]
+        ),
+
+        // TraceCurlRuntime: Swift wrapper around CCurlShim runtime capabilities.
+        .target(
+            name: "TraceCurlRuntime",
+            dependencies: ["CCurlShim"],
+            path: "TraceCurlRuntime"
         ),
 
         // HevSocks5Tunnel: C tunnel over SOCKS5 (tun2socks replacement)
@@ -218,7 +240,7 @@ let package = Package(
         // Dependencies: TraceCore, TraceSecurity
         .target(
             name: "TraceFeatures",
-            dependencies: ["TraceCore", "TraceSecurity"],
+            dependencies: ["TraceCore", "TraceSecurity", "TraceCurlRuntime"],
             path: "TraceFeatures"
         ),
 
