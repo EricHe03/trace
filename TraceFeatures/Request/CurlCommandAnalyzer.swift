@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if canImport(TraceCurlRuntime)
+import TraceCurlRuntime
+#endif
 
 public final class CurlCommandAnalyzer {
     private struct TokenStream {
@@ -184,6 +187,7 @@ public final class CurlCommandAnalyzer {
         }
 
         validateCapabilities(for: plans, diagnostics: &diagnostics)
+        validateRuntimePreflight(for: plans, diagnostics: &diagnostics)
 
         return CurlCommandPlan(
             originalCommand: original,
@@ -328,6 +332,59 @@ public final class CurlCommandAnalyzer {
             validateConfigFiles(for: transfer, emit: emit)
             validateVariables(for: transfer, emit: emit)
         }
+    }
+
+    private func validateRuntimePreflight(
+        for transfers: [CurlCommandTransferPlan],
+        diagnostics: inout [CurlDiagnostic]
+    ) {
+        #if canImport(TraceCurlRuntime)
+        guard shouldRunRuntimePreflight else { return }
+
+        var emittedMessages: Set<String> = []
+
+        for transfer in transfers {
+            do {
+                let preflight = try CurlRuntimeBridge.preflightTransferCommand(argv: transfer.argv)
+                if preflight.hasBlockingError {
+                    let stderr = preflight.standardError
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let details = stderr.isEmpty
+                        ? "parameter error code \(preflight.parameterErrorCode)"
+                        : stderr
+                    let message = "Runtime parser rejected transfer #\(transfer.index + 1): \(details)"
+                    if emittedMessages.insert(message).inserted {
+                        diagnostics.append(
+                            CurlDiagnostic(
+                                severity: .error,
+                                message: message
+                            )
+                        )
+                    }
+                }
+            } catch {
+                let message = "Runtime preflight failed for transfer #\(transfer.index + 1): \(error.localizedDescription)"
+                if emittedMessages.insert(message).inserted {
+                    diagnostics.append(
+                        CurlDiagnostic(
+                            severity: .error,
+                            message: message
+                        )
+                    )
+                }
+            }
+        }
+        #else
+        _ = transfers
+        #endif
+    }
+
+    private var shouldRunRuntimePreflight: Bool {
+        #if canImport(TraceCurlRuntime)
+        capabilities.backendName.contains("CCurlShim")
+        #else
+        false
+        #endif
     }
 
     private func validateConfigFiles(

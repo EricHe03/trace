@@ -72,7 +72,7 @@ public final class CurlCommandExecutor {
 
         for transfer in plan.transfers.sorted(by: { $0.index < $1.index }) {
             do {
-                let runtimeResult = try CurlRuntimeBridge.executeTransferCommand(
+                let runtimeResult = try await executeRuntimeTransfer(
                     argv: runtimeCommandArguments(for: transfer)
                 )
                 if runtimeResult.transferCount > 1 {
@@ -158,6 +158,12 @@ public final class CurlCommandExecutor {
             return Array(tokenized.dropFirst())
         }
         return tokenized
+    }
+
+    private func executeRuntimeTransfer(argv: [String]) async throws -> CurlRuntimeExecutionResult {
+        try await Task.detached(priority: .userInitiated) {
+            try CurlRuntimeBridge.executeTransferCommand(argv: argv)
+        }.value
     }
     #endif
 

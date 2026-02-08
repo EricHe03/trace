@@ -3,7 +3,29 @@
 #if canImport(AppleProductTypes)
 import AppleProductTypes
 #endif
+import Foundation
 import PackageDescription
+
+let curlVendorSources: [String] = {
+    let excludedSources: Set<String> = [
+        // We embed curl as an in-process runtime and call operate() directly.
+        // Excluding the CLI entrypoint avoids exporting an unnecessary main symbol.
+        "src/tool_main.c"
+    ]
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    let sourceListURL = root
+        .appendingPathComponent("ThirdParty")
+        .appendingPathComponent("curl-shim")
+        .appendingPathComponent("curl_vendor_sources.txt")
+    guard let contents = try? String(contentsOf: sourceListURL, encoding: .utf8) else {
+        return []
+    }
+    return contents
+        .split(whereSeparator: \.isNewline)
+        .map(String.init)
+        .filter { !$0.isEmpty }
+        .filter { !excludedSources.contains($0) }
+}()
 
 #if canImport(AppleProductTypes)
 let appProducts: [Product] = [
@@ -145,14 +167,50 @@ let package = Package(
             path: "TracePacket"
         ),
 
+        // CMBedTLS: Vendored mbed TLS backend used by curl runtime.
+        .target(
+            name: "CMBedTLS",
+            path: "ThirdParty/mbedtls",
+            exclude: [
+                "library/CMakeLists.txt",
+                "library/Makefile",
+                "library/.gitignore"
+            ],
+            sources: ["library"],
+            publicHeadersPath: "include"
+        ),
+
+        // CCurlVendor: Vendored curl lib/tool sources built in-process.
+        .target(
+            name: "CCurlVendor",
+            dependencies: ["CMBedTLS"],
+            path: "ThirdParty/curl",
+            sources: curlVendorSources,
+            publicHeadersPath: "include",
+            cSettings: [
+                .define("BUILDING_LIBCURL"),
+                .define("CURL_HIDDEN_SYMBOLS"),
+                .define("HAVE_CONFIG_H"),
+                .define("CURL_STATICLIB"),
+                .headerSearchPath("include"),
+                .headerSearchPath("lib"),
+                .headerSearchPath("src"),
+                .headerSearchPath("../curl-shim/include"),
+                .headerSearchPath("../mbedtls/include")
+            ]
+        ),
+
         // CCurlShim: C ABI shim for vendored curl integration.
         .target(
             name: "CCurlShim",
+            dependencies: ["CCurlVendor"],
             path: "ThirdParty/curl-shim",
             publicHeadersPath: "include",
             cSettings: [
                 .headerSearchPath("include"),
-                .headerSearchPath("../curl/include")
+                .headerSearchPath("../curl/include"),
+                .headerSearchPath("../curl/lib"),
+                .headerSearchPath("../curl/src")
             ]
         ),
 
@@ -160,7 +218,10 @@ let package = Package(
         .target(
             name: "TraceCurlRuntime",
             dependencies: ["CCurlShim"],
-            path: "TraceCurlRuntime"
+            path: "TraceCurlRuntime",
+            resources: [
+                .copy("Resources/apple-system-roots.pem")
+            ]
         ),
 
         // HevSocks5Tunnel: C tunnel over SOCKS5 (tun2socks replacement)

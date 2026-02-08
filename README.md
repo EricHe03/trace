@@ -62,7 +62,26 @@ Use the helper script to retarget the curl submodule to a specific release tag:
 ```bash
 ./Tools/Curl/fetch_curl_source.sh 8.18.0 submodule
 ./Tools/Curl/verify_curl_vendor_sync.sh
-git add ThirdParty/curl .gitmodules ThirdParty/curl-shim/include/trace_curl_vendor.h
+```
+
+The runtime TLS backend is vendored with `mbedtls`. Keep it pinned in git submodules:
+
+```bash
+git -C ThirdParty/mbedtls checkout v3.6.5
+```
+
+Regenerate the Apple root CA bundle used by the in-process curl runtime:
+
+```bash
+./Tools/Curl/generate_apple_ca_bundle.sh
+```
+
+Then stage all vendor metadata updates:
+
+```bash
+git add ThirdParty/curl ThirdParty/mbedtls .gitmodules \
+  ThirdParty/curl-shim/include/trace_curl_vendor.h \
+  TraceCurlRuntime/Resources/apple-system-roots.pem
 ```
 
 ## Quick Start
@@ -138,9 +157,10 @@ xcodebuild test \
 - Certificate pinning/custom trust validation prevents HTTPS MITM decryption.
 - QUIC/HTTP3 is not decrypted; optional QUIC blocking can force HTTP/2 in many cases.
 - Packet-tunnel behavior cannot be fully validated in iOS Simulator.
-- Full cURL runtime argument/protocol parity currently relies on the simulator/macOS
-  backend path with dynamic host capability probing; device builds keep URLSession
-  fallback diagnostics.
+- cURL import executes through the vendored in-process runtime; commands that
+  require unavailable backend capabilities fail fast with explicit diagnostics.
+- Runtime HTTPS/TLS for cURL import is provided by vendored `mbedtls`, using a
+  bundled Apple root CA PEM for default certificate verification.
 
 ## Contributing
 

@@ -34,4 +34,16 @@ final class CurlRuntimeCapabilitiesTests: XCTestCase {
         XCTAssertTrue(capabilities.backendName.contains("URLSession"))
         #endif
     }
+
+    func testRuntimeBackendReportsHTTPSSupport() {
+        #if canImport(TraceCurlRuntime)
+        let report = CurlRuntimeBridge.currentReport()
+        guard report.available, report.supportsCLIExecution else {
+            throw XCTSkip("Runtime backend unavailable in this environment")
+        }
+        XCTAssertTrue(report.supportedProtocols.contains("https"), "TLS backend is expected to expose https protocol support")
+        #else
+        throw XCTSkip("TraceCurlRuntime module unavailable")
+        #endif
+    }
 }

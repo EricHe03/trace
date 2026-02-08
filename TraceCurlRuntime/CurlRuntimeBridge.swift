@@ -7,9 +7,6 @@
 
 import CCurlShim
 import Foundation
-#if canImport(Darwin)
-import Darwin
-#endif
 
 public struct CurlRuntimeReport: Sendable {
     public let available: Bool
@@ -76,70 +73,64 @@ public struct CurlRuntimeExecutionResult: Sendable {
     }
 }
 
+public struct CurlRuntimePreflightResult: Sendable {
+    public let parameterErrorCode: Int32
+    public let transferCount: Int
+    public let urlCount: Int
+    public let standardError: String
+
+    public init(
+        parameterErrorCode: Int32,
+        transferCount: Int,
+        urlCount: Int,
+        standardError: String
+    ) {
+        self.parameterErrorCode = parameterErrorCode
+        self.transferCount = transferCount
+        self.urlCount = urlCount
+        self.standardError = standardError
+    }
+
+    public var hasBlockingError: Bool {
+        parameterErrorCode != 0
+    }
+}
+
 public enum CurlRuntimeExecutionError: LocalizedError {
     case backendUnavailable
     case invalidCommand
-    case commandLaunchFailed
-    case commandWaitFailed
+    case runtimeFailure(String)
 
     public var errorDescription: String? {
         switch self {
         case .backendUnavailable:
-            "cURL runtime CLI backend is not available on this platform"
+            "cURL in-process runtime is not available"
         case .invalidCommand:
             "Runtime backend received an empty cURL command"
-        case .commandLaunchFailed:
-            "Failed to launch cURL runtime command"
-        case .commandWaitFailed:
-            "cURL runtime command terminated unexpectedly"
+        case let .runtimeFailure(message):
+            "In-process cURL runtime failed: \(message)"
         }
     }
 }
 
 public enum CurlRuntimeBridge {
     private static let metaPrefix = "TRACE_META:"
-    private static let curlCLIPath = "/usr/bin/curl"
-    private static let hostCapabilityLock = NSLock()
-    nonisolated(unsafe) private static var cachedHostCapabilities: HostCapabilities?
-
-    private struct HostCapabilities: Sendable {
-        let protocols: Set<String>
-        let options: Set<String>
-        let version: String
-    }
 
     public static func currentReport() -> CurlRuntimeReport {
         let available = trace_curl_runtime_available() != 0
         let backendName = String(cString: trace_curl_runtime_backend_name())
-        let shimVersion = String(cString: trace_curl_runtime_version_string())
-        let shimProtocols = parseCSVSet(String(cString: trace_curl_runtime_supported_protocols_csv()))
-        let fullParityFlag = trace_curl_runtime_supports_full_option_parity() != 0
-        let supportsCLI = available && canExecuteCurlCLI()
-
-        var runtimeProtocols = shimProtocols
-        var runtimeOptions: Set<String> = []
-        var runtimeVersion = shimVersion
-
-        if supportsCLI, let hostCapabilities = loadHostCapabilities() {
-            if !hostCapabilities.protocols.isEmpty {
-                runtimeProtocols = hostCapabilities.protocols
-            }
-            if !hostCapabilities.options.isEmpty {
-                runtimeOptions = hostCapabilities.options
-            }
-            if !hostCapabilities.version.isEmpty {
-                runtimeVersion = hostCapabilities.version
-            }
-        }
+        let version = String(cString: trace_curl_runtime_version_string())
+        let protocols = parseCSVSet(String(cString: trace_curl_runtime_supported_protocols_csv()))
+        let supportsFullParity = trace_curl_runtime_supports_full_option_parity() != 0
 
         return CurlRuntimeReport(
             available: available,
-            supportsFullOptionParity: fullParityFlag && supportsCLI && !runtimeOptions.isEmpty,
-            supportsCLIExecution: supportsCLI,
+            supportsFullOptionParity: available && supportsFullParity,
+            supportsCLIExecution: available,
             backendName: backendName,
-            supportedProtocols: runtimeProtocols,
-            supportedOptions: runtimeOptions,
-            version: runtimeVersion
+            supportedProtocols: protocols,
+            supportedOptions: [],
+            version: version
         )
     }
 
@@ -149,7 +140,7 @@ public enum CurlRuntimeBridge {
 
     public static func executeTransferCommand(argv: [String]) throws -> CurlRuntimeExecutionResult {
         let report = currentReport()
-        guard report.supportsCLIExecution else {
+        guard report.available else {
             throw CurlRuntimeExecutionError.backendUnavailable
         }
 
@@ -167,10 +158,13 @@ public enum CurlRuntimeBridge {
 
         let headersURL = tempDirectory.appendingPathComponent("headers.txt")
         let bodyURL = tempDirectory.appendingPathComponent("body.bin")
-        let stdoutURL = tempDirectory.appendingPathComponent("stdout.txt")
-        let stderrURL = tempDirectory.appendingPathComponent("stderr.txt")
 
         var invocation = argv
+        if shouldInjectDefaultCABundle(into: invocation),
+           let bundlePath = defaultCABundlePath()
+        {
+            invocation.append(contentsOf: ["--cacert", bundlePath])
+        }
         invocation.append(contentsOf: [
             "--dump-header",
             headersURL.path,
@@ -179,17 +173,11 @@ public enum CurlRuntimeBridge {
             "--silent",
             "--show-error",
             "--write-out",
-            "\(metaPrefix)%{json}\n"
+            "\(metaPrefix)%{json}\\n"
         ])
 
-        let exitCode = try runCurlCommand(
-            arguments: invocation,
-            stdoutURL: stdoutURL,
-            stderrURL: stderrURL
-        )
-
-        let stdoutText = (try? String(contentsOf: stdoutURL, encoding: .utf8)) ?? ""
-        let (plainOutput, metaTexts) = splitStandardOutputAndMeta(stdoutText)
+        let execution = try runCurlCommand(arguments: invocation)
+        let (plainOutput, metaTexts) = splitStandardOutputAndMeta(execution.stdout)
         let metadataEntries = metaTexts.compactMap(parseMetadata)
         let selectedMetadata = metadataEntries.last
         let transferCount = max(metaTexts.count, 1)
@@ -201,10 +189,9 @@ public enum CurlRuntimeBridge {
         let effectiveURL = parseString(from: selectedMetadata, key: "url_effective")
         let timeTotal = parseDouble(from: selectedMetadata, key: "time_total")
         let responseBody = (try? Data(contentsOf: bodyURL)) ?? Data()
-        let standardError = (try? String(contentsOf: stderrURL, encoding: .utf8)) ?? ""
 
         return CurlRuntimeExecutionResult(
-            exitCode: exitCode,
+            exitCode: execution.exitCode,
             transferCount: transferCount,
             statusCode: statusCode,
             statusLine: statusLine,
@@ -213,139 +200,138 @@ public enum CurlRuntimeBridge {
             responseBody: responseBody,
             timeTotal: timeTotal,
             standardOutput: plainOutput,
-            standardError: standardError
+            standardError: execution.stderr
         )
     }
 
-    private static func canExecuteCurlCLI() -> Bool {
-        #if targetEnvironment(simulator) || os(macOS) || targetEnvironment(macCatalyst)
-        FileManager.default.isExecutableFile(atPath: curlCLIPath)
-        #else
-        false
-        #endif
+    public static func preflightTransferCommand(argv: [String]) throws -> CurlRuntimePreflightResult {
+        let report = currentReport()
+        guard report.available else {
+            throw CurlRuntimeExecutionError.backendUnavailable
+        }
+
+        guard !argv.isEmpty else {
+            throw CurlRuntimeExecutionError.invalidCommand
+        }
+
+        return try runCurlPreflight(arguments: argv)
     }
 
-    private static func loadHostCapabilities() -> HostCapabilities? {
-        hostCapabilityLock.lock()
-        defer { hostCapabilityLock.unlock() }
+    private static func runCurlCommand(arguments: [String]) throws -> (exitCode: Int32, stdout: String, stderr: String) {
+        var executionResult = trace_curl_execute_result(exit_code: 0, stdout_utf8: nil, stderr_utf8: nil)
 
-        if let cachedHostCapabilities {
-            return cachedHostCapabilities
-        }
-
-        let versionOutput = runIntrospection(arguments: ["--version"])
-        let helpOutput = runIntrospection(arguments: ["--help", "all"])
-        guard versionOutput != nil || helpOutput != nil else {
-            return nil
-        }
-
-        let hostCapabilities = HostCapabilities(
-            protocols: parseProtocols(fromVersionOutput: versionOutput ?? ""),
-            options: parseOptions(fromHelpOutput: helpOutput ?? ""),
-            version: parseVersion(fromVersionOutput: versionOutput ?? "")
-        )
-        cachedHostCapabilities = hostCapabilities
-        return hostCapabilities
-    }
-
-    private static func runIntrospection(arguments: [String]) -> String? {
-        let fm = FileManager.default
-        let tempDirectory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("trace-curl-introspect-\(UUID().uuidString)", isDirectory: true)
-        do {
-            try fm.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
-        } catch {
-            return nil
+        let ownedArguments = arguments.map { strdup($0) }
+        let cArguments: [UnsafePointer<CChar>?] = ownedArguments.map { pointer in
+            pointer.map { UnsafePointer($0) }
         }
         defer {
-            try? fm.removeItem(at: tempDirectory)
-        }
-
-        let stdoutURL = tempDirectory.appendingPathComponent("stdout.txt")
-        let stderrURL = tempDirectory.appendingPathComponent("stderr.txt")
-
-        guard let exitCode = try? runCurlCommand(arguments: arguments, stdoutURL: stdoutURL, stderrURL: stderrURL) else {
-            return nil
-        }
-        let stdoutText = (try? String(contentsOf: stdoutURL, encoding: .utf8)) ?? ""
-        if exitCode != 0 && stdoutText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return nil
-        }
-        return stdoutText
-    }
-
-    private static func runCurlCommand(
-        arguments: [String],
-        stdoutURL: URL,
-        stderrURL: URL
-    ) throws -> Int32 {
-        #if canImport(Darwin)
-        var fileActions: posix_spawn_file_actions_t?
-        guard posix_spawn_file_actions_init(&fileActions) == 0 else {
-            throw CurlRuntimeExecutionError.commandLaunchFailed
-        }
-        defer {
-            posix_spawn_file_actions_destroy(&fileActions)
-        }
-
-        let permissions = mode_t(S_IRUSR | S_IWUSR)
-        let openFlags = O_WRONLY | O_CREAT | O_TRUNC
-
-        guard posix_spawn_file_actions_addopen(
-            &fileActions,
-            STDOUT_FILENO,
-            stdoutURL.path,
-            openFlags,
-            permissions
-        ) == 0 else {
-            throw CurlRuntimeExecutionError.commandLaunchFailed
-        }
-        guard posix_spawn_file_actions_addopen(
-            &fileActions,
-            STDERR_FILENO,
-            stderrURL.path,
-            openFlags,
-            permissions
-        ) == 0 else {
-            throw CurlRuntimeExecutionError.commandLaunchFailed
-        }
-
-        var argv = (["curl"] + arguments).map { strdup($0) }
-        argv.append(nil)
-        defer {
-            for ptr in argv where ptr != nil {
-                free(ptr)
+            for pointer in ownedArguments where pointer != nil {
+                free(pointer)
             }
+            trace_curl_execute_result_dispose(&executionResult)
         }
 
-        var pid: pid_t = 0
-        let spawnResult: Int32 = argv.withUnsafeMutableBufferPointer { argvBuffer in
-            posix_spawn(
-                &pid,
-                curlCLIPath,
-                &fileActions,
-                nil,
-                argvBuffer.baseAddress,
-                environ
+        let status = cArguments.withUnsafeBufferPointer { buffer in
+            trace_curl_execute_argv(
+                Int32(arguments.count),
+                buffer.baseAddress,
+                &executionResult
             )
         }
 
-        guard spawnResult == 0 else {
-            throw CurlRuntimeExecutionError.commandLaunchFailed
+        if status != 0 {
+            let message = String(cString: trace_curl_runtime_last_error())
+            throw CurlRuntimeExecutionError.runtimeFailure(message)
         }
 
-        var status: Int32 = 0
-        guard waitpid(pid, &status, 0) != -1 else {
-            throw CurlRuntimeExecutionError.commandWaitFailed
+        let stdout = executionResult.stdout_utf8.map { String(cString: $0) } ?? ""
+        let stderr = executionResult.stderr_utf8.map { String(cString: $0) } ?? ""
+        return (executionResult.exit_code, stdout, stderr)
+    }
+
+    private static func runCurlPreflight(arguments: [String]) throws -> CurlRuntimePreflightResult {
+        var parseResult = trace_curl_parse_result(
+            parameter_error: 0,
+            transfer_count: 0,
+            url_count: 0,
+            stderr_utf8: nil
+        )
+
+        let ownedArguments = arguments.map { strdup($0) }
+        let cArguments: [UnsafePointer<CChar>?] = ownedArguments.map { pointer in
+            pointer.map { UnsafePointer($0) }
+        }
+        defer {
+            for pointer in ownedArguments where pointer != nil {
+                free(pointer)
+            }
+            trace_curl_parse_result_dispose(&parseResult)
         }
 
-        return Int32((status >> 8) & 0xff)
-        #else
-        _ = arguments
-        _ = stdoutURL
-        _ = stderrURL
-        throw CurlRuntimeExecutionError.backendUnavailable
-        #endif
+        let status = cArguments.withUnsafeBufferPointer { buffer in
+            trace_curl_parse_argv(
+                Int32(arguments.count),
+                buffer.baseAddress,
+                &parseResult
+            )
+        }
+
+        if status != 0 {
+            let message = String(cString: trace_curl_runtime_last_error())
+            throw CurlRuntimeExecutionError.runtimeFailure(message)
+        }
+
+        let stderr = parseResult.stderr_utf8.map { String(cString: $0) } ?? ""
+        return CurlRuntimePreflightResult(
+            parameterErrorCode: parseResult.parameter_error,
+            transferCount: Int(parseResult.transfer_count),
+            urlCount: Int(parseResult.url_count),
+            standardError: stderr
+        )
+    }
+
+    private static func defaultCABundlePath() -> String? {
+        Bundle.module
+            .url(forResource: "apple-system-roots", withExtension: "pem")?
+            .path
+    }
+
+    private static func shouldInjectDefaultCABundle(into argv: [String]) -> Bool {
+        var index = 0
+        while index < argv.count {
+            let token = argv[index]
+            let lowered = token.lowercased()
+
+            if lowered == "--insecure" || lowered.hasPrefix("--insecure=") {
+                return false
+            }
+
+            if lowered == "--ca-native" || lowered.hasPrefix("--ca-native=") {
+                return false
+            }
+
+            if lowered == "--cacert" || lowered.hasPrefix("--cacert=") ||
+                lowered == "--capath" || lowered.hasPrefix("--capath=") ||
+                lowered == "--proxy-cacert" || lowered.hasPrefix("--proxy-cacert=")
+            {
+                return false
+            }
+
+            if token.hasPrefix("-"), !token.hasPrefix("--"), token.count > 1 {
+                let shortCluster = token.dropFirst()
+                if shortCluster.contains("k") {
+                    return false
+                }
+            }
+
+            if lowered == "--cacert" || lowered == "--capath" || lowered == "--proxy-cacert" {
+                index += 1
+            }
+
+            index += 1
+        }
+
+        return true
     }
 
     private static func parseCSVSet(_ value: String) -> Set<String> {
@@ -355,49 +341,6 @@ public enum CurlRuntimeBridge {
                 .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
                 .filter { !$0.isEmpty }
         )
-    }
-
-    private static func parseVersion(fromVersionOutput output: String) -> String {
-        let firstLine = output.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first
-        let tokens = firstLine?.split(separator: " ", omittingEmptySubsequences: true) ?? []
-        guard tokens.count >= 2 else {
-            return ""
-        }
-        return String(tokens[1])
-    }
-
-    private static func parseProtocols(fromVersionOutput output: String) -> Set<String> {
-        let normalized = output.replacingOccurrences(of: "\r\n", with: "\n")
-        for line in normalized.split(separator: "\n", omittingEmptySubsequences: false) {
-            let stringLine = String(line)
-            guard stringLine.lowercased().hasPrefix("protocols:") else {
-                continue
-            }
-            let value = stringLine.dropFirst("Protocols:".count)
-            return Set(
-                value
-                    .split(whereSeparator: \.isWhitespace)
-                    .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-                    .filter { !$0.isEmpty }
-            )
-        }
-        return []
-    }
-
-    private static func parseOptions(fromHelpOutput output: String) -> Set<String> {
-        let pattern = #"(?<!\w)(--[A-Za-z0-9][A-Za-z0-9.:-]*|-[A-Za-z0-9:#])"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
-            return []
-        }
-
-        let range = NSRange(output.startIndex..., in: output)
-        let matches = regex.matches(in: output, options: [], range: range)
-        var options = Set<String>()
-        for match in matches {
-            guard let tokenRange = Range(match.range(at: 1), in: output) else { continue }
-            options.insert(String(output[tokenRange]))
-        }
-        return options
     }
 
     private static func tokenizeCommand(_ command: String) -> [String] {

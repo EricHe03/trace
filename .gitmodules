@@ -4,3 +4,6 @@
 [submodule "ThirdParty/curl"]
 	path = ThirdParty/curl
 	url = https://github.com/curl/curl.git
+[submodule "ThirdParty/mbedtls"]
+	path = ThirdParty/mbedtls
+	url = https://github.com/Mbed-TLS/mbedtls.git

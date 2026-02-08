@@ -98,8 +98,15 @@ public extension CurlRuntimeCapabilities {
         if report.available, report.supportsCLIExecution {
             let protocols = report.supportedProtocols.isEmpty ? parityValidation.supportedProtocols : report.supportedProtocols
             let runtimeKnownOptions = report.supportedOptions.intersection(CurlOptionRegistry.allOptions)
-            let supportedOptions = runtimeKnownOptions.isEmpty ? CurlOptionRegistry.allOptions : runtimeKnownOptions
-            let backendSuffix = runtimeKnownOptions == CurlOptionRegistry.allOptions ? "" : " (partial option set)"
+            let supportedOptions: Set<String>
+            let backendSuffix: String
+            if runtimeKnownOptions.isEmpty {
+                supportedOptions = report.supportsFullOptionParity ? CurlOptionRegistry.allOptions : urlSession.supportedOptions
+                backendSuffix = report.supportsFullOptionParity ? "" : " (partial option set)"
+            } else {
+                supportedOptions = runtimeKnownOptions
+                backendSuffix = runtimeKnownOptions == CurlOptionRegistry.allOptions ? "" : " (partial option set)"
+            }
             return .init(
                 backendName: report.backendName + backendSuffix,
                 supportedProtocols: protocols,
