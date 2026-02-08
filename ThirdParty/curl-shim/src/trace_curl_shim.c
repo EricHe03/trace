@@ -1,4 +1,5 @@
 #include "trace_curl_shim.h"
+#include "curl_config.h"
 #include "trace_curl_vendor.h"
 
 #include <curl/curl.h>
@@ -378,6 +379,48 @@ int32_t trace_curl_runtime_available(void)
 int32_t trace_curl_runtime_supports_full_option_parity(void)
 {
     return 1;
+}
+
+int32_t trace_curl_runtime_supports_http2(void)
+{
+#if defined(USE_NGHTTP2)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+int32_t trace_curl_runtime_supports_content_decoding(void)
+{
+#if defined(HAVE_LIBZ) || defined(HAVE_BROTLI) || defined(HAVE_ZSTD)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+int32_t trace_curl_runtime_supports_native_ca(void)
+{
+#if defined(USE_OPENSSL) || defined(USE_GNUTLS) || defined(USE_WOLFSSL) || \
+    defined(USE_RUSTLS) || defined(USE_APPLE_SECTRUST) || defined(USE_SCHANNEL)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+int32_t trace_curl_runtime_supports_ntlm(void)
+{
+#if !defined(CURL_DISABLE_NTLM) && \
+    ((defined(USE_OPENSSL) && defined(HAVE_DES_ECB_ENCRYPT)) || \
+        defined(USE_GNUTLS) || \
+        (defined(USE_MBEDTLS) && defined(HAVE_MBEDTLS_DES_CRYPT_ECB)) || \
+        defined(USE_OS400CRYPTO) || defined(USE_WIN32_CRYPTO) || \
+        (defined(USE_WOLFSSL) && defined(HAVE_WOLFSSL_DES_ECB_ENCRYPT)))
+    return 1;
+#else
+    return 0;
+#endif
 }
 
 const char *trace_curl_runtime_backend_name(void)

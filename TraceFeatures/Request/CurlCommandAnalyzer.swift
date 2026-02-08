@@ -187,6 +187,7 @@ public final class CurlCommandAnalyzer {
         }
 
         validateCapabilities(for: plans, diagnostics: &diagnostics)
+        validateRuntimeFeatureSupport(for: plans, diagnostics: &diagnostics)
         validateRuntimePreflight(for: plans, diagnostics: &diagnostics)
 
         return CurlCommandPlan(
@@ -385,6 +386,75 @@ public final class CurlCommandAnalyzer {
         #else
         false
         #endif
+    }
+
+    private func validateRuntimeFeatureSupport(
+        for transfers: [CurlCommandTransferPlan],
+        diagnostics: inout [CurlDiagnostic]
+    ) {
+        var emittedKeys: Set<String> = []
+
+        func emit(severity: CurlDiagnosticSeverity, option: String, message: String) {
+            let key = "\(severity.rawValue)|\(option)|\(message)"
+            guard emittedKeys.insert(key).inserted else { return }
+            diagnostics.append(
+                CurlDiagnostic(
+                    severity: severity,
+                    option: option,
+                    message: message
+                )
+            )
+        }
+
+        for transfer in transfers {
+            let options = transfer.effectiveOptions
+
+            if (optionEnabled("--http2", in: options) || optionEnabled("--http2-prior-knowledge", in: options)),
+               !capabilities.supportsHTTP2
+            {
+                emit(
+                    severity: .error,
+                    option: "--http2",
+                    message: "HTTP/2 is not supported by the \(capabilities.backendName) backend"
+                )
+            }
+
+            if optionEnabled("--compressed", in: options), !capabilities.supportsContentDecoding {
+                emit(
+                    severity: .error,
+                    option: "--compressed",
+                    message: "Compressed response decoding is not supported by the \(capabilities.backendName) backend"
+                )
+            }
+
+            if (optionEnabled("--ca-native", in: options) || optionEnabled("--proxy-ca-native", in: options)),
+               !capabilities.supportsNativeCA
+            {
+                emit(
+                    severity: .warning,
+                    option: "--ca-native",
+                    message: "Native CA store is not supported by the \(capabilities.backendName) backend; bundled CA PEM will be used"
+                )
+            }
+
+            if (optionEnabled("--ntlm", in: options) || optionEnabled("--proxy-ntlm", in: options)),
+               !capabilities.supportsNTLM
+            {
+                emit(
+                    severity: .error,
+                    option: "--ntlm",
+                    message: "NTLM authentication is not supported by the \(capabilities.backendName) backend"
+                )
+            }
+        }
+    }
+
+    private func optionEnabled(
+        _ option: String,
+        in options: [String: [String]]
+    ) -> Bool {
+        guard let values = options[option], !values.isEmpty else { return false }
+        return values.contains { $0.lowercased() != "false" }
     }
 
     private func validateConfigFiles(

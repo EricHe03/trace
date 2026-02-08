@@ -159,9 +159,77 @@ final class CurlCommandAnalyzerTests: XCTestCase {
         XCTAssertEqual(plan.transfers.count, 1)
         XCTAssertEqual(plan.transfers[0].argv, ["-H", "X Name: value with space", "https://example.com"])
     }
+
+    func testAnalyzeEmitsFeatureDiagnosticsWhenRuntimeFlagsAreDisabled() {
+        let analyzer = CurlCommandAnalyzer(capabilities: makeFeatureLimitedRuntimeCapabilities())
+
+        let http2Plan = analyzer.analyze("curl --http2 https://example.com")
+        XCTAssertTrue(http2Plan.hasBlockingDiagnostics)
+        XCTAssertTrue(http2Plan.diagnostics.contains { $0.option == "--http2" && $0.message.contains("HTTP/2") })
+
+        let compressedPlan = analyzer.analyze("curl --compressed https://example.com")
+        XCTAssertTrue(compressedPlan.hasBlockingDiagnostics)
+        XCTAssertTrue(compressedPlan.diagnostics.contains { $0.option == "--compressed" && $0.message.contains("Compressed response decoding") })
+
+        let ntlmPlan = analyzer.analyze("curl --ntlm --user user:pass https://example.com")
+        XCTAssertTrue(ntlmPlan.hasBlockingDiagnostics)
+        XCTAssertTrue(ntlmPlan.diagnostics.contains { $0.option == "--ntlm" && $0.message.contains("NTLM authentication") })
+    }
+
+    func testAnalyzeWarnsForNativeCAWhenUnsupported() {
+        let analyzer = CurlCommandAnalyzer(capabilities: makeFeatureLimitedRuntimeCapabilities())
+
+        let plan = analyzer.analyze("curl --ca-native https://example.com")
+
+        XCTAssertFalse(plan.hasBlockingDiagnostics)
+        XCTAssertTrue(
+            plan.diagnostics.contains {
+                $0.severity == .warning &&
+                    $0.option == "--ca-native" &&
+                    $0.message.contains("Native CA store")
+            }
+        )
+    }
+
+    func testAnalyzeAllowsHTTP2AndCompressedWhenRuntimeFlagsAreEnabled() {
+        let analyzer = CurlCommandAnalyzer(capabilities: .parityValidation)
+
+        let http2Plan = analyzer.analyze("curl --http2 https://example.com")
+        XCTAssertFalse(http2Plan.hasBlockingDiagnostics)
+        XCTAssertFalse(http2Plan.diagnostics.contains { $0.option == "--http2" && $0.severity == .error })
+
+        let compressedPlan = analyzer.analyze("curl --compressed https://example.com")
+        XCTAssertFalse(compressedPlan.hasBlockingDiagnostics)
+        XCTAssertFalse(compressedPlan.diagnostics.contains { $0.option == "--compressed" && $0.severity == .error })
+    }
+
+    func testAnalyzeRejectsExplicitlyUnsupportedRuntimeProtocols() {
+        let analyzer = CurlCommandAnalyzer(capabilities: makeFeatureLimitedRuntimeCapabilities())
+
+        for scheme in ["ldap", "ldaps", "scp", "sftp"] {
+            let plan = analyzer.analyze("curl \(scheme)://example.com/resource")
+            XCTAssertTrue(plan.hasBlockingDiagnostics, "Expected blocking diagnostics for \(scheme)")
+            XCTAssertTrue(
+                plan.diagnostics.contains { $0.message.contains("Protocol '\(scheme)'") },
+                "Expected protocol diagnostic for \(scheme)"
+            )
+        }
+    }
 }
 
 private extension CurlCommandAnalyzerTests {
+    func makeFeatureLimitedRuntimeCapabilities() -> CurlRuntimeCapabilities {
+        CurlRuntimeCapabilities(
+            backendName: "TestRuntime",
+            supportedProtocols: ["http", "https"],
+            supportedOptions: CurlOptionRegistry.allOptions,
+            supportsHTTP2: false,
+            supportsContentDecoding: false,
+            supportsNativeCA: false,
+            supportsNTLM: false
+        )
+    }
+
     func makeCommand(for option: String) -> String {
         if option == "--next" || option == "-:" {
             return "curl https://first.example \(option) https://second.example"

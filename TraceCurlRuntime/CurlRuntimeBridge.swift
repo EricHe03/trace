@@ -12,6 +12,10 @@ public struct CurlRuntimeReport: Sendable {
     public let available: Bool
     public let supportsFullOptionParity: Bool
     public let supportsCLIExecution: Bool
+    public let supportsHTTP2: Bool
+    public let supportsContentDecoding: Bool
+    public let supportsNativeCA: Bool
+    public let supportsNTLM: Bool
     public let backendName: String
     public let supportedProtocols: Set<String>
     public let supportedOptions: Set<String>
@@ -21,6 +25,10 @@ public struct CurlRuntimeReport: Sendable {
         available: Bool,
         supportsFullOptionParity: Bool,
         supportsCLIExecution: Bool,
+        supportsHTTP2: Bool,
+        supportsContentDecoding: Bool,
+        supportsNativeCA: Bool,
+        supportsNTLM: Bool,
         backendName: String,
         supportedProtocols: Set<String>,
         supportedOptions: Set<String>,
@@ -29,6 +37,10 @@ public struct CurlRuntimeReport: Sendable {
         self.available = available
         self.supportsFullOptionParity = supportsFullOptionParity
         self.supportsCLIExecution = supportsCLIExecution
+        self.supportsHTTP2 = supportsHTTP2
+        self.supportsContentDecoding = supportsContentDecoding
+        self.supportsNativeCA = supportsNativeCA
+        self.supportsNTLM = supportsNTLM
         self.backendName = backendName
         self.supportedProtocols = supportedProtocols
         self.supportedOptions = supportedOptions
@@ -122,11 +134,19 @@ public enum CurlRuntimeBridge {
         let version = String(cString: trace_curl_runtime_version_string())
         let protocols = parseCSVSet(String(cString: trace_curl_runtime_supported_protocols_csv()))
         let supportsFullParity = trace_curl_runtime_supports_full_option_parity() != 0
+        let supportsHTTP2 = trace_curl_runtime_supports_http2() != 0
+        let supportsContentDecoding = trace_curl_runtime_supports_content_decoding() != 0
+        let supportsNativeCA = trace_curl_runtime_supports_native_ca() != 0
+        let supportsNTLM = trace_curl_runtime_supports_ntlm() != 0
 
         return CurlRuntimeReport(
             available: available,
             supportsFullOptionParity: available && supportsFullParity,
             supportsCLIExecution: available,
+            supportsHTTP2: supportsHTTP2,
+            supportsContentDecoding: supportsContentDecoding,
+            supportsNativeCA: supportsNativeCA,
+            supportsNTLM: supportsNTLM,
             backendName: backendName,
             supportedProtocols: protocols,
             supportedOptions: [],
@@ -303,10 +323,6 @@ public enum CurlRuntimeBridge {
             let lowered = token.lowercased()
 
             if lowered == "--insecure" || lowered.hasPrefix("--insecure=") {
-                return false
-            }
-
-            if lowered == "--ca-native" || lowered.hasPrefix("--ca-native=") {
                 return false
             }
 

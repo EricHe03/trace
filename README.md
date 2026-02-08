@@ -68,12 +68,14 @@ The runtime TLS backend is vendored with `mbedtls`. Keep it pinned in git submod
 
 ```bash
 git -C ThirdParty/mbedtls checkout v3.6.5
+git -C ThirdParty/nghttp2 checkout v1.67.1
 ```
 
 Regenerate the Apple root CA bundle used by the in-process curl runtime:
 
 ```bash
 ./Tools/Curl/generate_apple_ca_bundle.sh
+./Tools/Curl/verify_apple_ca_bundle.sh
 ```
 
 Then stage all vendor metadata updates:
@@ -81,6 +83,8 @@ Then stage all vendor metadata updates:
 ```bash
 git add ThirdParty/curl ThirdParty/mbedtls .gitmodules \
   ThirdParty/curl-shim/include/trace_curl_vendor.h \
+  ThirdParty/curl-shim/include/nghttp2/nghttp2ver.h \
+  ThirdParty/nghttp2 \
   TraceCurlRuntime/Resources/apple-system-roots.pem
 ```
 
@@ -161,6 +165,8 @@ xcodebuild test \
   require unavailable backend capabilities fail fast with explicit diagnostics.
 - Runtime HTTPS/TLS for cURL import is provided by vendored `mbedtls`, using a
   bundled Apple root CA PEM for default certificate verification.
+- Runtime `--ca-native` is not available with the current `mbedtls` backend; the
+  bundled CA PEM remains the default verification source unless explicitly overridden.
 
 ## Contributing
 

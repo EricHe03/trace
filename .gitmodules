@@ -7,3 +7,6 @@
 [submodule "ThirdParty/mbedtls"]
 	path = ThirdParty/mbedtls
 	url = https://github.com/Mbed-TLS/mbedtls.git
+[submodule "ThirdParty/nghttp2"]
+	path = ThirdParty/nghttp2
+	url = https://github.com/nghttp2/nghttp2.git

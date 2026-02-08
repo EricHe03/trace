@@ -180,10 +180,34 @@ let package = Package(
             publicHeadersPath: "include"
         ),
 
+        // CNghttp2: Vendored nghttp2 backend used by curl runtime for HTTP/2.
+        .target(
+            name: "CNghttp2",
+            path: "ThirdParty/nghttp2",
+            exclude: [
+                "lib/CMakeLists.txt",
+                "lib/Makefile.am",
+                "lib/Makefile.msvc",
+                "lib/config.cmake.in",
+                "lib/libnghttp2.pc.in",
+                "lib/version.rc.in",
+                "lib/includes/CMakeLists.txt",
+                "lib/includes/Makefile.am",
+                "lib/includes/nghttp2/nghttp2ver.h.in",
+                "lib/.gitignore"
+            ],
+            sources: ["lib"],
+            publicHeadersPath: "lib/includes",
+            cSettings: [
+                .headerSearchPath("lib/includes"),
+                .headerSearchPath("../curl-shim/include")
+            ]
+        ),
+
         // CCurlVendor: Vendored curl lib/tool sources built in-process.
         .target(
             name: "CCurlVendor",
-            dependencies: ["CMBedTLS"],
+            dependencies: ["CMBedTLS", "CNghttp2"],
             path: "ThirdParty/curl",
             sources: curlVendorSources,
             publicHeadersPath: "include",
@@ -196,7 +220,11 @@ let package = Package(
                 .headerSearchPath("lib"),
                 .headerSearchPath("src"),
                 .headerSearchPath("../curl-shim/include"),
-                .headerSearchPath("../mbedtls/include")
+                .headerSearchPath("../mbedtls/include"),
+                .headerSearchPath("../nghttp2/lib/includes")
+            ],
+            linkerSettings: [
+                .linkedLibrary("z")
             ]
         ),
 
