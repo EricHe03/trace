@@ -118,7 +118,7 @@ struct NetworkViewActions {
     func importCurlCommand(_ command: String) {
         Task {
             let result = await CurlCommandExecutor().execute(command)
-            let successful = result.transfers.compactMap(\.request)
+            let successful = Self.successfulRequests(from: result)
 
             do {
                 for request in successful {
@@ -155,6 +155,12 @@ struct NetworkViewActions {
                 }
             }
         }
+    }
+
+    static func successfulRequests(from result: CurlExecutionResult) -> [NetworkRequest] {
+        result.transfers
+            .filter(\.succeeded)
+            .compactMap(\.request)
     }
 
     func clearAllData(

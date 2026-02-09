@@ -518,19 +518,25 @@ public enum CurlRuntimeBridge {
 
     private static func parseStatusCode(from metadata: [String: Any]?, statusLine: String?) -> Int? {
         if let value = metadata?["response_code"] as? Int {
-            return value
+            if value > 0 {
+                return value
+            }
         }
         if let value = metadata?["response_code"] as? NSNumber {
-            return value.intValue
+            let parsed = value.intValue
+            if parsed > 0 {
+                return parsed
+            }
         }
-        if let value = metadata?["response_code"] as? String, let parsed = Int(value) {
+        if let value = metadata?["response_code"] as? String, let parsed = Int(value), parsed > 0 {
             return parsed
         }
 
         guard let statusLine else { return nil }
         let parts = statusLine.split(separator: " ")
         guard parts.count >= 2 else { return nil }
-        return Int(parts[1])
+        guard let parsed = Int(parts[1]), parsed > 0 else { return nil }
+        return parsed
     }
 
     private static func parseLastHeaderBlock(from headerText: String) -> [String] {

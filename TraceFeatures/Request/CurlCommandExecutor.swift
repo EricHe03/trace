@@ -24,6 +24,11 @@ extension RequestExecutor: CurlTransferRequestExecuting {}
 public final class CurlCommandExecutor {
     private let analyzer: CurlCommandAnalyzer
     private let requestExecutorFactory: () -> any CurlTransferRequestExecuting
+    #if canImport(TraceCurlRuntime)
+    typealias RuntimeTransferExecutor = @Sendable ([String]) async throws -> CurlRuntimeExecutionResult
+    private let runtimeTransferExecutor: RuntimeTransferExecutor
+    private let runtimeExecutionOverride: Bool?
+    #endif
 
     public init(
         analyzer: CurlCommandAnalyzer = CurlCommandAnalyzer(),
@@ -31,7 +36,29 @@ public final class CurlCommandExecutor {
     ) {
         self.analyzer = analyzer
         self.requestExecutorFactory = requestExecutorFactory
+        #if canImport(TraceCurlRuntime)
+        self.runtimeExecutionOverride = nil
+        self.runtimeTransferExecutor = { argv in
+            try await Task.detached(priority: .userInitiated) {
+                try CurlRuntimeBridge.executeTransferCommand(argv: argv)
+            }.value
+        }
+        #endif
     }
+
+    #if canImport(TraceCurlRuntime)
+    init(
+        analyzer: CurlCommandAnalyzer = CurlCommandAnalyzer(),
+        requestExecutorFactory: @escaping () -> any CurlTransferRequestExecuting = { RequestExecutor() },
+        runtimeExecutionOverride: Bool,
+        runtimeTransferExecutor: @escaping RuntimeTransferExecutor
+    ) {
+        self.analyzer = analyzer
+        self.requestExecutorFactory = requestExecutorFactory
+        self.runtimeExecutionOverride = runtimeExecutionOverride
+        self.runtimeTransferExecutor = runtimeTransferExecutor
+    }
+    #endif
 
     public func analyze(_ command: String) -> CurlCommandPlan {
         analyzer.analyze(command)
@@ -54,6 +81,9 @@ public final class CurlCommandExecutor {
 
     private func shouldUseRuntimeExecution(for plan: CurlCommandPlan) -> Bool {
         #if canImport(TraceCurlRuntime)
+        if let runtimeExecutionOverride {
+            return runtimeExecutionOverride
+        }
         let backendHint = plan.diagnostics.contains {
             $0.severity == .info && $0.message.contains("CCurlShim")
         }
@@ -92,23 +122,23 @@ public final class CurlCommandExecutor {
                     )
                     continue
                 }
-                let request = buildRuntimeRequest(
-                    transfer: transfer,
-                    runtimeResult: runtimeResult,
-                    plan: plan
-                )
 
                 if runtimeResult.exitCode == 0 {
+                    let request = buildRuntimeRequest(
+                        transfer: transfer,
+                        runtimeResult: runtimeResult,
+                        plan: plan
+                    )
                     results.append(CurlTransferExecution(transfer: transfer, request: request))
                 } else {
                     let stderr = runtimeResult.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
                     let message = stderr.isEmpty
                         ? "curl exited with code \(runtimeResult.exitCode)"
-                        : stderr
+                        : "curl exited with code \(runtimeResult.exitCode): \(stderr)"
                     results.append(
                         CurlTransferExecution(
                             transfer: transfer,
-                            request: request,
+                            request: nil,
                             errorMessage: message,
                             diagnostics: [
                                 CurlDiagnostic(
@@ -161,9 +191,7 @@ public final class CurlCommandExecutor {
     }
 
     private func executeRuntimeTransfer(argv: [String]) async throws -> CurlRuntimeExecutionResult {
-        try await Task.detached(priority: .userInitiated) {
-            try CurlRuntimeBridge.executeTransferCommand(argv: argv)
-        }.value
+        try await runtimeTransferExecutor(argv)
     }
     #endif
 
@@ -255,7 +283,8 @@ public final class CurlCommandExecutor {
 
         let statusLine = runtimeResult.statusLine
         let responseHeaders = responseHeaders(from: runtimeResult.responseHeaderLines)
-        let statusCode = runtimeResult.statusCode ?? parseStatusCode(fromStatusLine: statusLine)
+        let statusCode = sanitizeStatusCode(runtimeResult.statusCode)
+            ?? sanitizeStatusCode(parseStatusCode(fromStatusLine: statusLine))
         let statusMessage = parseStatusMessage(fromStatusLine: statusLine)
         let protocolVersion = protocolVersion(fromStatusLine: statusLine) ?? parsedRequest?.protocolVersion
         let responseBody = runtimeResult.responseBody.isEmpty ? BodyStorage.empty : BodyStorage.from(data: runtimeResult.responseBody)
@@ -334,6 +363,11 @@ public final class CurlCommandExecutor {
         let parts = statusLine.split(separator: " ", omittingEmptySubsequences: true)
         guard parts.count >= 2 else { return nil }
         return Int(parts[1])
+    }
+
+    private func sanitizeStatusCode(_ value: Int?) -> Int? {
+        guard let value, value > 0 else { return nil }
+        return value
     }
 
     private func parseStatusMessage(fromStatusLine statusLine: String?) -> String? {
