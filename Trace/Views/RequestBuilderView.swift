@@ -56,6 +56,7 @@ struct RequestBuilderView: View {
                     TextField("URL", text: $url, axis: .vertical)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .keyboardType(.URL)
                         .lineLimit(2 ... 5)
                         .accessibilityLabel("Request URL")
                         .accessibilityHint("Enter the URL for the request")
@@ -70,10 +71,12 @@ struct RequestBuilderView: View {
                         HStack {
                             TextField("Header Name", text: $headers[index].key)
                                 .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
                                 .frame(maxWidth: .infinity)
 
                             TextField("Value", text: $headers[index].value)
                                 .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
                                 .frame(maxWidth: .infinity)
 
                             Button(action: {
@@ -103,6 +106,7 @@ struct RequestBuilderView: View {
                         TextEditor(text: $requestBody)
                             .frame(minHeight: DesignSystem.Form.textEditorMinHeightLarge)
                             .font(DesignSystem.Typography.monospacedFont)
+                            .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .formTextEditorStyle()
                             .accessibilityLabel("Request body")

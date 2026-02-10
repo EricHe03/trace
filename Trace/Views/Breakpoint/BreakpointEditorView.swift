@@ -169,6 +169,7 @@ struct BreakpointEditorView: View {
                         .textFieldStyle(.roundedBorder)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .keyboardType(.URL)
                 }
             }
 

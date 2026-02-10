@@ -61,7 +61,7 @@ public struct TimestampToolView: View {
 
                     HStack {
                         TextField("Enter timestamp", text: $unixTimestamp)
-                            .keyboardType(.numberPad)
+                            .keyboardType(.asciiCapableNumberPad)
                             .padding(DesignSystem.Spacing.md)
                             .background(DesignSystem.Colors.surfaceMuted)
                             .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
@@ -108,6 +108,9 @@ public struct TimestampToolView: View {
                     TextEditor(text: $isoDateTime)
                         .frame(height: 80)
                         .font(DesignSystem.Typography.monospacedFont)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.asciiCapable)
                         .formTextEditorStyle()
                         .onChangeCompat(of: isoDateTime) { newValue in
                             dateToTimestamp(newValue)

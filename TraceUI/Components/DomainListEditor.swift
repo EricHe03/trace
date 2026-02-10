@@ -68,6 +68,7 @@ public struct DomainListEditor: View {
 
             HStack {
                 TextField(placeholder, text: $newItem)
+                    .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .accessibilityLabel("\(title) entry")

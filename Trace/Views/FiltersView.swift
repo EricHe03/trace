@@ -385,6 +385,7 @@ struct FiltersView: View {
                             TextField("example.com", text: $newDomain)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
+                                .keyboardType(.URL)
                         } header: {
                             Text("Domain")
                         } footer: {

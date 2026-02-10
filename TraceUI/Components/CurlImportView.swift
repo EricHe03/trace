@@ -54,6 +54,9 @@ public struct CurlImportView: View {
 
                     TextEditor(text: $curlCommand)
                         .font(.system(.body, design: .monospaced))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.asciiCapable)
                         .frame(minHeight: 200)
                         .padding(8)
                         .background(Color(.systemGray6))

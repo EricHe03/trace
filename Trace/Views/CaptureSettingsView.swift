@@ -35,10 +35,11 @@ struct CaptureSettingsView: View {
                     TextField("Host", text: $config.fullTunnelSocks5Host)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .keyboardType(.URL)
                         .accessibilityLabel("SOCKS5 host")
 
                     TextField("Port", text: $socksPortText)
-                        .keyboardType(.numberPad)
+                        .keyboardType(.asciiCapableNumberPad)
                         .accessibilityLabel("SOCKS5 port")
 
                     Label {
