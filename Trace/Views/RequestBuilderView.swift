@@ -121,12 +121,16 @@ struct RequestBuilderView: View {
 
                             Spacer()
 
-                            Button("Format JSON") {
-                                formatJSON()
+                            Menu {
+                                Button("Format as JSON") {
+                                    formatJSON()
+                                }
+                            } label: {
+                                Label("Body Tools", systemImage: "ellipsis.circle")
                             }
-                            .foregroundStyle(DesignSystem.Colors.accent)
-                            .accessibilityLabel("Format JSON")
-                            .accessibilityHint("Double tap to format JSON in request body")
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Request body tools")
+                            .accessibilityHint("Contains optional formatting actions for the request body")
                         }
                         .buttonStyle(.plain)
                         .font(.caption)

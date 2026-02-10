@@ -23,7 +23,8 @@ struct ScriptEditorView: View {
     @State private var matchPattern: String
     @State private var code: String
     @State private var validationResult: ScriptValidationResult = .valid
-    @State private var showValidation = false
+    @State private var isValidating = false
+    @State private var validationTask: Task<Void, Never>?
 
     private let scriptManager = ScriptManager.shared
 
@@ -48,6 +49,10 @@ struct ScriptEditorView: View {
 
     var isValid: Bool {
         !name.isEmpty && !code.isEmpty
+    }
+
+    private var canSave: Bool {
+        isValid && validationResult.isValid && !isValidating
     }
 
     var body: some View {
@@ -97,53 +102,29 @@ struct ScriptEditorView: View {
 
                 // Code editor section
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-                    HStack {
-                        Text("JavaScript Code")
-                            .font(.headline)
-                            .padding(.horizontal)
-
-                        Spacer()
-
-                        Button {
-                            validateCode()
-                        } label: {
-                            HStack(spacing: DesignSystem.Spacing.xs) {
-                                Image(systemName: validationIcon)
-                                    .foregroundStyle(validationColor)
-                                Text("Validate")
-                                    .font(.caption)
-                            }
-                        }
-                        .buttonStyle(.bordered)
+                    Text("JavaScript Code")
+                        .font(.headline)
                         .padding(.horizontal)
-                        .accessibilityLabel("Validate script")
-                        .accessibilityHint("Checks script syntax and shows the result")
-                    }
                     .padding(.top, DesignSystem.Spacing.sm)
 
-                    if showValidation {
-                        HStack {
+                    HStack {
+                        if isValidating {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
                             Image(systemName: validationIcon)
                                 .foregroundStyle(validationColor)
-
-                            Text(validationMessage)
-                                .font(.caption)
-                                .foregroundStyle(validationColor)
-
-                            Spacer()
-
-                            Button {
-                                showValidation = false
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(DesignSystem.Colors.muted)
-                            }
-                            .accessibilityLabel("Dismiss validation result")
                         }
-                        .padding(.horizontal)
-                        .padding(.vertical, DesignSystem.Spacing.sm)
-                        .background(validationColor.opacity(0.1))
+
+                        Text(isValidating ? "Validating syntax…" : validationMessage)
+                            .font(.caption)
+                            .foregroundStyle(isValidating ? .secondary : validationColor)
+
+                        Spacer()
                     }
+                    .padding(.horizontal)
+                    .padding(.vertical, DesignSystem.Spacing.sm)
+                    .background((isValidating ? DesignSystem.Colors.muted : validationColor).opacity(0.1))
 
                     TextEditor(text: $code)
                         .font(.system(.body, design: .monospaced))
@@ -155,6 +136,9 @@ struct ScriptEditorView: View {
                         )
                         .formTextEditorStyle()
                         .accessibilityLabel("JavaScript code")
+                        .onChangeCompat(of: code) {
+                            scheduleValidation()
+                        }
                 }
             }
             .navigationTitle(script == nil ? "New Script" : "Edit Script")
@@ -170,10 +154,16 @@ struct ScriptEditorView: View {
                     Button("Save") {
                         saveScript()
                     }
-                    .disabled(!isValid)
+                    .disabled(!canSave)
                 }
             }
             .dismissKeyboardOnTapAndScroll()
+            .onAppear {
+                scheduleValidation()
+            }
+            .onDisappear {
+                validationTask?.cancel()
+            }
         }
     }
 
@@ -191,28 +181,63 @@ struct ScriptEditorView: View {
     }
 
     private var validationIcon: String {
-        validationResult.isValid ? "checkmark.circle.fill" : "xmark.circle.fill"
+        if code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "info.circle"
+        }
+        return validationResult.isValid ? "checkmark.circle.fill" : "xmark.circle.fill"
     }
 
     private var validationColor: Color {
-        validationResult.isValid ? DesignSystem.Colors.success : DesignSystem.Colors.danger
+        if code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return DesignSystem.Colors.muted
+        }
+        return validationResult.isValid ? DesignSystem.Colors.success : DesignSystem.Colors.danger
     }
 
     private var validationMessage: String {
-        if validationResult.isValid {
-            "Script syntax is valid"
+        if code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Enter script code to validate syntax"
+        } else if validationResult.isValid {
+            return "Script syntax is valid"
         } else {
-            validationResult.errorMessage ?? "Invalid script"
+            return validationResult.errorMessage ?? "Invalid script"
         }
     }
 
-    private func validateCode() {
+    private func scheduleValidation() {
+        validationTask?.cancel()
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            validationResult = .valid
+            isValidating = false
+            return
+        }
+
+        isValidating = true
+        let codeSnapshot = code
+        validationTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            guard codeSnapshot == code else { return }
+            validationResult = scriptManager.validateScript(codeSnapshot)
+            isValidating = false
+        }
+    }
+
+    private func validateBeforeSave() -> Bool {
+        validationTask?.cancel()
+        isValidating = false
         validationResult = scriptManager.validateScript(code)
-        showValidation = true
+        if validationResult.isValid {
+            return true
+        }
         UIAccessibility.post(notification: .announcement, argument: validationMessage)
+        return false
     }
 
     private func saveScript() {
+        guard validateBeforeSave() else { return }
+
         let newScript = Script(
             id: script?.id ?? UUID(),
             name: name,

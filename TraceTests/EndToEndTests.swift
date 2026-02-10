@@ -983,18 +983,16 @@ final class DuplicateDetectionE2ETests: XCTestCase {
 
         await viewModel.reloadRequests()
 
-        // WHEN: Running duplicate detection
-        viewModel.detectDuplicates()
+        // WHEN: Enabling duplicate-only filtering
+        viewModel.filterShowDuplicatesOnly = true
+        try await Task.sleep(nanoseconds: 400_000_000)
 
-        // THEN: Duplicates should be marked
+        // THEN: Duplicates should be marked automatically
         let duplicates = viewModel.requests.filter { $0.isDuplicate }
         XCTAssertEqual(duplicates.count, 2) // request2 and request3 are duplicates of request1
 
         // THEN: Duplicate count should be correct
         XCTAssertEqual(viewModel.duplicateCount, 2)
-
-        // WHEN: Filtering duplicates only
-        viewModel.filterShowDuplicatesOnly = true
 
         // THEN: Only duplicate requests should be visible
         let filteredDuplicates = viewModel.filteredRequests.filter {
@@ -1139,4 +1137,3 @@ private func httpStatusMessage(for code: Int) -> String {
     default: return "Unknown"
     }
 }
-

@@ -65,15 +65,6 @@ struct FiltersView: View {
                     Toggle("Duplicates Only", isOn: $viewModel.filterShowDuplicatesOnly)
                         .tint(DesignSystem.Colors.warning)
                         .accessibilityHint("Filter to show only duplicate requests")
-
-                    if viewModel.filterShowDuplicatesOnly {
-                        Button(action: {
-                            viewModel.detectDuplicates()
-                        }) {
-                            Label("Refresh Duplicate Detection", systemImage: "arrow.clockwise")
-                        }
-                        .accessibilityHint("Double tap to re-detect duplicate requests")
-                    }
                 } header: {
                     Text("Quick Filters")
                 }

@@ -276,6 +276,9 @@ final class CaptureViewModel: ObservableObject {
             requestsVersion &+= 1
             filteredRequestsCache = nil
             invalidateGroupingCache()
+            if filterShowDuplicatesOnly, !isRunningDuplicateDetection {
+                scheduleDuplicateDetection()
+            }
         }
     }
 
@@ -316,7 +319,13 @@ final class CaptureViewModel: ObservableObject {
 
     @Published private(set) var regexFilterError: String?
     @Published var filterResponseTime: ResponseTimeFilter?
-    @Published var filterShowDuplicatesOnly: Bool = false
+    @Published var filterShowDuplicatesOnly: Bool = false {
+        didSet {
+            if filterShowDuplicatesOnly {
+                scheduleDuplicateDetection()
+            }
+        }
+    }
     @Published var filterShowErrorsOnly: Bool = false
 
     /// Filter convenience properties for UI
@@ -435,6 +444,8 @@ final class CaptureViewModel: ObservableObject {
     private var notificationObservers: [NSObjectProtocol] = []
     private var newRequestsObserverToken: AppGroupStorageObserverToken?
     private var throttlingUpdateTask: Task<Void, Never>?
+    private var duplicateDetectionTask: Task<Void, Never>?
+    private var isRunningDuplicateDetection = false
     private var isLoadingThrottlingState = false
     private var isLoadingSettings = false
 
@@ -505,6 +516,7 @@ final class CaptureViewModel: ObservableObject {
         loadTask?.cancel()
         activeLoadTask?.cancel()
         throttlingUpdateTask?.cancel()
+        duplicateDetectionTask?.cancel()
 
         newRequestsObserverToken?.cancel()
         newRequestsObserverToken = nil
@@ -1179,34 +1191,43 @@ final class CaptureViewModel: ObservableObject {
 
     // MARK: - Duplicate Detection
 
-    func detectDuplicates() {
-        duplicateRequestCache.removeAll()
-
-        // Sort requests by timestamp (oldest first) to properly identify originals
-        let sortedRequests = requests.sorted { $0.timestamp < $1.timestamp }
-
-        for i in 0 ..< sortedRequests.count {
-            var request = sortedRequests[i]
-            let key = "\(request.method.rawValue):\(request.url)"
-
-            if let originalId = duplicateRequestCache[key] {
-                // This is a duplicate
-                request.isDuplicate = true
-                request.duplicateOfRequestId = originalId
-                // Update in the main requests array
-                if let index = requests.firstIndex(where: { $0.id == request.id }) {
-                    requests[index].isDuplicate = true
-                    requests[index].duplicateOfRequestId = originalId
-                }
-            } else {
-                // First occurrence - mark as original
-                duplicateRequestCache[key] = request.id
-                if let index = requests.firstIndex(where: { $0.id == request.id }) {
-                    requests[index].isDuplicate = false
-                    requests[index].duplicateOfRequestId = nil
-                }
+    private func scheduleDuplicateDetection() {
+        duplicateDetectionTask?.cancel()
+        duplicateDetectionTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.detectDuplicates()
             }
         }
+    }
+
+    func detectDuplicates() {
+        guard !isRunningDuplicateDetection else { return }
+        isRunningDuplicateDetection = true
+        defer { isRunningDuplicateDetection = false }
+
+        duplicateRequestCache.removeAll()
+
+        var updatedRequests = requests
+        let sortedIndices = updatedRequests.indices.sorted {
+            updatedRequests[$0].timestamp < updatedRequests[$1].timestamp
+        }
+
+        for index in sortedIndices {
+            let key = "\(updatedRequests[index].method.rawValue):\(updatedRequests[index].url)"
+
+            if let originalId = duplicateRequestCache[key] {
+                updatedRequests[index].isDuplicate = true
+                updatedRequests[index].duplicateOfRequestId = originalId
+            } else {
+                duplicateRequestCache[key] = updatedRequests[index].id
+                updatedRequests[index].isDuplicate = false
+                updatedRequests[index].duplicateOfRequestId = nil
+            }
+        }
+
+        requests = updatedRequests
     }
 
     var duplicateCount: Int {

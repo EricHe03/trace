@@ -22,8 +22,10 @@ public struct CurlImportView: View {
     @Environment(\.dismiss) private var dismiss: DismissAction
     @State private var curlCommand = ""
     @State private var analyzedPlan: CurlCommandPlan?
+    @State private var isAnalyzing = false
     @State private var isImporting = false
     @State private var importOutcome: ImportOutcome?
+    @State private var analysisTask: Task<Void, Never>?
 
     public var onImport: ((String) async -> ImportOutcome)?
 
@@ -38,7 +40,7 @@ public struct CurlImportView: View {
                     Label("Import cURL Command", systemImage: "square.and.arrow.down")
                         .font(.headline)
 
-                    Text("Paste a cURL command to analyze and execute with fail-fast diagnostics.")
+                    Text("Paste a cURL command. Analysis runs automatically with inline diagnostics.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -67,14 +69,7 @@ public struct CurlImportView: View {
                         )
                 }
 
-                Button {
-                    analyzeCommand()
-                } label: {
-                    Label("Analyze", systemImage: "checklist")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(curlCommand.isEmpty)
+                analysisStatusView
 
                 if let plan = analyzedPlan {
                     analysisSummary(plan: plan)
@@ -105,15 +100,38 @@ public struct CurlImportView: View {
             }
             .dismissKeyboardOnTapAndScroll()
             .onChangeCompat(of: curlCommand) {
-                analyzedPlan = nil
-                importOutcome = nil
+                scheduleAnalysis()
+            }
+            .onDisappear {
+                analysisTask?.cancel()
             }
         }
     }
 
     private var importDisabled: Bool {
         guard let plan = analyzedPlan else { return true }
-        return plan.hasBlockingDiagnostics || onImport == nil
+        return isAnalyzing || plan.hasBlockingDiagnostics || onImport == nil
+    }
+
+    @ViewBuilder
+    private var analysisStatusView: some View {
+        if !curlCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            HStack(spacing: 8) {
+                if isAnalyzing {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Analyzing command…")
+                        .foregroundStyle(.secondary)
+                } else if let plan = analyzedPlan {
+                    Image(systemName: plan.hasBlockingDiagnostics ? "xmark.octagon.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(plan.hasBlockingDiagnostics ? DesignSystem.Colors.danger : DesignSystem.Colors.success)
+                    Text(plan.hasBlockingDiagnostics ? "Fix blocking diagnostics before importing" : "Ready to import")
+                        .foregroundStyle(plan.hasBlockingDiagnostics ? DesignSystem.Colors.danger : DesignSystem.Colors.success)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .font(.caption)
+        }
     }
 
     private func analysisSummary(plan: CurlCommandPlan) -> some View {
@@ -224,9 +242,35 @@ public struct CurlImportView: View {
         }
     }
 
-    private func analyzeCommand() {
-        analyzedPlan = CurlCommandExecutor().analyze(curlCommand)
+    private func scheduleAnalysis() {
+        analysisTask?.cancel()
         importOutcome = nil
+
+        let trimmed = curlCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            analyzedPlan = nil
+            isAnalyzing = false
+            return
+        }
+
+        isAnalyzing = true
+        let commandSnapshot = curlCommand
+
+        analysisTask = Task {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+
+            let plan = await Task.detached(priority: .userInitiated) {
+                CurlCommandAnalyzer().analyze(commandSnapshot)
+            }.value
+
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard commandSnapshot == curlCommand else { return }
+                analyzedPlan = plan
+                isAnalyzing = false
+            }
+        }
     }
 
     private func style(for outcome: ImportOutcome) -> (title: String, message: String, icon: String, color: Color) {
