@@ -58,6 +58,12 @@ public struct RequestListRow: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: DesignSystem.Spacing.xxs) {
+                    let formattedDuration = DesignSystem.formattedDuration(request.duration)
+                    Text(formattedDuration)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Duration: \(formattedDuration)")
+
                     if let size = request.responseSize ?? request.requestSize {
                         let formattedBytes = DesignSystem.formattedBytes(size)
                         Text(formattedBytes)
@@ -65,12 +71,6 @@ public struct RequestListRow: View {
                             .foregroundStyle(.tertiary)
                             .accessibilityLabel("Size: \(formattedBytes)")
                     }
-
-                    let formattedDuration = DesignSystem.formattedDuration(request.duration)
-                    Text(formattedDuration)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("Duration: \(formattedDuration)")
                 }
             }
 
