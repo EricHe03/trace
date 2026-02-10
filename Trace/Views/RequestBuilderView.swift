@@ -11,8 +11,13 @@ import TraceFeatures
 import TraceUI
 
 struct RequestBuilderView: View {
+    private enum Field: Hashable {
+        case url
+    }
+
     @Environment(\.dismiss) private var dismiss
     @StateObject private var executor = RequestExecutor()
+    @FocusState private var focusedField: Field?
     @State private var url = ""
     @State private var method: HTTPMethod = .get
     @State private var headers: [HeaderPair] = [
@@ -53,11 +58,17 @@ struct RequestBuilderView: View {
                     .accessibilityLabel("HTTP Method")
 
                     // URL field
-                    TextField("URL", text: $url, axis: .vertical)
+                    TextField("URL", text: $url)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
-                        .lineLimit(2 ... 5)
+                        .submitLabel(.done)
+                        .focused($focusedField, equals: .url)
+                        .onSubmit {
+                            if focusedField == .url {
+                                focusedField = nil
+                            }
+                        }
                         .accessibilityLabel("Request URL")
                         .accessibilityHint("Enter the URL for the request")
 
