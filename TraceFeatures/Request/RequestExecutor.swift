@@ -19,6 +19,7 @@ public final class RequestExecutor: ObservableObject {
 
     private let session: URLSession
     private let cookieStore: CookieStore
+    private static let localNetworkRetryDelayNanoseconds: UInt64 = 600_000_000
 
     // Rule: Use a session without NetworkInterceptor to avoid recursive capture and
     // keep user-initiated replays separate from captured traffic.
@@ -83,7 +84,11 @@ public final class RequestExecutor: ObservableObject {
 
         do {
             let redirectDelegate = RedirectTrackingDelegate(followRedirects: request.followRedirects)
-            let (data, response) = try await session.data(for: urlRequest, delegate: redirectDelegate)
+            let (data, response) = try await executeWithPermissionRetry(
+                urlRequest: urlRequest,
+                targetURL: url,
+                delegate: redirectDelegate
+            )
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw RequestExecutionError.invalidResponse
@@ -175,6 +180,25 @@ public final class RequestExecutor: ObservableObject {
 }
 
 private extension RequestExecutor {
+    func executeWithPermissionRetry(
+        urlRequest: URLRequest,
+        targetURL: URL,
+        delegate: RedirectTrackingDelegate
+    ) async throws -> (Data, URLResponse) {
+        do {
+            return try await session.data(for: urlRequest, delegate: delegate)
+        } catch {
+            guard NetworkPermissionHeuristics.isLikelyPermissionIssue(error: error, url: targetURL) else {
+                throw error
+            }
+
+            // Give the system permission prompt a brief moment to settle before retrying.
+            try await Task.sleep(nanoseconds: Self.localNetworkRetryDelayNanoseconds)
+            try Task.checkCancellation()
+            return try await session.data(for: urlRequest, delegate: delegate)
+        }
+    }
+
     static func diffCookies(before: [Foundation.HTTPCookie], after: [Foundation.HTTPCookie]) -> [TraceCore.HTTPCookie] {
         let beforeSet = Set(before.map { cookieSignature(for: $0) })
         let newCookies = after.filter { !beforeSet.contains(cookieSignature(for: $0)) }

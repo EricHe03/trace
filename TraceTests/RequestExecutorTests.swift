@@ -270,6 +270,135 @@ final class RequestExecutorTests: XCTestCase {
         }
     }
 
+    func testExecuteRetriesOnceForLocalNetworkPermissionLikeError() async throws {
+        var attempts = 0
+        MockURLProtocol.requestHandler = { request in
+            attempts += 1
+            if attempts == 1 {
+                throw URLError(.notConnectedToInternet)
+            }
+
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: [:]
+            )!
+            return (response, Data())
+        }
+
+        let builder = RequestBuilder(
+            url: "http://192.168.1.88:8080/test",
+            method: .get,
+            headers: [:],
+            body: nil
+        )
+
+        let mockExecutor = RequestExecutor(session: mockSession)
+        let response = try await mockExecutor.execute(builder)
+
+        XCTAssertEqual(response.statusCode, 200)
+        XCTAssertEqual(attempts, 2)
+    }
+
+    func testExecuteDoesNotRetryForPublicHostOfflineError() async {
+        var attempts = 0
+        MockURLProtocol.requestHandler = { _ in
+            attempts += 1
+            throw URLError(.notConnectedToInternet)
+        }
+
+        let builder = RequestBuilder(
+            url: "https://api.example.com/test",
+            method: .get,
+            headers: [:],
+            body: nil
+        )
+
+        let mockExecutor = RequestExecutor(session: mockSession)
+
+        do {
+            _ = try await mockExecutor.execute(builder)
+            XCTFail("Should have thrown an error")
+        } catch {
+            XCTAssertEqual(attempts, 1)
+        }
+    }
+
+    func testExecuteDoesNotRetryForPublicHostPermissionDeniedLikeError() async {
+        var attempts = 0
+        MockURLProtocol.requestHandler = { _ in
+            attempts += 1
+            throw NSError(
+                domain: NSPOSIXErrorDomain,
+                code: 13,
+                userInfo: [NSLocalizedDescriptionKey: "Operation not permitted"]
+            )
+        }
+
+        let builder = RequestBuilder(
+            url: "https://api.example.com/test",
+            method: .get,
+            headers: [:],
+            body: nil
+        )
+
+        let mockExecutor = RequestExecutor(session: mockSession)
+
+        do {
+            _ = try await mockExecutor.execute(builder)
+            XCTFail("Should have thrown an error")
+        } catch {
+            XCTAssertEqual(attempts, 1)
+        }
+    }
+
+    func testExecuteCancellationDuringPermissionRetryDoesNotRunSecondAttempt() async {
+        var attempts = 0
+        let firstAttemptExpectation = expectation(description: "First attempt executed")
+
+        MockURLProtocol.requestHandler = { _ in
+            attempts += 1
+            if attempts == 1 {
+                firstAttemptExpectation.fulfill()
+            }
+            throw URLError(.notConnectedToInternet)
+        }
+
+        let builder = RequestBuilder(
+            url: "http://192.168.1.88:8080/test",
+            method: .get,
+            headers: [:],
+            body: nil
+        )
+
+        let mockExecutor = RequestExecutor(session: mockSession)
+        let task = Task {
+            try await mockExecutor.execute(builder)
+        }
+
+        await fulfillment(of: [firstAttemptExpectation], timeout: 1.0)
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation-related error")
+        } catch let error as RequestExecutionError {
+            switch error {
+            case let .transport(underlying):
+                XCTAssertTrue(underlying is CancellationError)
+            default:
+                XCTFail("Unexpected request execution error: \(error)")
+            }
+        } catch is CancellationError {
+            // Accept direct cancellation as well.
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(attempts, 1)
+    }
+
     func testExecuteHandles404() async throws {
         MockURLProtocol.requestHandler = { request in
             let response = HTTPURLResponse(

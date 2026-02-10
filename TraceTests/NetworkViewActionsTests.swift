@@ -32,6 +32,111 @@ final class NetworkViewActionsTests: XCTestCase {
         XCTAssertEqual(successful.count, 1)
         XCTAssertEqual(successful.first?.id, successRequest.id)
     }
+
+    func testIsLikelyPermissionIssueWhenErrorMentionsPermissionDeniedOnLocalNetwork() {
+        let failedTransfer = CurlTransferExecution(
+            transfer: makeTransferPlan(index: 0, url: "http://192.168.1.88:8080"),
+            request: nil,
+            errorMessage: "Operation not permitted"
+        )
+
+        let result = makeExecutionResult(transfers: [failedTransfer])
+
+        XCTAssertTrue(NetworkViewActions.isLikelyPermissionIssue(in: result))
+    }
+
+    func testIsLikelyPermissionIssueWhenErrorMentionsPermissionDeniedOnPublicHost() {
+        let failedTransfer = CurlTransferExecution(
+            transfer: makeTransferPlan(index: 0, url: "https://api.example.com"),
+            request: nil,
+            errorMessage: "Operation not permitted"
+        )
+
+        let result = makeExecutionResult(transfers: [failedTransfer])
+
+        XCTAssertFalse(NetworkViewActions.isLikelyPermissionIssue(in: result))
+    }
+
+    func testIsLikelyPermissionIssueWhenOfflineErrorTargetsLocalNetwork() {
+        let failedTransfer = CurlTransferExecution(
+            transfer: makeTransferPlan(index: 0, url: "http://192.168.1.88:8080"),
+            request: nil,
+            errorMessage: "The Internet connection appears to be offline."
+        )
+
+        let result = makeExecutionResult(transfers: [failedTransfer])
+
+        XCTAssertTrue(NetworkViewActions.isLikelyPermissionIssue(in: result))
+        XCTAssertEqual(
+            NetworkViewActions.permissionRequiredMessage,
+            "Network access is required to import this cURL command. Allow access in the system prompt, or enable it later in Settings."
+        )
+    }
+
+    func testIsLikelyPermissionIssueWhenOfflineErrorTargetsPublicHost() {
+        let failedTransfer = CurlTransferExecution(
+            transfer: makeTransferPlan(index: 0, url: "https://api.example.com"),
+            request: nil,
+            errorMessage: "The Internet connection appears to be offline."
+        )
+
+        let result = makeExecutionResult(transfers: [failedTransfer])
+
+        XCTAssertFalse(NetworkViewActions.isLikelyPermissionIssue(in: result))
+    }
+
+    func testShouldRetryAfterPermissionPromptWhenNoTransfersSucceeded() {
+        let failedTransfer = CurlTransferExecution(
+            transfer: makeTransferPlan(index: 0, url: "http://192.168.1.88:8080"),
+            request: nil,
+            errorMessage: "The Internet connection appears to be offline."
+        )
+
+        let result = makeExecutionResult(transfers: [failedTransfer])
+
+        XCTAssertTrue(NetworkViewActions.shouldRetryAfterPermissionPrompt(in: result))
+    }
+
+    func testShouldRetryAfterPermissionPromptWhenSomeTransfersSucceeded() {
+        let successfulTransfer = CurlTransferExecution(
+            transfer: makeTransferPlan(index: 0, url: "http://192.168.1.88:8080"),
+            request: makeRequest(url: "http://192.168.1.88:8080", statusCode: 200)
+        )
+        let failedTransfer = CurlTransferExecution(
+            transfer: makeTransferPlan(index: 1, url: "http://192.168.1.88:8081"),
+            request: nil,
+            errorMessage: "The Internet connection appears to be offline."
+        )
+
+        let result = makeExecutionResult(transfers: [successfulTransfer, failedTransfer])
+
+        XCTAssertFalse(NetworkViewActions.shouldRetryAfterPermissionPrompt(in: result))
+    }
+
+    func testShouldRetryAfterPermissionPromptWhenLocalErrorIsNotPermissionRelated() {
+        let failedTransfer = CurlTransferExecution(
+            transfer: makeTransferPlan(index: 0, url: "http://192.168.1.88:8080"),
+            request: nil,
+            errorMessage: "SSL handshake failed"
+        )
+
+        let result = makeExecutionResult(transfers: [failedTransfer])
+
+        XCTAssertFalse(NetworkViewActions.shouldRetryAfterPermissionPrompt(in: result))
+    }
+
+    func testImportFailureMessageUsesNeutralCopy() {
+        let failedTransfer = CurlTransferExecution(
+            transfer: makeTransferPlan(index: 0, url: "https://api.example.com"),
+            request: nil,
+            errorMessage: "curl exited with code 35"
+        )
+
+        let result = makeExecutionResult(transfers: [failedTransfer])
+        let message = NetworkViewActions.importFailureMessage(from: result)
+
+        XCTAssertEqual(message, "Couldn't import cURL command. curl exited with code 35")
+    }
 }
 
 private extension NetworkViewActionsTests {
