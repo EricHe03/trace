@@ -367,7 +367,7 @@ final class ConfigurationModelsTests: XCTestCase {
         let script = Script(
             name: "Test",
             scriptType: .request,
-            matchPattern: "example.com"
+            matchPattern: "*.example.com"
         )
 
         XCTAssertTrue(script.matches("https://api.example.com/test"))

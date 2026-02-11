@@ -142,11 +142,7 @@ protocol PacketForwardingEngine: AnyObject {
 }
 
 final class PacketFlowLoop {
-    enum UDPForwardDecision: Equatable {
-        case dropQUIC
-        case forwardDirect
-        case forwardTunnel
-    }
+    typealias UDPForwardDecision = TraceCore.UDPForwardDecision
 
     private struct QUICBlockFlowKey: Hashable {
         let sourceIP: TracePacket.IPAddress
@@ -168,26 +164,14 @@ final class PacketFlowLoop {
         blockQUICEnabled: Bool,
         tunnelUDPSupported: Bool
     ) -> (decision: UDPForwardDecision, isQUIC: Bool) {
-        let isQUIC = destinationPort == 443 || sourcePort == 443
-        if blockQUICEnabled, isQUIC {
-            return (.dropQUIC, true)
-        }
-
-        if udpForwarderAvailable {
-            switch mode {
-            case .direct:
-                return (.forwardDirect, isQUIC)
-            case .split:
-                if isQUIC {
-                    return (tunnelUDPSupported ? .forwardTunnel : .forwardDirect, true)
-                }
-                return (.forwardDirect, false)
-            case .hevOnly:
-                return (tunnelUDPSupported ? .forwardTunnel : .forwardDirect, isQUIC)
-            }
-        }
-
-        return (.forwardTunnel, isQUIC)
+        TraceCore.decideUDPForwarding(
+            udpForwarderAvailable: udpForwarderAvailable,
+            mode: mode,
+            sourcePort: sourcePort,
+            destinationPort: destinationPort,
+            blockQUICEnabled: blockQUICEnabled,
+            tunnelUDPSupported: tunnelUDPSupported
+        )
     }
 
     private let packetFlow: NEPacketTunnelFlow

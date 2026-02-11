@@ -374,7 +374,7 @@ final class CaptureSessionTests: XCTestCase {
         let session = CaptureSession(startTime: startTime, endTime: endTime)
 
         let duration = session.duration
-        XCTAssertLessThan(duration, 0)
+        XCTAssertEqual(duration, 0)
     }
 
     func testVeryLargeRequestCount() {

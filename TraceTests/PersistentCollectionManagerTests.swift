@@ -164,7 +164,7 @@ final class PersistentCollectionManagerTests: XCTestCase {
         let data = manager.exportData()
 
         XCTAssertNotNil(data)
-        let decoded = try? JSONDecoder().decode([TestItem].self, from: data!)
+        let decoded = try? JSONCoding.decode([TestItem].self, from: data!)
         XCTAssertEqual(decoded?.count, 2)
     }
 
@@ -213,7 +213,7 @@ final class PersistentCollectionManagerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
 
         let data = try Data(contentsOf: url)
-        let decoded = try JSONDecoder().decode([TestItem].self, from: data)
+        let decoded = try JSONCoding.decode([TestItem].self, from: data)
 
         XCTAssertEqual(decoded.count, 2)
 

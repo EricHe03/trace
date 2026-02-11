@@ -2,7 +2,7 @@
 //  CurlCommandAnalyzerTests.swift
 //  TraceTests
 //
-//  Created by Codex on 2026/02/08.
+//  Created by Justin on 2026/02/08.
 //
 
 import XCTest

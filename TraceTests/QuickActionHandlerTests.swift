@@ -13,13 +13,17 @@ import XCTest
 
 final class QuickActionHandlerTests: XCTestCase {
     var sut: QuickActionHandler!
+    private var previousOnboardingState = false
 
     override func setUp() {
         super.setUp()
         sut = QuickActionHandler.shared
+        previousOnboardingState = UserDefaults.standard.bool(forKey: TraceUserDefaultsKey.hasCompletedOnboarding)
+        UserDefaults.standard.set(true, forKey: TraceUserDefaultsKey.hasCompletedOnboarding)
     }
 
     override func tearDown() {
+        UserDefaults.standard.set(previousOnboardingState, forKey: TraceUserDefaultsKey.hasCompletedOnboarding)
         sut = nil
         super.tearDown()
     }
