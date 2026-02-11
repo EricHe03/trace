@@ -447,7 +447,7 @@ public final class CurlCommandExecutor {
             transferIndex: transfer.index,
             transferCount: max(transferCount, 1),
             effectiveOptions: transfer.effectiveOptions,
-            diagnostics: diagnostics.map { $0.asExecutionDiagnostic }
+            diagnostics: diagnostics.map(\.asExecutionDiagnostic)
         )
     }
 }

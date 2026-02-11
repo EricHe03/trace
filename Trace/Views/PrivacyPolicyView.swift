@@ -70,11 +70,15 @@ struct PrivacyPolicyView: View {
             Section {
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
                     DefinitionItem(
+                        icon: "antenna.radiowaves.left.and.right",
+                        iconColor: DesignSystem.Colors.info,
                         term: "Capture Data",
                         definition: "Any network traffic content and metadata the App displays or stores, including HTTP(S) requests and responses, WebSocket frames, Server-Sent Events (SSE) messages, headers, bodies, URLs, query parameters, cookies, tokens, timing, and TLS details."
                     )
 
                     DefinitionItem(
+                        icon: "iphone.radiowaves.left.and.right",
+                        iconColor: DesignSystem.Colors.success,
                         term: "On-Device",
                         definition: "Stored locally on your iPhone/iPad in the App's sandbox and/or App Group container shared with the App's extensions."
                     )
@@ -434,19 +438,28 @@ private struct PolicyRow: View {
 }
 
 private struct DefinitionItem: View {
+    let icon: String
+    let iconColor: Color
     let term: String
     let definition: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
-            Text(term)
-                .font(.headline)
-                .fontWeight(.semibold)
-                .foregroundStyle(.primary)
+        HStack(alignment: .top, spacing: DesignSystem.Spacing.md) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(iconColor)
+                .frame(width: 32)
 
-            Text(definition)
-                .font(.body)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
+                Text(term)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+
+                Text(definition)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

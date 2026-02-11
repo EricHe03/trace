@@ -409,9 +409,8 @@ public final class CurlCommandAnalyzer {
         for transfer in transfers {
             let options = transfer.effectiveOptions
 
-            if (optionEnabled("--http2", in: options) || optionEnabled("--http2-prior-knowledge", in: options)),
-               !capabilities.supportsHTTP2
-            {
+            if optionEnabled("--http2", in: options) || optionEnabled("--http2-prior-knowledge", in: options),
+               !capabilities.supportsHTTP2 {
                 emit(
                     severity: .error,
                     option: "--http2",
@@ -427,9 +426,8 @@ public final class CurlCommandAnalyzer {
                 )
             }
 
-            if (optionEnabled("--ca-native", in: options) || optionEnabled("--proxy-ca-native", in: options)),
-               !capabilities.supportsNativeCA
-            {
+            if optionEnabled("--ca-native", in: options) || optionEnabled("--proxy-ca-native", in: options),
+               !capabilities.supportsNativeCA {
                 emit(
                     severity: .warning,
                     option: "--ca-native",
@@ -437,9 +435,8 @@ public final class CurlCommandAnalyzer {
                 )
             }
 
-            if (optionEnabled("--ntlm", in: options) || optionEnabled("--proxy-ntlm", in: options)),
-               !capabilities.supportsNTLM
-            {
+            if optionEnabled("--ntlm", in: options) || optionEnabled("--proxy-ntlm", in: options),
+               !capabilities.supportsNTLM {
                 emit(
                     severity: .error,
                     option: "--ntlm",
@@ -529,11 +526,10 @@ public final class CurlCommandAnalyzer {
             optionToken = String(optionToken[..<equalsIndex])
         }
 
-        let expandedOptionToken: String
-        if optionToken.hasPrefix("--expand-") {
-            expandedOptionToken = "--" + optionToken.dropFirst("--expand-".count)
+        let expandedOptionToken: String = if optionToken.hasPrefix("--expand-") {
+            "--" + optionToken.dropFirst("--expand-".count)
         } else {
-            expandedOptionToken = optionToken
+            optionToken
         }
 
         let resolvedOption = resolveNegatedOption(expandedOptionToken)
@@ -596,13 +592,12 @@ public final class CurlCommandAnalyzer {
             )
 
         case .optionalValue:
-            let value: String?
-            if let inlineValue {
-                value = inlineValue
+            let value: String? = if let inlineValue {
+                inlineValue
             } else if shouldConsumeOptionalValue(peekedToken: stream.peek()) {
-                value = stream.next()
+                stream.next()
             } else {
-                value = nil
+                nil
             }
             storeOption(
                 optionKey: resolvedOption,
@@ -692,15 +687,14 @@ public final class CurlCommandAnalyzer {
                     nil
                 }
 
-                let value: String?
-                if let remainder {
-                    value = remainder
+                let value: String? = if let remainder {
+                    remainder
                 } else if metadata.arity == .requiredValue {
-                    value = stream.next()
+                    stream.next()
                 } else if shouldConsumeOptionalValue(peekedToken: stream.peek()) {
-                    value = stream.next()
+                    stream.next()
                 } else {
-                    value = nil
+                    nil
                 }
 
                 if metadata.arity == .requiredValue, value == nil {
@@ -843,7 +837,7 @@ public final class CurlCommandAnalyzer {
             return false
         }
 
-        if (optionKey == "--remote-name" || optionKey == "--out-null"), storedValue == "false" {
+        if optionKey == "--remote-name" || optionKey == "--out-null", storedValue == "false" {
             return false
         }
         return true

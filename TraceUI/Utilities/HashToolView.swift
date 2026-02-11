@@ -19,9 +19,13 @@ public struct HashToolView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(spacing: DesignSystem.Spacing.lgPlus) {
-                VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-                    HStack {
+            VStack(spacing: DesignSystem.Spacing.lg) {
+                // Input section
+                VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
+                    HStack(spacing: DesignSystem.Spacing.sm) {
+                        Image(systemName: "arrow.down.doc")
+                            .foregroundStyle(DesignSystem.Colors.info)
+                            .imageScale(.medium)
                         Text("Input")
                             .font(.headline)
 
@@ -30,6 +34,7 @@ public struct HashToolView: View {
                         Button("Clear") {
                             inputText = ""
                         }
+                        .buttonStyle(.bordered)
                         .font(.subheadline)
                         .disabled(inputText.isEmpty)
                         .accessibilityLabel("Clear input")
@@ -41,12 +46,21 @@ public struct HashToolView: View {
                         .font(DesignSystem.Typography.monospacedFont)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .formTextEditorStyle()
+                        .padding(DesignSystem.Spacing.sm)
+                        .background(
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .fill(DesignSystem.Form.textEditorBackground)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .stroke(DesignSystem.Colors.muted.opacity(0.3), lineWidth: 1)
+                        )
                         .accessibilityLabel("Input text")
                         .accessibilityHint("Enter text to generate hashes")
                 }
                 .padding(.horizontal)
 
+                // HMAC options
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
                     Toggle("Use HMAC", isOn: $useHMAC)
                         .accessibilityHint("Use HMAC for hash-based message authentication")
@@ -68,43 +82,61 @@ public struct HashToolView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal)
-
-                VStack(spacing: DesignSystem.Spacing.lg) {
-                    HashResultCard(
-                        algorithm: "MD5",
-                        hash: computeMD5(),
-                        color: DesignSystem.Colors.accent
-                    ) {
-                        copyHash("MD5", hash: computeMD5())
-                    }
-
-                    HashResultCard(
-                        algorithm: "SHA1",
-                        hash: computeSHA1(),
-                        color: DesignSystem.Colors.success
-                    ) {
-                        copyHash("SHA1", hash: computeSHA1())
-                    }
-
-                    HashResultCard(
-                        algorithm: "SHA256",
-                        hash: computeSHA256(),
-                        color: DesignSystem.Colors.warning
-                    ) {
-                        copyHash("SHA256", hash: computeSHA256())
-                    }
-
-                    HashResultCard(
-                        algorithm: "SHA512",
-                        hash: computeSHA512(),
-                        color: DesignSystem.Colors.accentAlt
-                    ) {
-                        copyHash("SHA512", hash: computeSHA512())
-                    }
-                }
+                .padding(.vertical, DesignSystem.Spacing.sm)
+                .background(
+                    RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                        .fill(DesignSystem.Colors.muted.opacity(0.1))
+                )
                 .padding(.horizontal)
 
-                Spacer()
+                // Output section
+                VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
+                    HStack(spacing: DesignSystem.Spacing.sm) {
+                        Image(systemName: "arrow.up.doc")
+                            .foregroundStyle(DesignSystem.Colors.success)
+                            .imageScale(.medium)
+                        Text("Hashes")
+                            .font(.headline)
+                    }
+                    .padding(.horizontal)
+
+                    VStack(spacing: DesignSystem.Spacing.md) {
+                        HashResultCard(
+                            algorithm: "MD5",
+                            hash: computeMD5(),
+                            color: DesignSystem.Colors.accent
+                        ) {
+                            copyHash("MD5", hash: computeMD5())
+                        }
+
+                        HashResultCard(
+                            algorithm: "SHA1",
+                            hash: computeSHA1(),
+                            color: DesignSystem.Colors.success
+                        ) {
+                            copyHash("SHA1", hash: computeSHA1())
+                        }
+
+                        HashResultCard(
+                            algorithm: "SHA256",
+                            hash: computeSHA256(),
+                            color: DesignSystem.Colors.warning
+                        ) {
+                            copyHash("SHA256", hash: computeSHA256())
+                        }
+
+                        HashResultCard(
+                            algorithm: "SHA512",
+                            hash: computeSHA512(),
+                            color: DesignSystem.Colors.accentAlt
+                        ) {
+                            copyHash("SHA512", hash: computeSHA512())
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+
+                Spacer(minLength: DesignSystem.Spacing.md)
             }
             .padding(.vertical)
         }
@@ -202,9 +234,12 @@ public struct HashResultCard: View {
                 Spacer()
 
                 Button(action: onCopy) {
-                    Image(systemName: "doc.on.doc")
+                    Label("Copy", systemImage: "doc.on.doc")
+                        .labelStyle(.iconOnly)
                         .foregroundStyle(color)
                 }
+                .buttonStyle(.bordered)
+                .tint(color)
                 .disabled(hash.isEmpty)
                 .accessibilityLabel("Copy \(algorithm) hash")
                 .accessibilityHint("Double tap to copy the \(algorithm) hash to clipboard")
@@ -221,9 +256,15 @@ public struct HashResultCard: View {
                     .lineLimit(nil)
             }
         }
-        .padding()
-        .background(color.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
+        .padding(DesignSystem.Spacing.md)
+        .background(
+            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                .fill(color.opacity(0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                .stroke(color.opacity(0.2), lineWidth: 1)
+        )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(algorithm) hash\(hash.isEmpty ? "" : ": \(hash)")")
     }

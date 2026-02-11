@@ -30,22 +30,25 @@ public struct TimestampToolView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(spacing: DesignSystem.Spacing.lgPlus) {
-                VStack(spacing: DesignSystem.Spacing.md) {
-                    Button {
-                        setCurrentTime()
-                    } label: {
-                        Label("Set to Current Time", systemImage: "clock.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityLabel("Set to current time")
-                    .accessibilityHint("Double tap to set fields to the current date and time")
+            VStack(spacing: DesignSystem.Spacing.lg) {
+                // Quick action
+                Button {
+                    setCurrentTime()
+                } label: {
+                    Label("Set to Current Time", systemImage: "clock.fill")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
                 .padding(.horizontal)
+                .accessibilityLabel("Set to current time")
+                .accessibilityHint("Double tap to set fields to the current date and time")
 
-                VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-                    HStack {
+                // Unix timestamp section
+                VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
+                    HStack(spacing: DesignSystem.Spacing.sm) {
+                        Image(systemName: "number")
+                            .foregroundStyle(DesignSystem.Colors.accent)
+                            .imageScale(.medium)
                         Text("Unix Timestamp")
                             .font(.headline)
 
@@ -56,6 +59,8 @@ public struct TimestampToolView: View {
                         } label: {
                             Image(systemName: "doc.on.doc")
                         }
+                        .buttonStyle(.bordered)
+                        .tint(DesignSystem.Colors.accent)
                         .disabled(unixTimestamp.isEmpty)
                     }
 
@@ -63,8 +68,14 @@ public struct TimestampToolView: View {
                         TextField("Enter timestamp", text: $unixTimestamp)
                             .keyboardType(.asciiCapableNumberPad)
                             .padding(DesignSystem.Spacing.md)
-                            .background(DesignSystem.Colors.surfaceMuted)
-                            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
+                            .background(
+                                RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                    .fill(DesignSystem.Colors.surfaceMuted)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                    .stroke(DesignSystem.Colors.muted.opacity(0.3), lineWidth: 1)
+                            )
                             .font(.system(.body, design: .monospaced))
                             .onChangeCompat(of: unixTimestamp) { newValue in
                                 timestampToDate(newValue)
@@ -90,8 +101,12 @@ public struct TimestampToolView: View {
                 Divider()
                     .padding(.horizontal)
 
-                VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-                    HStack {
+                // ISO 8601 section
+                VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
+                    HStack(spacing: DesignSystem.Spacing.sm) {
+                        Image(systemName: "calendar.badge.clock")
+                            .foregroundStyle(DesignSystem.Colors.info)
+                            .imageScale(.medium)
                         Text("ISO 8601 DateTime")
                             .font(.headline)
 
@@ -102,6 +117,8 @@ public struct TimestampToolView: View {
                         } label: {
                             Image(systemName: "doc.on.doc")
                         }
+                        .buttonStyle(.bordered)
+                        .tint(DesignSystem.Colors.info)
                         .disabled(isoDateTime.isEmpty)
                     }
 
@@ -111,7 +128,15 @@ public struct TimestampToolView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.asciiCapable)
-                        .formTextEditorStyle()
+                        .padding(DesignSystem.Spacing.sm)
+                        .background(
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .fill(DesignSystem.Form.textEditorBackground)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .stroke(DesignSystem.Colors.muted.opacity(0.3), lineWidth: 1)
+                        )
                         .onChangeCompat(of: isoDateTime) { newValue in
                             dateToTimestamp(newValue)
                         }
@@ -122,32 +147,41 @@ public struct TimestampToolView: View {
                 }
                 .padding(.horizontal)
 
+                // Timezone selector
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
                     Text("Timezone")
                         .font(.headline)
 
-                    HStack {
-                        Picker("Timezone", selection: $selectedTimezone) {
-                            ForEach(commonTimezones, id: \.identifier) { timezone in
-                                Text("\(timezone.identifier) (\(timezone.abbreviation() ?? ""))")
-                                    .tag(timezone)
-                            }
+                    Picker("Timezone", selection: $selectedTimezone) {
+                        ForEach(commonTimezones, id: \.identifier) { timezone in
+                            Text("\(timezone.identifier) (\(timezone.abbreviation() ?? ""))")
+                                .tag(timezone)
                         }
-                        .onChangeCompat(of: selectedTimezone) {
-                            dateFormatter.timeZone = selectedTimezone
-                            timestampToDate(unixTimestamp)
-                        }
-
-                        Spacer()
+                    }
+                    .onChangeCompat(of: selectedTimezone) {
+                        dateFormatter.timeZone = selectedTimezone
+                        timestampToDate(unixTimestamp)
                     }
                 }
                 .padding(.horizontal)
+                .padding(.vertical, DesignSystem.Spacing.sm)
+                .background(
+                    RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                        .fill(DesignSystem.Colors.muted.opacity(0.1))
+                )
+                .padding(.horizontal)
 
+                // Human readable section
                 if let timestamp = Double(unixTimestamp),
                    let date = timestampToDate(timestamp) {
-                    VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-                        Text("Human Readable")
-                            .font(.headline)
+                    VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
+                        HStack(spacing: DesignSystem.Spacing.sm) {
+                            Image(systemName: "text.alignleft")
+                                .foregroundStyle(DesignSystem.Colors.success)
+                                .imageScale(.medium)
+                            Text("Human Readable")
+                                .font(.headline)
+                        }
 
                         VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
                             InfoRowHorizontal(label: "Date", value: formatDate(date, format: "MMMM d, yyyy"))
@@ -155,14 +189,20 @@ public struct TimestampToolView: View {
                             InfoRowHorizontal(label: "Weekday", value: formatDate(date, format: "EEEE"))
                             InfoRowHorizontal(label: "Relative", value: date.formatted(.relative(presentation: .named)))
                         }
-                        .padding()
-                        .background(DesignSystem.Colors.surfaceMuted)
-                        .cornerRadius(DesignSystem.CornerRadius.md)
+                        .padding(DesignSystem.Spacing.md)
+                        .background(
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .fill(DesignSystem.Colors.surfaceMuted)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .stroke(DesignSystem.Colors.muted.opacity(0.2), lineWidth: 1)
+                        )
                     }
                     .padding(.horizontal)
                 }
 
-                Spacer()
+                Spacer(minLength: DesignSystem.Spacing.md)
             }
             .padding(.vertical)
         }

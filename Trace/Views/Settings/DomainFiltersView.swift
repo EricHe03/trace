@@ -35,7 +35,7 @@ struct DomainFiltersView: View {
             )
 
             Section {
-                Button("Reset to Defaults") {
+                Button("Reset to Defaults", role: .destructive) {
                     config.filterMode = .all
                     config.domainFilters = []
                     saveConfiguration()

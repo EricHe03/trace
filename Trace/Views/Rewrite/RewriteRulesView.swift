@@ -109,12 +109,6 @@ struct RewriteRulesView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button {
-                            showingAddRule = true
-                        } label: {
-                            Label("Add Rule", systemImage: "plus")
-                        }
-
-                        Button {
                             showingImport = true
                         } label: {
                             Label("Import Rules", systemImage: "square.and.arrow.down")

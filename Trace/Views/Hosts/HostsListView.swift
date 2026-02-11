@@ -115,12 +115,6 @@ struct HostsListView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button {
-                            showingAddEntry = true
-                        } label: {
-                            Label("Add Entry", systemImage: "plus")
-                        }
-
-                        Button {
                             showingImport = true
                         } label: {
                             Label("Import", systemImage: "square.and.arrow.down")

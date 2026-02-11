@@ -276,11 +276,11 @@ public struct CurlImportView: View {
     private func style(for outcome: ImportOutcome) -> (title: String, message: String, icon: String, color: Color) {
         switch outcome {
         case let .success(message):
-            return ("Import complete", message, "checkmark.circle.fill", DesignSystem.Colors.success)
+            ("Import complete", message, "checkmark.circle.fill", DesignSystem.Colors.success)
         case let .permissionRequired(message):
-            return ("Network access required", message, "exclamationmark.triangle.fill", DesignSystem.Colors.warning)
+            ("Network access required", message, "exclamationmark.triangle.fill", DesignSystem.Colors.warning)
         case let .failure(message):
-            return ("Import couldn't finish", message, "xmark.circle.fill", DesignSystem.Colors.danger)
+            ("Import couldn't finish", message, "xmark.circle.fill", DesignSystem.Colors.danger)
         }
     }
 

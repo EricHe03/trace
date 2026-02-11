@@ -341,7 +341,7 @@ enum CurlOptionRegistry {
         "-w",
         "-x",
         "-y",
-        "-z",
+        "-z"
     ]
 
     static let optionsRequiringValue: Set<String> = [
@@ -517,7 +517,7 @@ enum CurlOptionRegistry {
         "-w",
         "-x",
         "-y",
-        "-z",
+        "-z"
     ]
 
     static let optionsWithOptionalValue: Set<String> = [
@@ -534,7 +534,7 @@ enum CurlOptionRegistry {
         "--socks5-hostname",
         "--variable",
         "-E",
-        "-x",
+        "-x"
     ]
 
     static func isKnown(_ option: String) -> Bool {
