@@ -181,8 +181,7 @@ public enum CurlRuntimeBridge {
 
         var invocation = argv
         if shouldInjectDefaultCABundle(into: invocation),
-           let bundlePath = defaultCABundlePath()
-        {
+           let bundlePath = defaultCABundlePath() {
             invocation.append(contentsOf: ["--cacert", bundlePath])
         }
         invocation.append(contentsOf: [
@@ -328,8 +327,7 @@ public enum CurlRuntimeBridge {
 
             if lowered == "--cacert" || lowered.hasPrefix("--cacert=") ||
                 lowered == "--capath" || lowered.hasPrefix("--capath=") ||
-                lowered == "--proxy-cacert" || lowered.hasPrefix("--proxy-cacert=")
-            {
+                lowered == "--proxy-cacert" || lowered.hasPrefix("--proxy-cacert=") {
                 return false
             }
 

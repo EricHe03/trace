@@ -65,7 +65,7 @@ struct MITMSecurityView: View {
             }
 
             Section {
-                Button("Reset to Defaults") {
+                Button("Reset to Defaults", role: .destructive) {
                     resetToDefaults()
                 }
             }

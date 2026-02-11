@@ -326,6 +326,7 @@ final class CaptureViewModel: ObservableObject {
             }
         }
     }
+
     @Published var filterShowErrorsOnly: Bool = false
 
     /// Filter convenience properties for UI

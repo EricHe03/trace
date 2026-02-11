@@ -122,7 +122,7 @@ public struct CurlCommandPlan: Codable, Equatable, Sendable {
     }
 
     public var blockingDiagnostics: [CurlDiagnostic] {
-        diagnostics.filter { $0.severity.isBlocking }
+        diagnostics.filter(\.severity.isBlocking)
     }
 
     public var hasBlockingDiagnostics: Bool {
@@ -175,7 +175,7 @@ public struct CurlExecutionResult: Sendable {
     }
 
     public var succeededCount: Int {
-        transfers.filter { $0.succeeded }.count
+        transfers.count(where: { $0.succeeded })
     }
 
     public var failedCount: Int {

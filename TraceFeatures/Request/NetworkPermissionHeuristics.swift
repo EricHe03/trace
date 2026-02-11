@@ -50,7 +50,7 @@ public enum NetworkPermissionHeuristics {
             nsError.localizedFailureReason,
             nsError.localizedRecoverySuggestion
         ]
-        .compactMap { $0 }
+        .compactMap(\.self)
         .filter { !$0.isEmpty }
 
         let urls = url.map { [$0.absoluteString] } ?? []

@@ -53,19 +53,18 @@ public enum CurlOptionMetadataRegistry {
         "--verbose",
         "-S",
         "-Z",
-        "-v",
+        "-v"
     ]
 
     public static func metadata(for option: String) -> CurlOptionMetadata? {
         guard CurlOptionRegistry.isKnown(option) else { return nil }
 
-        let arity: CurlOptionArity
-        if CurlOptionRegistry.hasOptionalValue(option) {
-            arity = .optionalValue
+        let arity: CurlOptionArity = if CurlOptionRegistry.hasOptionalValue(option) {
+            .optionalValue
         } else if CurlOptionRegistry.requiresValue(option) {
-            arity = .requiredValue
+            .requiredValue
         } else {
-            arity = .flag
+            .flag
         }
 
         let category: CurlOptionCategory = globalOptions.contains(option) ? .global : .transfer

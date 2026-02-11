@@ -98,47 +98,67 @@ struct ScriptEditorView: View {
                         }
                     }
                 }
-                .frame(maxHeight: 350)
+                .scrollDisabled(true)
 
                 // Code editor section
-                VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-                    Text("JavaScript Code")
-                        .font(.headline)
-                        .padding(.horizontal)
-                    .padding(.top, DesignSystem.Spacing.sm)
+                VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
+                    HStack(spacing: DesignSystem.Spacing.sm) {
+                        Image(systemName: "curlybraces")
+                            .foregroundStyle(DesignSystem.Colors.info)
+                            .font(.title3)
+                        Text("JavaScript Code")
+                            .font(.headline)
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, DesignSystem.Spacing.md)
 
-                    HStack {
+                    // Enhanced validation banner
+                    HStack(spacing: DesignSystem.Spacing.sm) {
                         if isValidating {
                             ProgressView()
                                 .controlSize(.small)
                         } else {
                             Image(systemName: validationIcon)
                                 .foregroundStyle(validationColor)
+                                .imageScale(.medium)
                         }
 
                         Text(isValidating ? "Validating syntax…" : validationMessage)
-                            .font(.caption)
+                            .font(.subheadline)
                             .foregroundStyle(isValidating ? .secondary : validationColor)
 
                         Spacer()
                     }
-                    .padding(.horizontal)
+                    .padding(.horizontal, DesignSystem.Spacing.md)
                     .padding(.vertical, DesignSystem.Spacing.sm)
-                    .background((isValidating ? DesignSystem.Colors.muted : validationColor).opacity(0.1))
+                    .background(
+                        RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                            .fill((isValidating ? DesignSystem.Colors.muted : validationColor).opacity(0.15))
+                    )
+                    .padding(.horizontal)
 
                     TextEditor(text: $code)
                         .font(.system(.body, design: .monospaced))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .frame(minHeight: 300)
+                        .padding(DesignSystem.Spacing.sm)
+                        .background(
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .fill(Color(.systemBackground))
+                        )
                         .overlay(
                             RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
-                                .stroke(DesignSystem.Colors.muted.opacity(0.2), lineWidth: 1)
+                                .stroke(DesignSystem.Colors.muted.opacity(0.3), lineWidth: 1)
                         )
-                        .formTextEditorStyle()
-                        .accessibilityLabel("JavaScript code")
+                        .padding(.horizontal)
+                        .accessibilityLabel("JavaScript code editor")
                         .onChangeCompat(of: code) {
                             scheduleValidation()
                         }
+
+                    Spacer(minLength: DesignSystem.Spacing.md)
                 }
             }
             .navigationTitle(script == nil ? "New Script" : "Edit Script")
@@ -196,11 +216,11 @@ struct ScriptEditorView: View {
 
     private var validationMessage: String {
         if code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Enter script code to validate syntax"
+            "Enter script code to validate syntax"
         } else if validationResult.isValid {
-            return "Script syntax is valid"
+            "Script syntax is valid"
         } else {
-            return validationResult.errorMessage ?? "Invalid script"
+            validationResult.errorMessage ?? "Invalid script"
         }
     }
 
