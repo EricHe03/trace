@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/01/10.
 //
 
-import SwiftUI
 import OSLog
+import SwiftUI
 import TraceCore
 import TraceFeatures
 import TraceUI
@@ -96,8 +96,8 @@ struct NetworkView: View {
     }
 
     private var curlImportView: some View {
-        CurlImportView { request in
-            actions.importCurlRequest(request)
+        CurlImportView { command in
+            await actions.importCurlCommand(command)
         }
     }
 

@@ -7,8 +7,8 @@
 
 import Foundation
 import Network
-import TraceCore
 import TraceCompression
+import TraceCore
 
 /// Manages Server-Sent Events connections and streaming.
 ///

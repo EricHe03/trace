@@ -338,6 +338,24 @@ final class CurlParserTests: XCTestCase {
         XCTAssertTrue(bodyString?.contains("John") ?? false)
     }
 
+    func testParseMultilineCommandWithLineContinuationAfterQuotedValues() throws {
+        let curl = """
+        curl -X POST -H 'Content-Type: application/json' \
+             -d '{"hello":"world"}' \
+             https://httpbin.org/post
+        """
+
+        let request = try CurlParser.parse(curl)
+
+        XCTAssertEqual(request.url, "https://httpbin.org/post")
+        XCTAssertEqual(request.method, .post)
+        XCTAssertEqual(request.requestHeaders.first(where: { $0.key == "Content-Type" })?.value, "application/json")
+
+        let bodyData = request.requestBody.getData()
+        XCTAssertNotNil(bodyData)
+        XCTAssertEqual(String(data: bodyData!, encoding: .utf8), "{\"hello\":\"world\"}")
+    }
+
     func testParseRealWorldExample() throws {
         let curl = """
         curl 'https://api.github.com/repos/owner/repo/issues' \

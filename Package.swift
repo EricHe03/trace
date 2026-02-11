@@ -3,7 +3,29 @@
 #if canImport(AppleProductTypes)
 import AppleProductTypes
 #endif
+import Foundation
 import PackageDescription
+
+let curlVendorSources: [String] = {
+    let excludedSources: Set<String> = [
+        // We embed curl as an in-process runtime and call operate() directly.
+        // Excluding the CLI entrypoint avoids exporting an unnecessary main symbol.
+        "src/tool_main.c"
+    ]
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    let sourceListURL = root
+        .appendingPathComponent("ThirdParty")
+        .appendingPathComponent("curl-shim")
+        .appendingPathComponent("curl_vendor_sources.txt")
+    guard let contents = try? String(contentsOf: sourceListURL, encoding: .utf8) else {
+        return []
+    }
+    return contents
+        .split(whereSeparator: \.isNewline)
+        .map(String.init)
+        .filter { !$0.isEmpty }
+        .filter { !excludedSources.contains($0) }
+}()
 
 #if canImport(AppleProductTypes)
 let appProducts: [Product] = [
@@ -82,6 +104,10 @@ let package = Package(
             targets: ["TraceFeatures"]
         ),
         .library(
+            name: "TraceCurlRuntime",
+            targets: ["TraceCurlRuntime"]
+        ),
+        .library(
             name: "TraceUI",
             targets: ["TraceUI"]
         ),
@@ -139,6 +165,91 @@ let package = Package(
             name: "TracePacket",
             dependencies: ["TraceCore"],
             path: "TracePacket"
+        ),
+
+        // CMBedTLS: Vendored mbed TLS backend used by curl runtime.
+        .target(
+            name: "CMBedTLS",
+            path: "ThirdParty/mbedtls",
+            exclude: [
+                "library/CMakeLists.txt",
+                "library/Makefile",
+                "library/.gitignore"
+            ],
+            sources: ["library"],
+            publicHeadersPath: "include"
+        ),
+
+        // CNghttp2: Vendored nghttp2 backend used by curl runtime for HTTP/2.
+        .target(
+            name: "CNghttp2",
+            path: "ThirdParty/nghttp2",
+            exclude: [
+                "lib/CMakeLists.txt",
+                "lib/Makefile.am",
+                "lib/Makefile.msvc",
+                "lib/config.cmake.in",
+                "lib/libnghttp2.pc.in",
+                "lib/version.rc.in",
+                "lib/includes/CMakeLists.txt",
+                "lib/includes/Makefile.am",
+                "lib/includes/nghttp2/nghttp2ver.h.in",
+                "lib/.gitignore"
+            ],
+            sources: ["lib"],
+            publicHeadersPath: "lib/includes",
+            cSettings: [
+                .headerSearchPath("lib/includes"),
+                .headerSearchPath("../curl-shim/include")
+            ]
+        ),
+
+        // CCurlVendor: Vendored curl lib/tool sources built in-process.
+        .target(
+            name: "CCurlVendor",
+            dependencies: ["CMBedTLS", "CNghttp2"],
+            path: "ThirdParty/curl",
+            sources: curlVendorSources,
+            publicHeadersPath: "include",
+            cSettings: [
+                .define("BUILDING_LIBCURL"),
+                .define("CURL_HIDDEN_SYMBOLS"),
+                .define("HAVE_CONFIG_H"),
+                .define("CURL_STATICLIB"),
+                .headerSearchPath("include"),
+                .headerSearchPath("lib"),
+                .headerSearchPath("src"),
+                .headerSearchPath("../curl-shim/include"),
+                .headerSearchPath("../mbedtls/include"),
+                .headerSearchPath("../nghttp2/lib/includes")
+            ],
+            linkerSettings: [
+                .linkedLibrary("z")
+            ]
+        ),
+
+        // CCurlShim: C ABI shim for vendored curl integration.
+        .target(
+            name: "CCurlShim",
+            dependencies: ["CCurlVendor"],
+            path: "ThirdParty/curl-shim",
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("include"),
+                .headerSearchPath("../curl/include"),
+                .headerSearchPath("../curl/lib"),
+                .headerSearchPath("../curl/src")
+            ]
+        ),
+
+        // TraceCurlRuntime: Swift wrapper around CCurlShim runtime capabilities.
+        .target(
+            name: "TraceCurlRuntime",
+            dependencies: ["CCurlShim"],
+            path: "TraceCurlRuntime",
+            resources: [
+                .copy("Resources/apple-system-roots.pem")
+            ]
         ),
 
         // HevSocks5Tunnel: C tunnel over SOCKS5 (tun2socks replacement)
@@ -218,7 +329,7 @@ let package = Package(
         // Dependencies: TraceCore, TraceSecurity
         .target(
             name: "TraceFeatures",
-            dependencies: ["TraceCore", "TraceSecurity"],
+            dependencies: ["TraceCore", "TraceSecurity", "TraceCurlRuntime"],
             path: "TraceFeatures"
         ),
 

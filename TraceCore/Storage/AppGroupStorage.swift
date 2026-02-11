@@ -1631,7 +1631,7 @@ public enum StorageError: LocalizedError, Equatable {
 
 extension NetworkRequest: Codable {
     enum CodingKeys: String, CodingKey {
-        case id, url, method, statusCode, statusMessage, timestamp, duration
+        case id, url, method, requestMethodRaw, statusCode, statusMessage, timestamp, duration
         case requestHeaders, responseHeaders, requestBody, responseBody, protocolVersion, sessionId
         case timingPhases, tlsInfo
         case wasThrottled, throttlingProfile
@@ -1645,6 +1645,12 @@ extension NetworkRequest: Codable {
         case queryParameters, authorization, tlsAlerts
         case http2Streams, http2ConnectionInfo
         case redirectChain
+        case curlExecutionMetadata
+    }
+
+    private enum LegacyCodingKeys: String, CodingKey {
+        case rawMethod
+        case curlMetadata
     }
 
     private struct QueryItemStorage: Codable {
@@ -1658,6 +1664,7 @@ extension NetworkRequest: Codable {
         self.id = try container.decode(UUID.self, forKey: .id)
         self.url = try container.decode(String.self, forKey: .url)
         self.method = try container.decode(HTTPMethod.self, forKey: .method)
+        self.requestMethodRaw = try container.decodeIfPresent(String.self, forKey: .requestMethodRaw)
         self.statusCode = try container.decodeIfPresent(Int.self, forKey: .statusCode)
         self.statusMessage = try container.decodeIfPresent(String.self, forKey: .statusMessage)
         self.timestamp = try container.decode(Date.self, forKey: .timestamp)
@@ -1716,6 +1723,16 @@ extension NetworkRequest: Codable {
         self.http2Streams = try container.decodeIfPresent([HTTP2StreamInfo].self, forKey: .http2Streams)
         self.http2ConnectionInfo = try container.decodeIfPresent(HTTP2ConnectionInfo.self, forKey: .http2ConnectionInfo)
         self.redirectChain = try container.decodeIfPresent([RedirectInfo].self, forKey: .redirectChain) ?? []
+        self.curlExecutionMetadata = try container.decodeIfPresent(CurlExecutionMetadata.self, forKey: .curlExecutionMetadata)
+
+        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
+        if self.requestMethodRaw == nil {
+            self.requestMethodRaw = try legacyContainer.decodeIfPresent(String.self, forKey: .rawMethod)
+        }
+        if self.curlExecutionMetadata == nil,
+           let legacyMetadata = try legacyContainer.decodeIfPresent(CurlRequestMetadata.self, forKey: .curlMetadata) {
+            self.curlExecutionMetadata = legacyMetadata.asExecutionMetadata
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -1724,6 +1741,7 @@ extension NetworkRequest: Codable {
         try container.encode(id, forKey: .id)
         try container.encode(url, forKey: .url)
         try container.encode(method, forKey: .method)
+        try container.encodeIfPresent(requestMethodRaw, forKey: .requestMethodRaw)
         try container.encodeIfPresent(statusCode, forKey: .statusCode)
         try container.encodeIfPresent(statusMessage, forKey: .statusMessage)
         try container.encode(timestamp, forKey: .timestamp)
@@ -1765,6 +1783,7 @@ extension NetworkRequest: Codable {
         try container.encodeIfPresent(http2Streams, forKey: .http2Streams)
         try container.encodeIfPresent(http2ConnectionInfo, forKey: .http2ConnectionInfo)
         try container.encode(redirectChain, forKey: .redirectChain)
+        try container.encodeIfPresent(curlExecutionMetadata, forKey: .curlExecutionMetadata)
     }
 }
 

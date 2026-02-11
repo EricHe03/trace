@@ -54,4 +54,3 @@ public struct SectionCard<Content: View>: View {
         }
     }
 }
-

@@ -19,6 +19,7 @@ public final class RequestExecutor: ObservableObject {
 
     private let session: URLSession
     private let cookieStore: CookieStore
+    private static let localNetworkRetryDelayNanoseconds: UInt64 = 600_000_000
 
     // Rule: Use a session without NetworkInterceptor to avoid recursive capture and
     // keep user-initiated replays separate from captured traffic.
@@ -64,7 +65,7 @@ public final class RequestExecutor: ObservableObject {
         }
 
         var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = request.method.rawValue
+        urlRequest.httpMethod = request.methodRaw ?? request.method.rawValue
         urlRequest.timeoutInterval = 30
 
         for header in request.headers {
@@ -83,7 +84,11 @@ public final class RequestExecutor: ObservableObject {
 
         do {
             let redirectDelegate = RedirectTrackingDelegate(followRedirects: request.followRedirects)
-            let (data, response) = try await session.data(for: urlRequest, delegate: redirectDelegate)
+            let (data, response) = try await executeWithPermissionRetry(
+                urlRequest: urlRequest,
+                targetURL: url,
+                delegate: redirectDelegate
+            )
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw RequestExecutionError.invalidResponse
@@ -94,6 +99,7 @@ public final class RequestExecutor: ObservableObject {
             var networkRequest = NetworkRequest(
                 url: url.absoluteString,
                 method: request.method,
+                requestMethodRaw: request.methodRaw,
                 statusCode: httpResponse.statusCode,
                 timestamp: startTime,
                 duration: duration,
@@ -174,6 +180,25 @@ public final class RequestExecutor: ObservableObject {
 }
 
 private extension RequestExecutor {
+    func executeWithPermissionRetry(
+        urlRequest: URLRequest,
+        targetURL: URL,
+        delegate: RedirectTrackingDelegate
+    ) async throws -> (Data, URLResponse) {
+        do {
+            return try await session.data(for: urlRequest, delegate: delegate)
+        } catch {
+            guard NetworkPermissionHeuristics.isLikelyPermissionIssue(error: error, url: targetURL) else {
+                throw error
+            }
+
+            // Give the system permission prompt a brief moment to settle before retrying.
+            try await Task.sleep(nanoseconds: Self.localNetworkRetryDelayNanoseconds)
+            try Task.checkCancellation()
+            return try await session.data(for: urlRequest, delegate: delegate)
+        }
+    }
+
     static func diffCookies(before: [Foundation.HTTPCookie], after: [Foundation.HTTPCookie]) -> [TraceCore.HTTPCookie] {
         let beforeSet = Set(before.map { cookieSignature(for: $0) })
         let newCookies = after.filter { !beforeSet.contains(cookieSignature(for: $0)) }
@@ -259,6 +284,7 @@ public enum RequestExecutionError: LocalizedError {
 public struct RequestBuilder {
     public var url: String
     public var method: HTTPMethod
+    public var methodRaw: String?
     public var headers: [String: String]
     public var body: String?
     public var protocolVersion: HTTPProtocolVersion?
@@ -267,6 +293,7 @@ public struct RequestBuilder {
     public init(
         url: String,
         method: HTTPMethod = .get,
+        methodRaw: String? = nil,
         headers: [String: String] = [:],
         body: String? = nil,
         protocolVersion: HTTPProtocolVersion? = nil,
@@ -274,6 +301,7 @@ public struct RequestBuilder {
     ) {
         self.url = url
         self.method = method
+        self.methodRaw = methodRaw
         self.headers = headers
         self.body = body
         self.protocolVersion = protocolVersion
@@ -285,6 +313,7 @@ public struct RequestBuilder {
     public init(from request: NetworkRequest) {
         self.url = request.url
         self.method = request.method
+        self.methodRaw = request.requestMethodRaw
         self.protocolVersion = request.protocolVersion
         self.followRedirects = true
 
@@ -303,6 +332,7 @@ public struct RequestBuilder {
         let request = NetworkRequest(
             url: url,
             method: method,
+            requestMethodRaw: methodRaw,
             statusCode: nil,
             statusMessage: nil,
             timestamp: Date(),
@@ -319,7 +349,8 @@ public struct RequestBuilder {
     /// Exports the request as raw HTTP/1.1 text.
     /// - Returns: The raw HTTP/1.1 request.
     public func toHTTPRaw() -> String {
-        var raw = "\(method.rawValue) \(url) HTTP/1.1\r\n"
+        let methodToken = methodRaw.flatMap { $0.isEmpty ? nil : $0 } ?? method.rawValue
+        var raw = "\(methodToken) \(url) HTTP/1.1\r\n"
 
         for (key, value) in headers {
             raw += "\(key): \(value)\r\n"

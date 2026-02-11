@@ -57,4 +57,3 @@ struct SSEEventsFilterBar: View {
         .accessibilityLabel("SSE filters")
     }
 }
-

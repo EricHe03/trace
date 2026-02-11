@@ -68,10 +68,14 @@ struct WidgetRequest: Identifiable, Codable {
     }
 
     /// Returns a privacy-safe host label suitable for glanceable surfaces.
-    var redactedHost: String { "Endpoint hidden" }
+    var redactedHost: String {
+        "Endpoint hidden"
+    }
 
     /// Returns a privacy-safe path label suitable for glanceable surfaces.
-    var redactedPath: String { "Path hidden" }
+    var redactedPath: String {
+        "Path hidden"
+    }
 }
 
 // MARK: - Timeline Provider

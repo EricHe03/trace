@@ -50,7 +50,9 @@ public struct BodyInspectorView: View {
         case text = "Text"
         case hex = "Hex"
 
-        public var id: String { rawValue }
+        public var id: String {
+            rawValue
+        }
     }
 
     public var body: some View {
@@ -533,4 +535,3 @@ public struct BodyInspectorView: View {
         SVGPreviewHelper.svgData(from: content, contentType: contentType)
     }
 }
-

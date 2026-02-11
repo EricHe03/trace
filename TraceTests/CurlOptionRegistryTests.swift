@@ -248,15 +248,16 @@ final class CurlOptionRegistryTests: XCTestCase {
         let options = CurlOptionRegistry.optionsWithOptionalValue
 
         // Assert
-        XCTAssertEqual(options.count, 1)
+        XCTAssertGreaterThan(options.count, 0)
     }
 
-    func testDataBinaryHasOptionalValue() {
+    func testRepresentativeOptionsHaveOptionalValue() {
         // Arrange & Act
         let options = CurlOptionRegistry.optionsWithOptionalValue
 
         // Assert
-        XCTAssertTrue(options.contains("--data-binary"))
+        XCTAssertTrue(options.contains("--proxy"))
+        XCTAssertTrue(options.contains("-x"))
     }
 
     // MARK: - isKnown Tests

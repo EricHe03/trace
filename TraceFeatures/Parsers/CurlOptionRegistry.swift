@@ -2,7 +2,7 @@
 //  CurlOptionRegistry.swift
 //  TraceFeatures
 //
-//  Auto-generated from curl.txt (curl 8.19.0 man page).
+//  Auto-generated from manpage.html.
 //  Do not edit manually.
 //
 
@@ -201,6 +201,7 @@ enum CurlOptionRegistry {
         "--quote",
         "--random-file",
         "--range",
+        "--rate",
         "--raw",
         "--referer",
         "--remote-header-name",
@@ -288,7 +289,6 @@ enum CurlOptionRegistry {
         "-2",
         "-3",
         "-4",
-        "-500",
         "-6",
         "-:",
         "-A",
@@ -341,7 +341,7 @@ enum CurlOptionRegistry {
         "-w",
         "-x",
         "-y",
-        "-z"
+        "-z",
     ]
 
     static let optionsRequiringValue: Set<String> = [
@@ -450,6 +450,7 @@ enum CurlOptionRegistry {
         "--quote",
         "--random-file",
         "--range",
+        "--rate",
         "--referer",
         "--request",
         "--request-target",
@@ -516,11 +517,24 @@ enum CurlOptionRegistry {
         "-w",
         "-x",
         "-y",
-        "-z"
+        "-z",
     ]
 
     static let optionsWithOptionalValue: Set<String> = [
-        "--data-binary"
+        "--aws-sigv4",
+        "--cert",
+        "--preproxy",
+        "--proxy",
+        "--proxy-cert",
+        "--proxy1.0",
+        "--resolve",
+        "--socks4",
+        "--socks4a",
+        "--socks5",
+        "--socks5-hostname",
+        "--variable",
+        "-E",
+        "-x",
     ]
 
     static func isKnown(_ option: String) -> Bool {
