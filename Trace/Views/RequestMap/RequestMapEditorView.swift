@@ -242,6 +242,8 @@ struct RequestMapEditorView: View {
 
             TextEditor(text: $bodyContent)
                 .font(.system(.body, design: .monospaced))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
                 .frame(minHeight: textEditorHeight)
                 .overlay(
                     RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
@@ -273,6 +275,7 @@ struct RequestMapEditorView: View {
                 TextField("Path or filename", text: $bodyFilePath)
                     .autocapitalization(.none)
                     .autocorrectionDisabled()
+                    .keyboardType(.asciiCapable)
                     .font(.system(.body, design: .monospaced))
 
                 Button {
@@ -369,6 +372,8 @@ struct RequestMapEditorView: View {
 
             TextEditor(text: $scriptContent)
                 .font(.system(.body, design: .monospaced))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
                 .frame(minHeight: textEditorHeight)
                 .overlay(
                     RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
@@ -466,8 +471,10 @@ struct HeaderEditorView: View {
             Form {
                 TextField("Header Name", text: $key)
                     .autocapitalization(.none)
+                    .autocorrectionDisabled()
 
                 TextField("Header Value", text: $value)
+                    .autocorrectionDisabled()
             }
             .dismissKeyboardOnTapAndScroll()
             .navigationTitle("Add Header")

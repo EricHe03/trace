@@ -62,12 +62,6 @@ public struct JSONFormatterView: View {
                         }
                         .font(.subheadline)
                         .disabled(inputText.isEmpty)
-
-                        Button("Validate") {
-                            validateJSON()
-                        }
-                        .font(.subheadline)
-                        .disabled(inputText.isEmpty)
                     }
 
                     TextEditor(text: $inputText)
@@ -182,10 +176,6 @@ public struct JSONFormatterView: View {
             validationMessage = "Invalid JSON: \(error.localizedDescription)"
             isValid = false
         }
-    }
-
-    private func validateJSON() {
-        formatJSON()
     }
 }
 

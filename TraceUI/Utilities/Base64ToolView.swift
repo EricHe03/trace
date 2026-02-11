@@ -58,6 +58,8 @@ public struct Base64ToolView: View {
                     TextEditor(text: $inputText)
                         .frame(minHeight: DesignSystem.Form.textEditorMinHeightMedium)
                         .font(DesignSystem.Typography.monospacedFont)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                         .formTextEditorStyle()
                         .onChangeCompat(of: inputText) {
                             processText()

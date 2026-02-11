@@ -304,6 +304,8 @@ private struct UDPFlowFiltersView: View {
                 TextField("Search by IP or port", text: $viewModel.searchText)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .keyboardType(.webSearch)
+                    .submitLabel(.search)
             }
 
             Section("Status") {
@@ -321,7 +323,7 @@ private struct UDPFlowFiltersView: View {
 
             Section("Port") {
                 TextField("Port", text: $viewModel.portFilter)
-                    .keyboardType(.numberPad)
+                    .keyboardType(.asciiCapableNumberPad)
             }
 
             Section("Sort") {

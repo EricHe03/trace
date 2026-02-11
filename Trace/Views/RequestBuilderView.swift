@@ -11,8 +11,13 @@ import TraceFeatures
 import TraceUI
 
 struct RequestBuilderView: View {
+    private enum Field: Hashable {
+        case url
+    }
+
     @Environment(\.dismiss) private var dismiss
     @StateObject private var executor = RequestExecutor()
+    @FocusState private var focusedField: Field?
     @State private var url = ""
     @State private var method: HTTPMethod = .get
     @State private var headers: [HeaderPair] = [
@@ -53,10 +58,17 @@ struct RequestBuilderView: View {
                     .accessibilityLabel("HTTP Method")
 
                     // URL field
-                    TextField("URL", text: $url, axis: .vertical)
+                    TextField("URL", text: $url)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .lineLimit(2 ... 5)
+                        .keyboardType(.URL)
+                        .submitLabel(.done)
+                        .focused($focusedField, equals: .url)
+                        .onSubmit {
+                            if focusedField == .url {
+                                focusedField = nil
+                            }
+                        }
                         .accessibilityLabel("Request URL")
                         .accessibilityHint("Enter the URL for the request")
 
@@ -70,10 +82,12 @@ struct RequestBuilderView: View {
                         HStack {
                             TextField("Header Name", text: $headers[index].key)
                                 .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
                                 .frame(maxWidth: .infinity)
 
                             TextField("Value", text: $headers[index].value)
                                 .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
                                 .frame(maxWidth: .infinity)
 
                             Button(action: {
@@ -103,6 +117,7 @@ struct RequestBuilderView: View {
                         TextEditor(text: $requestBody)
                             .frame(minHeight: DesignSystem.Form.textEditorMinHeightLarge)
                             .font(DesignSystem.Typography.monospacedFont)
+                            .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .formTextEditorStyle()
                             .accessibilityLabel("Request body")
@@ -117,12 +132,16 @@ struct RequestBuilderView: View {
 
                             Spacer()
 
-                            Button("Format JSON") {
-                                formatJSON()
+                            Menu {
+                                Button("Format as JSON") {
+                                    formatJSON()
+                                }
+                            } label: {
+                                Label("Body Tools", systemImage: "ellipsis.circle")
                             }
-                            .foregroundStyle(DesignSystem.Colors.accent)
-                            .accessibilityLabel("Format JSON")
-                            .accessibilityHint("Double tap to format JSON in request body")
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Request body tools")
+                            .accessibilityHint("Contains optional formatting actions for the request body")
                         }
                         .buttonStyle(.plain)
                         .font(.caption)

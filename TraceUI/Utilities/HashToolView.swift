@@ -39,6 +39,8 @@ public struct HashToolView: View {
                     TextEditor(text: $inputText)
                         .frame(minHeight: DesignSystem.Form.textEditorMinHeightSmall)
                         .font(DesignSystem.Typography.monospacedFont)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                         .formTextEditorStyle()
                         .accessibilityLabel("Input text")
                         .accessibilityHint("Enter text to generate hashes")
@@ -51,6 +53,8 @@ public struct HashToolView: View {
 
                     if useHMAC {
                         TextField("HMAC Key", text: $hmacKey)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
                             .padding(DesignSystem.Spacing.md)
                             .background(DesignSystem.Colors.surfaceMuted)
                             .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))

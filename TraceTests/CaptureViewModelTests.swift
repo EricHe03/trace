@@ -247,6 +247,28 @@ final class CaptureViewModelTests: XCTestCase {
         XCTAssertEqual(filtered.last?.url, "https://example.com/old")
     }
 
+    func testDuplicateDetectionRunsAutomaticallyWhenEnabled() async {
+        let now = Date()
+        let original = createMockRequest(
+            url: "https://api.example.com/users",
+            method: .get,
+            timestamp: now.addingTimeInterval(-60)
+        )
+        let duplicate = createMockRequest(
+            url: "https://api.example.com/users",
+            method: .get,
+            timestamp: now
+        )
+
+        viewModel.requests = [original, duplicate]
+        viewModel.filterShowDuplicatesOnly = true
+        try? await Task.sleep(nanoseconds: 400_000_000)
+
+        XCTAssertEqual(viewModel.duplicateCount, 1)
+        XCTAssertEqual(viewModel.filteredRequests.count, 1)
+        XCTAssertTrue(viewModel.filteredRequests.allSatisfy(\.isDuplicate))
+    }
+
     // MARK: - App Theme Tests
 
     // MARK: - Helper Methods
