@@ -209,7 +209,7 @@ final class ScriptTests: XCTestCase {
             name: "Test",
             scriptType: .request,
             matchType: .contains,
-            matchPattern: "API",
+            matchPattern: "/API/",
             code: ""
         )
 

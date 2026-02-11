@@ -1729,9 +1729,14 @@ extension NetworkRequest: Codable {
         if self.requestMethodRaw == nil {
             self.requestMethodRaw = try legacyContainer.decodeIfPresent(String.self, forKey: .rawMethod)
         }
-        if self.curlExecutionMetadata == nil,
-           let legacyMetadata = try legacyContainer.decodeIfPresent(CurlRequestMetadata.self, forKey: .curlMetadata) {
-            self.curlExecutionMetadata = legacyMetadata.asExecutionMetadata
+        if self.curlExecutionMetadata == nil {
+            // Accept either legacy CurlRequestMetadata ("options") or legacy-keyed
+            // CurlExecutionMetadata ("effectiveOptions") payloads.
+            if let legacyExecution = try? legacyContainer.decode(CurlExecutionMetadata.self, forKey: .curlMetadata) {
+                self.curlExecutionMetadata = legacyExecution
+            } else if let legacyMetadata = try? legacyContainer.decode(CurlRequestMetadata.self, forKey: .curlMetadata) {
+                self.curlExecutionMetadata = legacyMetadata.asExecutionMetadata
+            }
         }
     }
 

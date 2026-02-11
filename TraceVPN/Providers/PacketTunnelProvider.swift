@@ -82,17 +82,6 @@ struct AppMessage {
     let payload: [String: Any]
 }
 
-enum SocksEndpointSource: String, Sendable {
-    case configured
-    case embedded
-}
-
-@inline(__always)
-func selectSocksEndpointSource(host: String, port: UInt16) -> SocksEndpointSource {
-    let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
-    return (!trimmedHost.isEmpty && port > 0) ? .configured : .embedded
-}
-
 /// Manages VPN-based traffic capture in the network extension.
 ///
 /// Discussion: This class runs in a separate process (Network Extension) from the main app.

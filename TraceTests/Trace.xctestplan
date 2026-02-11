@@ -25,7 +25,7 @@
       }
     },
     {
-      "parallelizable" : true,
+      "parallelizable" : false,
       "target" : {
         "containerPath" : "container:Trace.xcodeproj",
         "identifier" : "5FCEEC192F0152E600D3CD59",

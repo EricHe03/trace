@@ -160,12 +160,19 @@ final class StreamingBrotliDecoderTests: XCTestCase {
     }
 
     func testStreamingBrotliGarbageData() throws {
-        let garbage = Data((0..<100).map { _ in UInt8.random(in: 0...255) })
+        // Deterministic non-Brotli payload.
+        let garbage = Data((0..<128).map { UInt8($0) })
 
         let decoder = StreamingBrotliDecoder()
         try decoder.initialize()
 
-        XCTAssertThrowsError(try decoder.decompress(chunk: garbage))
+        // Some invalid streams fail during chunk processing, others fail at finalize.
+        do {
+            _ = try decoder.decompress(chunk: garbage)
+            XCTAssertThrowsError(try decoder.finalize())
+        } catch {
+            XCTAssertTrue(error is CompressionError)
+        }
     }
 
     // MARK: - State Tests

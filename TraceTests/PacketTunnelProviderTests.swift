@@ -211,7 +211,7 @@ final class PacketTunnelProviderTests: XCTestCase {
     }
 
     func testDecideUDPForwardingHevOnlyFallsBackToDirectWhenTunnelUDPUnsupported() {
-        let decision = PacketFlowLoop.decideUDPForwarding(
+        let decision = decideUDPForwarding(
             udpForwarderAvailable: true,
             mode: .hevOnly,
             sourcePort: 50_000,
@@ -225,7 +225,7 @@ final class PacketTunnelProviderTests: XCTestCase {
     }
 
     func testDecideUDPForwardingSplitFallsBackToDirectForQUICWhenTunnelUDPUnsupported() {
-        let decision = PacketFlowLoop.decideUDPForwarding(
+        let decision = decideUDPForwarding(
             udpForwarderAvailable: true,
             mode: .split,
             sourcePort: 50_000,
@@ -239,7 +239,7 @@ final class PacketTunnelProviderTests: XCTestCase {
     }
 
     func testDecideUDPForwardingHevOnlyUsesTunnelWhenTunnelUDPSupported() {
-        let decision = PacketFlowLoop.decideUDPForwarding(
+        let decision = decideUDPForwarding(
             udpForwarderAvailable: true,
             mode: .hevOnly,
             sourcePort: 50_000,
