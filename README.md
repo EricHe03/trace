@@ -6,23 +6,24 @@ An iOS network debugger for capturing and inspecting HTTP(S), WebSocket, and SSE
 ![Platform](https://img.shields.io/badge/platform-iOS%2016.0%2B-blue)
 ![Xcode](https://img.shields.io/badge/Xcode-26.2-blue)
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Release](https://img.shields.io/github/v/release/Trace-iOS/Trace)
-![Downloads](https://img.shields.io/github/downloads/Trace-iOS/Trace/total)
+[Latest Release](https://github.com/Trace-iOS/Trace/releases/latest) | [Releases](https://github.com/Trace-iOS/Trace/releases)
 
-Trace is built as a local Network Extension packet tunnel with on-device TLS MITM (via a self-generated root CA). Captured data stays on-device, and you can inspect requests, replay traffic, apply rewrite rules, and export diagnostics without routing through a remote proxy.
+Trace is built as a local Network Extension packet tunnel with on-device TLS MITM (via a self-generated root CA). Captured data stays on-device by default, and you can inspect requests, replay traffic, apply rewrite rules, and export diagnostics. Full-tunnel mode can optionally forward traffic through a custom SOCKS5 server.
 
 ## Features
 
 - Proxy-only and full-tunnel capture modes
 - HTTP(S), WebSocket, and SSE capture in one network timeline
-- Request inspection for headers, body, timings, TLS chain, and HTTP/2 metadata
+- Request inspection for headers, body, timings, and TLS chain
 - Request replay and manual request builder
 - cURL import, HAR import/export, and copy-as-cURL
 - Rewrite rules, request maps, breakpoints, scripts, and hosts overrides
 - Capture rules for domain filtering, body capture controls, and size limits
 - Full-tunnel controls for custom DNS, IPv6, SOCKS5 forwarding, and UDP forwarding mode
+- Network throttling profiles for simulating Wi-Fi, cellular, offline, and custom conditions
 - Connections and UDP flow diagnostics
 - PCAP capture/export and VPN NDJSON log export
+- Storage and cleanup controls for retained capture data
 - Certificate setup wizard, MITM allowlist, and QUIC blocking controls
 - Quick actions, notification actions, and Widget/Live Activity integration
 - Built-in utilities (Base64, URL encode/decode, JSON formatter, hash, timestamp)
@@ -91,10 +92,10 @@ git add ThirdParty/curl ThirdParty/mbedtls .gitmodules \
 ## Quick Start
 
 1. Complete onboarding:
-   - Optional: enable notifications.
+   - Optional: enable notifications in Settings -> `Notifications`.
    - Install and trust the Trace root CA in iOS Settings.
    - Allow Trace to add VPN configurations.
-2. Open the Network tab and tap **Start Capture**.
+2. Open the Network tab and tap the capture control (play icon / `Stopped`) to start capture.
 3. Generate traffic from other apps and inspect requests in Trace.
 4. Adjust capture behavior in Settings:
    - `Capture Rules` for domain/body capture behavior.
@@ -110,6 +111,8 @@ git add ThirdParty/curl ThirdParty/mbedtls .gitmodules \
 - Export HAR: Settings -> `Export HAR`.
 - Import HAR: Settings -> `Import HAR`.
 - Export packet captures and VPN logs: Settings -> `Packet Captures`.
+- Simulate network conditions: Settings -> `Network Conditions`.
+- Manage retained data: Settings -> `Storage & Cleanup`.
 
 ## Configuration Reference
 
@@ -134,12 +137,16 @@ Trace/
 ├── TraceSecurity/          # Certificate and TLS handling
 ├── TraceProxy/             # MITM proxy and capture pipeline
 ├── TracePacket/            # Packet parsing and TCP/UDP reassembly
+├── TraceCurlRuntime/       # Swift wrapper for vendored curl runtime
 ├── TraceFeatures/          # Feature modules (VPN, export, scripting, cleanup, etc.)
 ├── TraceUI/                # Shared UI components/utilities
 ├── TraceTests/             # Unit tests
 ├── TraceUITests/           # UI tests
-├── ThirdParty/hev-socks5-tunnel/  # Git submodule used by full-tunnel forwarding
-└── ThirdParty/curl/               # Git submodule for pinned curl tool/lib sources
+├── ThirdParty/hev-socks5-tunnel/  # Git submodule: tun2socks for full-tunnel forwarding
+├── ThirdParty/curl/               # Git submodule: curl tool/lib sources
+├── ThirdParty/curl-shim/          # C ABI shim for curl integration
+├── ThirdParty/mbedtls/            # Git submodule: TLS backend for curl runtime
+└── ThirdParty/nghttp2/            # Git submodule: HTTP/2 backend for curl runtime
 ```
 
 ## Testing
@@ -153,6 +160,18 @@ xcodebuild test \
   -scheme Trace \
   -testPlan Trace \
   -destination 'platform=iOS Simulator,name=<Your Simulator Name>'
+```
+
+- Format check:
+
+```bash
+swiftformat --lint . --config .swiftformat
+```
+
+- Lint check:
+
+```bash
+swiftlint lint --strict --config .swiftlint.yml
 ```
 
 ## Limitations
@@ -171,6 +190,10 @@ xcodebuild test \
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and PR guidance, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for participation standards.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting guidance.
 
 ## Authors
 
