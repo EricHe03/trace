@@ -5,10 +5,10 @@
 //  Created by Justin on 2026/01/10.
 //
 
-import Compression
 import Foundation
+import libzstd
 
-/// Provides streaming Zstd decompression using Apple's Compression framework.
+/// Provides streaming Zstd decompression using libzstd.
 /// Processes data incrementally as chunks arrive instead of accumulating.
 public class StreamingZstdDecoder: StreamingDecoderProtocol {
     private var config: StreamingDecoderConfig
@@ -16,54 +16,35 @@ public class StreamingZstdDecoder: StreamingDecoderProtocol {
     public private(set) var totalBytesIn: Int = 0
     public private(set) var totalBytesOut: Int = 0
 
-    private var stream: compression_stream
-    private var streamInitialized: Bool = false
-
-    private var outputBuffer: UnsafeMutablePointer<UInt8>?
-    private let placeholderBuffer: UnsafeMutablePointer<UInt8>
+    private var stream: OpaquePointer?
 
     public init(config: StreamingDecoderConfig = .default) {
         self.config = config
-        self.placeholderBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 1)
-        self.placeholderBuffer.initialize(repeating: 0, count: 1)
-        self.stream = compression_stream(
-            dst_ptr: placeholderBuffer,
-            dst_size: 0,
-            src_ptr: UnsafePointer(placeholderBuffer),
-            src_size: 0,
-            state: nil
-        )
     }
 
     deinit {
         cleanup()
-        placeholderBuffer.deinitialize(count: 1)
-        placeholderBuffer.deallocate()
     }
 
     public func initialize() throws {
         guard !isInitialized else { return }
 
-        guard let zstdAlgorithm = ZstdCompressionAlgorithm.supportedAlgorithm else {
-            throw CompressionError.decompressionFailed("Zstandard decompression is not supported by this SDK")
+        guard let stream = ZSTD_createDStream() else {
+            throw CompressionError.initializationFailed("Failed to create zstd decompression stream")
         }
 
-        outputBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: config.chunkSize)
-
-        let status = compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, zstdAlgorithm)
-        guard status != COMPRESSION_STATUS_ERROR else {
-            outputBuffer?.deallocate()
-            outputBuffer = nil
-            resetStreamToPlaceholder()
-            throw CompressionError.initializationFailed("Failed to initialize Zstd decompression stream")
+        let status = ZSTD_initDStream(stream)
+        guard !ZstdDecoder.isError(status) else {
+            ZSTD_freeDStream(stream)
+            throw CompressionError.initializationFailed("Failed to initialize zstd stream: \(ZstdDecoder.errorMessage(for: status))")
         }
 
-        streamInitialized = true
-        isInitialized = true
+        self.stream = stream
+        self.isInitialized = true
     }
 
     public func decompress(chunk: Data) throws -> Data {
-        guard isInitialized else {
+        guard isInitialized, let stream else {
             throw CompressionError.notInitialized("Decoder not initialized")
         }
 
@@ -71,46 +52,70 @@ public class StreamingZstdDecoder: StreamingDecoderProtocol {
             return Data()
         }
 
-        guard let outputBuffer else {
-            throw CompressionError.notInitialized("Output buffer not allocated")
-        }
-
         var output = Data()
+        output.reserveCapacity(min(config.chunkSize, max(0, config.maxOutputSize - totalBytesOut)))
 
         try chunk.withUnsafeBytes { (inputPointer: UnsafeRawBufferPointer) in
             guard let baseAddress = inputPointer.baseAddress else {
                 throw CompressionError.invalidInput("Invalid chunk buffer")
             }
 
-            stream.src_ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
-            stream.src_size = chunk.count
+            var inputBuffer = ZSTD_inBuffer(
+                src: UnsafeMutableRawPointer(mutating: baseAddress),
+                size: inputPointer.count,
+                pos: 0
+            )
 
-            repeat {
-                stream.dst_ptr = outputBuffer
-                stream.dst_size = config.chunkSize
+            var outputChunk = [UInt8](repeating: 0, count: config.chunkSize)
+            var previousInputPosition = inputBuffer.pos
 
-                let status = compression_stream_process(&stream, 0)
+            while true {
+                var produced = 0
+                var resultCode: Int = 0
 
-                switch status {
-                case COMPRESSION_STATUS_OK, COMPRESSION_STATUS_END:
-                    let bytesProduced = config.chunkSize - stream.dst_size
-                    if bytesProduced > 0 {
-                        output.append(outputBuffer, count: bytesProduced)
-                        totalBytesOut += bytesProduced
-                    }
+                produced = outputChunk.withUnsafeMutableBytes { destination in
+                    var outputBuffer = ZSTD_outBuffer(
+                        dst: destination.baseAddress,
+                        size: destination.count,
+                        pos: 0
+                    )
+
+                    resultCode = ZSTD_decompressStream(stream, &outputBuffer, &inputBuffer)
+                    return outputBuffer.pos
+                }
+
+                guard !ZstdDecoder.isError(resultCode) else {
+                    throw CompressionError.decompressionFailed("Zstd decompression failed: \(ZstdDecoder.errorMessage(for: resultCode))")
+                }
+
+                if produced > 0 {
+                    output.append(outputChunk, count: produced)
+                    totalBytesOut += produced
 
                     // Rule: Enforce maxOutputSize to avoid unbounded output growth.
                     if totalBytesOut > config.maxOutputSize {
                         throw CompressionError.bufferTooSmall("Output exceeded \(config.maxOutputSize) bytes")
                     }
-
-                case COMPRESSION_STATUS_ERROR:
-                    throw CompressionError.decompressionFailed("Zstd decompression failed")
-
-                default:
-                    throw CompressionError.unknownError("Unexpected Zstd decompression status \(status)")
                 }
-            } while stream.src_size > 0 || stream.dst_size == 0
+
+                let consumedInput = inputBuffer.pos != previousInputPosition
+
+                if inputBuffer.pos == inputBuffer.size {
+                    if resultCode == 0 {
+                        break
+                    }
+                    // Rule: Break when the current chunk is fully consumed and the decoder needs more input.
+                    if produced == 0 {
+                        break
+                    }
+                }
+
+                if produced == 0, !consumedInput {
+                    throw CompressionError.decompressionFailed("Zstd decompression made no progress")
+                }
+
+                previousInputPosition = inputBuffer.pos
+            }
         }
 
         totalBytesIn += chunk.count
@@ -118,42 +123,59 @@ public class StreamingZstdDecoder: StreamingDecoderProtocol {
     }
 
     public func finalize() throws -> Data {
-        guard isInitialized else {
+        guard isInitialized, let stream else {
             throw CompressionError.notInitialized("Decoder not initialized")
         }
 
-        guard let outputBuffer else {
-            throw CompressionError.notInitialized("Output buffer not allocated")
-        }
-
         var output = Data()
+        output.reserveCapacity(min(config.chunkSize, max(0, config.maxOutputSize - totalBytesOut)))
+        var outputChunk = [UInt8](repeating: 0, count: config.chunkSize)
+        var emptyByte: UInt8 = 0
 
-        // Rule: Use an empty source to signal end of input to the stream.
-        stream.src_ptr = UnsafePointer(placeholderBuffer)
-        stream.src_size = 0
+        try withUnsafeMutableBytes(of: &emptyByte) { emptyBuffer in
+            var inputBuffer = ZSTD_inBuffer(
+                src: emptyBuffer.baseAddress,
+                size: 0,
+                pos: 0
+            )
 
-        var status: compression_status
-        repeat {
-            stream.dst_ptr = outputBuffer
-            stream.dst_size = config.chunkSize
+            while true {
+                var produced = 0
+                var resultCode: Int = 0
 
-            status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
+                produced = outputChunk.withUnsafeMutableBytes { destination in
+                    var outputBuffer = ZSTD_outBuffer(
+                        dst: destination.baseAddress,
+                        size: destination.count,
+                        pos: 0
+                    )
 
-            switch status {
-            case COMPRESSION_STATUS_OK, COMPRESSION_STATUS_END:
-                let bytesProduced = config.chunkSize - stream.dst_size
-                if bytesProduced > 0 {
-                    output.append(outputBuffer, count: bytesProduced)
-                    totalBytesOut += bytesProduced
+                    resultCode = ZSTD_decompressStream(stream, &outputBuffer, &inputBuffer)
+                    return outputBuffer.pos
                 }
 
-            case COMPRESSION_STATUS_ERROR:
-                throw CompressionError.decompressionFailed("Zstd finalization failed")
+                guard !ZstdDecoder.isError(resultCode) else {
+                    throw CompressionError.decompressionFailed("Zstd finalization failed: \(ZstdDecoder.errorMessage(for: resultCode))")
+                }
 
-            default:
-                throw CompressionError.unknownError("Unexpected Zstd finalization status \(status)")
+                if produced > 0 {
+                    output.append(outputChunk, count: produced)
+                    totalBytesOut += produced
+
+                    if totalBytesOut > config.maxOutputSize {
+                        throw CompressionError.bufferTooSmall("Output exceeded \(config.maxOutputSize) bytes")
+                    }
+                }
+
+                if resultCode == 0 {
+                    break
+                }
+
+                if produced == 0 {
+                    throw CompressionError.decompressionFailed("Zstd finalization requires more input (truncated stream)")
+                }
             }
-        } while status == COMPRESSION_STATUS_OK && stream.dst_size == 0
+        }
 
         cleanup()
         return output
@@ -166,25 +188,10 @@ public class StreamingZstdDecoder: StreamingDecoderProtocol {
     }
 
     private func cleanup() {
-        if streamInitialized {
-            compression_stream_destroy(&stream)
-            streamInitialized = false
+        if let stream {
+            ZSTD_freeDStream(stream)
+            self.stream = nil
         }
-        outputBuffer?.deallocate()
-        outputBuffer = nil
         isInitialized = false
-
-        // Rule: Recreate the stream to avoid "invalid reuse" after a failed init attempt.
-        resetStreamToPlaceholder()
-    }
-
-    private func resetStreamToPlaceholder() {
-        stream = compression_stream(
-            dst_ptr: placeholderBuffer,
-            dst_size: 0,
-            src_ptr: UnsafePointer(placeholderBuffer),
-            src_size: 0,
-            state: nil
-        )
     }
 }

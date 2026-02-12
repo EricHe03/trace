@@ -111,6 +111,7 @@ final class CertificateManagerTests: XCTestCase {
 
         XCTAssertNotNil(certificate)
         XCTAssertNotNil(privateKey)
+        XCTAssertEqual(certificate.commonName, "test.example.com")
     }
 
     func testGenerateCertificateForDomainCaches() throws {
@@ -131,6 +132,10 @@ final class CertificateManagerTests: XCTestCase {
             XCTAssertNotNil(certificate)
             XCTAssertNotNil(privateKey)
         }
+    }
+
+    func testGenerateCertificateForIPAddress() {
+        XCTAssertNoThrow(try manager.generateCertificateForDomain("127.0.0.1"))
     }
 
     func testDomainKeychainIdentifiersAreCanonicalAndStable() {
@@ -164,6 +169,11 @@ final class CertificateManagerTests: XCTestCase {
         let summary = certificate.summary
         XCTAssertFalse(summary.isEmpty)
         XCTAssertNotEqual(summary, "Unknown")
+    }
+
+    func testRootCACreationDateCanBeRead() throws {
+        _ = try manager.getRootCA()
+        XCTAssertNotNil(manager.getRootCACreationDate())
     }
 
     // MARK: - CertificateError Tests
