@@ -54,12 +54,24 @@ let appProducts: [Product] = [
 let appProducts: [Product] = []
 #endif
 
-let package = Package(
-    name: "Trace",
-    platforms: [
-        .iOS("16.0")
-    ],
-    products: appProducts + [
+let externalDependencies: [Package.Dependency] = [
+    .package(url: "https://github.com/apple/swift-certificates.git", exact: "1.17.1"),
+    .package(url: "https://github.com/apple/swift-asn1.git", exact: "1.5.1"),
+    .package(url: "https://github.com/facebook/zstd.git", exact: "1.5.7")
+]
+
+let traceCompressionDependencies: [Target.Dependency] = [
+    .product(name: "libzstd", package: "zstd")
+]
+
+let traceSecurityDependencies: [Target.Dependency] = [
+    "TraceCore",
+    "TraceNetworking",
+    .product(name: "X509", package: "swift-certificates"),
+    .product(name: "SwiftASN1", package: "swift-asn1")
+]
+
+let packageProducts: [Product] = appProducts + [
         // ═══════════════════════════════════════════════════════
         // Foundation Layer - Core modules with no/minimal dependencies
         // ═══════════════════════════════════════════════════════
@@ -119,8 +131,9 @@ let package = Package(
             name: "TraceVPN",
             targets: ["TraceVPN"]
         )
-    ],
-    targets: [
+]
+
+let packageTargets: [Target] = [
         // ═══════════════════════════════════════════════════════
         // Foundation Layer
         // ═══════════════════════════════════════════════════════
@@ -137,6 +150,7 @@ let package = Package(
         // Dependencies: None
         .target(
             name: "TraceCompression",
+            dependencies: traceCompressionDependencies,
             path: "TraceCompression"
         ),
 
@@ -148,7 +162,7 @@ let package = Package(
         // Dependencies: TraceCore, TraceNetworking
         .target(
             name: "TraceSecurity",
-            dependencies: ["TraceCore", "TraceNetworking"],
+            dependencies: traceSecurityDependencies,
             path: "TraceSecurity"
         ),
 
@@ -412,7 +426,16 @@ let package = Package(
             dependencies: ["Trace"],
             path: "TraceUITests"
         )
+]
+
+let package = Package(
+    name: "Trace",
+    platforms: [
+        .iOS("16.0")
     ],
+    products: packageProducts,
+    dependencies: externalDependencies,
+    targets: packageTargets,
     swiftLanguageModes: [
         .v6
     ]

@@ -6,7 +6,6 @@
 //
 
 import XCTest
-import Compression
 @testable import TraceCompression
 
 final class StreamingZstdDecoderTests: XCTestCase {
@@ -14,7 +13,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     // MARK: - Round-Trip Tests
 
     func testStreamingZstdRoundTrip() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let testStrings = [
             "Short",
@@ -40,7 +39,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     }
 
     func testStreamingZstdSingleChunk() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let original = "Hello, Zstd!".data(using: .utf8)!
         let compressed = try compressZstd(original)
@@ -56,7 +55,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     }
 
     func testStreamingZstdMultipleChunks() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let original = String(repeating: "Test data ", count: 100).data(using: .utf8)!
         let compressed = try compressZstd(original)
@@ -85,7 +84,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     // MARK: - Various Data Sizes
 
     func testStreamingZstdSmallData() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let small = "Hi".data(using: .utf8)!
         let compressed = try compressZstd(small)
@@ -101,7 +100,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     }
 
     func testStreamingZstdMediumData() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let medium = String(repeating: "Medium test data. ", count: 50).data(using: .utf8)!
         let compressed = try compressZstd(medium)
@@ -117,7 +116,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     }
 
     func testStreamingZstdLargeData() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let large = String(repeating: "Lorem ipsum dolor sit amet. ", count: 3000).data(using: .utf8)!
         let compressed = try compressZstd(large)
@@ -134,7 +133,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     }
 
     func testStreamingZstdVeryLargeData() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let veryLarge = Data(repeating: 0x42, count: 100000)
         let compressed = try compressZstd(veryLarge)
@@ -152,7 +151,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     // MARK: - Empty Data Tests
 
     func testStreamingZstdEmptyChunk() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let decoder = StreamingZstdDecoder()
         try decoder.initialize()
@@ -165,7 +164,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     // MARK: - Invalid Data Tests
 
     func testStreamingZstdInvalidData() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let invalidData = Data([0xFF, 0xFF, 0xFF, 0xFF])
 
@@ -178,7 +177,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     }
 
     func testStreamingZstdGarbageData() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let garbage = Data((0..<100).map { _ in UInt8.random(in: 0...255) })
 
@@ -186,6 +185,38 @@ final class StreamingZstdDecoderTests: XCTestCase {
         try decoder.initialize()
 
         XCTAssertThrowsError(try decoder.decompress(chunk: garbage))
+    }
+
+    func testStreamingZstdTruncatedDataFailsOnFinalize() throws {
+        try requireZstdSupport()
+
+        let original = String(repeating: "stream truncate", count: 300).data(using: .utf8)!
+        let compressed = try compressZstd(original)
+        let truncated = Data(compressed.dropLast(max(1, compressed.count / 8)))
+
+        let decoder = StreamingZstdDecoder()
+        try decoder.initialize()
+
+        _ = try decoder.decompress(chunk: truncated)
+
+        XCTAssertThrowsError(try decoder.finalize()) { error in
+            XCTAssertTrue(error is CompressionError)
+        }
+    }
+
+    func testStreamingZstdCorruptedDataThrows() throws {
+        try requireZstdSupport()
+
+        let original = String(repeating: "stream corrupt", count: 300).data(using: .utf8)!
+        var compressed = try compressZstd(original)
+        compressed[compressed.startIndex + 8] ^= 0xAA
+
+        let decoder = StreamingZstdDecoder()
+        try decoder.initialize()
+
+        XCTAssertThrowsError(try decoder.decompress(chunk: compressed)) { error in
+            XCTAssertTrue(error is CompressionError)
+        }
     }
 
     // MARK: - State Tests
@@ -204,7 +235,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     }
 
     func testStreamingZstdReset() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let decoder = StreamingZstdDecoder()
         try decoder.initialize()
@@ -220,7 +251,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     }
 
     func testStreamingZstdTracksBytes() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let original = "Test".data(using: .utf8)!
         let compressed = try compressZstd(original)
@@ -236,7 +267,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     }
 
     func testStreamingZstdMultipleInitialize() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let decoder = StreamingZstdDecoder()
         try decoder.initialize()
@@ -249,7 +280,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     // MARK: - Custom Configuration Tests
 
     func testStreamingZstdCustomConfig() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let config = StreamingDecoderConfig(
             chunkSize: 1024,
@@ -270,7 +301,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     }
 
     func testStreamingZstdMaxOutputSizeExceeded() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let config = StreamingDecoderConfig(
             chunkSize: 64 * 1024,
@@ -295,7 +326,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     // MARK: - Binary Data Tests
 
     func testStreamingZstdBinaryData() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         var binaryData = Data()
         for i in 0..<1000 {
@@ -317,7 +348,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     // MARK: - Unicode Tests
 
     func testStreamingZstdUnicodeString() throws {
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
+        try requireZstdSupport()
 
         let unicode = "Hello 世界 🌍 مرحبا".data(using: .utf8)!
         let compressed = try compressZstd(unicode)
@@ -337,55 +368,10 @@ final class StreamingZstdDecoderTests: XCTestCase {
 
     // MARK: - Initialization Tests
 
-    func testStreamingZstdInitializeFailsWhenUnsupported() throws {
-        guard ZstdCompressionAlgorithm.supportedAlgorithm == nil else {
-            throw XCTSkip("Zstandard is supported on this SDK, cannot test failure case")
-        }
-
+    func testStreamingZstdInitializeSucceeds() throws {
+        try requireZstdSupport()
         let decoder = StreamingZstdDecoder()
-
-        XCTAssertThrowsError(try decoder.initialize()) { error in
-            if case CompressionError.decompressionFailed = error {
-                // Expected
-            } else {
-                XCTFail("Expected decompressionFailed error")
-            }
-        }
-    }
-
-    // MARK: - Helper Methods
-
-    private func compressZstd(_ data: Data) throws -> Data {
-        guard let algorithm = ZstdCompressionAlgorithm.supportedAlgorithm else {
-            throw CompressionError.initializationFailed("Zstandard compression is unavailable on this SDK")
-        }
-
-        let maxSize = max(data.count * 8, 1024)
-        var bufferSize = max(data.count, 64)
-
-        while bufferSize <= maxSize {
-            var compressed = Data(count: bufferSize)
-            let actualSize = compressed.withUnsafeMutableBytes { outputBuffer in
-                data.withUnsafeBytes { inputBuffer in
-                    compression_encode_buffer(
-                        outputBuffer.baseAddress!,
-                        bufferSize,
-                        inputBuffer.baseAddress!,
-                        data.count,
-                        nil,
-                        algorithm
-                    )
-                }
-            }
-
-            if actualSize > 0 {
-                compressed.count = actualSize
-                return compressed
-            }
-
-            bufferSize *= 2
-        }
-
-        throw CompressionError.decompressionFailed("Zstandard compression failed for test fixture")
+        XCTAssertNoThrow(try decoder.initialize())
+        XCTAssertTrue(decoder.isInitialized)
     }
 }

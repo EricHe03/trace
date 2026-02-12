@@ -217,11 +217,8 @@ final class StreamingDecompressionTests: XCTestCase {
     func testStreamingZstd_Decompresses() throws {
         let original = "Hello, Zstd!".data(using: .utf8)!
 
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
-        guard let compressed = compressWithCompressionFramework(original, algorithm: ZstdCompressionAlgorithm.supportedAlgorithm!) else {
-            XCTFail("Failed to compress")
-            return
-        }
+        try requireZstdSupport()
+        let compressed = try compressZstd(original)
 
         let decoder = StreamingZstdDecoder()
         try decoder.initialize()
@@ -236,11 +233,8 @@ final class StreamingDecompressionTests: XCTestCase {
     func testStreamingZstd_TracksBytes() throws {
         let original = "Test".data(using: .utf8)!
 
-        try XCTSkipIf(ZstdCompressionAlgorithm.supportedAlgorithm == nil, "Zstandard compression is unavailable on this SDK")
-        guard let compressed = compressWithCompressionFramework(original, algorithm: ZstdCompressionAlgorithm.supportedAlgorithm!) else {
-            XCTFail("Failed to compress")
-            return
-        }
+        try requireZstdSupport()
+        let compressed = try compressZstd(original)
 
         let decoder = StreamingZstdDecoder()
         try decoder.initialize()
