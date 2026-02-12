@@ -54,6 +54,27 @@ final class StreamingZstdDecoderTests: XCTestCase {
         XCTAssertEqual(result, original)
     }
 
+    func testStreamingZstdSingleChunkFlushesFrameWithoutFinalizeOutput() throws {
+        try requireZstdSupport()
+
+        let original = Data(repeating: 0x61, count: 200_000)
+        let compressed = try compressZstd(original)
+
+        let decoder = StreamingZstdDecoder(
+            config: StreamingDecoderConfig(
+                chunkSize: 1024,
+                maxOutputSize: 400_000
+            )
+        )
+        try decoder.initialize()
+
+        let chunk = try decoder.decompress(chunk: compressed)
+        XCTAssertEqual(chunk, original)
+
+        let final = try decoder.finalize()
+        XCTAssertTrue(final.isEmpty)
+    }
+
     func testStreamingZstdMultipleChunks() throws {
         try requireZstdSupport()
 

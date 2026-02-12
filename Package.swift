@@ -416,6 +416,8 @@ let packageTargets: [Target] = [
                 "TraceNetworking",
                 "TraceProxy",
                 "TraceFeatures",
+                .product(name: "libzstd", package: "zstd"),
+                .product(name: "X509", package: "swift-certificates"),
                 "TraceVPN",
                 "TraceWidget"
             ],

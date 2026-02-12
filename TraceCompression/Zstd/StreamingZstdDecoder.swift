@@ -69,7 +69,7 @@ public class StreamingZstdDecoder: StreamingDecoderProtocol {
             var outputChunk = [UInt8](repeating: 0, count: config.chunkSize)
             var previousInputPosition = inputBuffer.pos
 
-            while inputBuffer.pos < inputBuffer.size {
+            while true {
                 var produced = 0
                 var resultCode: Int = 0
 
@@ -98,7 +98,19 @@ public class StreamingZstdDecoder: StreamingDecoderProtocol {
                     }
                 }
 
-                if produced == 0, inputBuffer.pos == previousInputPosition {
+                let consumedInput = inputBuffer.pos != previousInputPosition
+
+                if inputBuffer.pos == inputBuffer.size {
+                    if resultCode == 0 {
+                        break
+                    }
+                    // Rule: Break when the current chunk is fully consumed and the decoder needs more input.
+                    if produced == 0 {
+                        break
+                    }
+                }
+
+                if produced == 0, !consumedInput {
                     throw CompressionError.decompressionFailed("Zstd decompression made no progress")
                 }
 
