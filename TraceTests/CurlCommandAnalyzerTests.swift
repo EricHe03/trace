@@ -116,7 +116,7 @@ final class CurlCommandAnalyzerTests: XCTestCase {
     }
 
     func testAnalyzeFailsFastForUnsupportedBackendOption() {
-        let analyzer = CurlCommandAnalyzer(capabilities: .urlSession)
+        let analyzer = CurlCommandAnalyzer(capabilities: .nioAsyncHTTPClient)
 
         let plan = analyzer.analyze("curl --parallel https://example.com")
 
@@ -125,7 +125,7 @@ final class CurlCommandAnalyzerTests: XCTestCase {
     }
 
     func testAnalyzeFailsFastForUnsupportedProtocolOnDefaultBackend() {
-        let analyzer = CurlCommandAnalyzer(capabilities: .urlSession)
+        let analyzer = CurlCommandAnalyzer(capabilities: .nioAsyncHTTPClient)
 
         let plan = analyzer.analyze("curl ftp://example.com/file.txt")
 

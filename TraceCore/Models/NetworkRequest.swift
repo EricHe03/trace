@@ -19,7 +19,7 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public var statusCode: Int?
     public var statusMessage: String?
     public let timestamp: Date
-    public let duration: TimeInterval
+    public var duration: TimeInterval
     public var requestHeaders: [TraceHTTPHeader]
     public var responseHeaders: [TraceHTTPHeader]
     public var requestBody: BodyStorage

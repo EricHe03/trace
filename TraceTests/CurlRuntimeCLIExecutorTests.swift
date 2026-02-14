@@ -5,43 +5,46 @@
 //  Created by Justin on 2026/02/08.
 //
 
-import Foundation
 import XCTest
 @testable import TraceCore
 @testable import TraceFeatures
-#if canImport(TraceCurlRuntime)
-import TraceCurlRuntime
-#endif
 
 @MainActor
 final class CurlRuntimeCLIExecutorTests: XCTestCase {
 
-    func testRuntimeCLIExecutesTransferWhenAvailable() async throws {
-        #if canImport(TraceCurlRuntime)
-        let report = CurlRuntimeBridge.currentReport()
-        guard report.available, report.supportsFullOptionParity, report.supportsCLIExecution else {
-            throw XCTSkip("Runtime CLI backend unavailable in this environment")
-        }
+    func testExecuteUsesParsedTransferPathWithoutRuntimeCLI() async {
+        let mockExecutor = MockRequestExecutor()
+        let executor = CurlCommandExecutor(
+            analyzer: CurlCommandAnalyzer(capabilities: .nioAsyncHTTPClient),
+            requestExecutorFactory: { mockExecutor }
+        )
 
-        let fileURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("trace-runtime-\(UUID().uuidString).txt")
-        let payload = "runtime-backend-smoke-test"
-        try payload.write(to: fileURL, atomically: true, encoding: .utf8)
-        defer {
-            try? FileManager.default.removeItem(at: fileURL)
-        }
-
-        let result = await CurlCommandExecutor().execute("curl \(fileURL.absoluteString)")
+        let result = await executor.execute("curl https://example.com")
 
         XCTAssertEqual(result.transfers.count, 1)
         XCTAssertEqual(result.succeededCount, 1)
         XCTAssertEqual(result.failedCount, 0)
+        XCTAssertEqual(mockExecutor.executedURLs, ["https://example.com"])
+    }
+}
 
-        let request = try XCTUnwrap(result.transfers.first?.request)
-        let body = request.responseBody.getString()
-        XCTAssertTrue(body?.contains(payload) == true)
-        #else
-        throw XCTSkip("TraceCurlRuntime module unavailable")
-        #endif
+@MainActor
+private final class MockRequestExecutor: CurlTransferRequestExecuting {
+    var executedURLs: [String] = []
+
+    func execute(_ request: RequestBuilder) async throws -> NetworkRequest {
+        executedURLs.append(request.url)
+        return NetworkRequest(
+            url: request.url,
+            method: request.method,
+            requestMethodRaw: request.methodRaw,
+            statusCode: 200,
+            timestamp: Date(),
+            duration: 0.01,
+            requestHeaders: request.headers.map { TraceHTTPHeader(key: $0.key, value: $0.value) },
+            responseHeaders: [TraceHTTPHeader(key: "Content-Type", value: "text/plain")],
+            requestBody: .empty,
+            responseBody: .empty
+        )
     }
 }

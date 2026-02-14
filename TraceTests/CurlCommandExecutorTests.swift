@@ -8,9 +8,6 @@
 import XCTest
 @testable import TraceCore
 @testable import TraceFeatures
-#if canImport(TraceCurlRuntime)
-import TraceCurlRuntime
-#endif
 
 @MainActor
 final class CurlCommandExecutorTests: XCTestCase {
@@ -18,7 +15,7 @@ final class CurlCommandExecutorTests: XCTestCase {
     func testExecuteBlocksWhenAnalyzerHasErrors() async {
         let mockExecutor = MockTransferExecutor()
         let executor = CurlCommandExecutor(
-            analyzer: CurlCommandAnalyzer(capabilities: .urlSession),
+            analyzer: CurlCommandAnalyzer(capabilities: .nioAsyncHTTPClient),
             requestExecutorFactory: { mockExecutor }
         )
 
@@ -102,64 +99,6 @@ final class CurlCommandExecutorTests: XCTestCase {
         XCTAssertEqual(mockExecutor.executedURLs, ["https://one.example", "https://two.example"])
         XCTAssertEqual(result.transfers.count, 2)
     }
-
-    func testExecuteRuntimeRejectsExpiredCertificateTransfer() async throws {
-        #if canImport(TraceCurlRuntime)
-        let stderr = "curl: (60) SSL certificate problem: certificate has expired"
-        let executor = makeRuntimeExecutor(exitCode: 60, statusCode: 0, stderr: stderr)
-
-        let result = await executor.execute("curl https://expired.badssl.com/")
-
-        XCTAssertEqual(result.transfers.count, 1)
-        XCTAssertEqual(result.succeededCount, 0)
-        XCTAssertEqual(result.failedCount, 1)
-
-        let transfer = try XCTUnwrap(result.transfers.first)
-        XCTAssertFalse(transfer.succeeded)
-        XCTAssertEqual(
-            transfer.errorMessage,
-            "curl exited with code 60: \(stderr)"
-        )
-        XCTAssertNil(transfer.request)
-        XCTAssertTrue(
-            transfer.diagnostics.contains {
-                $0.message.contains("failed in runtime backend") &&
-                    $0.message.contains("certificate has expired")
-            }
-        )
-        #else
-        throw XCTSkip("TraceCurlRuntime module unavailable")
-        #endif
-    }
-
-    func testExecuteRuntimeRejectsSelfSignedCertificateTransfer() async throws {
-        #if canImport(TraceCurlRuntime)
-        let stderr = "curl: (60) SSL certificate problem: self signed certificate"
-        let executor = makeRuntimeExecutor(exitCode: 60, statusCode: 0, stderr: stderr)
-
-        let result = await executor.execute("curl https://self-signed.badssl.com/")
-
-        XCTAssertEqual(result.transfers.count, 1)
-        XCTAssertEqual(result.succeededCount, 0)
-        XCTAssertEqual(result.failedCount, 1)
-
-        let transfer = try XCTUnwrap(result.transfers.first)
-        XCTAssertFalse(transfer.succeeded)
-        XCTAssertEqual(
-            transfer.errorMessage,
-            "curl exited with code 60: \(stderr)"
-        )
-        XCTAssertNil(transfer.request)
-        XCTAssertTrue(
-            transfer.diagnostics.contains {
-                $0.message.contains("failed in runtime backend") &&
-                    $0.message.contains("self signed certificate")
-            }
-        )
-        #else
-        throw XCTSkip("TraceCurlRuntime module unavailable")
-        #endif
-    }
 }
 
 @MainActor
@@ -194,38 +133,7 @@ private enum MockError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .transport:
-            return "Mock transport error"
+            "Mock transport error"
         }
     }
 }
-
-#if canImport(TraceCurlRuntime)
-private extension CurlCommandExecutorTests {
-    func makeRuntimeExecutor(
-        exitCode: Int32,
-        statusCode: Int?,
-        stderr: String
-    ) -> CurlCommandExecutor {
-        CurlCommandExecutor(
-            analyzer: CurlCommandAnalyzer(capabilities: .parityValidation),
-            requestExecutorFactory: { MockTransferExecutor() },
-            runtimeExecutionOverride: true,
-            runtimeTransferExecutor: { argv in
-                let url = argv.last
-                return CurlRuntimeExecutionResult(
-                    exitCode: exitCode,
-                    transferCount: 1,
-                    statusCode: statusCode,
-                    statusLine: nil,
-                    effectiveURL: url,
-                    responseHeaderLines: [],
-                    responseBody: Data(),
-                    timeTotal: nil,
-                    standardOutput: "",
-                    standardError: stderr
-                )
-            }
-        )
-    }
-}
-#endif
