@@ -6,27 +6,6 @@ import AppleProductTypes
 import Foundation
 import PackageDescription
 
-let curlVendorSources: [String] = {
-    let excludedSources: Set<String> = [
-        // We embed curl as an in-process runtime and call operate() directly.
-        // Excluding the CLI entrypoint avoids exporting an unnecessary main symbol.
-        "src/tool_main.c"
-    ]
-    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-    let sourceListURL = root
-        .appendingPathComponent("ThirdParty")
-        .appendingPathComponent("curl-shim")
-        .appendingPathComponent("curl_vendor_sources.txt")
-    guard let contents = try? String(contentsOf: sourceListURL, encoding: .utf8) else {
-        return []
-    }
-    return contents
-        .split(whereSeparator: \.isNewline)
-        .map(String.init)
-        .filter { !$0.isEmpty }
-        .filter { !excludedSources.contains($0) }
-}()
-
 #if canImport(AppleProductTypes)
 let appProducts: [Product] = [
     .iOSApplication(
@@ -57,18 +36,66 @@ let appProducts: [Product] = []
 let externalDependencies: [Package.Dependency] = [
     .package(url: "https://github.com/apple/swift-certificates.git", exact: "1.17.1"),
     .package(url: "https://github.com/apple/swift-asn1.git", exact: "1.5.1"),
-    .package(url: "https://github.com/facebook/zstd.git", exact: "1.5.7")
+    .package(url: "https://github.com/facebook/zstd.git", exact: "1.5.7"),
+    .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
+    .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.0.0"),
+    .package(url: "https://github.com/apple/swift-nio-transport-services.git", from: "1.0.0"),
+    .package(url: "https://github.com/apple/swift-nio-http2.git", from: "1.0.0"),
+    .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.0.0")
 ]
 
 let traceCompressionDependencies: [Target.Dependency] = [
     .product(name: "libzstd", package: "zstd")
 ]
 
+let traceCoreDependencies: [Target.Dependency] = [
+    "TraceCompression",
+    .product(name: "AsyncHTTPClient", package: "async-http-client"),
+    .product(name: "NIOCore", package: "swift-nio"),
+    .product(name: "NIOTransportServices", package: "swift-nio-transport-services")
+]
+
 let traceSecurityDependencies: [Target.Dependency] = [
     "TraceCore",
-    "TraceNetworking",
     .product(name: "X509", package: "swift-certificates"),
-    .product(name: "SwiftASN1", package: "swift-asn1")
+    .product(name: "SwiftASN1", package: "swift-asn1"),
+    .product(name: "NIOCore", package: "swift-nio"),
+    .product(name: "NIOHTTP1", package: "swift-nio"),
+    .product(name: "NIOHTTP2", package: "swift-nio-http2"),
+    .product(name: "NIOWebSocket", package: "swift-nio"),
+    .product(name: "NIOSSL", package: "swift-nio-ssl"),
+    .product(name: "NIOTransportServices", package: "swift-nio-transport-services")
+]
+
+let traceProxyDependencies: [Target.Dependency] = [
+    "TraceCore",
+    "TraceSecurity",
+    "TraceFeatures",
+    .product(name: "NIOCore", package: "swift-nio"),
+    .product(name: "NIOHTTP1", package: "swift-nio"),
+    .product(name: "NIOHTTP2", package: "swift-nio-http2"),
+    .product(name: "NIOWebSocket", package: "swift-nio"),
+    .product(name: "NIOSSL", package: "swift-nio-ssl"),
+    .product(name: "NIOTransportServices", package: "swift-nio-transport-services")
+]
+
+let traceFeaturesDependencies: [Target.Dependency] = [
+    "TraceCore",
+    "TraceSecurity",
+    .product(name: "AsyncHTTPClient", package: "async-http-client"),
+    .product(name: "NIOCore", package: "swift-nio"),
+    .product(name: "NIOHTTP1", package: "swift-nio")
+]
+
+let traceVPNDependencies: [Target.Dependency] = [
+    "TraceCore",
+    "TraceSecurity",
+    "TraceNetworking",
+    "TraceProxy",
+    "HevSocks5Tunnel",
+    "TracePacket",
+    .product(name: "NIOCore", package: "swift-nio"),
+    .product(name: "NIOTransportServices", package: "swift-nio-transport-services")
 ]
 
 let packageProducts: [Product] = appProducts + [
@@ -116,10 +143,6 @@ let packageProducts: [Product] = appProducts + [
             targets: ["TraceFeatures"]
         ),
         .library(
-            name: "TraceCurlRuntime",
-            targets: ["TraceCurlRuntime"]
-        ),
-        .library(
             name: "TraceUI",
             targets: ["TraceUI"]
         ),
@@ -142,7 +165,7 @@ let packageTargets: [Target] = [
         // Dependencies: None
         .target(
             name: "TraceCore",
-            dependencies: ["TraceCompression"],
+            dependencies: traceCoreDependencies,
             path: "TraceCore"
         ),
 
@@ -159,14 +182,14 @@ let packageTargets: [Target] = [
         // ═══════════════════════════════════════════════════════
 
         // TraceSecurity: Certificate management and TLS handling
-        // Dependencies: TraceCore, TraceNetworking
+        // Dependencies: TraceCore
         .target(
             name: "TraceSecurity",
             dependencies: traceSecurityDependencies,
             path: "TraceSecurity"
         ),
 
-        // TraceNetworking: Protocol parsers (HTTP, HTTP2, WebSocket, etc.)
+        // TraceNetworking: Shared networking primitives (DNS parsing, logging, diagnostics)
         // Dependencies: TraceCore, TraceCompression
         .target(
             name: "TraceNetworking",
@@ -179,91 +202,6 @@ let packageTargets: [Target] = [
             name: "TracePacket",
             dependencies: ["TraceCore"],
             path: "TracePacket"
-        ),
-
-        // CMBedTLS: Vendored mbed TLS backend used by curl runtime.
-        .target(
-            name: "CMBedTLS",
-            path: "ThirdParty/mbedtls",
-            exclude: [
-                "library/CMakeLists.txt",
-                "library/Makefile",
-                "library/.gitignore"
-            ],
-            sources: ["library"],
-            publicHeadersPath: "include"
-        ),
-
-        // CNghttp2: Vendored nghttp2 backend used by curl runtime for HTTP/2.
-        .target(
-            name: "CNghttp2",
-            path: "ThirdParty/nghttp2",
-            exclude: [
-                "lib/CMakeLists.txt",
-                "lib/Makefile.am",
-                "lib/Makefile.msvc",
-                "lib/config.cmake.in",
-                "lib/libnghttp2.pc.in",
-                "lib/version.rc.in",
-                "lib/includes/CMakeLists.txt",
-                "lib/includes/Makefile.am",
-                "lib/includes/nghttp2/nghttp2ver.h.in",
-                "lib/.gitignore"
-            ],
-            sources: ["lib"],
-            publicHeadersPath: "lib/includes",
-            cSettings: [
-                .headerSearchPath("lib/includes"),
-                .headerSearchPath("../curl-shim/include")
-            ]
-        ),
-
-        // CCurlVendor: Vendored curl lib/tool sources built in-process.
-        .target(
-            name: "CCurlVendor",
-            dependencies: ["CMBedTLS", "CNghttp2"],
-            path: "ThirdParty/curl",
-            sources: curlVendorSources,
-            publicHeadersPath: "include",
-            cSettings: [
-                .define("BUILDING_LIBCURL"),
-                .define("CURL_HIDDEN_SYMBOLS"),
-                .define("HAVE_CONFIG_H"),
-                .define("CURL_STATICLIB"),
-                .headerSearchPath("include"),
-                .headerSearchPath("lib"),
-                .headerSearchPath("src"),
-                .headerSearchPath("../curl-shim/include"),
-                .headerSearchPath("../mbedtls/include"),
-                .headerSearchPath("../nghttp2/lib/includes")
-            ],
-            linkerSettings: [
-                .linkedLibrary("z")
-            ]
-        ),
-
-        // CCurlShim: C ABI shim for vendored curl integration.
-        .target(
-            name: "CCurlShim",
-            dependencies: ["CCurlVendor"],
-            path: "ThirdParty/curl-shim",
-            publicHeadersPath: "include",
-            cSettings: [
-                .headerSearchPath("include"),
-                .headerSearchPath("../curl/include"),
-                .headerSearchPath("../curl/lib"),
-                .headerSearchPath("../curl/src")
-            ]
-        ),
-
-        // TraceCurlRuntime: Swift wrapper around CCurlShim runtime capabilities.
-        .target(
-            name: "TraceCurlRuntime",
-            dependencies: ["CCurlShim"],
-            path: "TraceCurlRuntime",
-            resources: [
-                .copy("Resources/apple-system-roots.pem")
-            ]
         ),
 
         // HevSocks5Tunnel: C tunnel over SOCKS5 (tun2socks replacement)
@@ -332,10 +270,10 @@ let packageTargets: [Target] = [
         // ═══════════════════════════════════════════════════════
 
         // TraceProxy: MITM proxy and connection management
-        // Dependencies: TraceCore, TraceNetworking, TraceSecurity
+        // Dependencies: TraceCore, TraceSecurity
         .target(
             name: "TraceProxy",
-            dependencies: ["TraceCore", "TraceNetworking", "TraceSecurity", "TraceFeatures"],
+            dependencies: traceProxyDependencies,
             path: "TraceProxy"
         ),
 
@@ -343,7 +281,7 @@ let packageTargets: [Target] = [
         // Dependencies: TraceCore, TraceSecurity
         .target(
             name: "TraceFeatures",
-            dependencies: ["TraceCore", "TraceSecurity", "TraceCurlRuntime"],
+            dependencies: traceFeaturesDependencies,
             path: "TraceFeatures"
         ),
 
@@ -381,14 +319,7 @@ let packageTargets: [Target] = [
         // VPN Network Extension
         .target(
             name: "TraceVPN",
-            dependencies: [
-                "TraceCore",
-                "TraceSecurity",
-                "TraceNetworking",
-                "TraceProxy",
-                "HevSocks5Tunnel",
-                "TracePacket"
-            ],
+            dependencies: traceVPNDependencies,
             path: "TraceVPN"
         ),
 
@@ -418,6 +349,14 @@ let packageTargets: [Target] = [
                 "TraceFeatures",
                 .product(name: "libzstd", package: "zstd"),
                 .product(name: "X509", package: "swift-certificates"),
+                .product(name: "AsyncHTTPClient", package: "async-http-client"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOEmbedded", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOHTTP2", package: "swift-nio-http2"),
+                .product(name: "NIOWebSocket", package: "swift-nio"),
+                .product(name: "NIOSSL", package: "swift-nio-ssl"),
+                .product(name: "NIOTransportServices", package: "swift-nio-transport-services"),
                 "TraceVPN",
                 "TraceWidget"
             ],

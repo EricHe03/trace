@@ -8,6 +8,7 @@
 import Foundation
 import Security
 import XCTest
+import SwiftASN1
 import X509
 @testable import Trace
 @testable import TraceSecurity
