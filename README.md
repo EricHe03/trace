@@ -28,6 +28,16 @@ Trace is built as a local Network Extension packet tunnel with on-device TLS MIT
 - Quick actions, notification actions, and Widget/Live Activity integration
 - Built-in utilities (Base64, URL encode/decode, JSON formatter, hash, timestamp)
 
+## Networking Architecture
+
+- Runtime foundation: shared NIOTS event-loop + AsyncHTTPClient lifecycle via `TraceCore/Networking/NIORuntime.swift`.
+- Request execution path: `TraceFeatures/Request/RequestExecutor.swift` uses AsyncHTTPClient transport abstraction (API unchanged for `execute/replay/get/post`).
+- Proxy/MITM path: `TraceProxy/MITM/MITMProxyServer.swift` delegates to NIO engine `TraceProxy/MITM/NIOMITMProxyEngine.swift` (HTTP/1.1 codec, HTTP/2 stream handling, NIOSSL MITM TLS).
+- Proxy ingress: explicit proxy CONNECT handling remains default, with optional transparent TLS ClientHello ingress mode preserved behind runtime config.
+- VPN path: SOCKS5 + UDP forwarding in `TraceVPN/Providers/LocalSocks5Server.swift`, `TraceVPN/UDP/UDPForwarder.swift`, and UDP probe in `TraceVPN/Providers/HevSocks5TunnelForwarder.swift` run on NIOTS/NIO.
+- Intentional exception: app-originated capture through `Trace/NetworkInterceptor.swift` remains URLProtocol-based.
+- Removed legacy runtime/parser stack: `TraceCurlRuntime`, vendored curl artifacts, and custom HTTP/1.1/HTTP/2/WebSocket parser modules.
+
 ## Requirements
 
 - macOS with Xcode 26.2 or newer
@@ -55,39 +65,6 @@ open Trace.xcodeproj
 4. Ensure all targets use the same App Group (`APP_GROUP_IDENTIFIER`).
 5. If you change the VPN extension bundle ID, also update `providerBundleIdentifier` in `TraceFeatures/VPN/VPNManager.swift`.
 6. Build and run on a physical device.
-
-### Updating pinned curl sources
-
-Use the helper script to retarget the curl submodule to a specific release tag:
-
-```bash
-./Tools/Curl/fetch_curl_source.sh 8.18.0 submodule
-./Tools/Curl/verify_curl_vendor_sync.sh
-```
-
-The runtime TLS backend is vendored with `mbedtls`. Keep it pinned in git submodules:
-
-```bash
-git -C ThirdParty/mbedtls checkout v3.6.5
-git -C ThirdParty/nghttp2 checkout v1.67.1
-```
-
-Regenerate the Apple root CA bundle used by the in-process curl runtime:
-
-```bash
-./Tools/Curl/generate_apple_ca_bundle.sh
-./Tools/Curl/verify_apple_ca_bundle.sh
-```
-
-Then stage all vendor metadata updates:
-
-```bash
-git add ThirdParty/curl ThirdParty/mbedtls .gitmodules \
-  ThirdParty/curl-shim/include/trace_curl_vendor.h \
-  ThirdParty/curl-shim/include/nghttp2/nghttp2ver.h \
-  ThirdParty/nghttp2 \
-  TraceCurlRuntime/Resources/apple-system-roots.pem
-```
 
 ## Quick Start
 
@@ -133,20 +110,17 @@ Trace/
 ├── TraceWidget/            # Widget source (used by TraceWidgetExtension target)
 ├── TraceCore/              # Models, storage, logging, shared utilities
 ├── TraceCompression/       # Brotli, Deflate, Zstd decoding
-├── TraceNetworking/        # HTTP/HTTP2/WebSocket/SSE parsing
+├── TraceNetworking/        # DNS parsing and shared networking diagnostics utilities
 ├── TraceSecurity/          # Certificate and TLS handling
 ├── TraceProxy/             # MITM proxy and capture pipeline
 ├── TracePacket/            # Packet parsing and TCP/UDP reassembly
-├── TraceCurlRuntime/       # Swift wrapper for vendored curl runtime
 ├── TraceFeatures/          # Feature modules (VPN, export, scripting, cleanup, etc.)
 ├── TraceUI/                # Shared UI components/utilities
 ├── TraceTests/             # Unit tests
 ├── TraceUITests/           # UI tests
 ├── ThirdParty/hev-socks5-tunnel/  # Git submodule: tun2socks for full-tunnel forwarding
-├── ThirdParty/curl/               # Git submodule: curl tool/lib sources
-├── ThirdParty/curl-shim/          # C ABI shim for curl integration
-├── ThirdParty/mbedtls/            # Git submodule: TLS backend for curl runtime
-└── ThirdParty/nghttp2/            # Git submodule: HTTP/2 backend for curl runtime
+├── ThirdParty/mbedtls/            # Git submodule: TLS dependencies
+└── ThirdParty/nghttp2/            # Git submodule: HTTP/2 dependencies
 ```
 
 ## Testing
@@ -180,12 +154,6 @@ swiftlint lint --strict --config .swiftlint.yml
 - Certificate pinning/custom trust validation prevents HTTPS MITM decryption.
 - QUIC/HTTP3 is not decrypted; optional QUIC blocking can force HTTP/2 in many cases.
 - Packet-tunnel behavior cannot be fully validated in iOS Simulator.
-- cURL import executes through the vendored in-process runtime; commands that
-  require unavailable backend capabilities fail fast with explicit diagnostics.
-- Runtime HTTPS/TLS for cURL import is provided by vendored `mbedtls`, using a
-  bundled Apple root CA PEM for default certificate verification.
-- Runtime `--ca-native` is not available with the current `mbedtls` backend; the
-  bundled CA PEM remains the default verification source unless explicitly overridden.
 
 ## Contributing
 

@@ -138,9 +138,8 @@ The MITM proxy server:
 
 #### 5. Protocol Parsing
 
-- **HTTP/HTTP2**: `TraceNetworking` contains parsers for HTTP/1.1 and HTTP/2 frames
-- **WebSocket**: Handled by `TraceNetworking/WebSocket/`
-- **SSE**: Handled by `TraceNetworking/SSE/SSEHandler.swift`
+- **HTTP/HTTP2/WebSocket**: Parsed/framed by NIO codecs in the proxy pipeline (`TraceProxy/MITM/NIOMITMProxyEngine.swift`)
+- **SSE**: Captured from proxy stream handling in the MITM pipeline
 
 ### Testing Considerations
 

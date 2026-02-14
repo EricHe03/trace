@@ -1,7 +1,0 @@
-#ifndef TRACE_CURL_VENDOR_H
-#define TRACE_CURL_VENDOR_H
-
-#define TRACE_CURL_VENDOR_TAG "curl-8_18_0"
-#define TRACE_CURL_VENDOR_COMMIT "2eebc58c4b8d68c98c8344381a9f6df4cca838fd"
-
-#endif /* TRACE_CURL_VENDOR_H */
