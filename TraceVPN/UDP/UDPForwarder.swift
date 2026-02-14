@@ -7,14 +7,15 @@
 
 import Darwin
 import Foundation
-import Network
+import NIOCore
+import NIOTransportServices
 import NetworkExtension
 import os
 import TraceCore
 import TracePacket
 
 final class UDPForwarder: @unchecked Sendable {
-    private struct FlowKey: Hashable {
+    fileprivate struct FlowKey: Hashable {
         let sourceIP: TracePacket.IPAddress
         let sourcePort: UInt16
         let destinationIP: TracePacket.IPAddress
@@ -32,13 +33,15 @@ final class UDPForwarder: @unchecked Sendable {
 
     private final class UDPForwardConnection: @unchecked Sendable {
         let key: FlowKey
-        let connection: NWConnection
+        let remoteAddress: SocketAddress
+        var channel: Channel?
         var lastActivity: Date
         var isReady = false
+        var pendingPayloads: [Data] = []
 
-        init(key: FlowKey, connection: NWConnection, lastActivity: Date) {
+        init(key: FlowKey, remoteAddress: SocketAddress, lastActivity: Date) {
             self.key = key
-            self.connection = connection
+            self.remoteAddress = remoteAddress
             self.lastActivity = lastActivity
         }
     }
@@ -47,9 +50,12 @@ final class UDPForwarder: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.trace.vpn.udp_forwarder", qos: .userInitiated)
     private let cleanupInterval: TimeInterval
     private let idleTimeout: TimeInterval
+    private let logSampler = LogSampler()
+
+    private var group: NIOTSEventLoopGroup?
+    private var runtimeAcquired = false
     private var connections: [FlowKey: UDPForwardConnection] = [:]
     private var cleanupTimer: DispatchSourceTimer?
-    private let logSampler = LogSampler()
     private var packetIdentifier: UInt16 = 0
     private var metrics = Metrics()
 
@@ -57,6 +63,18 @@ final class UDPForwarder: @unchecked Sendable {
         self.packetFlow = packetFlow
         self.idleTimeout = idleTimeout
         self.cleanupInterval = cleanupInterval
+
+        let resources = NIORuntime.shared.acquire(for: .networkExtension)
+        if let eventLoopGroup = resources.eventLoopGroup as? NIOTSEventLoopGroup {
+            group = eventLoopGroup
+            runtimeAcquired = true
+        } else {
+            try? NIORuntime.shared.release(for: .networkExtension)
+            group = nil
+            runtimeAcquired = false
+            VPNLog.tunnel.error("event=vpn.udp_forward_runtime outcome=failure reason=event_loop_group_unavailable")
+        }
+
         start()
     }
 
@@ -74,12 +92,22 @@ final class UDPForwarder: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self else { return }
             self.logSummary(reason: "stop")
+
             self.cleanupTimer?.cancel()
             self.cleanupTimer = nil
+
             for connection in self.connections.values {
-                connection.connection.cancel()
+                if let channel = connection.channel {
+                    channel.close(promise: nil)
+                }
             }
             self.connections.removeAll()
+
+            if self.runtimeAcquired {
+                self.runtimeAcquired = false
+                self.group = nil
+                try? NIORuntime.shared.release(for: .networkExtension)
+            }
         }
     }
 
@@ -106,12 +134,7 @@ final class UDPForwarder: @unchecked Sendable {
                 self.metrics.udpOut443 &+= 1
             }
 
-            connection.connection.send(content: payload, completion: .contentProcessed { [weak self] error in
-                guard let self else { return }
-                if let error, self.logSampler.shouldLog(event: "vpn.udp_forward_send", key: "error", first: 3, every: 200) {
-                    VPNLog.tunnel.warning("event=vpn.udp_forward_send outcome=failure error=\(error.localizedDescription, privacy: .public)")
-                }
-            })
+            self.send(payload: payload, on: connection)
         }
     }
 
@@ -120,60 +143,114 @@ final class UDPForwarder: @unchecked Sendable {
             return existing
         }
 
-        let host = NWEndpoint.Host(key.destinationIP.description)
-        guard let endpointPort = NWEndpoint.Port(rawValue: port) else { return nil }
-        let parameters = NWParameters.udp
-        parameters.allowLocalEndpointReuse = true
-        parameters.prohibitedInterfaceTypes = [.loopback, .other]
+        guard let group else {
+            if logSampler.shouldLog(event: "vpn.udp_forward_connect", key: "missing_runtime", first: 3, every: 200) {
+                VPNLog.tunnel.warning("event=vpn.udp_forward_connect outcome=failure reason=missing_runtime")
+            }
+            return nil
+        }
 
-        let connection = NWConnection(host: host, port: endpointPort, using: parameters)
-        let newConnection = UDPForwardConnection(key: key, connection: connection, lastActivity: Date())
-        connections[key] = newConnection
+        let host = key.destinationIP.description
+        let remoteAddress = (try? SocketAddress(ipAddress: host, port: Int(port))) ??
+            (try? SocketAddress.makeAddressResolvingHost(host, port: Int(port)))
+
+        guard let remoteAddress else { return nil }
+
+        let connection = UDPForwardConnection(key: key, remoteAddress: remoteAddress, lastActivity: Date())
+        connections[key] = connection
+
         metrics.flowsCreated &+= 1
         metrics.flowsActive &+= 1
 
-        connection.stateUpdateHandler = { [weak self, weak newConnection] state in
-            guard let self, let newConnection else { return }
-            switch state {
-            case .ready:
-                newConnection.isReady = true
-                self.receiveLoop(for: newConnection)
-            case .failed, .cancelled:
-                self.removeConnection(for: key)
-            default:
-                break
+        let bootstrap = NIOTSDatagramConnectionBootstrap(group: group)
+            .channelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+            .channelInitializer { [weak self] channel in
+                guard let self else {
+                    return channel.eventLoop.makeSucceededVoidFuture()
+                }
+                return channel.pipeline.addHandler(UDPForwardInboundHandler(owner: self, key: key))
+            }
+
+        bootstrap.connect(to: remoteAddress).whenComplete { [weak self] result in
+            guard let self else { return }
+            self.queue.async {
+                switch result {
+                case let .success(channel):
+                    guard let current = self.connections[key] else {
+                        channel.close(promise: nil)
+                        return
+                    }
+                    current.channel = channel
+                    current.isReady = true
+
+                    channel.closeFuture.whenComplete { [weak self] _ in
+                        guard let self else { return }
+                        self.queue.async {
+                            self.removeConnection(for: key, closeChannel: false)
+                        }
+                    }
+
+                    if !current.pendingPayloads.isEmpty {
+                        let pending = current.pendingPayloads
+                        current.pendingPayloads.removeAll(keepingCapacity: true)
+                        for payload in pending {
+                            self.send(payload: payload, on: current)
+                        }
+                    }
+                case let .failure(error):
+                    self.removeConnection(for: key, closeChannel: false)
+                    if self.logSampler.shouldLog(event: "vpn.udp_forward_connect", key: "error", first: 3, every: 200) {
+                        VPNLog.tunnel.warning("event=vpn.udp_forward_connect outcome=failure error=\(error.localizedDescription, privacy: .public)")
+                    }
+                }
             }
         }
 
-        connection.start(queue: queue)
-        return newConnection
+        return connection
     }
 
-    private func receiveLoop(for connection: UDPForwardConnection) {
-        connection.connection.receiveMessage { [weak self, weak connection] data, _, _, error in
-            guard let self, let connection else { return }
-            if let data, !data.isEmpty {
-                self.handleInbound(payload: data, for: connection.key)
-                connection.lastActivity = Date()
-                self.metrics.udpInPackets &+= 1
-                if connection.key.destinationPort == 443 {
-                    self.metrics.udpIn443 &+= 1
+    private func send(payload: Data, on connection: UDPForwardConnection) {
+        guard connection.isReady, let channel = connection.channel, channel.isActive else {
+            connection.pendingPayloads.append(payload)
+            return
+        }
+
+        var buffer = channel.allocator.buffer(capacity: payload.count)
+        buffer.writeBytes(payload)
+        let promise = channel.eventLoop.makePromise(of: Void.self)
+        promise.futureResult.whenFailure { [weak self] error in
+            guard let self else { return }
+            self.queue.async {
+                if self.logSampler.shouldLog(event: "vpn.udp_forward_send", key: "error", first: 3, every: 200) {
+                    VPNLog.tunnel.warning("event=vpn.udp_forward_send outcome=failure error=\(error.localizedDescription, privacy: .public)")
                 }
             }
+        }
 
-            if let error {
-                if self.logSampler.shouldLog(event: "vpn.udp_forward_receive", key: "error", first: 3, every: 200) {
-                    VPNLog.tunnel.warning("event=vpn.udp_forward_receive outcome=failure error=\(error.localizedDescription, privacy: .public)")
-                }
-                self.removeConnection(for: connection.key)
-                return
+        channel.writeAndFlush(buffer, promise: promise)
+    }
+
+    fileprivate func handleInbound(payload: Data, for key: FlowKey) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard let connection = self.connections[key] else { return }
+
+            connection.lastActivity = Date()
+            self.metrics.udpInPackets &+= 1
+            if key.destinationPort == 443 {
+                self.metrics.udpIn443 &+= 1
             }
-
-            self.receiveLoop(for: connection)
+            self.handleInboundPayload(payload, for: key)
         }
     }
 
-    private func handleInbound(payload: Data, for key: FlowKey) {
+    fileprivate func handleChannelInactive(for key: FlowKey) {
+        queue.async { [weak self] in
+            self?.removeConnection(for: key, closeChannel: false)
+        }
+    }
+
+    private func handleInboundPayload(_ payload: Data, for key: FlowKey) {
         switch (key.destinationIP, key.sourceIP) {
         case let (.v4(srcIP), .v4(dstIP)):
             let udpPacket = buildUDPDatagramV4(
@@ -191,6 +268,7 @@ final class UDPForwarder: @unchecked Sendable {
             )
 
             packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET)])
+
         case let (.v6(srcIP), .v6(dstIP)):
             let udpPacket = buildUDPDatagramV6(
                 sourcePort: key.destinationPort,
@@ -207,6 +285,7 @@ final class UDPForwarder: @unchecked Sendable {
             )
 
             packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET6)])
+
         default:
             return
         }
@@ -461,6 +540,7 @@ final class UDPForwarder: @unchecked Sendable {
         if cleanupTimer != nil {
             return
         }
+
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + cleanupInterval, repeating: cleanupInterval)
         timer.setEventHandler { [weak self] in
@@ -475,9 +555,8 @@ final class UDPForwarder: @unchecked Sendable {
         let expired = connections.filter { $0.value.lastActivity < cutoff }
         guard !expired.isEmpty else { return }
 
-        for (key, connection) in expired {
-            connection.connection.cancel()
-            removeConnection(for: key)
+        for (key, _) in expired {
+            removeConnection(for: key, closeChannel: true)
         }
 
         if logSampler.shouldLog(event: "vpn.udp_forward_metrics", key: "periodic", first: 2, every: 120) {
@@ -485,9 +564,17 @@ final class UDPForwarder: @unchecked Sendable {
         }
     }
 
-    private func removeConnection(for key: FlowKey) {
-        if connections.removeValue(forKey: key) != nil, self.metrics.flowsActive > 0 {
-            self.metrics.flowsActive &-= 1
+    private func removeConnection(for key: FlowKey, closeChannel: Bool) {
+        guard let connection = connections.removeValue(forKey: key) else {
+            return
+        }
+
+        if closeChannel, let channel = connection.channel {
+            channel.close(promise: nil)
+        }
+
+        if metrics.flowsActive > 0 {
+            metrics.flowsActive &-= 1
         }
     }
 
@@ -495,5 +582,34 @@ final class UDPForwarder: @unchecked Sendable {
         VPNLog.tunnel.info(
             "event=vpn.udp_forward_metrics reason=\(reason) udp_flows_created=\(self.metrics.flowsCreated) udp_flows_active=\(self.metrics.flowsActive) udp_out_packets=\(self.metrics.udpOutPackets) udp_in_packets=\(self.metrics.udpInPackets) udp_out_443=\(self.metrics.udpOut443) udp_in_443=\(self.metrics.udpIn443)"
         )
+    }
+}
+
+private final class UDPForwardInboundHandler: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+
+    private weak var owner: UDPForwarder?
+    private let key: UDPForwarder.FlowKey
+
+    init(owner: UDPForwarder, key: UDPForwarder.FlowKey) {
+        self.owner = owner
+        self.key = key
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var buffer = unwrapInboundIn(data)
+        let payload = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        guard !payload.isEmpty else { return }
+        owner?.handleInbound(payload: payload, for: key)
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        owner?.handleChannelInactive(for: key)
+        context.fireChannelInactive()
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        owner?.handleChannelInactive(for: key)
+        context.close(promise: nil)
     }
 }

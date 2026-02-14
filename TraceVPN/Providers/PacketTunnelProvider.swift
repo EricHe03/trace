@@ -860,7 +860,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         VPNLog.proxy.info("event=vpn.proxy_server_init_begin")
 
         let allowlist = await HardeningConfig.shared.mitmAllowlist
-        let requestedMitmEnabled = await HardeningConfig.shared.enableNetworkFrameworkMITM
+        let requestedMitmEnabled = await HardeningConfig.shared.enableNIOMITM
         let caTrusted = CertificateManager.shared.isRootCATrusted()
 
         VPNLog.proxy.info("event=vpn.proxy_server_config allowlist_count=\(allowlist.count) mitm_requested=\(requestedMitmEnabled) ca_trusted=\(caTrusted)")
@@ -1104,16 +1104,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             )
         }
 
-        if let enableNetworkFrameworkMITM = config["enableNetworkFrameworkMITM"] as? Bool {
-            await hardeningConfig.setEnableNetworkFrameworkMITM(enableNetworkFrameworkMITM)
+        let requestedNIOMITM = (config["enableNIOMITM"] as? Bool) ?? (config["enableNetworkFrameworkMITM"] as? Bool)
+        if let requestedNIOMITM {
+            await hardeningConfig.setEnableNIOMITM(requestedNIOMITM)
             let caTrusted = CertificateManager.shared.isRootCATrusted()
-            let effectiveMitmEnabled = enableNetworkFrameworkMITM && caTrusted
+            let effectiveMitmEnabled = requestedNIOMITM && caTrusted
             await runtimeState.setMitmEnabled(effectiveMitmEnabled)
             await runtimeState.appendEventLog(
                 type: "mitm_enabled_update",
-                msg: "requested=\(enableNetworkFrameworkMITM) effective=\(effectiveMitmEnabled) ca_trusted=\(caTrusted)"
+                msg: "requested=\(requestedNIOMITM) effective=\(effectiveMitmEnabled) ca_trusted=\(caTrusted)"
             )
-            if enableNetworkFrameworkMITM && !caTrusted {
+            if requestedNIOMITM && !caTrusted {
                 VPNLog.certificate.warning("event=vpn.ca_trust_missing outcome=warning action=disable_mitm")
                 await runtimeState.appendEventLog(
                     type: "mitm_disabled",
@@ -1490,38 +1491,39 @@ actor PacketTunnelRuntimeState {
                 msg: "mode=\(config.mode.rawValue) socks_source=\(endpoint.source) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue) block_quic=\(blockQUICEnabled)"
             )
 
-            let eventLogger: (String, String) -> Void = { [weak self] type, msg in
+            let eventLogger: @Sendable (String, String) -> Void = { [weak self] type, msg in
                 Task { [weak self] in
                     await self?.appendEventLog(type: type, msg: msg)
                 }
             }
+            let ipv6Enabled = config.ipv6Enabled
             let forwarder = HevSocks5TunnelForwarder(
                 packetFlow: config.packetFlow,
                 socks5Host: trimmedHost,
                 socks5Port: endpoint.port,
                 mtu: config.mtu,
-                ipv6Enabled: config.ipv6Enabled,
+                ipv6Enabled: ipv6Enabled,
                 eventLogHandler: eventLogger
             ) { [weak self] support in
-                let usable = support.isUsable(forIPv6: config.ipv6Enabled)
+                let usable = support.isUsable(forIPv6: ipv6Enabled)
                 Task { [weak self] in
-                    await self?.setUDPTunnelSupported(usable, support: support, ipv6Enabled: config.ipv6Enabled)
+                    await self?.setUDPTunnelSupported(usable, support: support, ipv6Enabled: ipv6Enabled)
                     if usable {
                         VPNLog.tunnel.info(
-                            "event=vpn.socks5_udp_associate outcome=success support=\(support.rawValue) ipv6_enabled=\(config.ipv6Enabled)"
+                            "event=vpn.socks5_udp_associate outcome=success support=\(support.rawValue) ipv6_enabled=\(ipv6Enabled)"
                         )
                         await self?.appendEventLog(
                             type: "socks5_udp_associate",
-                            msg: "outcome=success support=\(support.rawValue) ipv6_enabled=\(config.ipv6Enabled)"
+                            msg: "outcome=success support=\(support.rawValue) ipv6_enabled=\(ipv6Enabled)"
                         )
                     } else {
                         VPNLog.tunnel.warning(
-                            "event=vpn.socks5_udp_associate outcome=failure support=\(support.rawValue) ipv6_enabled=\(config.ipv6Enabled) fallback=block_quic"
+                            "event=vpn.socks5_udp_associate outcome=failure support=\(support.rawValue) ipv6_enabled=\(ipv6Enabled) fallback=block_quic"
                         )
                         await self?.setBlockQUICEnabled(true)
                         await self?.appendEventLog(
                             type: "socks5_udp_associate",
-                            msg: "outcome=failure support=\(support.rawValue) ipv6_enabled=\(config.ipv6Enabled) action=block_quic"
+                            msg: "outcome=failure support=\(support.rawValue) ipv6_enabled=\(ipv6Enabled) action=block_quic"
                         )
                         await self?.appendEventLog(
                             type: "block_quic",
@@ -1597,7 +1599,7 @@ actor PacketTunnelRuntimeState {
         if let existing = localSocks5Server {
             localServer = existing
         } else {
-            let eventLogger: (String, String) -> Void = { [weak self] type, msg in
+            let eventLogger: @Sendable (String, String) -> Void = { [weak self] type, msg in
                 Task { [weak self] in
                     await self?.appendEventLog(type: type, msg: msg)
                 }

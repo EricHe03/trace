@@ -18,6 +18,8 @@ public struct HardeningConfigSnapshot: Sendable {
     public let maxRawCaptureSize: UInt64
     public let mitmAllowlist: [String]
     public let blockQUIC: Bool
+    public let enableNIOMITM: Bool
+    /// Legacy key kept for compatibility with older app payloads.
     public let enableNetworkFrameworkMITM: Bool
 
     public func toDictionary() -> [String: Any] {
@@ -30,6 +32,7 @@ public struct HardeningConfigSnapshot: Sendable {
             "maxRawCaptureSize": maxRawCaptureSize,
             "mitmAllowlist": mitmAllowlist,
             "blockQUIC": blockQUIC,
+            "enableNIOMITM": enableNIOMITM,
             "enableNetworkFrameworkMITM": enableNetworkFrameworkMITM
         ]
     }
@@ -53,6 +56,8 @@ public actor HardeningConfig {
         case maxRawCaptureSize = "hardening.maxRawCaptureSize"
         case mitmAllowlist = "hardening.mitmAllowlist"
         case blockQUIC = "hardening.blockQUIC"
+        case enableNIOMITM = "hardening.enableNIOMITM"
+        // Legacy persisted key kept for backward compatibility.
         case enableNetworkFrameworkMITM = "hardening.enableNetworkFrameworkMITM"
     }
 
@@ -79,7 +84,7 @@ public actor HardeningConfig {
     private var _maxRawCaptureSize: UInt64
     private var _mitmAllowlist: [String]
     private var _blockQUIC: Bool
-    private var _enableNetworkFrameworkMITM: Bool
+    private var _enableNIOMITM: Bool
 
     // MARK: - Initialization
 
@@ -127,7 +132,11 @@ public actor HardeningConfig {
         }
 
         _blockQUIC = boolValue(.blockQUIC, default: true)
-        _enableNetworkFrameworkMITM = boolValue(.enableNetworkFrameworkMITM, default: true)
+        if let stored = defaults?.object(forKey: ConfigKey.enableNIOMITM.rawValue) as? Bool {
+            _enableNIOMITM = stored
+        } else {
+            _enableNIOMITM = boolValue(.enableNetworkFrameworkMITM, default: true)
+        }
 
         // Rationale: Apply rollout stage restrictions inline to avoid actor isolation in init.
         switch _rolloutStage {
@@ -201,9 +210,14 @@ public actor HardeningConfig {
         _blockQUIC
     }
 
-    /// Returns whether Network.framework MITM is enabled.
+    /// Returns whether NIO MITM is enabled.
+    public var enableNIOMITM: Bool {
+        _enableNIOMITM
+    }
+
+    /// Returns whether MITM is enabled (legacy key name).
     public var enableNetworkFrameworkMITM: Bool {
-        _enableNetworkFrameworkMITM
+        _enableNIOMITM
     }
 
     // MARK: - Configuration Updates
@@ -285,11 +299,18 @@ public actor HardeningConfig {
         ProxyLog.mitm.info("event=config.block_quic_toggle outcome=success enabled=\(enabled)")
     }
 
-    /// Updates Network.framework MITM enablement.
-    public func setEnableNetworkFrameworkMITM(_ enabled: Bool) {
-        _enableNetworkFrameworkMITM = enabled
+    /// Updates MITM enablement for the NIO proxy engine.
+    public func setEnableNIOMITM(_ enabled: Bool) {
+        _enableNIOMITM = enabled
+        defaults?.set(enabled, forKey: ConfigKey.enableNIOMITM.rawValue)
+        // Maintain compatibility for older consumers still reading the legacy key.
         defaults?.set(enabled, forKey: ConfigKey.enableNetworkFrameworkMITM.rawValue)
-        ProxyLog.mitm.info("event=config.nw_mitm_toggle outcome=success enabled=\(enabled)")
+        ProxyLog.mitm.info("event=config.nio_mitm_toggle outcome=success enabled=\(enabled)")
+    }
+
+    /// Updates MITM enablement using the legacy key name.
+    public func setEnableNetworkFrameworkMITM(_ enabled: Bool) {
+        setEnableNIOMITM(enabled)
     }
 
     /// Applies rollout stage restrictions.
@@ -346,7 +367,7 @@ public actor HardeningConfig {
 
         _mitmAllowlist = ["*"]
         _blockQUIC = true
-        _enableNetworkFrameworkMITM = true
+        _enableNIOMITM = true
         _enableRawCapture = false
         _maxRawCaptureSize = 10_485_760
 
@@ -358,7 +379,8 @@ public actor HardeningConfig {
             defaults?.set(data, forKey: ConfigKey.mitmAllowlist.rawValue)
         }
         defaults?.set(_blockQUIC, forKey: ConfigKey.blockQUIC.rawValue)
-        defaults?.set(_enableNetworkFrameworkMITM, forKey: ConfigKey.enableNetworkFrameworkMITM.rawValue)
+        defaults?.set(_enableNIOMITM, forKey: ConfigKey.enableNIOMITM.rawValue)
+        defaults?.set(_enableNIOMITM, forKey: ConfigKey.enableNetworkFrameworkMITM.rawValue)
         defaults?.set(_enableRawCapture, forKey: ConfigKey.enableRawCapture.rawValue)
         defaults?.set(_maxRawCaptureSize, forKey: ConfigKey.maxRawCaptureSize.rawValue)
 
@@ -376,12 +398,13 @@ public actor HardeningConfig {
             maxRawCaptureSize: _maxRawCaptureSize,
             mitmAllowlist: _mitmAllowlist,
             blockQUIC: _blockQUIC,
-            enableNetworkFrameworkMITM: _enableNetworkFrameworkMITM
+            enableNIOMITM: _enableNIOMITM,
+            enableNetworkFrameworkMITM: _enableNIOMITM
         )
     }
 
     /// Logs the current configuration.
     public func logCurrentConfig() {
-        ProxyLog.mitm.info("event=config.current stage=\(self._rolloutStage.rawValue, privacy: .public) reassembly=\(self._enableRobustReassembly) metrics=\(self._enableMetrics) debug=\(self._enableDebugLogging) raw_capture=\(self._enableRawCapture) max_size=\(self._maxRawCaptureSize) allowlist_count=\(self._mitmAllowlist.count) block_quic=\(self._blockQUIC) nw_mitm=\(self._enableNetworkFrameworkMITM)")
+        ProxyLog.mitm.info("event=config.current stage=\(self._rolloutStage.rawValue, privacy: .public) reassembly=\(self._enableRobustReassembly) metrics=\(self._enableMetrics) debug=\(self._enableDebugLogging) raw_capture=\(self._enableRawCapture) max_size=\(self._maxRawCaptureSize) allowlist_count=\(self._mitmAllowlist.count) block_quic=\(self._blockQUIC) nio_mitm=\(self._enableNIOMITM)")
     }
 }
