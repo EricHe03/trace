@@ -236,7 +236,7 @@ enum ShareHelper {
 
         // Handle binary content
         if request.isBinary || contentDisposition?.lowercased().contains("attachment") == true {
-            if case let .file(url, _, _) = request.responseBody {
+            if let url = storedBodyFileURL(request.responseBody) {
                 if let copied = createTemporaryFileCopy(from: url, fileName: safeFileName) {
                     return [copied]
                 }
@@ -314,7 +314,7 @@ enum ShareHelper {
 
         // Handle binary content
         if isBinary {
-            if case let .file(url, _, _) = request.requestBody {
+            if let url = storedBodyFileURL(request.requestBody) {
                 if let copied = createTemporaryFileCopy(from: url, fileName: safeFileName) {
                     return [copied]
                 }
@@ -352,6 +352,17 @@ enum ShareHelper {
 
         // Default to text with appropriate extension
         return shareItemsForText(content: text, fileName: safeFileName)
+    }
+
+    private static func storedBodyFileURL(_ storage: BodyStorage) -> URL? {
+        switch storage {
+        case let .file(url, _, _):
+            url
+        case let .truncatedFile(url, _, _, _):
+            url
+        default:
+            nil
+        }
     }
 
     /// Generates a file name based on URL, content type, and timestamp.

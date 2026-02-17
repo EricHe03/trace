@@ -369,6 +369,7 @@ public final class RequestExecutor: ObservableObject {
     private let transport: any RequestExecutorTransport
     private let cookieStore: CookieStore
     private static let localNetworkRetryDelayNanoseconds: UInt64 = 600_000_000
+    private static let manualResponseBodyTruncationLimitBytes = 512 * 1024 * 1024
 
     // MARK: - Initialization
 
@@ -451,7 +452,7 @@ public final class RequestExecutor: ObservableObject {
                 requestHeaders: request.headers.map { TraceHTTPHeader(key: $0.key, value: $0.value) },
                 responseHeaders: transportResponse.responseHeaders,
                 requestBody: BodyStorage.from(string: request.body ?? ""),
-                responseBody: BodyStorage.from(data: transportResponse.body),
+                responseBody: Self.makeManualResponseBodyStorage(from: transportResponse.body),
                 protocolVersion: transportResponse.protocolVersion
             )
 
@@ -531,6 +532,12 @@ public final class RequestExecutor: ObservableObject {
 }
 
 private extension RequestExecutor {
+    static func makeManualResponseBodyStorage(from data: Data) -> BodyStorage {
+        // Manual requests are explicit user actions; keep large payloads shareable by
+        // preferring file-backed storage over preview-only truncation in common cases.
+        BodyStorage.from(data: data, maxSize: manualResponseBodyTruncationLimitBytes)
+    }
+
     func executeWithPermissionRetry(
         request: RequestExecutorTransportRequest,
         targetURL: URL

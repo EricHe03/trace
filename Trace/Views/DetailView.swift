@@ -152,7 +152,7 @@ struct DetailView: View {
                         contentType: contentType,
                         rawData: viewModel.requestBodyRawData,
                         fileName: nil,
-                        totalSize: request.requestBody.totalSize,
+                        totalSize: request.requestBody.capturedSize,
                         onCopy: viewModel.requestBodyText.map { text in
                             { viewModel.copyToClipboard(text) }
                         },
@@ -163,7 +163,7 @@ struct DetailView: View {
                 }
 
                 if viewModel.isRequestBodyPreview {
-                    Button("Load Full Request Body") {
+                    Button("Load Full Captured Request Body") {
                         Task {
                             await viewModel.loadRequestBody(for: request, full: true)
                         }
@@ -192,7 +192,7 @@ struct DetailView: View {
                         contentType: contentType,
                         rawData: viewModel.responseBodyRawData,
                         fileName: fileName,
-                        totalSize: request.responseBody.totalSize,
+                        totalSize: request.responseBody.capturedSize,
                         onCopy: viewModel.responseBodyText.map { text in
                             { viewModel.copyToClipboard(text) }
                         },
@@ -203,7 +203,7 @@ struct DetailView: View {
                 }
 
                 if viewModel.isResponseBodyPreview {
-                    Button("Load Full Response Body") {
+                    Button("Load Full Captured Response Body") {
                         Task {
                             await viewModel.loadResponseBody(for: request, full: true)
                         }

@@ -198,6 +198,34 @@ final class RequestExecutorTests: XCTestCase {
         XCTAssertNotNil(response.responseBody.getString())
     }
 
+    func testExecuteStoresLargeManualResponseBodyAsFileForSharing() async throws {
+        let largeBody = Data(repeating: 0x5A, count: (2 * 1024 * 1024) + (128 * 1024))
+
+        mockTransport.requestHandler = { request in
+            try self.makeTransportResponse(
+                url: request.url,
+                statusCode: 200,
+                headers: ["Content-Type": "application/octet-stream"],
+                body: largeBody
+            )
+        }
+
+        let builder = RequestBuilder(
+            url: "https://example.com/large.bin",
+            method: .get,
+            headers: [:],
+            body: nil
+        )
+
+        let response = try await executor.execute(builder)
+        defer { response.responseBody.deleteFile() }
+
+        XCTAssertTrue(response.responseBody.isFile)
+        XCTAssertFalse(response.responseBody.isTruncated)
+        XCTAssertEqual(response.responseBody.totalSize, largeBody.count)
+        XCTAssertEqual(response.responseBody.getData()?.count, largeBody.count)
+    }
+
     func testExecuteWithPostBody() async throws {
         var receivedRequest: RequestExecutorTransportRequest?
 

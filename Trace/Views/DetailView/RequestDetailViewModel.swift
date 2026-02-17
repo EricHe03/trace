@@ -56,6 +56,8 @@ final class RequestDetailViewModel: ObservableObject {
         let isBinary = RequestDetailBodyAnalyzer.isBinaryContentType(contentType)
 
         if isBinary {
+            let capturedSize = request.requestBody.capturedSize
+            let isPreview = !full && capturedSize > BodyStorage.previewSize
             requestBodyRawData = await Task.detached(priority: .userInitiated) {
                 if let limit {
                     return request.requestBody.getPreview(maxBytes: limit)
@@ -71,9 +73,11 @@ final class RequestDetailViewModel: ObservableObject {
             requestBodyText = RequestDetailBodyAnalyzer.binarySummaryText(
                 kind: kind,
                 fileName: nil,
-                totalSize: request.requestBody.totalSize,
+                receivedSize: receivedRequestBodySize(for: request),
+                capturedSize: capturedSize,
                 previewSize: requestBodyRawData?.count,
-                isPreview: !full && request.requestBody.totalSize > BodyStorage.previewSize
+                isPreview: isPreview,
+                isTruncated: request.requestBody.isTruncated
             )
         } else {
             if contentType?.hasPrefix("image/") == true {
@@ -95,7 +99,7 @@ final class RequestDetailViewModel: ObservableObject {
             }.value
         }
 
-        isRequestBodyPreview = !full && request.requestBody.totalSize > BodyStorage.previewSize
+        isRequestBodyPreview = !full && request.requestBody.capturedSize > BodyStorage.previewSize
         isLoadingRequestBody = false
     }
 
@@ -111,6 +115,8 @@ final class RequestDetailViewModel: ObservableObject {
         let isBinary = request.isBinary || RequestDetailBodyAnalyzer.isBinaryContentType(contentType) || isAttachment
 
         if isBinary {
+            let capturedSize = request.responseBody.capturedSize
+            let isPreview = !full && capturedSize > BodyStorage.previewSize
             responseBodyRawData = await Task.detached(priority: .userInitiated) {
                 if let limit {
                     return request.responseBody.getPreview(maxBytes: limit)
@@ -126,9 +132,11 @@ final class RequestDetailViewModel: ObservableObject {
             responseBodyText = RequestDetailBodyAnalyzer.binarySummaryText(
                 kind: kind,
                 fileName: fileName,
-                totalSize: request.responseBody.totalSize,
+                receivedSize: receivedResponseBodySize(for: request),
+                capturedSize: capturedSize,
                 previewSize: responseBodyRawData?.count,
-                isPreview: !full && request.responseBody.totalSize > BodyStorage.previewSize
+                isPreview: isPreview,
+                isTruncated: request.responseBody.isTruncated
             )
         } else {
             if contentType?.hasPrefix("image/") == true {
@@ -150,7 +158,7 @@ final class RequestDetailViewModel: ObservableObject {
             }.value
         }
 
-        isResponseBodyPreview = !full && request.responseBody.totalSize > BodyStorage.previewSize
+        isResponseBodyPreview = !full && request.responseBody.capturedSize > BodyStorage.previewSize
         isLoadingResponseBody = false
     }
 
@@ -168,6 +176,22 @@ final class RequestDetailViewModel: ObservableObject {
 
     func responseAttachmentFilename(from request: NetworkRequest) -> String? {
         RequestDetailBodyAnalyzer.attachmentFileName(from: responseContentDisposition(from: request))
+    }
+
+    private func receivedRequestBodySize(for request: NetworkRequest) -> Int? {
+        if let headerSize = request.requestSize, headerSize > 0 {
+            return headerSize
+        }
+        let bodySize = request.requestBody.totalSize
+        return bodySize > 0 ? bodySize : nil
+    }
+
+    private func receivedResponseBodySize(for request: NetworkRequest) -> Int? {
+        if let headerSize = request.responseSize, headerSize > 0 {
+            return headerSize
+        }
+        let bodySize = request.responseBody.totalSize
+        return bodySize > 0 ? bodySize : nil
     }
 
     func copyToClipboard(_ text: String, toastMessage: String = "Copied to clipboard") {
@@ -236,8 +260,14 @@ final class RequestDetailViewModel: ObservableObject {
             let isRequestBinary = RequestDetailBodyAnalyzer.isBinaryContentType(contentType)
 
             if isRequestBinary {
-                let size = request.requestBody.totalSize
-                text += "\nRequest Body:\n<binary body omitted> (size: \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)))\n"
+                text += "\nRequest Body:\n<binary body omitted>\n"
+                if let receivedSize = receivedRequestBodySize(for: request), receivedSize > 0 {
+                    text += "Received: \(formattedBytes(receivedSize))\n"
+                }
+                text += "Captured: \(formattedBytes(request.requestBody.capturedSize))\n"
+                if request.requestBody.isTruncated {
+                    text += "Truncated at capture limit.\n"
+                }
             } else if let requestBodyText, !requestBodyText.isEmpty {
                 text += "\nRequest Body:\n\(requestBodyText)\n"
                 if isRequestBodyPreview {
@@ -270,8 +300,14 @@ final class RequestDetailViewModel: ObservableObject {
             let isResponseBinary = request.isBinary || RequestDetailBodyAnalyzer.isBinaryContentType(contentType) || isAttachment
 
             if isResponseBinary {
-                let size = request.responseBody.totalSize
-                text += "\nResponse Body:\n<binary body omitted> (size: \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)))\n"
+                text += "\nResponse Body:\n<binary body omitted>\n"
+                if let receivedSize = receivedResponseBodySize(for: request), receivedSize > 0 {
+                    text += "Received: \(formattedBytes(receivedSize))\n"
+                }
+                text += "Captured: \(formattedBytes(request.responseBody.capturedSize))\n"
+                if request.responseBody.isTruncated {
+                    text += "Truncated at capture limit.\n"
+                }
                 if let fileName, !fileName.isEmpty {
                     text += "Filename: \(fileName)\n"
                 }
@@ -289,5 +325,9 @@ final class RequestDetailViewModel: ObservableObject {
         text += CurlCommandGenerator.generate(from: request)
 
         return text
+    }
+
+    private func formattedBytes(_ bytes: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 }
