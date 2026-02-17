@@ -134,7 +134,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let tunnelSubnetMask = "255.255.255.0"
     private let fullTunnelMTU: Int = 1400
     private let localSocks5Host = "127.0.0.1"
-    private let localSocks5Port: UInt16 = 1080
+    // Bind embedded SOCKS5 on an ephemeral port to avoid collisions with existing local listeners.
+    private let localSocks5Port: UInt16 = 0
     private var currentCaptureMode: CaptureMode = .proxyOnly
 
     // MARK: - Diagnostics
@@ -1410,7 +1411,8 @@ actor PacketTunnelRuntimeState {
     private var rawCaptureEnabled = false
     private var rawCaptureLimit: UInt64 = 0
     private var blockQUICEnabled = true
-    private var udpTunnelSupported = true
+    // Fail safe for DNS/connectivity: assume SOCKS5 UDP tunnel is unavailable until probe confirms support.
+    private var udpTunnelSupported = false
     private var isStopping = false
     private let throttler = PacketThrottler()
 
@@ -1478,6 +1480,8 @@ actor PacketTunnelRuntimeState {
         pipeline.configure(enabled: config.captureEnabled, limit: config.captureLimit, writer: config.writer)
         packetCapturePipeline = pipeline
         packetCaptureWriter = config.writer
+        // Use direct UDP forwarding until SOCKS5 UDP ASSOCIATE probe explicitly enables tunnel UDP.
+        udpTunnelSupported = false
 
         do {
             let endpoint = try resolveSocksEndpoint(using: config)
@@ -1584,7 +1588,7 @@ actor PacketTunnelRuntimeState {
         packetCaptureWriter?.close()
         packetCaptureWriter = nil
         stopLocalSocks5Server()
-        udpTunnelSupported = true
+        udpTunnelSupported = false
     }
 
     private func resolveSocksEndpoint(using config: PacketFlowConfig) throws -> EffectiveSocksEndpoint {

@@ -672,7 +672,8 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Saves capture configuration (filters, settings, etc.)
     public func saveConfiguration(_ config: CaptureConfiguration) throws {
-        let data = try makeEncoder().encode(config)
+        let normalized = config.normalized()
+        let data = try makeEncoder().encode(normalized)
         sharedUserDefaults.set(data, forKey: DefaultsKey.captureConfiguration)
     }
 
@@ -680,17 +681,22 @@ public class AppGroupStorage: @unchecked Sendable {
     public func loadConfiguration() -> CaptureConfiguration {
         if let data = sharedUserDefaults.data(forKey: DefaultsKey.captureConfiguration),
            let config = try? makeDecoder().decode(CaptureConfiguration.self, from: data) {
-            return config
+            return config.normalized()
         }
 
         // Legacy migration: JSON file in App Group container.
         if let legacyData = try? loadData(from: configurationFileName),
            let legacyConfig = try? makeDecoder().decode(CaptureConfiguration.self, from: legacyData) {
-            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.captureConfiguration)
-            return legacyConfig
+            let normalized = legacyConfig.normalized()
+            if let normalizedData = try? makeEncoder().encode(normalized) {
+                sharedUserDefaults.set(normalizedData, forKey: DefaultsKey.captureConfiguration)
+            } else {
+                sharedUserDefaults.set(legacyData, forKey: DefaultsKey.captureConfiguration)
+            }
+            return normalized
         }
 
-        return CaptureConfiguration.default
+        return CaptureConfiguration.default.normalized()
     }
 
     // MARK: - Capture Options
@@ -1465,6 +1471,8 @@ public enum UDPForwardingMode: String, Codable, Sendable {
 }
 
 public struct CaptureConfiguration: Codable, Sendable {
+    public static let defaultFullTunnelDNSServers = ["1.1.1.1", "8.8.8.8"]
+
     public var isEnabled: Bool
     public var filterMode: FilterMode
     public var domainFilters: [String] // Domains to include/exclude based on filterMode
@@ -1568,23 +1576,58 @@ public struct CaptureConfiguration: Codable, Sendable {
             ?? defaults.fullTunnelSocks5Port
         fullTunnelUDPForwardingMode = try container.decodeIfPresent(UDPForwardingMode.self, forKey: .fullTunnelUDPForwardingMode)
             ?? defaults.fullTunnelUDPForwardingMode
+        self = normalized()
     }
 
     public func encode(to encoder: Encoder) throws {
+        let normalized = normalized()
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(isEnabled, forKey: .isEnabled)
-        try container.encode(filterMode, forKey: .filterMode)
-        try container.encode(domainFilters, forKey: .domainFilters)
-        try container.encode(captureHeaders, forKey: .captureHeaders)
-        try container.encode(captureBody, forKey: .captureBody)
-        try container.encode(maxBodySize, forKey: .maxBodySize)
-        try container.encode(captureMode, forKey: .captureMode)
-        try container.encode(fullTunnelDNSServers, forKey: .fullTunnelDNSServers)
-        try container.encode(fullTunnelSearchDomains, forKey: .fullTunnelSearchDomains)
-        try container.encode(fullTunnelIPv6Enabled, forKey: .fullTunnelIPv6Enabled)
-        try container.encode(fullTunnelSocks5Host, forKey: .fullTunnelSocks5Host)
-        try container.encode(fullTunnelSocks5Port, forKey: .fullTunnelSocks5Port)
-        try container.encode(fullTunnelUDPForwardingMode, forKey: .fullTunnelUDPForwardingMode)
+        try container.encode(normalized.isEnabled, forKey: .isEnabled)
+        try container.encode(normalized.filterMode, forKey: .filterMode)
+        try container.encode(normalized.domainFilters, forKey: .domainFilters)
+        try container.encode(normalized.captureHeaders, forKey: .captureHeaders)
+        try container.encode(normalized.captureBody, forKey: .captureBody)
+        try container.encode(normalized.maxBodySize, forKey: .maxBodySize)
+        try container.encode(normalized.captureMode, forKey: .captureMode)
+        try container.encode(normalized.fullTunnelDNSServers, forKey: .fullTunnelDNSServers)
+        try container.encode(normalized.fullTunnelSearchDomains, forKey: .fullTunnelSearchDomains)
+        try container.encode(normalized.fullTunnelIPv6Enabled, forKey: .fullTunnelIPv6Enabled)
+        try container.encode(normalized.fullTunnelSocks5Host, forKey: .fullTunnelSocks5Host)
+        try container.encode(normalized.fullTunnelSocks5Port, forKey: .fullTunnelSocks5Port)
+        try container.encode(normalized.fullTunnelUDPForwardingMode, forKey: .fullTunnelUDPForwardingMode)
+    }
+
+    public func normalized() -> CaptureConfiguration {
+        var normalizedConfig = self
+        normalizedConfig.normalizeInPlace()
+        return normalizedConfig
+    }
+
+    private mutating func normalizeInPlace() {
+        fullTunnelSocks5Host = fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if fullTunnelSocks5Host.isEmpty {
+            fullTunnelSocks5Port = 0
+        }
+
+        fullTunnelDNSServers = Self.normalizedStringList(fullTunnelDNSServers)
+        fullTunnelSearchDomains = Self.normalizedStringList(fullTunnelSearchDomains)
+
+        if captureMode == .fullTunnel, fullTunnelDNSServers.isEmpty {
+            fullTunnelDNSServers = Self.defaultFullTunnelDNSServers
+        }
+    }
+
+    private static func normalizedStringList(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var normalized: [String] = []
+        for value in values {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if seen.insert(trimmed).inserted {
+                normalized.append(trimmed)
+            }
+        }
+        return normalized
     }
 }
 

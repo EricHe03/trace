@@ -309,6 +309,19 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine, @unchecked Sendabl
         case eventLoopUnavailable
     }
 
+    private final class ProbeCompletionGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var completed = false
+
+        func markCompleted() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !completed else { return false }
+            completed = true
+            return true
+        }
+    }
+
     private func probeSocks5UDPAssociate(completion: @Sendable @escaping (Socks5UDPSupport) -> Void) {
         guard socks5Port > 0 else {
             eventLogHandler?("socks5_udp_probe", "outcome=failure reason=invalid_port")
@@ -325,10 +338,18 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine, @unchecked Sendabl
             "outcome=begin host_hash=\(hostHash) host_len=\(self.socks5Host.count) port=\(self.socks5Port) ipv6_enabled=\(self.ipv6Enabled)"
         )
 
+        let completionGate = ProbeCompletionGate()
         let queue = DispatchQueue(label: "com.trace.vpn.socks5_udp_probe", qos: .utility)
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 6) { [weak self] in
+            guard completionGate.markCompleted() else { return }
+            VPNLog.tunnel.warning("event=vpn.socks5_udp_probe_guard outcome=triggered fallback=unsupported")
+            self?.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=probe_guard_timeout")
+            completion(.unsupported)
+        }
         queue.async { [weak self] in
             guard let self else { return }
             let support = self.runSocks5UDPAssociateProbe()
+            guard completionGate.markCompleted() else { return }
             VPNLog.tunnel.info("event=vpn.socks5_udp_probe_done support=\(support.rawValue, privacy: .public)")
             self.eventLogHandler?("socks5_udp_probe", "outcome=done support=\(support.rawValue)")
             completion(support)
@@ -354,6 +375,9 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine, @unchecked Sendabl
         do {
             let channel = try waitFor(bootstrap.connect(host: socks5Host, port: Int(socks5Port)), timeout: 5)
             defer { _ = try? waitFor(channel.close(), timeout: 1) }
+
+            ioHandler.bindFallbackEventLoop(channel.eventLoop)
+            try waitFor(ioHandler.waitUntilReady(on: channel.eventLoop), timeout: 1)
 
             try waitFor(ioHandler.send([0x05, 0x01, 0x00]), timeout: 5)
             let greetingReply = try waitFor(ioHandler.readExact(2), timeout: 5)
@@ -472,18 +496,49 @@ private enum Socks5ProbeIOError: Error {
 
 private final class Socks5ProbeIOHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
+    private static let fallbackEventLoopGroup = NIOTSEventLoopGroup()
 
     private struct PendingRead {
         let count: Int
         let promise: EventLoopPromise<[UInt8]>
     }
 
+    private let stateLock = NSLock()
     private var context: ChannelHandlerContext?
+    private var fallbackEventLoop: EventLoop?
+    private var pendingReadyPromises: [EventLoopPromise<Void>] = []
     private var readBuffer = ByteBuffer()
     private var pendingReads: [PendingRead] = []
 
+    func bindFallbackEventLoop(_ eventLoop: EventLoop) {
+        stateLock.lock()
+        fallbackEventLoop = eventLoop
+        stateLock.unlock()
+    }
+
+    func waitUntilReady(on eventLoop: EventLoop) -> EventLoopFuture<Void> {
+        stateLock.lock()
+        if context != nil {
+            stateLock.unlock()
+            return eventLoop.makeSucceededFuture(())
+        }
+        let promise = eventLoop.makePromise(of: Void.self)
+        pendingReadyPromises.append(promise)
+        stateLock.unlock()
+        return promise.futureResult
+    }
+
     func handlerAdded(context: ChannelHandlerContext) {
+        stateLock.lock()
         self.context = context
+        fallbackEventLoop = context.eventLoop
+        let readyPromises = pendingReadyPromises
+        pendingReadyPromises.removeAll(keepingCapacity: false)
+        stateLock.unlock()
+
+        for promise in readyPromises {
+            promise.succeed(())
+        }
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -494,16 +549,20 @@ private final class Socks5ProbeIOHandler: ChannelInboundHandler, @unchecked Send
 
     func channelInactive(context: ChannelHandlerContext) {
         failPendingReads(error: Socks5ProbeIOError.channelClosed)
+        failPendingReadyPromises(error: Socks5ProbeIOError.channelClosed)
         context.fireChannelInactive()
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         failPendingReads(error: error)
+        failPendingReadyPromises(error: error)
         context.close(promise: nil)
     }
 
     func send(_ bytes: [UInt8]) -> EventLoopFuture<Void> {
-        guard let context else { preconditionFailure("Socks5ProbeIOHandler context unavailable") }
+        guard let context = currentContext() else {
+            return makeContextUnavailableFuture()
+        }
 
         let promise = context.eventLoop.makePromise(of: Void.self)
         let writeBlock = { [weak context] in
@@ -525,7 +584,9 @@ private final class Socks5ProbeIOHandler: ChannelInboundHandler, @unchecked Send
     }
 
     func readExact(_ count: Int) -> EventLoopFuture<[UInt8]> {
-        guard let context else { preconditionFailure("Socks5ProbeIOHandler context unavailable") }
+        guard let context = currentContext() else {
+            return makeContextUnavailableFuture()
+        }
 
         let promise = context.eventLoop.makePromise(of: [UInt8].self)
         let scheduleRead = {
@@ -544,6 +605,28 @@ private final class Socks5ProbeIOHandler: ChannelInboundHandler, @unchecked Send
         return promise.futureResult
     }
 
+    private func currentContext() -> ChannelHandlerContext? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return context
+    }
+
+    private func makeContextUnavailableFuture<T>() -> EventLoopFuture<T> {
+        stateLock.lock()
+        let eventLoop = context?.eventLoop ?? fallbackEventLoop
+        stateLock.unlock()
+
+        if let eventLoop {
+            return eventLoop.makeFailedFuture(Socks5ProbeIOError.contextUnavailable)
+        }
+
+        if let eventLoop = NIORuntime.shared.currentResources()?.eventLoopGroup.next() {
+            return eventLoop.makeFailedFuture(Socks5ProbeIOError.contextUnavailable)
+        }
+
+        return Self.fallbackEventLoopGroup.next().makeFailedFuture(Socks5ProbeIOError.contextUnavailable)
+    }
+
     private func fulfillPendingReads() {
         while let next = pendingReads.first {
             guard readBuffer.readableBytes >= next.count else { break }
@@ -558,6 +641,17 @@ private final class Socks5ProbeIOHandler: ChannelInboundHandler, @unchecked Send
         pendingReads.removeAll(keepingCapacity: false)
         for pendingRead in pending {
             pendingRead.promise.fail(error)
+        }
+    }
+
+    private func failPendingReadyPromises(error: Error) {
+        stateLock.lock()
+        let promises = pendingReadyPromises
+        pendingReadyPromises.removeAll(keepingCapacity: false)
+        stateLock.unlock()
+
+        for promise in promises {
+            promise.fail(error)
         }
     }
 }

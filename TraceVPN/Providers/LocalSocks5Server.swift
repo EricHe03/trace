@@ -259,10 +259,22 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
         case greeting
         case request
         case connecting
+        case udpAssociating
         case relaying
         case udpAssociated
         case closing
     }
+
+    private enum UDPAssociateSetupResult {
+        case success(relay: Socks5UDPRelay, endpoint: Socks5UDPRelay.Endpoint)
+        case failure
+    }
+
+    // Avoid blocking the channel's event loop while creating the UDP relay socket.
+    private static let udpAssociateSetupQueue = DispatchQueue(
+        label: "com.trace.vpn.local_socks5.udp_associate_setup",
+        qos: .userInitiated
+    )
 
     private let group: NIOTSEventLoopGroup
     private let eventLogHandler: (@Sendable (String, String) -> Void)?
@@ -294,7 +306,7 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
                 return
             }
             remoteChannel.writeAndFlush(inbound, promise: nil)
-        case .udpAssociated:
+        case .udpAssociated, .udpAssociating:
             // Keep the TCP control channel open; ignore additional payload.
             return
         case .closing:
@@ -361,7 +373,7 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
                         return
                     }
                 }
-            case .connecting, .relaying, .udpAssociated, .closing:
+            case .connecting, .udpAssociating, .relaying, .udpAssociated, .closing:
                 return
             }
         }
@@ -399,49 +411,76 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
     }
 
     private func handleUDPAssociate(request: Socks5Request, context: ChannelHandlerContext) {
+        guard state == .request else { return }
+        state = .udpAssociating
         let preferredType: Socks5AddressType = request.address.type == .ipv6 ? .ipv6 : .ipv4
-        let relay: Socks5UDPRelay
-        let endpoint: Socks5UDPRelay.Endpoint
+        Self.udpAssociateSetupQueue.async { [weak self, weak context] in
+            guard let self, let context else { return }
+            let result = self.makeUDPAssociateRelay(preferredType: preferredType)
+            context.eventLoop.execute {
+                guard self.state == .udpAssociating else {
+                    if case let .success(relay, _) = result {
+                        relay.stop()
+                    }
+                    return
+                }
 
+                switch result {
+                case let .success(relay, endpoint):
+                    self.udpRelay = relay
+                    self.state = .udpAssociated
+                    self.sendReply(
+                        .succeeded,
+                        bindAddress: Socks5Address(type: endpoint.addressType, host: endpoint.host),
+                        bindPort: endpoint.port,
+                        context: context
+                    )
+                case .failure:
+                    self.sendReply(.generalFailure, context: context)
+                    self.closeConnection(context: context)
+                }
+            }
+        }
+    }
+
+    private func makeUDPAssociateRelay(preferredType: Socks5AddressType) -> UDPAssociateSetupResult {
         do {
-            let candidate = Socks5UDPRelay(
+            let relay = Socks5UDPRelay(
                 group: group,
                 bindAddressType: preferredType,
                 eventLogHandler: eventLogHandler
             )
-            endpoint = try candidate.start()
-            relay = candidate
+            let endpoint = try relay.start()
+            return .success(relay: relay, endpoint: endpoint)
         } catch {
             guard preferredType == .ipv6 else {
-                sendReply(.generalFailure, context: context)
-                closeConnection(context: context)
-                return
+                eventLogHandler?(
+                    "local_socks5_udp_relay",
+                    "outcome=failure addr_type=\(preferredType.rawValue) reason=start_failed"
+                )
+                return .failure
             }
 
             do {
-                let fallback = Socks5UDPRelay(
+                let relay = Socks5UDPRelay(
                     group: group,
                     bindAddressType: .ipv4,
                     eventLogHandler: eventLogHandler
                 )
-                endpoint = try fallback.start()
-                relay = fallback
+                let endpoint = try relay.start()
+                eventLogHandler?(
+                    "local_socks5_udp_relay",
+                    "outcome=success fallback=ipv4_from_ipv6_request"
+                )
+                return .success(relay: relay, endpoint: endpoint)
             } catch {
-                sendReply(.generalFailure, context: context)
-                closeConnection(context: context)
-                return
+                eventLogHandler?(
+                    "local_socks5_udp_relay",
+                    "outcome=failure addr_type=\(preferredType.rawValue) fallback=ipv4_failed"
+                )
+                return .failure
             }
         }
-
-        udpRelay = relay
-        state = .udpAssociated
-
-        sendReply(
-            .succeeded,
-            bindAddress: Socks5Address(type: endpoint.addressType, host: endpoint.host),
-            bindPort: endpoint.port,
-            context: context
-        )
     }
 
     private func parseGreeting() -> ParseResult<Bool> {

@@ -316,6 +316,36 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(config.maxBodySize, 10 * 1024 * 1024)
     }
 
+    func testCaptureConfigurationNormalizedAddsDefaultDNSForFullTunnel() {
+        var config = CaptureConfiguration.default
+        config.captureMode = .fullTunnel
+        config.fullTunnelDNSServers = []
+
+        let normalized = config.normalized()
+
+        XCTAssertEqual(normalized.fullTunnelDNSServers, CaptureConfiguration.defaultFullTunnelDNSServers)
+    }
+
+    func testCaptureConfigurationNormalizedKeepsEmptyDNSForProxyOnly() {
+        var config = CaptureConfiguration.default
+        config.captureMode = .proxyOnly
+        config.fullTunnelDNSServers = []
+
+        let normalized = config.normalized()
+
+        XCTAssertTrue(normalized.fullTunnelDNSServers.isEmpty)
+    }
+
+    func testCaptureConfigurationNormalizedTrimsAndDeduplicatesDNS() {
+        var config = CaptureConfiguration.default
+        config.captureMode = .fullTunnel
+        config.fullTunnelDNSServers = [" 1.1.1.1 ", "", "8.8.8.8", "1.1.1.1"]
+
+        let normalized = config.normalized()
+
+        XCTAssertEqual(normalized.fullTunnelDNSServers, ["1.1.1.1", "8.8.8.8"])
+    }
+
     func testFilterModeEnum() {
         XCTAssertEqual(FilterMode.all.rawValue, "all")
         XCTAssertEqual(FilterMode.whitelist.rawValue, "whitelist")
