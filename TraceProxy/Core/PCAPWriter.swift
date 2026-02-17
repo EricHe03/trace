@@ -11,9 +11,18 @@ import TraceCore
 
 public protocol PCAPWriting: AnyObject, Sendable {
     func writePacket(_ packet: Data)
+    func writePackets(_ packets: [Data])
     func currentFileSize() -> UInt64
     func close()
     var supportsRolling: Bool { get }
+}
+
+public extension PCAPWriting {
+    func writePackets(_ packets: [Data]) {
+        for packet in packets {
+            writePacket(packet)
+        }
+    }
 }
 
 /// Defines errors thrown when creating a PCAP writer.
@@ -66,21 +75,17 @@ public final class PCAPWriter: PCAPWriting, @unchecked Sendable {
     /// Enqueues a packet write with a PCAP record header timestamped at enqueue time.
     /// - Note: This is best-effort and logs on failure; it does not throw.
     public func writePacket(_ packet: Data) {
-        queue.async { [weak self] in
-            guard let self, !self.isClosed else { return }
-            let now = Date()
-            let seconds = UInt32(now.timeIntervalSince1970)
-            let usec = UInt32((now.timeIntervalSince1970 - Double(seconds)) * 1_000_000.0)
+        writePackets([packet])
+    }
 
-            var record = Data()
-            record.appendUInt32LE(seconds)
-            record.appendUInt32LE(usec)
-            record.appendUInt32LE(UInt32(packet.count))
-            record.appendUInt32LE(UInt32(packet.count))
+    public func writePackets(_ packets: [Data]) {
+        queue.async { [weak self] in
+            guard let self, !self.isClosed, !packets.isEmpty else { return }
 
             do {
-                try self.handle.write(contentsOf: record)
-                try self.handle.write(contentsOf: packet)
+                for packet in packets {
+                    try self.writeRecord(packet)
+                }
             } catch {
                 ProxyLog.metrics.error("event=pcap.write outcome=failure error=\(error.localizedDescription, privacy: .public)")
             }
@@ -124,5 +129,20 @@ public final class PCAPWriter: PCAPWriting, @unchecked Sendable {
         hdr.appendUInt32LE(65535)
         hdr.appendUInt32LE(101) // Uses LINKTYPE_RAW for raw IP packets without a link layer.
         try handle.write(contentsOf: hdr)
+    }
+
+    private func writeRecord(_ packet: Data) throws {
+        let now = Date()
+        let seconds = UInt32(now.timeIntervalSince1970)
+        let usec = UInt32((now.timeIntervalSince1970 - Double(seconds)) * 1_000_000.0)
+
+        var record = Data()
+        record.reserveCapacity(16 + packet.count)
+        record.appendUInt32LE(seconds)
+        record.appendUInt32LE(usec)
+        record.appendUInt32LE(UInt32(packet.count))
+        record.appendUInt32LE(UInt32(packet.count))
+        record.append(packet)
+        try handle.write(contentsOf: record)
     }
 }

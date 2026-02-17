@@ -70,46 +70,76 @@ final class PacketCapturePipeline: @unchecked Sendable {
     }
 
     func enqueue(packet: Data) -> Bool {
+        enqueue(packets: [packet]) == 1
+    }
+
+    @discardableResult
+    func enqueue(packets: [Data]) -> Int {
+        guard !packets.isEmpty else { return 0 }
+
+        let acceptedPackets: [Data]
+        let droppedCount: Int
         pendingLock.lock()
-        let hasCapacity = pendingCount < maxPending
-        if hasCapacity {
-            pendingCount += 1
+        let available = max(0, maxPending - pendingCount)
+        let acceptedCount = min(available, packets.count)
+        if acceptedCount > 0 {
+            pendingCount += acceptedCount
+            acceptedPackets = Array(packets.prefix(acceptedCount))
+        } else {
+            acceptedPackets = []
         }
+        droppedCount = packets.count - acceptedCount
         pendingLock.unlock()
 
-        guard hasCapacity else {
+        if droppedCount > 0 {
             if logSampler.shouldLog(event: "vpn.packet_capture_drop", key: "pending_full", first: 5, every: 200) {
-                VPNLog.tunnel.warning("event=vpn.packet_capture_drop outcome=skipped reason=pending_full")
+                VPNLog.tunnel.warning("event=vpn.packet_capture_drop outcome=skipped reason=pending_full count=\(droppedCount)")
             }
-            return false
+        }
+
+        guard !acceptedPackets.isEmpty else {
+            return 0
         }
 
         queue.async { [weak self] in
             defer {
                 self?.pendingLock.lock()
-                self?.pendingCount = max(0, (self?.pendingCount ?? 1) - 1)
+                self?.pendingCount = max(0, (self?.pendingCount ?? acceptedCount) - acceptedCount)
                 self?.pendingLock.unlock()
             }
 
             guard let self else { return }
             if self.enabled, let writer = self.writer {
+                let packetsToWrite: [Data]
                 if self.limit > 0, !writer.supportsRolling {
-                    let projected = self.bytes + UInt64(packet.count)
-                    if projected > self.limit {
-                        self.enabled = false
-                        VPNLog.tunnel.warning("event=vpn.packet_capture_limit_reached outcome=disabled limit=\(self.limit) current=\(self.bytes)")
-                        return
+                    var limitedPackets: [Data] = []
+                    limitedPackets.reserveCapacity(acceptedPackets.count)
+                    for packet in acceptedPackets {
+                        let projected = self.bytes + UInt64(packet.count)
+                        if projected > self.limit {
+                            self.enabled = false
+                            VPNLog.tunnel.warning("event=vpn.packet_capture_limit_reached outcome=disabled limit=\(self.limit) current=\(self.bytes)")
+                            break
+                        }
+                        self.bytes = projected
+                        limitedPackets.append(packet)
                     }
-                    self.bytes = projected
+                    packetsToWrite = limitedPackets
+                } else {
+                    packetsToWrite = acceptedPackets
                 }
 
-                writer.writePacket(packet)
+                if !packetsToWrite.isEmpty {
+                    writer.writePackets(packetsToWrite)
+                }
             }
 
-            self.processParsedPacket(packet: packet)
+            for packet in acceptedPackets {
+                self.processParsedPacket(packet: packet)
+            }
         }
 
-        return true
+        return acceptedCount
     }
 
     private func processParsedPacket(packet: Data) {
@@ -272,9 +302,7 @@ final class PacketFlowLoop {
                     return
                 }
 
-                for packet in packets {
-                    _ = self.capturePipeline.enqueue(packet: packet)
-                }
+                _ = self.capturePipeline.enqueue(packets: packets)
 
                 if let udpForwarder = self.udpForwarder {
                     var forwardPackets: [Data] = []

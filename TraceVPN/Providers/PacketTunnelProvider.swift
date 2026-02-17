@@ -229,7 +229,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         await HardeningConfig.shared.logCurrentConfig()
 
-        await configureCaptureSettings()
+        await configureCaptureSettings(for: captureConfig.captureMode)
         await initializeEventLog(mode: captureConfig.captureMode)
 
         await preloadRootCertificate()
@@ -1005,6 +1005,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         let rawCaptureEnabled = await HardeningConfig.shared.enableRawCapture
         let rawCaptureLimit = await HardeningConfig.shared.maxRawCaptureSize
+        let enableProxyPCAP = shouldEnableProxyPCAP(rawCaptureEnabled: rawCaptureEnabled, mode: config.captureMode)
+        let proxyWriter = await createPCAPWriterIfNeeded(enabled: enableProxyPCAP)
+        await runtimeState.configureRawCapture(
+            enabled: enableProxyPCAP,
+            limit: rawCaptureLimit,
+            writer: proxyWriter
+        )
         let packetCaptureWriter = createPacketCaptureWriterIfNeeded(
             enabled: rawCaptureEnabled && config.captureMode == .fullTunnel
         )
@@ -1072,9 +1079,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         if let enableRawCapture = config["enableRawCapture"] as? Bool {
             await hardeningConfig.setEnableRawCapture(enableRawCapture)
             let limit = await hardeningConfig.maxRawCaptureSize
-            let writer = await createPCAPWriterIfNeeded(enabled: enableRawCapture)
+            let enableProxyPCAP = shouldEnableProxyPCAP(rawCaptureEnabled: enableRawCapture, mode: currentCaptureMode)
+            let writer = await createPCAPWriterIfNeeded(enabled: enableProxyPCAP)
             await runtimeState.configureRawCapture(
-                enabled: enableRawCapture,
+                enabled: enableProxyPCAP,
                 limit: limit,
                 writer: writer
             )
@@ -1150,19 +1158,25 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
     }
 
-    private func configureCaptureSettings() async {
+    private func configureCaptureSettings(for mode: CaptureMode) async {
         let config = HardeningConfig.shared
         let rawCaptureEnabled = await config.enableRawCapture
         let rawCaptureLimit = await config.maxRawCaptureSize
         let blockQUICEnabled = await config.blockQUIC
 
-        let writer = await createPCAPWriterIfNeeded(enabled: rawCaptureEnabled)
+        let enableProxyPCAP = shouldEnableProxyPCAP(rawCaptureEnabled: rawCaptureEnabled, mode: mode)
+        let writer = await createPCAPWriterIfNeeded(enabled: enableProxyPCAP)
         await runtimeState.configureRawCapture(
-            enabled: rawCaptureEnabled,
+            enabled: enableProxyPCAP,
             limit: rawCaptureLimit,
             writer: writer
         )
         await runtimeState.setBlockQUICEnabled(blockQUICEnabled)
+    }
+
+    private func shouldEnableProxyPCAP(rawCaptureEnabled: Bool, mode: CaptureMode) -> Bool {
+        // Avoid duplicate capture in full-tunnel mode; packet-level PCAP already captures traffic there.
+        rawCaptureEnabled && mode == .proxyOnly
     }
 
     /// Creates a PCAP writer for raw packet capture.

@@ -286,10 +286,10 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine, @unchecked Sendabl
           udp: 'udp'
 
         misc:
-          task-stack-size: 24576
-          tcp-buffer-size: 4096
+          task-stack-size: 36864
+          tcp-buffer-size: 16384
           udp-recv-buffer-size: 524288
-          udp-copy-buffer-nums: 10
+          udp-copy-buffer-nums: 20
           max-session-count: 1200
           tcp-read-write-timeout: 300
           udp-read-write-timeout: 300

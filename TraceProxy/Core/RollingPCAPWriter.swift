@@ -37,13 +37,19 @@ public final class RollingPCAPWriter: PCAPWriting, @unchecked Sendable {
     }
 
     public func writePacket(_ packet: Data) {
+        writePackets([packet])
+    }
+
+    public func writePackets(_ packets: [Data]) {
         queue.async { [weak self] in
-            guard let self else { return }
-            let recordSize = UInt64(16 + packet.count)
-            if self.maxFileSize > 0, self.currentSize + recordSize > self.maxFileSize {
-                self.rotateFiles()
+            guard let self, !packets.isEmpty else { return }
+            for packet in packets {
+                let recordSize = UInt64(16 + packet.count)
+                if self.maxFileSize > 0, self.currentSize + recordSize > self.maxFileSize {
+                    self.rotateFiles()
+                }
+                self.writeRecord(packet)
             }
-            self.writeRecord(packet)
         }
     }
 
@@ -146,15 +152,16 @@ public final class RollingPCAPWriter: PCAPWriting, @unchecked Sendable {
         let usec = UInt32((now.timeIntervalSince1970 - Double(seconds)) * 1_000_000.0)
 
         var record = Data()
+        record.reserveCapacity(16 + packet.count)
         record.appendUInt32LE(seconds)
         record.appendUInt32LE(usec)
         record.appendUInt32LE(UInt32(packet.count))
         record.appendUInt32LE(UInt32(packet.count))
+        record.append(packet)
 
         do {
             try handle.write(contentsOf: record)
-            try handle.write(contentsOf: packet)
-            currentSize += UInt64(record.count + packet.count)
+            currentSize += UInt64(record.count)
         } catch {
             ProxyLog.metrics.error("event=pcap.write outcome=failure error=\(error.localizedDescription, privacy: .public)")
         }
