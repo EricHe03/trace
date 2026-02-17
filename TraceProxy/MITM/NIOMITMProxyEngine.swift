@@ -17,6 +17,10 @@ import Security
 import TraceCore
 import TraceSecurity
 
+private struct NIOMITMUncheckedSendableBox<Value>: @unchecked Sendable {
+    let value: Value
+}
+
 /// NIO/NIOTS transport engine for MITM proxy listener lifecycle.
 ///
 /// NIO is the sole transport backend for MITM server lifecycle.
@@ -293,7 +297,9 @@ private extension NIOMITMInitialIngressHandler {
         context.channel.pipeline
             .addHandler(
                 ByteToMessageHandler(
-                    HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)
+                    // Avoid forwarding non-HTTP leftovers as IOData into handlers
+                    // that only accept HTTPServerRequestPart.
+                    HTTPRequestDecoder(leftOverBytesStrategy: .dropBytes)
                 ),
                 name: NIOMITMHTTPConnectHandler.decoderName
             )
@@ -624,6 +630,8 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
     static let clientWSDecoderName = "nioClientWSDecoder"
     static let clientWSEncoderName = "nioClientWSEncoder"
     static let clientWSRelayName = "nioClientWSRelay"
+    static let tunnelPipelineVersion = "connect-relay-2026-02-14-v3"
+    static let upstreamHTTPResponseDeadlineSeconds: Int64 = 600
 
     private enum State {
         case waitingForRequest
@@ -662,11 +670,17 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
     private let shouldMitmConnect: (String, UInt16) -> Bool
     private let onMITMFailure: ((String, String) -> Void)?
     private let ingressMode: IngressMode
+    private let usesHTTP2StreamSemantics: Bool
 
+    private let connectionID = UUID().uuidString
     private var state: State = .waitingForRequest
     private var upstreamChannel: Channel?
     private var pendingRequestHead: HTTPRequestHead?
     private var pendingRequestBody = ByteBuffer()
+    private var connectTargetHost: String?
+    private var connectTargetPort: Int?
+    private var connectRequestStartTime: Date?
+    private var didLogTunnelStatePassthrough = false
 
     init(
         group: NIOTSEventLoopGroup,
@@ -677,7 +691,8 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         onRequestCaptured: ((NetworkRequest) -> Void)?,
         shouldMitmConnect: @escaping (String, UInt16) -> Bool,
         onMITMFailure: ((String, String) -> Void)?,
-        ingressMode: IngressMode
+        ingressMode: IngressMode,
+        usesHTTP2StreamSemantics: Bool = false
     ) {
         self.group = group
         self.eventLog = eventLog
@@ -688,39 +703,84 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         self.shouldMitmConnect = shouldMitmConnect
         self.onMITMFailure = onMITMFailure
         self.ingressMode = ingressMode
+        self.usesHTTP2StreamSemantics = usesHTTP2StreamSemantics
+        if case let .tunneledHTTPS(host, port) = ingressMode {
+            connectTargetHost = host
+            connectTargetPort = Int(port)
+        }
+    }
+
+    func handlerAdded(context: ChannelHandlerContext) {
+        let mode: String
+        switch ingressMode {
+        case .proxy:
+            mode = "proxy"
+        case .tunneledHTTPS:
+            mode = "tunneled_https"
+        }
+        logConnectStage(
+            stage: "handler_added",
+            outcome: "ready",
+            detail: "version=\(Self.tunnelPipelineVersion),mode=\(mode)"
+        )
+    }
+
+    func handlerRemoved(context: ChannelHandlerContext) {
+        logConnectStage(
+            stage: "handler_removed",
+            outcome: "success",
+            detail: "version=\(Self.tunnelPipelineVersion)"
+        )
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         guard state != .closed else { return }
-        let part = unwrapInboundIn(data)
-
         switch state {
+        case .connectingUpstream, .tunnelEstablished:
+            // During CONNECT->tunnel transitions this handler can still briefly sit in
+            // the pipeline while raw bytes are already flowing. Do not force-decode
+            // as HTTP parts here; pass through to downstream tunnel handlers.
+            if !didLogTunnelStatePassthrough {
+                didLogTunnelStatePassthrough = true
+                logConnectStage(stage: "handler_tunnel_passthrough", outcome: "active")
+            }
+            context.fireChannelRead(data)
+        case .closed:
+            return
         case .waitingForRequest:
+            let part = unwrapInboundIn(data)
             handleInitialRequestPart(part, context: context)
         case .receivingHTTPRequest:
+            let part = unwrapInboundIn(data)
             handleHTTPRequestPart(part, context: context)
         case .forwardingHTTPRequest:
+            let part = unwrapInboundIn(data)
             sendResponse(
                 status: .badRequest,
                 body: "HTTP request pipelining is not supported by the NIO engine yet",
                 closeAfterSend: true,
                 context: context
             )
-        case .connectingUpstream, .tunnelEstablished, .closed:
-            return
+            if case .head = part {
+                Task { await ProxyNetworkMetrics.shared.recordHTTPParseFailure() }
+            }
         }
     }
 
     func channelInactive(context: ChannelHandlerContext) {
+        logConnectStage(stage: "client_channel_inactive", outcome: "closed")
         upstreamChannel?.close(promise: nil)
+        connectRequestStartTime = nil
         state = .closed
         context.fireChannelInactive()
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         ProxyLog.mitm.warning("event=proxy.nio_connect_handler_error outcome=failure error=\(error.localizedDescription, privacy: .public)")
-        reportMITMFailure(reason: "possible_pinning_or_strict_trust: \(error.localizedDescription)")
+        logConnectStage(stage: "client_handler_error", outcome: "failure", detail: error.localizedDescription)
+        reportMITMFailure(reason: classifyMITMFailure(error))
         upstreamChannel?.close(promise: nil)
+        connectRequestStartTime = nil
         state = .closed
         context.close(promise: nil)
     }
@@ -757,19 +817,38 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             }
 
             state = .connectingUpstream
+            connectTargetHost = targetHost
+            connectTargetPort = targetPort
+            connectRequestStartTime = Date()
             ProxyLog.mitm.info(
                 "event=proxy.nio_connect_request outcome=accepted host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public)"
             )
             eventLog?.append(type: "proxy_nio_connect", msg: "\(LogRedaction.hash(targetHost)):\(targetPort)")
+            logConnectStage(stage: "connect_request", outcome: "accepted")
+            logConnectStage(stage: "client_autoread", outcome: "disable_begin")
+            context.channel.setOption(ChannelOptions.autoRead, value: false).whenComplete { [weak self] result in
+                if case let .failure(error) = result {
+                    self?.logConnectStage(
+                        stage: "client_autoread",
+                        outcome: "disable_failure",
+                        detail: error.localizedDescription
+                    )
+                }
+            }
 
             if shouldMitmConnect(targetHost, UInt16(targetPort)) {
                 if let bypassDetail = TLSHandler.preflightServerLeafTrust(for: targetHost) {
                     ProxyLog.mitm.info(
                         "event=proxy.nio_connect_mitm_bypass outcome=success host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) reason=\(bypassDetail, privacy: .public)"
                     )
-                    emitConnectMarker(host: targetHost, port: targetPort, note: "CONNECT passthrough (\(bypassDetail))")
+                    logConnectStage(stage: "mitm_bypass_preflight", outcome: "success", detail: bypassDetail)
                     Task { await ProxyNetworkMetrics.shared.recordMITMBypassed() }
-                    connectUpstream(host: targetHost, port: targetPort, context: context)
+                    connectUpstream(
+                        host: targetHost,
+                        port: targetPort,
+                        context: context,
+                        connectMarkerNote: "CONNECT passthrough (\(bypassDetail))"
+                    )
                     return
                 }
 
@@ -777,9 +856,14 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                 return
             }
 
-            emitConnectMarker(host: targetHost, port: targetPort, note: "CONNECT passthrough tunnel")
+            logConnectStage(stage: "mitm_bypass_policy", outcome: "success", detail: "not_mitm")
             Task { await ProxyNetworkMetrics.shared.recordMITMBypassed() }
-            connectUpstream(host: targetHost, port: targetPort, context: context)
+            connectUpstream(
+                host: targetHost,
+                port: targetPort,
+                context: context,
+                connectMarkerNote: "CONNECT passthrough tunnel"
+            )
         case .body, .end:
             return
         }
@@ -882,6 +966,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             blocked.responseBody = .empty
             blocked.extractHTTPFields()
             NetworkThrottlingController.shared.applyMetadata(to: &blocked)
+            finalizeCapturedDuration(for: &blocked)
             onRequestCaptured?(blocked)
             Task {
                 await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
@@ -925,26 +1010,44 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
     }
 
     private func beginCONNECTMITM(host: String, port: Int, context: ChannelHandlerContext) {
+        logConnectStage(stage: "mitm_prepare", outcome: "begin")
         do {
             let tlsContext = try Self.makeServerTLSContext(for: host)
-            emitConnectMarker(host: host, port: port, note: "CONNECT MITM established")
-            Task { await ProxyNetworkMetrics.shared.recordMITMIntercepted() }
-            sendResponse(status: .ok, body: nil, closeAfterSend: false, context: context) { [weak self] in
-                self?.installMITMDecryptionPipeline(
-                    host: host,
-                    port: port,
-                    tlsContext: tlsContext,
-                    context: context
-                )
+            context.channel.setOption(ChannelOptions.autoRead, value: false).whenComplete { [weak self] _ in
+                guard let self else { return }
+                self.logConnectStage(stage: "connect_response", outcome: "writing", detail: "mitm")
+                Task { await ProxyNetworkMetrics.shared.recordMITMIntercepted() }
+                self.sendResponse(status: .ok, body: nil, closeAfterSend: false, context: context) { [weak self] in
+                    guard let self else { return }
+                    self.logConnectStage(stage: "connect_response", outcome: "flushed", detail: "mitm")
+                    self.emitConnectMarker(
+                        host: host,
+                        port: port,
+                        note: "CONNECT MITM established",
+                        startTime: self.connectRequestStartTime
+                    )
+                    self.connectRequestStartTime = nil
+                    self.installMITMDecryptionPipeline(
+                        host: host,
+                        port: port,
+                        tlsContext: tlsContext,
+                        context: context
+                    )
+                }
             }
         } catch {
             ProxyLog.mitm.warning(
                 "event=proxy.nio_connect_mitm_prepare outcome=failure host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
             )
+            logConnectStage(stage: "mitm_prepare", outcome: "failure", detail: error.localizedDescription)
             reportMITMFailure(host: host, reason: "mitm_setup_failed: \(error.localizedDescription)")
-            emitConnectMarker(host: host, port: port, note: "CONNECT passthrough (mitm_setup_failed)")
             Task { await ProxyNetworkMetrics.shared.recordMITMBypassed() }
-            connectUpstream(host: host, port: port, context: context)
+            connectUpstream(
+                host: host,
+                port: port,
+                context: context,
+                connectMarkerNote: "CONNECT passthrough (mitm_setup_failed)"
+            )
         }
     }
 
@@ -954,6 +1057,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         tlsContext: NIOSSLContext,
         context: ChannelHandlerContext
     ) {
+        logConnectStage(stage: "mitm_pipeline_install", outcome: "begin")
         let clientChannel = context.channel
 
         let tlsHandler: NIOSSLServerHandler
@@ -963,20 +1067,18 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             ProxyLog.mitm.warning(
                 "event=proxy.nio_connect_mitm_install outcome=failure stage=tls_handler host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
             )
+            logConnectStage(stage: "mitm_pipeline_install", outcome: "failure", detail: "tls_handler:\(error.localizedDescription)")
             reportMITMFailure(host: host, reason: "mitm_tls_handler_failed: \(error.localizedDescription)")
-            state = .closed
-            clientChannel.close(promise: nil)
+            attemptMITMFallbackToPassthrough(
+                host: host,
+                port: port,
+                context: context,
+                detail: "tls_handler_failed"
+            )
             return
         }
 
-        clientChannel.pipeline
-            .removeHandler(name: Self.handlerName)
-            .flatMap {
-                clientChannel.pipeline.removeHandler(name: Self.decoderName)
-            }
-            .flatMap {
-                clientChannel.pipeline.removeHandler(name: Self.encoderName)
-            }
+        removeCurrentHTTPPipelineHandlers(from: clientChannel)
             .flatMap {
                 clientChannel.pipeline.addHandler(tlsHandler, name: Self.tlsName, position: .first)
             }
@@ -1007,16 +1109,44 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             .whenComplete { [weak self] result in
                 switch result {
                 case .success:
+                    self?.logConnectStage(stage: "mitm_pipeline_install", outcome: "success")
                     self?.state = .tunnelEstablished
+                    _ = clientChannel.setOption(ChannelOptions.autoRead, value: true)
                 case let .failure(error):
                     ProxyLog.mitm.warning(
                         "event=proxy.nio_connect_mitm_install outcome=failure stage=pipeline host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                     )
+                    self?.logConnectStage(stage: "mitm_pipeline_install", outcome: "failure", detail: "pipeline:\(error.localizedDescription)")
                     self?.reportMITMFailure(host: host, reason: "mitm_pipeline_failed: \(error.localizedDescription)")
-                    self?.state = .closed
-                    clientChannel.close(promise: nil)
+                    self?.attemptMITMFallbackToPassthrough(
+                        host: host,
+                        port: port,
+                        context: context,
+                        detail: "pipeline_failed"
+                    )
                 }
             }
+    }
+
+    private func attemptMITMFallbackToPassthrough(
+        host: String,
+        port: Int,
+        context: ChannelHandlerContext,
+        detail: String
+    ) {
+        guard context.channel.isActive else {
+            logConnectStage(stage: "mitm_fallback", outcome: "skipped", detail: "\(detail),client_inactive")
+            state = .closed
+            return
+        }
+        state = .connectingUpstream
+        logConnectStage(stage: "mitm_fallback", outcome: "begin", detail: detail)
+        connectUpstream(
+            host: host,
+            port: port,
+            context: context,
+            sendConnectResponse: false
+        )
     }
 
     fileprivate func installTransparentTLSPipeline(
@@ -1065,13 +1195,16 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         host: String,
         port: Int
     ) -> EventLoopFuture<Void> {
+        logConnectStage(stage: "mitm_protocol_select", outcome: "success", detail: "http1.1")
         ProxyLog.mitm.debug(
             "event=proxy.nio_connect_mitm_protocol outcome=selected protocol=http1.1 host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public)"
         )
         return channel.pipeline
             .addHandler(
                 ByteToMessageHandler(
-                    HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)
+                    // Tunneled HTTP/1 requests should not forward raw leftovers
+                    // to typed HTTP handlers, which can trigger NIOAny type traps.
+                    HTTPRequestDecoder(leftOverBytesStrategy: .dropBytes)
                 ),
                 name: Self.tunneledDecoderName
             )
@@ -1094,6 +1227,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         host: String,
         port: Int
     ) -> EventLoopFuture<Void> {
+        logConnectStage(stage: "mitm_protocol_select", outcome: "success", detail: "h2")
         ProxyLog.mitm.info(
             "event=proxy.nio_connect_mitm_protocol outcome=selected protocol=h2 host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public)"
         )
@@ -1121,14 +1255,22 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                 }
                 .flatMap {
                     streamChannel.pipeline.addHandler(
-                        self.makeTunneledHTTPHandler(host: host, port: port),
+                        self.makeTunneledHTTPHandler(
+                            host: host,
+                            port: port,
+                            usesHTTP2StreamSemantics: true
+                        ),
                         name: Self.tunneledHTTP2HandlerName
                     )
                 }
         }.map { _ in () }
     }
 
-    private func makeTunneledHTTPHandler(host: String, port: Int) -> NIOMITMHTTPConnectHandler {
+    private func makeTunneledHTTPHandler(
+        host: String,
+        port: Int,
+        usesHTTP2StreamSemantics: Bool = false
+    ) -> NIOMITMHTTPConnectHandler {
         NIOMITMHTTPConnectHandler(
             group: group,
             eventLog: eventLog,
@@ -1138,11 +1280,19 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             onRequestCaptured: onRequestCaptured,
             shouldMitmConnect: shouldMitmConnect,
             onMITMFailure: onMITMFailure,
-            ingressMode: .tunneledHTTPS(host: host, port: UInt16(port))
+            ingressMode: .tunneledHTTPS(host: host, port: UInt16(port)),
+            usesHTTP2StreamSemantics: usesHTTP2StreamSemantics
         )
     }
 
-    private func connectUpstream(host: String, port: Int, context: ChannelHandlerContext) {
+    private func connectUpstream(
+        host: String,
+        port: Int,
+        context: ChannelHandlerContext,
+        sendConnectResponse: Bool = true,
+        connectMarkerNote: String? = nil
+    ) {
+        logConnectStage(stage: "upstream_connect", outcome: "begin")
         let bootstrap = NIOTSConnectionBootstrap(group: group)
         bootstrap.connect(host: host, port: port).whenComplete { [weak self] result in
             context.eventLoop.execute {
@@ -1156,16 +1306,48 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
 
                 switch result {
                 case let .success(upstream):
+                    self.logConnectStage(stage: "upstream_connect", outcome: "success")
                     self.upstreamChannel = upstream
-                    self.sendResponse(status: .ok, body: nil, closeAfterSend: false, context: context) { [weak self] in
-                        guard let self else { return }
-                        self.installTunnel(clientContext: context, upstream: upstream)
+                    if sendConnectResponse {
+                        self.logConnectStage(stage: "connect_response", outcome: "writing", detail: "passthrough")
+                        self.sendResponse(status: .ok, body: nil, closeAfterSend: false, context: context) { [weak self] in
+                            guard let self else { return }
+                            self.logConnectStage(stage: "connect_response", outcome: "flushed", detail: "passthrough")
+                            if let connectMarkerNote {
+                                self.emitConnectMarker(
+                                    host: host,
+                                    port: port,
+                                    note: connectMarkerNote,
+                                    startTime: self.connectRequestStartTime
+                                )
+                            }
+                            self.connectRequestStartTime = nil
+                            self.installTunnel(
+                                clientContext: context,
+                                upstream: upstream,
+                                restoreAutoRead: true
+                            )
+                        }
+                    } else {
+                        self.connectRequestStartTime = nil
+                        self.installTunnel(
+                            clientContext: context,
+                            upstream: upstream,
+                            restoreAutoRead: true
+                        )
                     }
                 case let .failure(error):
                     ProxyLog.mitm.warning(
                         "event=proxy.nio_upstream_connect outcome=failure host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                     )
-                    self.sendResponse(status: .badGateway, body: "Failed to connect upstream", closeAfterSend: true, context: context)
+                    self.logConnectStage(stage: "upstream_connect", outcome: "failure", detail: error.localizedDescription)
+                    self.connectRequestStartTime = nil
+                    if sendConnectResponse {
+                        self.sendResponse(status: .badGateway, body: "Failed to connect upstream", closeAfterSend: true, context: context)
+                    } else {
+                        self.state = .closed
+                        context.close(promise: nil)
+                    }
                 }
             }
         }
@@ -1181,7 +1363,13 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             return
         }
 
-        let outboundHeaders = makeHTTPHeaders(from: outboundContext.headers)
+        var outboundHeaders = makeHTTPHeaders(from: outboundContext.headers)
+        let outboundBodyData = normalizeWireBody(
+            outboundContext.body,
+            headers: &outboundHeaders,
+            compressionInfo: outboundContext.requestSnapshot.requestBody.getCompressionInfo(),
+            direction: "request"
+        )
         switch streamingRequestKind(requestHead: requestHead, headers: outboundHeaders) {
         case .webSocket:
             forwardWebSocketStream(
@@ -1205,8 +1393,8 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
 
         let sanitizedHeaders = sanitizedRequestHeaders(from: outboundHeaders)
         let method = NIOHTTP1.HTTPMethod(rawValue: outboundContext.methodToken) ?? .RAW(value: outboundContext.methodToken)
-        let outboundBodyBuffer = byteBuffer(from: outboundContext.body, allocator: context.channel.allocator)
-        let outboundBody: HTTPClient.Body? = outboundContext.body.isEmpty ? nil : .byteBuffer(outboundBodyBuffer)
+        let outboundBodyBuffer = byteBuffer(from: outboundBodyData, allocator: context.channel.allocator)
+        let outboundBody: HTTPClient.Body? = outboundBodyData.isEmpty ? nil : .byteBuffer(outboundBodyBuffer)
 
         let outboundRequest: HTTPClient.Request
         do {
@@ -1223,72 +1411,135 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
 
         throttle(
             direction: .upload,
-            bytes: outboundContext.body.count,
+            bytes: outboundBodyData.count,
             context: context
         ) { [weak self] in
             guard let self else { return }
-            httpClient.execute(request: outboundRequest, deadline: .now() + .seconds(60)).whenComplete { [weak self] result in
-                context.eventLoop.execute {
-                    guard let self, self.state == .forwardingHTTPRequest else { return }
-                    switch result {
-                    case let .success(response):
-                        let responseHeadersTrace = self.traceHeaders(from: response.headers)
-                        let responseBodyData = self.byteBufferToData(response.body ?? ByteBuffer())
-                        let captureConfig = self.captureConfigProvider()
-                        var captured = outboundContext.requestSnapshot
-                        captured.statusCode = Int(response.status.code)
-                        captured.statusMessage = response.status.reasonPhrase
-                        captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
-                        let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
-                        let responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
-                        captured.responseBody = self.bodyStorage(
-                            from: responseBodyData,
-                            charset: responseCharset,
-                            contentEncoding: responseContentEncoding,
-                            captureConfig: captureConfig
-                        )
-                        captured.extractHTTPFields()
-                        NetworkThrottlingController.shared.applyMetadata(to: &captured)
+            self.responsePipelineFuture(for: outboundContext.url, eventLoop: context.eventLoop)
+                .and(self.blockQUICEnabledFuture(eventLoop: context.eventLoop))
+                .whenComplete { [weak self] planResult in
+                    context.eventLoop.execute {
+                        guard let self, self.state == .forwardingHTTPRequest else { return }
 
-                        self.responseInterceptionFuture(
-                            fallbackRequest: captured,
-                            statusCode: Int(response.status.code),
-                            statusMessage: response.status.reasonPhrase,
-                            responseHeaders: responseHeadersTrace,
-                            responseBodyData: responseBodyData,
-                            eventLoop: context.eventLoop
-                        ).whenComplete { [weak self] interceptResult in
+                        let responsePipeline: ResponsePipeline
+                        let blockQUIC: Bool
+                        switch planResult {
+                        case let .success(plan):
+                            responsePipeline = plan.0
+                            blockQUIC = plan.1
+                        case let .failure(error):
+                            responsePipeline = .bufferAndIntercept
+                            blockQUIC = true
+                            ProxyLog.mitm.warning(
+                                "event=proxy.nio_response_pipeline outcome=failure url=\(outboundContext.url, privacy: .private(mask: .hash)) error=\(error.localizedDescription, privacy: .public)"
+                            )
+                        }
+
+                        self.logConnectStage(
+                            stage: "response_pipeline",
+                            outcome: "selected",
+                            detail: responsePipeline == .streamAndCapture ? "stream_and_capture" : "buffer_and_intercept"
+                        )
+
+                        let upstreamDeadline = NIODeadline.now() + .seconds(Self.upstreamHTTPResponseDeadlineSeconds)
+                        self.logConnectStage(
+                            stage: "http_upstream",
+                            outcome: "start",
+                            detail: "deadline_seconds=\(Self.upstreamHTTPResponseDeadlineSeconds)"
+                        )
+                        if responsePipeline == .streamAndCapture {
+                            self.forwardStreamingUpstreamResponse(
+                                httpClient: httpClient,
+                                request: outboundRequest,
+                                outboundContext: outboundContext,
+                                requestHead: requestHead,
+                                context: context,
+                                blockQUIC: blockQUIC,
+                                upstreamDeadline: upstreamDeadline,
+                                metricsAsParsedResponse: true
+                            )
+                            return
+                        }
+                        httpClient.execute(request: outboundRequest, deadline: upstreamDeadline).whenComplete { [weak self] result in
                             context.eventLoop.execute {
                                 guard let self, self.state == .forwardingHTTPRequest else { return }
-                                switch interceptResult {
-                                case let .success(interceptedRequest):
-                                    self.deliverCapturedResponse(
-                                        interceptedRequest,
-                                        requestHead: requestHead,
-                                        context: context,
-                                        metricsAsParsedResponse: true
+                                switch result {
+                                case let .success(response):
+                                    var forwardedHeaders = response.headers
+                                    if blockQUIC, outboundContext.url.lowercased().hasPrefix("https://") {
+                                        forwardedHeaders.remove(name: "Alt-Svc")
+                                        forwardedHeaders.add(name: "Alt-Svc", value: "clear")
+                                    }
+
+                                    let responseHeadersTrace = self.traceHeaders(from: forwardedHeaders)
+                                    let responseBodyData = self.byteBufferToData(response.body ?? ByteBuffer())
+                                    let captureConfig = self.captureConfigProvider()
+                                    var captured = outboundContext.requestSnapshot
+                                    captured.statusCode = Int(response.status.code)
+                                    captured.statusMessage = response.status.reasonPhrase
+                                    captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
+                                    let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
+                                    let responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
+                                    captured.responseBody = self.bodyStorage(
+                                        from: responseBodyData,
+                                        charset: responseCharset,
+                                        contentEncoding: responseContentEncoding,
+                                        captureConfig: captureConfig
                                     )
-                                case .failure:
-                                    self.deliverCapturedResponse(
-                                        captured,
-                                        requestHead: requestHead,
-                                        context: context,
-                                        metricsAsParsedResponse: true
+                                    captured.extractHTTPFields()
+                                    NetworkThrottlingController.shared.applyMetadata(to: &captured)
+
+                                    self.responseInterceptionFuture(
+                                        fallbackRequest: captured,
+                                        statusCode: Int(response.status.code),
+                                        statusMessage: response.status.reasonPhrase,
+                                        responseHeaders: responseHeadersTrace,
+                                        responseBodyData: responseBodyData,
+                                        eventLoop: context.eventLoop
+                                    ).whenComplete { [weak self] interceptResult in
+                                        context.eventLoop.execute {
+                                            guard let self, self.state == .forwardingHTTPRequest else { return }
+                                            switch interceptResult {
+                                            case let .success(interceptedRequest):
+                                                self.deliverCapturedResponse(
+                                                    interceptedRequest,
+                                                    requestHead: requestHead,
+                                                    context: context,
+                                                    metricsAsParsedResponse: true
+                                                )
+                                            case .failure:
+                                                self.deliverCapturedResponse(
+                                                    captured,
+                                                    requestHead: requestHead,
+                                                    context: context,
+                                                    metricsAsParsedResponse: true
+                                                )
+                                            }
+                                        }
+                                    }
+                                case let .failure(error):
+                                    let classifiedFailure = self.classifyMITMFailure(error)
+                                    self.reportMITMFailure(reason: classifiedFailure)
+                                    self.logConnectStage(stage: "http_upstream", outcome: "failure", detail: error.localizedDescription)
+                                    let targetHost = URL(string: outboundContext.url)?.host ?? "unknown"
+                                    ProxyLog.mitm.warning(
+                                        "event=proxy.nio_http_upstream outcome=failure method=\(outboundContext.methodToken, privacy: .public) host=\(targetHost, privacy: .private(mask: .hash)) error=\(error.localizedDescription, privacy: .public) classified=\(classifiedFailure, privacy: .public) deadline_seconds=\(Self.upstreamHTTPResponseDeadlineSeconds, privacy: .public)"
+                                    )
+                                    self.eventLog?.append(
+                                        type: "proxy_nio_http_upstream_failure",
+                                        msg: "method=\(outboundContext.methodToken) host_hash=\(LogRedaction.hash(targetHost)) error=\(error.localizedDescription) classified=\(classifiedFailure) deadline_seconds=\(Self.upstreamHTTPResponseDeadlineSeconds)"
+                                    )
+                                    self.sendResponse(
+                                        status: .badGateway,
+                                        body: "Upstream HTTP request failed",
+                                        closeAfterSend: true,
+                                        context: context
                                     )
                                 }
                             }
                         }
-                    case let .failure(error):
-                        self.reportMITMFailure(reason: self.classifyMITMFailure(error))
-                        self.sendResponse(
-                            status: .badGateway,
-                            body: "Upstream HTTP request failed",
-                            closeAfterSend: true,
-                            context: context
-                        )
                     }
                 }
-            }
         }
     }
 
@@ -1330,6 +1581,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             allocator: context.channel.allocator
         )
         let sseCapture = NIOMITMSSECaptureState(baseRequest: outboundContext.requestSnapshot)
+        let sendableContext = NIOMITMUncheckedSendableBox(value: context)
 
         let bootstrap = NIOTSConnectionBootstrap(group: group)
         bootstrap.connect(host: targetHost, port: targetPort).whenComplete { [weak self] result in
@@ -1348,6 +1600,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                     var responseHeadSeen = false
 
                     let onPart: @Sendable (HTTPClientResponsePart) -> Void = { [weak self, weak upstream] part in
+                        let context = sendableContext.value
                         guard let self, let upstream else { return }
                         context.eventLoop.execute {
                             guard self.state == .forwardingHTTPRequest else { return }
@@ -1391,6 +1644,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                     }
 
                     let onError: @Sendable (Error) -> Void = { [weak self] error in
+                        let context = sendableContext.value
                         context.eventLoop.execute {
                             guard let self, self.state == .forwardingHTTPRequest else { return }
                             self.reportMITMFailure(reason: self.classifyMITMFailure(error))
@@ -1414,6 +1668,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                     }
 
                     let onInactive: @Sendable () -> Void = { [weak self] in
+                        let context = sendableContext.value
                         context.eventLoop.execute {
                             guard let self, self.state == .forwardingHTTPRequest else { return }
                             sseCapture.finish(
@@ -1498,6 +1753,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             url: normalizedWebSocketURL(from: outboundContext.url),
             requestHeaders: traceHeaders(from: requestHeaders)
         )
+        let sendableContext = NIOMITMUncheckedSendableBox(value: context)
 
         let bootstrap = NIOTSConnectionBootstrap(group: group)
         bootstrap.connect(host: targetHost, port: targetPort).whenComplete { [weak self] result in
@@ -1517,6 +1773,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                     var closeAfterSend = false
 
                     let onPart: @Sendable (HTTPClientResponsePart) -> Void = { [weak self, weak upstream] part in
+                        let context = sendableContext.value
                         guard let self, let upstream else { return }
                         context.eventLoop.execute {
                             guard self.state == .forwardingHTTPRequest else { return }
@@ -1588,6 +1845,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                                 )
                                 captured.extractHTTPFields()
                                 NetworkThrottlingController.shared.applyMetadata(to: &captured)
+                                self.finalizeCapturedDuration(for: &captured)
                                 self.onRequestCaptured?(captured)
 
                                 let promise = context.eventLoop.makePromise(of: Void.self)
@@ -1605,6 +1863,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                     }
 
                     let onError: @Sendable (Error) -> Void = { [weak self] error in
+                        let context = sendableContext.value
                         context.eventLoop.execute {
                             guard let self, self.state == .forwardingHTTPRequest else { return }
                             self.reportMITMFailure(reason: self.classifyMITMFailure(error))
@@ -1624,6 +1883,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                     }
 
                     let onInactive: @Sendable () -> Void = { [weak self] in
+                        let context = sendableContext.value
                         context.eventLoop.execute {
                             guard let self, self.state == .forwardingHTTPRequest else { return }
                             wsCapture.markClosed(code: nil, reason: nil)
@@ -1775,21 +2035,38 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
     }
 
     private func removeCurrentHTTPPipelineHandlers(from channel: Channel) -> EventLoopFuture<Void> {
-        let handlerNames: [String]
-        switch ingressMode {
-        case .proxy:
-            handlerNames = [Self.handlerName, Self.decoderName, Self.encoderName]
-        case .tunneledHTTPS:
-            handlerNames = [Self.tunneledHandlerName, Self.tunneledDecoderName, Self.tunneledEncoderName]
-        }
+        removeCurrentHTTPPipelineHandlersIfPresent(from: channel)
+    }
 
+    private func removeCurrentHTTPPipelineHandlersIfPresent(from channel: Channel) -> EventLoopFuture<Void> {
         var future = channel.eventLoop.makeSucceededVoidFuture()
-        for name in handlerNames {
+        for name in currentHTTPPipelineHandlerNames() {
             future = future.flatMap {
-                channel.pipeline.removeHandler(name: name)
+                self.removeHandlerIfPresent(name: name, from: channel)
             }
         }
         return future
+    }
+
+    private func currentHTTPPipelineHandlerNames() -> [String] {
+        switch ingressMode {
+        case .proxy:
+            return [Self.handlerName, Self.decoderName, Self.encoderName]
+        case .tunneledHTTPS:
+            return [Self.tunneledHandlerName, Self.tunneledDecoderName, Self.tunneledEncoderName]
+        }
+    }
+
+    private func currentHTTPPipelinePresenceSummary(on channel: Channel) -> EventLoopFuture<String> {
+        let checks = currentHTTPPipelineHandlerNames().map { name in
+            channel.pipeline.context(name: name)
+                .map { _ in "\(name)=present" }
+                .flatMapError { _ in
+                    channel.eventLoop.makeSucceededFuture("\(name)=missing")
+                }
+        }
+        return EventLoopFuture.whenAllSucceed(checks, on: channel.eventLoop)
+            .map { $0.joined(separator: ",") }
     }
 
     private func makeRawStreamingRequestBuffer(
@@ -1858,10 +2135,16 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             statusCode: responseStatusCode,
             reasonPhrase: request.statusMessage ?? HTTPResponseStatus(statusCode: responseStatusCode).reasonPhrase
         )
-        let responseHeaders = makeHTTPHeaders(from: request.responseHeaders)
-        let responseBodyData = request.responseBody.getData()
+        var responseHeaders = makeHTTPHeaders(from: request.responseHeaders)
+        var responseBodyData = request.responseBody.getData()
             ?? request.responseBody.getString()?.data(using: .utf8)
             ?? Data()
+        responseBodyData = normalizeWireBody(
+            responseBodyData,
+            headers: &responseHeaders,
+            compressionInfo: request.responseBody.getCompressionInfo(),
+            direction: "response"
+        )
         let closeAfterSend = shouldCloseConnection(requestHead: requestHead, responseHeaders: responseHeaders)
         let sanitizedHeaders = sanitizedResponseHeaders(
             from: responseHeaders,
@@ -1879,41 +2162,338 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                 closeAfterSend: closeAfterSend,
                 context: context
             ) { [weak self] in
-                self?.onRequestCaptured?(request)
+                guard let self else { return }
+                var finalized = request
+                self.finalizeCapturedDuration(for: &finalized)
+                self.onRequestCaptured?(finalized)
                 if metricsAsParsedResponse {
                     Task {
                         await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
                         await ProxyNetworkMetrics.shared.recordHTTPTransactionCompleted()
                     }
                 }
-                self?.state = closeAfterSend ? .closed : .waitingForRequest
+                self.state = closeAfterSend ? .closed : .waitingForRequest
             }
         }
     }
 
-    private func installTunnel(clientContext: ChannelHandlerContext, upstream: Channel) {
+    private func deliverRawUpstreamResponse(
+        status: HTTPResponseStatus,
+        headers: HTTPHeaders,
+        bodyData: Data,
+        capturedRequest: NetworkRequest,
+        requestHead: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        metricsAsParsedResponse: Bool
+    ) {
+        let closeAfterSend = shouldCloseConnection(requestHead: requestHead, responseHeaders: headers)
+        let sanitizedHeaders = sanitizedResponseHeaders(
+            from: headers,
+            bodyBytes: bodyData.count,
+            closeAfterSend: closeAfterSend
+        )
+        let responseBodyBuffer = byteBuffer(from: bodyData, allocator: context.channel.allocator)
+
+        throttle(direction: .download, bytes: bodyData.count, context: context) { [weak self] in
+            guard let self else { return }
+            self.sendHTTPResponse(
+                status: status,
+                headers: sanitizedHeaders,
+                body: responseBodyBuffer,
+                closeAfterSend: closeAfterSend,
+                context: context
+            ) { [weak self] in
+                guard let self else { return }
+                var finalized = capturedRequest
+                self.finalizeCapturedDuration(for: &finalized)
+                self.onRequestCaptured?(finalized)
+                if metricsAsParsedResponse {
+                    Task {
+                        await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
+                        await ProxyNetworkMetrics.shared.recordHTTPTransactionCompleted()
+                    }
+                }
+                self.state = closeAfterSend ? .closed : .waitingForRequest
+            }
+        }
+    }
+
+    private func forwardStreamingUpstreamResponse(
+        httpClient: HTTPClient,
+        request: HTTPClient.Request,
+        outboundContext: OutboundRequestContext,
+        requestHead: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        blockQUIC: Bool,
+        upstreamDeadline: NIODeadline,
+        metricsAsParsedResponse: Bool
+    ) {
+        let captureConfig = captureConfigProvider()
+        let maxCapturedBodyBytes = captureConfig.captureBody ? max(0, captureConfig.maxBodySize) : 0
+        var capturedBodyData = Data()
+        var receivedBodyBytes = 0
+        var didTruncateCapturedBody = false
+        var declaredResponseBodyBytes: Int?
+        var capturedRequest = outboundContext.requestSnapshot
+        var responseHead: HTTPResponseHead?
+        var responseHeadersTrace: [TraceHTTPHeader] = []
+        var closeAfterSend = false
+        var responseHeadSent = false
+        var terminalStateReached = false
+        let targetHost = URL(string: outboundContext.url)?.host ?? "unknown"
+        let sendableContext = NIOMITMUncheckedSendableBox(value: context)
+
+        let onHead: @Sendable (HTTPResponseHead) -> EventLoopFuture<Void> = { [weak self] head in
+            let context = sendableContext.value
+            guard let self else {
+                return context.eventLoop.makeSucceededVoidFuture()
+            }
+            let promise = context.eventLoop.makePromise(of: Void.self)
+            context.eventLoop.execute {
+                guard self.state == .forwardingHTTPRequest, !terminalStateReached else {
+                    promise.succeed(())
+                    return
+                }
+
+                responseHead = head
+                responseHeadSent = true
+                declaredResponseBodyBytes = self.contentLength(from: head.headers)
+
+                var forwardedHeaders = head.headers
+                if blockQUIC, outboundContext.url.lowercased().hasPrefix("https://") {
+                    forwardedHeaders.remove(name: "Alt-Svc")
+                    forwardedHeaders.add(name: "Alt-Svc", value: "clear")
+                }
+                closeAfterSend = self.shouldCloseConnection(requestHead: requestHead, responseHeaders: forwardedHeaders)
+                responseHeadersTrace = self.traceHeaders(from: forwardedHeaders)
+
+                if head.status.code >= 400 {
+                    self.logConnectStage(
+                        stage: "response_emit",
+                        outcome: "error",
+                        detail: "status=\(head.status.code),close=\(closeAfterSend),h2_stream=\(self.usesHTTP2StreamSemantics)"
+                    )
+                    self.eventLog?.append(
+                        type: "proxy_nio_error_response",
+                        msg: "mode=\(self.ingressModeLabel) id=\(self.connectionID) status=\(head.status.code) close=\(closeAfterSend) h2_stream=\(self.usesHTTP2StreamSemantics)"
+                    )
+                }
+
+                let responseHead = HTTPResponseHead(
+                    version: .http1_1,
+                    status: head.status,
+                    headers: self.streamingResponseHeaders(from: forwardedHeaders, closeAfterSend: closeAfterSend)
+                )
+                context.writeAndFlush(self.wrapOutboundOut(.head(responseHead)), promise: promise)
+            }
+            return promise.futureResult
+        }
+
+        let onBodyPart: @Sendable (ByteBuffer) -> EventLoopFuture<Void> = { [weak self] buffer in
+            let context = sendableContext.value
+            guard let self else {
+                return context.eventLoop.makeSucceededVoidFuture()
+            }
+            let promise = context.eventLoop.makePromise(of: Void.self)
+            context.eventLoop.execute {
+                guard self.state == .forwardingHTTPRequest, !terminalStateReached else {
+                    promise.succeed(())
+                    return
+                }
+
+                let chunkBytes = buffer.readableBytes
+                if chunkBytes > 0 {
+                    receivedBodyBytes += chunkBytes
+                }
+
+                if maxCapturedBodyBytes > 0, chunkBytes > 0 {
+                    let remaining = maxCapturedBodyBytes - capturedBodyData.count
+                    if remaining > 0 {
+                        let chunkData = self.byteBufferToData(buffer)
+                        if chunkData.count <= remaining {
+                            capturedBodyData.append(chunkData)
+                        } else {
+                            capturedBodyData.append(chunkData.prefix(remaining))
+                            didTruncateCapturedBody = true
+                        }
+                    } else {
+                        didTruncateCapturedBody = true
+                    }
+                }
+
+                let writeChunk = {
+                    context.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: promise)
+                }
+                if buffer.readableBytes > 0 {
+                    self.throttle(
+                        direction: .download,
+                        bytes: buffer.readableBytes,
+                        context: context,
+                        operation: writeChunk
+                    )
+                } else {
+                    writeChunk()
+                }
+            }
+            return promise.futureResult
+        }
+
+        let onFinish: @Sendable () throws -> Void = { [weak self] in
+            let context = sendableContext.value
+            guard let self else { return }
+            context.eventLoop.execute {
+                guard self.state == .forwardingHTTPRequest, !terminalStateReached else { return }
+                terminalStateReached = true
+
+                let finalStatus = responseHead?.status ?? .ok
+                capturedRequest.statusCode = Int(finalStatus.code)
+                capturedRequest.statusMessage = finalStatus.reasonPhrase
+                capturedRequest.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
+                let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
+                let observedResponseBodyBytes = max(receivedBodyBytes, capturedBodyData.count)
+                let resolvedResponseBodyBytes = self.resolvedResponseBodyBytes(
+                    declaredContentLength: declaredResponseBodyBytes,
+                    observedBodyBytes: observedResponseBodyBytes
+                )
+                if didTruncateCapturedBody {
+                    let totalSize = max(capturedBodyData.count, resolvedResponseBodyBytes)
+                    capturedRequest.responseBody = self.truncatedBodyStorage(
+                        fromCapturedData: capturedBodyData,
+                        totalSize: totalSize,
+                        charset: responseCharset,
+                        contentEncoding: nil,
+                        decodeCompressedContent: false
+                    )
+                } else {
+                    capturedRequest.responseBody = self.bodyStorage(
+                        from: capturedBodyData,
+                        charset: responseCharset,
+                        contentEncoding: nil,
+                        captureConfig: captureConfig,
+                        decodeCompressedContent: false
+                    )
+                }
+                NetworkThrottlingController.shared.applyMetadata(to: &capturedRequest)
+
+                let endPromise = context.eventLoop.makePromise(of: Void.self)
+                endPromise.futureResult.whenComplete { _ in
+                    var finalized = capturedRequest
+                    self.finalizeCapturedDuration(for: &finalized)
+                    self.onRequestCaptured?(finalized)
+                    if metricsAsParsedResponse {
+                        Task {
+                            await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
+                            await ProxyNetworkMetrics.shared.recordHTTPTransactionCompleted()
+                        }
+                    }
+                    self.state = closeAfterSend ? .closed : .waitingForRequest
+                    if closeAfterSend {
+                        context.close(promise: nil)
+                    }
+                }
+                context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: endPromise)
+            }
+        }
+
+        let onError: @Sendable (Error) -> Void = { [weak self] error in
+            let context = sendableContext.value
+            guard let self else { return }
+            context.eventLoop.execute {
+                guard self.state == .forwardingHTTPRequest, !terminalStateReached else { return }
+                terminalStateReached = true
+
+                let classifiedFailure = self.classifyMITMFailure(error)
+                self.reportMITMFailure(reason: classifiedFailure)
+                self.logConnectStage(stage: "http_upstream", outcome: "failure", detail: error.localizedDescription)
+                ProxyLog.mitm.warning(
+                    "event=proxy.nio_http_upstream outcome=failure method=\(outboundContext.methodToken, privacy: .public) host=\(targetHost, privacy: .private(mask: .hash)) error=\(error.localizedDescription, privacy: .public) classified=\(classifiedFailure, privacy: .public) deadline_seconds=\(Self.upstreamHTTPResponseDeadlineSeconds, privacy: .public)"
+                )
+                self.eventLog?.append(
+                    type: "proxy_nio_http_upstream_failure",
+                    msg: "method=\(outboundContext.methodToken) host_hash=\(LogRedaction.hash(targetHost)) error=\(error.localizedDescription) classified=\(classifiedFailure) deadline_seconds=\(Self.upstreamHTTPResponseDeadlineSeconds)"
+                )
+
+                if responseHeadSent {
+                    self.state = .closed
+                    context.close(promise: nil)
+                } else {
+                    self.sendResponse(
+                        status: .badGateway,
+                        body: "Upstream HTTP request failed",
+                        closeAfterSend: true,
+                        context: context
+                    )
+                    self.state = .closed
+                }
+            }
+        }
+
+        let delegate = NIOMITMHTTPStreamingResponseDelegate(
+            onHead: onHead,
+            onBodyPart: onBodyPart,
+            onFinish: onFinish,
+            onError: onError
+        )
+        let task = httpClient.execute(request: request, delegate: delegate, deadline: upstreamDeadline)
+        task.futureResult.whenFailure { error in
+            onError(error)
+        }
+    }
+
+    private func installTunnel(
+        clientContext: ChannelHandlerContext,
+        upstream: Channel,
+        restoreAutoRead: Bool = false
+    ) {
+        logConnectStage(stage: "relay_install", outcome: "begin")
         let clientChannel = clientContext.channel
 
-        upstream.pipeline
-            .addHandler(NIOMITMRawRelayHandler(peerChannel: clientChannel))
+        let prepareFuture = currentHTTPPipelinePresenceSummary(on: clientChannel)
+            .map { [weak self] summary in
+                self?.logConnectStage(
+                    stage: "relay_prepare",
+                    outcome: "pipeline_before",
+                    detail: summary
+                )
+            }
+            .flatMap { [weak self] _ -> EventLoopFuture<Void> in
+                guard let self else {
+                    return clientChannel.eventLoop.makeSucceededVoidFuture()
+                }
+                return self.removeCurrentHTTPPipelineHandlersIfPresent(from: clientChannel)
+            }
+            .flatMap { [weak self] in
+                guard let self else {
+                    return clientChannel.eventLoop.makeSucceededVoidFuture()
+                }
+                return self.currentHTTPPipelinePresenceSummary(on: clientChannel)
+                    .map { summary in
+                        self.logConnectStage(
+                            stage: "relay_prepare",
+                            outcome: "pipeline_after",
+                            detail: summary
+                        )
+                    }
+            }
+
+        prepareFuture
+            .flatMap {
+                upstream.pipeline.addHandler(NIOMITMRawRelayHandler(peerChannel: clientChannel))
+            }
             .flatMap {
                 clientChannel.pipeline.addHandler(NIOMITMRawRelayHandler(peerChannel: upstream))
-            }
-            .flatMap {
-                clientChannel.pipeline.removeHandler(name: Self.handlerName)
-            }
-            .flatMap {
-                clientChannel.pipeline.removeHandler(name: Self.decoderName)
-            }
-            .flatMap {
-                clientChannel.pipeline.removeHandler(name: Self.encoderName)
             }
             .whenComplete { [weak self] result in
                 switch result {
                 case .success:
+                    self?.logConnectStage(stage: "relay_install", outcome: "success")
                     self?.state = .tunnelEstablished
+                    if restoreAutoRead {
+                        _ = clientChannel.setOption(ChannelOptions.autoRead, value: true)
+                    }
                 case let .failure(error):
                     ProxyLog.mitm.warning("event=proxy.nio_tunnel_install outcome=failure error=\(error.localizedDescription, privacy: .public)")
+                    self?.logConnectStage(stage: "relay_install", outcome: "failure", detail: error.localizedDescription)
                     self?.state = .closed
                     upstream.close(promise: nil)
                     clientChannel.close(promise: nil)
@@ -1953,11 +2533,31 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         onFlushed: (() -> Void)? = nil
     ) {
         var responseHeaders = headers
-        if responseHeaders.first(name: "Connection") == nil {
+        if usesHTTP2StreamSemantics {
+            // HTTP/2 forbids connection-specific headers.
+            responseHeaders.remove(name: "Connection")
+            responseHeaders.remove(name: "Proxy-Connection")
+            responseHeaders.remove(name: "Keep-Alive")
+            responseHeaders.remove(name: "Transfer-Encoding")
+            responseHeaders.remove(name: "Upgrade")
+        } else if responseHeaders.first(name: "Connection") == nil {
             responseHeaders.add(name: "Connection", value: closeAfterSend ? "close" : "keep-alive")
         } else if closeAfterSend {
             responseHeaders.replaceOrAdd(name: "Connection", value: "close")
         }
+
+        if status.code >= 400 {
+            logConnectStage(
+                stage: "response_emit",
+                outcome: "error",
+                detail: "status=\(status.code),close=\(closeAfterSend),h2_stream=\(usesHTTP2StreamSemantics)"
+            )
+            eventLog?.append(
+                type: "proxy_nio_error_response",
+                msg: "mode=\(ingressModeLabel) id=\(connectionID) status=\(status.code) close=\(closeAfterSend) h2_stream=\(usesHTTP2StreamSemantics)"
+            )
+        }
+
         let responseHead = HTTPResponseHead(version: .http1_1, status: status, headers: responseHeaders)
         context.write(wrapOutboundOut(.head(responseHead)), promise: nil)
         if body.readableBytes > 0 {
@@ -2014,6 +2614,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         sanitized.remove(name: "TE")
         sanitized.remove(name: "Trailer")
         sanitized.remove(name: "Transfer-Encoding")
+        sanitized.remove(name: "Content-Length")
         return sanitized
     }
 
@@ -2056,6 +2657,83 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         }
     }
 
+    private func normalizeWireBody(
+        _ body: Data,
+        headers: inout HTTPHeaders,
+        compressionInfo: CompressionInfo?,
+        direction: String
+    ) -> Data {
+        guard !body.isEmpty else { return body }
+        guard let compressionInfo, compressionInfo.decompressionSuccess else { return body }
+        guard let contentEncoding = headers.first(name: "Content-Encoding")?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !contentEncoding.isEmpty,
+            contentEncoding.lowercased() != "identity"
+        else {
+            return body
+        }
+
+        let encodings = contentEncoding
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty && $0 != "identity" }
+
+        guard !encodings.isEmpty else {
+            headers.remove(name: "Content-Encoding")
+            return body
+        }
+
+        var encodedBody = body
+        for encoding in encodings {
+            guard let compressed = CompressionHelper.compress(data: encodedBody, algorithm: encoding) else {
+                headers.remove(name: "Content-Encoding")
+                logConnectStage(
+                    stage: "body_encoding_normalize",
+                    outcome: "fallback_identity",
+                    detail: "\(direction),encoding=\(contentEncoding),failed=\(encoding)"
+                )
+                eventLog?.append(
+                    type: "proxy_nio_body_encoding_normalize",
+                    msg: "mode=\(ingressModeLabel) id=\(connectionID) direction=\(direction) action=strip content_encoding=\(contentEncoding) failed=\(encoding)"
+                )
+                return body
+            }
+            encodedBody = compressed
+        }
+
+        logConnectStage(
+            stage: "body_encoding_normalize",
+            outcome: "recompressed",
+            detail: "\(direction),encoding=\(contentEncoding),bytes=\(body.count)->\(encodedBody.count)"
+        )
+        eventLog?.append(
+            type: "proxy_nio_body_encoding_normalize",
+            msg: "mode=\(ingressModeLabel) id=\(connectionID) direction=\(direction) action=recompress content_encoding=\(contentEncoding) bytes_in=\(body.count) bytes_out=\(encodedBody.count)"
+        )
+        return encodedBody
+    }
+
+    private func streamingResponseHeaders(
+        from headers: HTTPHeaders,
+        closeAfterSend: Bool
+    ) -> HTTPHeaders {
+        var sanitized = headers
+        sanitized.remove(name: "Proxy-Connection")
+
+        if usesHTTP2StreamSemantics {
+            sanitized.remove(name: "Connection")
+            sanitized.remove(name: "Keep-Alive")
+            sanitized.remove(name: "Transfer-Encoding")
+            sanitized.remove(name: "Upgrade")
+        } else if sanitized.first(name: "Connection") == nil {
+            sanitized.add(name: "Connection", value: closeAfterSend ? "close" : "keep-alive")
+        } else if closeAfterSend {
+            sanitized.replaceOrAdd(name: "Connection", value: "close")
+        }
+
+        return sanitized
+    }
+
     private func sanitizedResponseHeaders(
         from headers: HTTPHeaders,
         bodyBytes: Int,
@@ -2068,7 +2746,9 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         sanitized.remove(name: "Trailer")
         sanitized.remove(name: "Transfer-Encoding")
         sanitized.replaceOrAdd(name: "Content-Length", value: "\(bodyBytes)")
-        sanitized.replaceOrAdd(name: "Connection", value: closeAfterSend ? "close" : "keep-alive")
+        if !usesHTTP2StreamSemantics {
+            sanitized.replaceOrAdd(name: "Connection", value: closeAfterSend ? "close" : "keep-alive")
+        }
         return sanitized
     }
 
@@ -2101,14 +2781,31 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         }
 
         let promise = eventLoop.makePromise(of: InterceptionResult.self)
-        promise.completeWithTask {
-            await interceptor.interceptRequest(
+        promise.completeWithTask { [fallbackRequest] in
+            let result = await interceptor.interceptRequest(
                 flowId: flowID,
                 url: requestURL,
                 method: methodToken,
                 headers: requestHeaders,
                 body: requestBodyData.isEmpty ? nil : requestBodyData
             )
+
+            switch result {
+            case let .modified(request):
+                var patched = request
+                if patched.protocolVersion == nil || patched.protocolVersion == .http11 {
+                    patched.protocolVersion = fallbackRequest.protocolVersion
+                }
+                return .modified(patched)
+            case let .mocked(request):
+                var patched = request
+                if patched.protocolVersion == nil || patched.protocolVersion == .http11 {
+                    patched.protocolVersion = fallbackRequest.protocolVersion
+                }
+                return .mocked(patched)
+            case .blocked, .failed:
+                return result
+            }
         }
         return promise.futureResult
     }
@@ -2134,6 +2831,26 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                 headers: responseHeaders,
                 body: responseBodyData.isEmpty ? nil : responseBodyData
             )
+        }
+        return promise.futureResult
+    }
+
+    private func responsePipelineFuture(for requestURL: String, eventLoop: EventLoop) -> EventLoopFuture<ResponsePipeline> {
+        guard let interceptor else {
+            return eventLoop.makeSucceededFuture(.bufferAndIntercept)
+        }
+
+        let promise = eventLoop.makePromise(of: ResponsePipeline.self)
+        promise.completeWithTask {
+            await interceptor.responsePipeline(for: requestURL)
+        }
+        return promise.futureResult
+    }
+
+    private func blockQUICEnabledFuture(eventLoop: EventLoop) -> EventLoopFuture<Bool> {
+        let promise = eventLoop.makePromise(of: Bool.self)
+        promise.completeWithTask {
+            await HardeningConfig.shared.blockQUIC
         }
         return promise.futureResult
     }
@@ -2191,7 +2908,8 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             requestHeaders: traceHeaders,
             responseHeaders: [],
             requestBody: requestBody,
-            responseBody: .empty
+            responseBody: .empty,
+            protocolVersion: usesHTTP2StreamSemantics ? .http2 : nil
         )
     }
 
@@ -2199,15 +2917,93 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         from data: Data,
         charset: String?,
         contentEncoding: String?,
-        captureConfig: CaptureConfiguration
+        captureConfig: CaptureConfiguration,
+        decodeCompressedContent: Bool = true
     ) -> BodyStorage {
         guard captureConfig.captureBody, captureConfig.maxBodySize > 0, !data.isEmpty else { return .empty }
         return BodyStorage.from(
             data: data,
             charset: charset,
             maxSize: max(0, captureConfig.maxBodySize),
-            contentEncoding: contentEncoding
+            contentEncoding: contentEncoding,
+            decodeCompressedContent: decodeCompressedContent
         )
+    }
+
+    private func contentLength(from headers: HTTPHeaders) -> Int? {
+        guard let rawValue = headers.first(name: "Content-Length") else { return nil }
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let contentLength = Int(trimmed), contentLength >= 0 else { return nil }
+        return contentLength
+    }
+
+    private func resolvedResponseBodyBytes(
+        declaredContentLength: Int?,
+        observedBodyBytes: Int
+    ) -> Int {
+        if let declaredContentLength, declaredContentLength >= 0 {
+            return max(declaredContentLength, observedBodyBytes)
+        }
+        return observedBodyBytes
+    }
+
+    private func truncatedBodyStorage(
+        fromCapturedData capturedData: Data,
+        totalSize: Int,
+        charset: String?,
+        contentEncoding: String?,
+        decodeCompressedContent: Bool
+    ) -> BodyStorage {
+        guard !capturedData.isEmpty else { return .empty }
+
+        let capturedStorage = BodyStorage.from(
+            data: capturedData,
+            charset: charset,
+            maxSize: Int.max,
+            contentEncoding: contentEncoding,
+            decodeCompressedContent: decodeCompressedContent
+        )
+
+        switch capturedStorage {
+        case let .inline(data, capturedCharset, compressionInfo):
+            return .truncated(
+                data,
+                totalSize: max(totalSize, data.count),
+                charset: capturedCharset ?? charset,
+                compressionInfo: compressionInfo
+            )
+        case let .file(url, capturedCharset, compressionInfo):
+            let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? capturedData.count
+            return .truncatedFile(
+                url,
+                totalSize: max(totalSize, fileSize),
+                charset: capturedCharset ?? charset,
+                compressionInfo: compressionInfo
+            )
+        case let .truncated(data, _, capturedCharset, compressionInfo):
+            return .truncated(
+                data,
+                totalSize: max(totalSize, data.count),
+                charset: capturedCharset ?? charset,
+                compressionInfo: compressionInfo
+            )
+        case let .truncatedFile(url, _, capturedCharset, compressionInfo):
+            let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? capturedData.count
+            return .truncatedFile(
+                url,
+                totalSize: max(totalSize, fileSize),
+                charset: capturedCharset ?? charset,
+                compressionInfo: compressionInfo
+            )
+        case .empty:
+            return .empty
+        }
+    }
+
+    private func finalizeCapturedDuration(for request: inout NetworkRequest) {
+        let elapsed = Date().timeIntervalSince(request.timestamp)
+        guard elapsed.isFinite else { return }
+        request.duration = max(request.duration, max(0, elapsed))
     }
 
     private func throttle(
@@ -2230,6 +3026,9 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
     }
 
     private func mitmHost() -> String? {
+        if let connectTargetHost, !connectTargetHost.isEmpty {
+            return connectTargetHost
+        }
         switch ingressMode {
         case .proxy:
             return nil
@@ -2238,29 +3037,109 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         }
     }
 
+    private var ingressModeLabel: String {
+        switch ingressMode {
+        case .proxy:
+            return "proxy"
+        case .tunneledHTTPS:
+            return "tunneled_https"
+        }
+    }
+
+    private func logConnectStage(stage: String, outcome: String, detail: String? = nil) {
+        guard let host = connectTargetHost, let port = connectTargetPort else { return }
+        let hostHash = LogRedaction.hash(host)
+        let stateLabel = String(describing: state)
+        let detailText = detail.flatMap { $0.isEmpty ? nil : $0 }
+
+        if let detailText {
+            ProxyLog.mitm.debug(
+                "event=proxy.nio_connect_stage stage=\(stage, privacy: .public) outcome=\(outcome, privacy: .public) mode=\(self.ingressModeLabel, privacy: .public) id=\(self.connectionID, privacy: .public) host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public) state=\(stateLabel, privacy: .public) detail=\(detailText, privacy: .public)"
+            )
+            eventLog?.append(
+                type: "proxy_nio_connect_stage",
+                msg: "stage=\(stage) outcome=\(outcome) mode=\(self.ingressModeLabel) id=\(self.connectionID) host_hash=\(hostHash) port=\(port) state=\(stateLabel) detail=\(detailText)"
+            )
+            return
+        }
+
+        ProxyLog.mitm.debug(
+            "event=proxy.nio_connect_stage stage=\(stage, privacy: .public) outcome=\(outcome, privacy: .public) mode=\(self.ingressModeLabel, privacy: .public) id=\(self.connectionID, privacy: .public) host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public) state=\(stateLabel, privacy: .public)"
+        )
+        eventLog?.append(
+            type: "proxy_nio_connect_stage",
+            msg: "stage=\(stage) outcome=\(outcome) mode=\(self.ingressModeLabel) id=\(self.connectionID) host_hash=\(hostHash) port=\(port) state=\(stateLabel)"
+        )
+    }
+
     private func reportMITMFailure(host: String, reason: String) {
         onMITMFailure?(host, reason)
     }
 
     private func reportMITMFailure(reason: String) {
-        guard let host = mitmHost() else { return }
+        guard let host = mitmHost() else {
+            ProxyLog.mitm.debug(
+                "event=proxy.mitm_failure_unattributed outcome=ignored mode=\(self.ingressModeLabel, privacy: .public) id=\(self.connectionID, privacy: .public) reason=\(reason, privacy: .public)"
+            )
+            eventLog?.append(
+                type: "mitm_failure_unattributed",
+                msg: "mode=\(self.ingressModeLabel) id=\(self.connectionID) reason=\(reason)"
+            )
+            return
+        }
         onMITMFailure?(host, reason)
     }
 
     private func classifyMITMFailure(_ error: Error) -> String {
         let detail = error.localizedDescription.lowercased()
+        let nsError = error as NSError
+
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorTimedOut:
+                return "upstream_timeout"
+            case NSURLErrorCancelled:
+                return "upstream_cancelled"
+            default:
+                break
+            }
+        }
+
+        if detail.contains("timed out") || detail.contains("timeout") || detail.contains("deadline") {
+            return "upstream_timeout"
+        }
+        if detail.contains("cancelled") || detail.contains("canceled") {
+            return "upstream_cancelled"
+        }
+        if detail.contains("httpparsererror") {
+            return "mitm_non_http_protocol"
+        }
+        if detail.contains("httpclienterror error 1") {
+            return "possible_pinning_or_strict_trust: \(error.localizedDescription)"
+        }
+        if detail.contains("connection reset") ||
+            detail.contains("connection closed") ||
+            detail.contains("remote closed") ||
+            detail.contains("channelerror error 5") ||
+            detail.contains("nwerror error 54") ||
+            detail.contains("streamclosed")
+        {
+            return "upstream_connection_closed"
+        }
         if detail.contains("hostname") && detail.contains("mismatch") {
             return "tls_upstream_hostname_mismatch"
         }
         if detail.contains("certificate") || detail.contains("trust") || detail.contains("ssl") || detail.contains("tls") {
             return "tls_upstream_trust_failed"
         }
-        return "possible_pinning_or_strict_trust: \(error.localizedDescription)"
+        return "upstream_transport_error: \(error.localizedDescription)"
     }
 
-    private func emitConnectMarker(host: String, port: Int, note: String) {
+    private func emitConnectMarker(host: String, port: Int, note: String, startTime: Date? = nil) {
         guard let onRequestCaptured else { return }
 
+        let markerTimestamp = startTime ?? Date()
+        let elapsed = max(0, Date().timeIntervalSince(markerTimestamp))
         let connectURL = "https://\(host):\(port)"
         var marker = NetworkRequest(
             id: UUID(),
@@ -2268,8 +3147,8 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             method: .connect,
             statusCode: 200,
             statusMessage: "CONNECT established",
-            timestamp: Date(),
-            duration: 0,
+            timestamp: markerTimestamp,
+            duration: elapsed,
             requestHeaders: [TraceHTTPHeader(key: "Host", value: "\(host):\(port)")],
             responseHeaders: [TraceHTTPHeader(key: "X-Trace-Note", value: note)],
             requestBody: .empty,
@@ -2471,6 +3350,43 @@ private final class NIOMITMHTTPClientResponseRelayHandler: ChannelInboundHandler
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         onError(error)
         context.close(promise: nil)
+    }
+}
+
+private final class NIOMITMHTTPStreamingResponseDelegate: HTTPClientResponseDelegate, @unchecked Sendable {
+    typealias Response = Void
+
+    private let onHead: @Sendable (HTTPResponseHead) -> EventLoopFuture<Void>
+    private let onBodyPart: @Sendable (ByteBuffer) -> EventLoopFuture<Void>
+    private let onFinish: @Sendable () throws -> Void
+    private let onError: @Sendable (Error) -> Void
+
+    init(
+        onHead: @escaping @Sendable (HTTPResponseHead) -> EventLoopFuture<Void>,
+        onBodyPart: @escaping @Sendable (ByteBuffer) -> EventLoopFuture<Void>,
+        onFinish: @escaping @Sendable () throws -> Void,
+        onError: @escaping @Sendable (Error) -> Void
+    ) {
+        self.onHead = onHead
+        self.onBodyPart = onBodyPart
+        self.onFinish = onFinish
+        self.onError = onError
+    }
+
+    func didReceiveHead(task: HTTPClient.Task<Void>, _ head: HTTPResponseHead) -> EventLoopFuture<Void> {
+        onHead(head).hop(to: task.eventLoop)
+    }
+
+    func didReceiveBodyPart(task: HTTPClient.Task<Void>, _ buffer: ByteBuffer) -> EventLoopFuture<Void> {
+        onBodyPart(buffer).hop(to: task.eventLoop)
+    }
+
+    func didReceiveError(task: HTTPClient.Task<Void>, _ error: Error) {
+        onError(error)
+    }
+
+    func didFinishRequest(task: HTTPClient.Task<Void>) throws {
+        try onFinish()
     }
 }
 
@@ -2966,6 +3882,7 @@ private final class NIOMITMHTTP2MetricsHandler: ChannelInboundHandler, @unchecke
 private final class NIOMITMRawRelayHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
 
+    private let linkID = UUID().uuidString
     private weak var peerChannel: Channel?
 
     init(peerChannel: Channel) {
@@ -2982,11 +3899,17 @@ private final class NIOMITMRawRelayHandler: ChannelInboundHandler, @unchecked Se
     }
 
     func channelInactive(context: ChannelHandlerContext) {
+        ProxyLog.mitm.debug(
+            "event=proxy.nio_raw_relay_inactive outcome=closing_peer id=\(self.linkID, privacy: .public)"
+        )
         peerChannel?.close(promise: nil)
         context.fireChannelInactive()
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
+        ProxyLog.mitm.warning(
+            "event=proxy.nio_raw_relay_error outcome=failure id=\(self.linkID, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+        )
         peerChannel?.close(promise: nil)
         context.close(promise: nil)
     }

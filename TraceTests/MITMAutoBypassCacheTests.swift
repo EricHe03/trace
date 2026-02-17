@@ -175,6 +175,70 @@ final class MITMAutoBypassCacheTests: XCTestCase {
         XCTAssertEqual(sut.reason(host: host), secondReason)
     }
 
+    func testPersistedEntriesAreLoadedByNewInstance() {
+        // Given
+        let suiteName = "MITMAutoBypassCacheTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Failed to create test defaults suite")
+            return
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+
+        let writer = MITMAutoBypassCache(
+            defaults: defaults,
+            ttl: 3600,
+            nowProvider: { Date(timeIntervalSince1970: 1000) }
+        )
+        writer.clear()
+        writer.record(host: "persisted.example.com", reason: "pinning")
+
+        // When
+        let reader = MITMAutoBypassCache(
+            defaults: defaults,
+            ttl: 3600,
+            nowProvider: { Date(timeIntervalSince1970: 1100) }
+        )
+
+        // Then
+        XCTAssertTrue(reader.shouldBypass(host: "persisted.example.com"))
+        XCTAssertEqual(reader.reason(host: "persisted.example.com"), "pinning")
+
+        reader.clear()
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    func testExpiredPersistedEntriesArePrunedOnLoad() {
+        // Given
+        let suiteName = "MITMAutoBypassCacheTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Failed to create test defaults suite")
+            return
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+
+        let writer = MITMAutoBypassCache(
+            defaults: defaults,
+            ttl: 10,
+            nowProvider: { Date(timeIntervalSince1970: 1000) }
+        )
+        writer.clear()
+        writer.record(host: "expired.example.com", reason: "test")
+
+        // When
+        let reader = MITMAutoBypassCache(
+            defaults: defaults,
+            ttl: 10,
+            nowProvider: { Date(timeIntervalSince1970: 2000) }
+        )
+
+        // Then
+        XCTAssertFalse(reader.shouldBypass(host: "expired.example.com"))
+        XCTAssertNil(reader.reason(host: "expired.example.com"))
+
+        reader.clear()
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
     // MARK: - Concurrent Access Tests
 
     func testConcurrentReads() async {

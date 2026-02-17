@@ -237,8 +237,9 @@ public class MITMProxyServer: @unchecked Sendable {
 
     private func handleCapturedRequest(_ request: NetworkRequest) {
         if logSampler.shouldLog(key: "proxy.request_captured", first: 10, every: 200) {
+            let protocolVersion = request.protocolVersion?.rawValue ?? "unknown"
             ProxyLog.mitm.debug(
-                "event=proxy.request_captured outcome=success method=\(request.method.rawValue, privacy: .public) url=\(request.url, privacy: .private(mask: .hash)) request_id=\(request.id.uuidString, privacy: .public)"
+                "event=proxy.request_captured outcome=success method=\(request.method.rawValue, privacy: .public) protocol=\(protocolVersion, privacy: .public) duration_ms=\(Int(request.duration * 1000), privacy: .public) url=\(request.url, privacy: .private(mask: .hash)) request_id=\(request.id.uuidString, privacy: .public)"
             )
         }
 
@@ -253,8 +254,9 @@ public class MITMProxyServer: @unchecked Sendable {
         do {
             try AppGroupStorage.shared.saveRequest(request)
             if logSampler.shouldLog(key: "proxy.request_saved", first: 10, every: 200) {
+                let protocolVersion = request.protocolVersion?.rawValue ?? "unknown"
                 ProxyLog.mitm.debug(
-                    "event=proxy.request_saved outcome=success method=\(request.method.rawValue, privacy: .public) url=\(request.url, privacy: .private(mask: .hash)) request_id=\(request.id.uuidString, privacy: .public)"
+                    "event=proxy.request_saved outcome=success method=\(request.method.rawValue, privacy: .public) protocol=\(protocolVersion, privacy: .public) duration_ms=\(Int(request.duration * 1000), privacy: .public) url=\(request.url, privacy: .private(mask: .hash)) request_id=\(request.id.uuidString, privacy: .public)"
                 )
             }
 
@@ -351,6 +353,32 @@ public class MITMProxyServer: @unchecked Sendable {
             let normalized = lowercasedReason.contains("hostname_mismatch")
                 ? "upstream hostname mismatch"
                 : "upstream trust failure"
+            MITMAutoBypassCache.shared.record(host: host, reason: normalized)
+            ProxyLog.mitm.info(
+                "event=proxy.mitm_auto_bypass outcome=success host=\(host, privacy: .private(mask: .hash)) reason=\(normalized, privacy: .public)"
+            )
+            eventLog?.append(type: "mitm_auto_bypass", msg: "\(LogRedaction.hash(host)) reason=\(normalized)")
+            return
+        }
+
+        let mitmSetupFailure =
+            lowercasedReason.contains("mitm_pipeline_failed") ||
+            lowercasedReason.contains("mitm_tls_handler_failed")
+        if mitmSetupFailure {
+            let normalized = "mitm setup failure"
+            MITMAutoBypassCache.shared.record(host: host, reason: normalized)
+            ProxyLog.mitm.info(
+                "event=proxy.mitm_auto_bypass outcome=success host=\(host, privacy: .private(mask: .hash)) reason=\(normalized, privacy: .public)"
+            )
+            eventLog?.append(type: "mitm_auto_bypass", msg: "\(LogRedaction.hash(host)) reason=\(normalized)")
+            return
+        }
+
+        let nonHTTPFailure =
+            lowercasedReason.contains("mitm_non_http_protocol") ||
+            lowercasedReason.contains("httpparsererror")
+        if nonHTTPFailure {
+            let normalized = "non-http protocol"
             MITMAutoBypassCache.shared.record(host: host, reason: normalized)
             ProxyLog.mitm.info(
                 "event=proxy.mitm_auto_bypass outcome=success host=\(host, privacy: .private(mask: .hash)) reason=\(normalized, privacy: .public)"

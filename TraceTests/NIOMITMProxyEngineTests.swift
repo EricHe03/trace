@@ -31,6 +31,48 @@ final class NIOMITMProxyEngineTests: XCTestCase {
         let body: Data
     }
 
+    private actor StreamOnlyInterceptor: InterceptionProviding {
+        func interceptRequest(
+            flowId: UUID,
+            url: String,
+            method: String,
+            headers: [String: String],
+            body _: Data?
+        ) async -> InterceptionResult {
+            let uppercasedMethod = method.uppercased()
+            let mappedMethod = HTTPMethod(rawValue: uppercasedMethod) ?? .get
+            let methodRaw = HTTPMethod(rawValue: uppercasedMethod) == nil ? method : nil
+            let requestHeaders = headers.map { TraceHTTPHeader(key: $0.key, value: $0.value) }
+            let request = NetworkRequest(
+                id: flowId,
+                url: url,
+                method: mappedMethod,
+                requestMethodRaw: methodRaw,
+                duration: 0,
+                requestHeaders: requestHeaders
+            )
+            return .modified(request)
+        }
+
+        func interceptResponse(
+            request: NetworkRequest,
+            statusCode _: Int,
+            statusMessage _: String,
+            headers _: [TraceHTTPHeader],
+            body _: Data?
+        ) async -> NetworkRequest {
+            request
+        }
+
+        func responsePipeline(for _: String) async -> ResponsePipeline {
+            .streamAndCapture
+        }
+
+        func requiresHTTP1Interception() async -> Bool {
+            false
+        }
+    }
+
     private final class SingleConnectionTCPServer: @unchecked Sendable {
         let port: UInt16
 
@@ -187,6 +229,100 @@ final class NIOMITMProxyEngineTests: XCTestCase {
         XCTAssertTrue(response2.statusLine.hasPrefix("HTTP/1.1 200"))
         XCTAssertEqual(response2.headers["connection"]?.lowercased(), "close")
         XCTAssertEqual(String(data: response2.body, encoding: .utf8), "two")
+    }
+
+    func testHTTPCaptureDurationReflectsElapsedTime() throws {
+        let upstreamServer = try SingleConnectionTCPServer()
+        upstreamServer.start(handler: Self.handleHTTPDelayedResponseConnection)
+        defer {
+            upstreamServer.closeSocket()
+            upstreamServer.waitForCompletion()
+        }
+
+        let capturedExpectation = expectation(description: "captured delayed request")
+        capturedExpectation.assertForOverFulfill = false
+
+        let capturedLock = NSLock()
+        var capturedRequest: NetworkRequest?
+
+        let engine = NIOMITMProxyEngine(
+            port: 0,
+            eventLog: nil,
+            onRequestCaptured: { request in
+                guard request.url.contains("/delayed") else { return }
+                capturedLock.lock()
+                capturedRequest = request
+                capturedLock.unlock()
+                capturedExpectation.fulfill()
+            }
+        )
+        let endpoint = try engine.start()
+        defer { engine.stop() }
+
+        let clientFD = try Self.connectTCP(host: endpoint.host, port: endpoint.port)
+        defer { close(clientFD) }
+
+        let request = """
+        GET http://127.0.0.1:\(upstreamServer.port)/delayed HTTP/1.1\r
+        Host: 127.0.0.1:\(upstreamServer.port)\r
+        Connection: close\r
+        \r
+        """
+        try Self.writeAll(Data(request.utf8), to: clientFD)
+
+        var pendingBytes = Data()
+        let response = try Self.readHTTPResponse(from: clientFD, pendingBytes: &pendingBytes)
+        XCTAssertTrue(response.statusLine.hasPrefix("HTTP/1.1 200"))
+        XCTAssertEqual(String(data: response.body, encoding: .utf8), "delayed")
+
+        wait(for: [capturedExpectation], timeout: 3.0)
+
+        capturedLock.lock()
+        let captured = capturedRequest
+        capturedLock.unlock()
+
+        XCTAssertNotNil(captured)
+        XCTAssertGreaterThanOrEqual(captured?.duration ?? 0, 0.03)
+    }
+
+    func testStreamAndCaptureFlushesResponseHeadBeforeBodyCompletes() throws {
+        let upstreamServer = try SingleConnectionTCPServer()
+        upstreamServer.start(handler: Self.handleHTTPDelayedBodyAfterHeadersConnection)
+        defer {
+            upstreamServer.closeSocket()
+            upstreamServer.waitForCompletion()
+        }
+
+        let engine = NIOMITMProxyEngine(
+            port: 0,
+            eventLog: nil,
+            interceptor: StreamOnlyInterceptor()
+        )
+        let endpoint = try engine.start()
+        defer { engine.stop() }
+
+        let clientFD = try Self.connectTCP(host: endpoint.host, port: endpoint.port)
+        defer { close(clientFD) }
+
+        let request = """
+        GET http://127.0.0.1:\(upstreamServer.port)/download HTTP/1.1\r
+        Host: 127.0.0.1:\(upstreamServer.port)\r
+        Connection: close\r
+        \r
+        """
+        try Self.writeAll(Data(request.utf8), to: clientFD)
+
+        let readableBeforeBody = try Self.waitForReadable(clientFD, timeout: 0.25)
+        XCTAssertTrue(readableBeforeBody, "Expected response head to be forwarded before delayed body completes.")
+
+        var pendingBytes = Data()
+        let response = try Self.readHTTPResponse(from: clientFD, pendingBytes: &pendingBytes)
+        XCTAssertTrue(response.statusLine.hasPrefix("HTTP/1.1 200"))
+        XCTAssertEqual(
+            response.headers["content-disposition"]?.lowercased(),
+            "attachment; filename=\"download.bin\""
+        )
+        XCTAssertEqual(String(data: response.body, encoding: .utf8), "stream-body")
     }
 
     func testCONNECTTunnelRelaysBidirectionalBytes() throws {
@@ -364,6 +500,21 @@ private extension NIOMITMProxyEngineTests {
         return payload
     }
 
+    static func waitForReadable(_ fd: Int32, timeout: TimeInterval) throws -> Bool {
+        var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        let timeoutMilliseconds = Int32(max(0, timeout * 1_000))
+        let pollResult = withUnsafeMutablePointer(to: &descriptor) {
+            Darwin.poll($0, 1, timeoutMilliseconds)
+        }
+        guard pollResult >= 0 else {
+            throw TestError.socketReadFailed(errno)
+        }
+        guard pollResult > 0 else {
+            return false
+        }
+        return (descriptor.revents & Int16(POLLIN)) != 0
+    }
+
     static func readHTTPRequestHead(from fd: Int32, pendingBytes: inout Data) throws -> String {
         let delimiter = Data("\r\n\r\n".utf8)
         while pendingBytes.range(of: delimiter) == nil {
@@ -411,6 +562,45 @@ private extension NIOMITMProxyEngineTests {
             \(secondBody)
             """
             try writeAll(Data(secondResponse.utf8), to: clientFD)
+        } catch {
+            return
+        }
+    }
+
+    static func handleHTTPDelayedResponseConnection(_ clientFD: Int32) {
+        do {
+            var pendingBytes = Data()
+            _ = try readHTTPRequestHead(from: clientFD, pendingBytes: &pendingBytes)
+            usleep(50_000)
+            let body = "delayed"
+            let response = """
+            HTTP/1.1 200 OK\r
+            Content-Length: \(body.utf8.count)\r
+            Connection: close\r
+            \r
+            \(body)
+            """
+            try writeAll(Data(response.utf8), to: clientFD)
+        } catch {
+            return
+        }
+    }
+
+    static func handleHTTPDelayedBodyAfterHeadersConnection(_ clientFD: Int32) {
+        do {
+            var pendingBytes = Data()
+            _ = try readHTTPRequestHead(from: clientFD, pendingBytes: &pendingBytes)
+            let body = "stream-body"
+            let responseHead = """
+            HTTP/1.1 200 OK\r
+            Content-Length: \(body.utf8.count)\r
+            Content-Disposition: attachment; filename="download.bin"\r
+            Connection: close\r
+            \r
+            """
+            try writeAll(Data(responseHead.utf8), to: clientFD)
+            usleep(700_000)
+            try writeAll(Data(body.utf8), to: clientFD)
         } catch {
             return
         }

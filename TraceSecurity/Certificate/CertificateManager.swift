@@ -569,8 +569,10 @@ public class CertificateManager {
         isCA: Bool,
         validityDays: Int
     ) throws -> SecCertificate {
-        let notBefore = Date()
-        guard let notAfter = Calendar.current.date(byAdding: .day, value: validityDays, to: notBefore) else {
+        let now = Date()
+        // Backdate validity slightly so trust evaluation is resilient to small clock skew.
+        let notBefore = now.addingTimeInterval(-300)
+        guard let notAfter = Calendar.current.date(byAdding: .day, value: validityDays, to: now) else {
             throw CertificateError.validityDateCalculationFailed
         }
 
