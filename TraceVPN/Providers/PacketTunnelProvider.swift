@@ -1494,6 +1494,14 @@ actor PacketTunnelRuntimeState {
         pipeline.configure(enabled: config.captureEnabled, limit: config.captureLimit, writer: config.writer)
         packetCapturePipeline = pipeline
         packetCaptureWriter = config.writer
+        let inboundCaptureObserver: @Sendable ([Data]) -> Void = { [weak pipeline] packets in
+            guard let pipeline else { return }
+            _ = pipeline.enqueue(packets: packets)
+        }
+        let inboundPacketObserver: @Sendable (Data) -> Void = { [weak pipeline] packet in
+            guard let pipeline else { return }
+            _ = pipeline.enqueue(packet: packet)
+        }
         // Use direct UDP forwarding until SOCKS5 UDP ASSOCIATE probe explicitly enables tunnel UDP.
         udpTunnelSupported = false
 
@@ -1521,6 +1529,7 @@ actor PacketTunnelRuntimeState {
                 socks5Port: endpoint.port,
                 mtu: config.mtu,
                 ipv6Enabled: ipv6Enabled,
+                outputPacketObserver: inboundCaptureObserver,
                 eventLogHandler: eventLogger
             ) { [weak self] support in
                 let usable = support.isUsable(forIPv6: ipv6Enabled)
@@ -1565,7 +1574,10 @@ actor PacketTunnelRuntimeState {
 
         // Always instantiate `UDPForwarder` so we can fall back to direct UDP forwarding when the
         // SOCKS5 server does not support UDP associate (common) or when IPv6 UDP isn't supported.
-        let udpForwarder: UDPForwarder? = UDPForwarder(packetFlow: config.packetFlow)
+        let udpForwarder: UDPForwarder? = UDPForwarder(
+            packetFlow: config.packetFlow,
+            inboundPacketObserver: inboundPacketObserver
+        )
         self.udpForwarder = udpForwarder
 
         let loop = PacketFlowLoop(

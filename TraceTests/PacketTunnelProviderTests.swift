@@ -252,6 +252,20 @@ final class PacketTunnelProviderTests: XCTestCase {
         XCTAssertTrue(decision.isQUIC)
     }
 
+    func testDecideUDPForwardingFallsBackToTunnelWhenDirectForwarderUnavailable() {
+        let decision = decideUDPForwarding(
+            udpForwarderAvailable: false,
+            mode: .direct,
+            sourcePort: 40_000,
+            destinationPort: 53,
+            blockQUICEnabled: false,
+            tunnelUDPSupported: true
+        )
+
+        XCTAssertEqual(decision.decision, .forwardTunnel)
+        XCTAssertFalse(decision.isQUIC)
+    }
+
     func testDNSSettings() {
         struct DNSSettings {
             let servers: [String]

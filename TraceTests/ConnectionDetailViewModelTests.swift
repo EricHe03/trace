@@ -324,7 +324,24 @@ final class ConnectionDetailViewModelTests: XCTestCase {
         XCTAssertNotNil(vm.analysis?.handshake?.synTime)
     }
 
-    func testAutoLoadSkippedForUDPRecord() {
+    func testAutoLoadSupportsUDPRecord() async throws {
+        // This test is only deterministic when there are no other eligible raw captures present.
+        guard let container = AppGroupStorage.shared.containerURL else {
+            XCTFail("Missing container URL")
+            return
+        }
+
+        let maxBytes: UInt64 = 25 * 1_048_576
+        let existingRaw = AppGroupStorage.shared.packetCaptureFiles(prefixes: ["capture_raw_packets"])
+        let hasEligibleExistingCapture = existingRaw.contains { url in
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?
+                .uint64Value ?? 0
+            return size > 0 && size <= maxBytes
+        }
+        if hasEligibleExistingCapture {
+            throw XCTSkip("Skipping: existing raw captures make auto-load nondeterministic in this environment.")
+        }
+
         let now = Date()
         let record = PacketFlowRecord(
             id: UUID(),
@@ -343,11 +360,28 @@ final class ConnectionDetailViewModelTests: XCTestCase {
         )
         let vm = ConnectionDetailViewModel(record: record)
 
-        vm.autoLoadPCAPIfPossible()
+        let udpPacket = makeIPv4UDPPacket(
+            srcIP: "1.1.1.1",
+            dstIP: "8.8.8.8",
+            srcPort: 12345,
+            dstPort: 53,
+            payload: Data([0x12, 0x34, 0x56, 0x78])
+        )
+        let tmpURL = try createMockPCAPFile(withPackets: [(timestamp: now, data: udpPacket)])
+        let candidateURL = container.appendingPathComponent("capture_raw_packets_udp_auto_\(UUID().uuidString).pcap")
+        try FileManager.default.copyItem(at: tmpURL, to: candidateURL)
+        defer { try? FileManager.default.removeItem(at: candidateURL) }
 
-        XCTAssertFalse(vm.isLoading)
-        XCTAssertNil(vm.analysis)
+        vm.autoLoadPCAPIfPossible()
+        try await waitForLoadingToFinish(vm)
+
         XCTAssertNil(vm.loadError)
+        XCTAssertNotNil(vm.analysis)
+        XCTAssertTrue(vm.analysis?.packets.isEmpty ?? true)
+        XCTAssertFalse(vm.analysis?.udpPackets.isEmpty ?? true)
+        XCTAssertNotNil(vm.analysis?.udpDiagnostics)
+        XCTAssertEqual(vm.analysis?.udpPackets.first?.sourcePort, 12345)
+        XCTAssertEqual(vm.analysis?.udpPackets.first?.destinationPort, 53)
     }
 
     func testAutoLoadRespectsAutoAnalyzeMaxBytes() throws {
@@ -548,6 +582,56 @@ private extension ConnectionDetailViewModelTests {
         tcpHeader[18] = 0x00
         tcpHeader[19] = 0x00
         packet.append(tcpHeader)
+
+        packet.append(payload)
+        return packet
+    }
+
+    func makeIPv4UDPPacket(
+        srcIP: String,
+        dstIP: String,
+        srcPort: UInt16,
+        dstPort: UInt16,
+        payload: Data = Data()
+    ) -> Data {
+        let src = ipv4Bytes(srcIP)
+        let dst = ipv4Bytes(dstIP)
+
+        let ipHeaderLen = 20
+        let udpHeaderLen = 8
+        let udpLength = udpHeaderLen + payload.count
+        let totalLen = ipHeaderLen + udpLength
+
+        var packet = Data()
+        packet.reserveCapacity(totalLen)
+
+        var ipHeader = Data(count: ipHeaderLen)
+        ipHeader[0] = 0x45 // v4, IHL=5
+        ipHeader[1] = 0x00
+        ipHeader[2] = UInt8((totalLen >> 8) & 0xFF)
+        ipHeader[3] = UInt8(totalLen & 0xFF)
+        ipHeader[4] = 0x00
+        ipHeader[5] = 0x00
+        ipHeader[6] = 0x40 // DF
+        ipHeader[7] = 0x00
+        ipHeader[8] = 64 // TTL
+        ipHeader[9] = 17 // UDP
+        ipHeader[10] = 0x00
+        ipHeader[11] = 0x00
+        ipHeader.replaceSubrange(12 ..< 16, with: src)
+        ipHeader.replaceSubrange(16 ..< 20, with: dst)
+        packet.append(ipHeader)
+
+        var udpHeader = Data(count: udpHeaderLen)
+        udpHeader[0] = UInt8((srcPort >> 8) & 0xFF)
+        udpHeader[1] = UInt8(srcPort & 0xFF)
+        udpHeader[2] = UInt8((dstPort >> 8) & 0xFF)
+        udpHeader[3] = UInt8(dstPort & 0xFF)
+        udpHeader[4] = UInt8((udpLength >> 8) & 0xFF)
+        udpHeader[5] = UInt8(udpLength & 0xFF)
+        udpHeader[6] = 0x00
+        udpHeader[7] = 0x00
+        packet.append(udpHeader)
 
         packet.append(payload)
         return packet

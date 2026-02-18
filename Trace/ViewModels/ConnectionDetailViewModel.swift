@@ -33,6 +33,96 @@ struct TCPPacketSummary: Identifiable {
     let isRetransmission: Bool
     let isOutOfOrder: Bool
     let isDupAck: Bool
+    let isAckOnly: Bool
+    let sourceIP: String
+    let destinationIP: String
+    let sourcePort: UInt16
+    let destinationPort: UInt16
+    let ipVersion: UInt8
+    let hopLimit: UInt8
+    let protocolNumber: UInt8
+    let ipHeaderLength: Int
+    let totalLength: Int
+    let fragmentOffset: Int
+    let moreFragments: Bool
+    let scaledWindow: UInt64
+
+    init(
+        timestamp: Date,
+        direction: FlowDirection,
+        sequence: UInt32,
+        acknowledgment: UInt32,
+        length: Int,
+        flags: TCPPacket.Flags,
+        window: UInt16,
+        isRetransmission: Bool,
+        isOutOfOrder: Bool,
+        isDupAck: Bool,
+        isAckOnly: Bool = false,
+        sourceIP: String = "",
+        destinationIP: String = "",
+        sourcePort: UInt16 = 0,
+        destinationPort: UInt16 = 0,
+        ipVersion: UInt8 = 0,
+        hopLimit: UInt8 = 0,
+        protocolNumber: UInt8 = 0,
+        ipHeaderLength: Int = 0,
+        totalLength: Int = 0,
+        fragmentOffset: Int = 0,
+        moreFragments: Bool = false,
+        scaledWindow: UInt64 = 0
+    ) {
+        self.timestamp = timestamp
+        self.direction = direction
+        self.sequence = sequence
+        self.acknowledgment = acknowledgment
+        self.length = length
+        self.flags = flags
+        self.window = window
+        self.isRetransmission = isRetransmission
+        self.isOutOfOrder = isOutOfOrder
+        self.isDupAck = isDupAck
+        self.isAckOnly = isAckOnly
+        self.sourceIP = sourceIP
+        self.destinationIP = destinationIP
+        self.sourcePort = sourcePort
+        self.destinationPort = destinationPort
+        self.ipVersion = ipVersion
+        self.hopLimit = hopLimit
+        self.protocolNumber = protocolNumber
+        self.ipHeaderLength = ipHeaderLength
+        self.totalLength = totalLength
+        self.fragmentOffset = fragmentOffset
+        self.moreFragments = moreFragments
+        self.scaledWindow = scaledWindow
+    }
+}
+
+struct UDPPacketSummary: Identifiable {
+    let id = UUID()
+    let timestamp: Date
+    let direction: FlowDirection
+    let sourceIP: String
+    let destinationIP: String
+    let sourcePort: UInt16
+    let destinationPort: UInt16
+    let udpLength: UInt16
+    let payloadLength: Int
+    let ipVersion: UInt8
+    let hopLimit: UInt8
+    let protocolNumber: UInt8
+    let ipHeaderLength: Int
+    let totalLength: Int
+    let fragmentOffset: Int
+    let moreFragments: Bool
+}
+
+struct UDPPCAPDiagnostics {
+    let totalDatagrams: Int
+    let sourceToDestinationDatagrams: Int
+    let destinationToSourceDatagrams: Int
+    let fragmentedDatagrams: Int
+    let maxDatagramLength: UInt16
 }
 
 struct ConnectionPCAPAnalysis {
@@ -45,6 +135,38 @@ struct ConnectionPCAPAnalysis {
     let packets: [TCPPacketSummary]
     let streamClientToServer: Data
     let streamServerToClient: Data
+    let udpPackets: [UDPPacketSummary]
+    let udpDiagnostics: UDPPCAPDiagnostics?
+
+    init(
+        clientEndpoint: FlowEndpoint?,
+        serverEndpoint: FlowEndpoint?,
+        handshake: TCPHandshakeSummary?,
+        termination: TCPTerminationSummary?,
+        state: FlowConnectionState,
+        metrics: TCPFlowMetrics,
+        packets: [TCPPacketSummary],
+        streamClientToServer: Data,
+        streamServerToClient: Data,
+        udpPackets: [UDPPacketSummary] = [],
+        udpDiagnostics: UDPPCAPDiagnostics? = nil
+    ) {
+        self.clientEndpoint = clientEndpoint
+        self.serverEndpoint = serverEndpoint
+        self.handshake = handshake
+        self.termination = termination
+        self.state = state
+        self.metrics = metrics
+        self.packets = packets
+        self.streamClientToServer = streamClientToServer
+        self.streamServerToClient = streamServerToClient
+        self.udpPackets = udpPackets
+        self.udpDiagnostics = udpDiagnostics
+    }
+
+    var hasPackets: Bool {
+        !packets.isEmpty || !udpPackets.isEmpty
+    }
 }
 
 @MainActor
@@ -90,7 +212,7 @@ final class ConnectionDetailViewModel: ObservableObject {
         guard !didAttemptAutoLoadPCAP else { return }
         didAttemptAutoLoadPCAP = true
 
-        guard record.transport == .tcp else { return }
+        guard record.transport != .unknown else { return }
         guard analysis == nil else { return }
 
         let candidates = rawPacketPCAPFiles()
@@ -123,7 +245,7 @@ final class ConnectionDetailViewModel: ObservableObject {
             for candidate in candidates {
                 do {
                     let analysis = try await analyze(record: capturedRecord, url: candidate.url)
-                    if analysis.packets.isEmpty {
+                    if !analysis.hasPackets {
                         throw PCAPFlowAnalyzerError.noPacketsForFlow
                     }
                     self.analysis = analysis
@@ -203,6 +325,11 @@ private final class PCAPFlowAnalyzer {
         let port: UInt16
     }
 
+    private struct TimeWindow {
+        let lowerBound: Date
+        let upperBound: Date
+    }
+
     private enum ScanControl: Error {
         case reachedEndOfWindow
     }
@@ -225,6 +352,23 @@ private final class PCAPFlowAnalyzer {
         var lastSeqSampleTime: Date?
     }
 
+    private struct TCPPacketIndicators {
+        var isRetransmission = false
+        var isOutOfOrder = false
+        var isDupAck = false
+        var isAckOnly = false
+        var scaledWindow: UInt64 = 0
+    }
+
+    private struct UDPAnalysisState {
+        var packets: [UDPPacketSummary] = []
+        var sourceToDestinationDatagrams = 0
+        var destinationToSourceDatagrams = 0
+        var fragmentedDatagrams = 0
+        var maxDatagramLength: UInt16 = 0
+        var matchedDatagrams = 0
+    }
+
     private let record: PacketFlowRecord
     private let maxRecentSegments = 128
     private let maxInflightSegments = 128
@@ -238,8 +382,17 @@ private final class PCAPFlowAnalyzer {
         self.record = record
     }
 
-    // swiftlint:disable:next cyclomatic_complexity
     func analyze(url: URL) throws -> ConnectionPCAPAnalysis {
+        switch record.transport {
+        case .udp:
+            try analyzeUDP(url: url)
+        case .tcp, .unknown:
+            try analyzeTCP(url: url)
+        }
+    }
+
+    // swiftlint:disable:next cyclomatic_complexity
+    private func analyzeTCP(url: URL) throws -> ConnectionPCAPAnalysis {
         let reader = try PCAPReader(url: url)
         let reassembler = TCPReassembler()
 
@@ -259,22 +412,19 @@ private final class PCAPFlowAnalyzer {
 
         let endpointA = EndpointKey(ip: record.sourceIP, port: record.sourcePort)
         let endpointB = EndpointKey(ip: record.destinationIP, port: record.destinationPort)
-
-        let timeSlack: TimeInterval = 15
-        let lowerBound = min(record.startTime, record.lastSeen).addingTimeInterval(-timeSlack)
-        let upperBound = max(record.startTime, record.lastSeen).addingTimeInterval(timeSlack)
+        let window = scanWindow()
         var didMatchAnyPacket = false
 
         do {
-            try reader.forEachPacket(throwing: { packet in
+            try reader.forEachPacket { packet in
                 if Task.isCancelled {
                     throw CancellationError()
                 }
 
-                if packet.timestamp < lowerBound {
+                if packet.timestamp < window.lowerBound {
                     return
                 }
-                if packet.timestamp > upperBound {
+                if packet.timestamp > window.upperBound {
                     throw ScanControl.reachedEndOfWindow
                 }
 
@@ -348,7 +498,7 @@ private final class PCAPFlowAnalyzer {
                     client: clientEndpoint,
                     server: serverEndpoint
                 )
-                updateMetrics(
+                let indicators = updateMetrics(
                     metrics: &metrics,
                     endpointTrackers: &endpointTrackers,
                     windowScaleByEndpoint: &windowScaleByEndpoint,
@@ -357,12 +507,14 @@ private final class PCAPFlowAnalyzer {
 
                 if packets.count < maxPacketSummaries {
                     let summary = buildPacketSummary(
-                        endpointTrackers: endpointTrackers,
                         src: src,
+                        dst: dst,
+                        ipPacket: ipPacket,
                         tcpPacket: tcpPacket,
                         timestamp: packet.timestamp,
                         client: clientEndpoint,
-                        server: serverEndpoint
+                        server: serverEndpoint,
+                        indicators: indicators
                     )
                     packets.append(summary)
                 }
@@ -382,7 +534,7 @@ private final class PCAPFlowAnalyzer {
                         }
                     }
                 }
-            })
+            }
         } catch ScanControl.reachedEndOfWindow {
             // Best-effort: stop scanning once we pass the connection's time window.
         } catch PCAPReaderError.truncatedRecord {
@@ -428,6 +580,127 @@ private final class PCAPFlowAnalyzer {
         )
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
+    private func analyzeUDP(url: URL) throws -> ConnectionPCAPAnalysis {
+        let reader = try PCAPReader(url: url)
+        let endpointA = EndpointKey(ip: record.sourceIP, port: record.sourcePort)
+        let endpointB = EndpointKey(ip: record.destinationIP, port: record.destinationPort)
+        let window = scanWindow()
+
+        var state = UDPAnalysisState()
+        var didMatchAnyPacket = false
+
+        do {
+            try reader.forEachPacket { packet in
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+
+                if packet.timestamp < window.lowerBound {
+                    return
+                }
+                if packet.timestamp > window.upperBound {
+                    throw ScanControl.reachedEndOfWindow
+                }
+
+                guard let ipPacket = IPPacketParser.parse(packet.data) else { return }
+                guard ipPacket.transport == .udp else { return }
+                guard let udpPacket = UDPParser.parse(ipPacket.payload) else { return }
+
+                let src = EndpointKey(ip: ipPacket.source.description, port: udpPacket.sourcePort)
+                let dst = EndpointKey(ip: ipPacket.destination.description, port: udpPacket.destinationPort)
+                guard (src == endpointA && dst == endpointB) || (src == endpointB && dst == endpointA) else { return }
+                didMatchAnyPacket = true
+                state.matchedDatagrams += 1
+
+                let direction = directionForEndpoint(src, client: record.clientEndpoint, server: record.serverEndpoint, record: record)
+                switch direction {
+                case .clientToServer, .sourceToDestination:
+                    state.sourceToDestinationDatagrams += 1
+                case .serverToClient, .destinationToSource:
+                    state.destinationToSourceDatagrams += 1
+                }
+
+                if ipPacket.isFragmented {
+                    state.fragmentedDatagrams += 1
+                }
+                if udpPacket.length > state.maxDatagramLength {
+                    state.maxDatagramLength = udpPacket.length
+                }
+
+                if state.packets.count < maxPacketSummaries {
+                    state.packets.append(
+                        UDPPacketSummary(
+                            timestamp: packet.timestamp,
+                            direction: direction,
+                            sourceIP: src.ip,
+                            destinationIP: dst.ip,
+                            sourcePort: udpPacket.sourcePort,
+                            destinationPort: udpPacket.destinationPort,
+                            udpLength: udpPacket.length,
+                            payloadLength: udpPacket.payload.count,
+                            ipVersion: ipPacket.version,
+                            hopLimit: ipPacket.hopLimit,
+                            protocolNumber: ipPacket.protocolNumber,
+                            ipHeaderLength: ipPacket.headerLength,
+                            totalLength: ipPacket.totalLength,
+                            fragmentOffset: ipPacket.fragmentOffset,
+                            moreFragments: ipPacket.moreFragments
+                        )
+                    )
+                }
+            }
+        } catch ScanControl.reachedEndOfWindow {
+            // Best-effort: stop scanning once we pass the connection's time window.
+        } catch PCAPReaderError.truncatedRecord {
+            // Best-effort: capture file may be actively written; treat trailing truncation as EOF.
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw error
+        }
+
+        guard didMatchAnyPacket else {
+            throw PCAPFlowAnalyzerError.noPacketsForFlow
+        }
+
+        let diagnostics = UDPPCAPDiagnostics(
+            totalDatagrams: state.matchedDatagrams,
+            sourceToDestinationDatagrams: state.sourceToDestinationDatagrams,
+            destinationToSourceDatagrams: state.destinationToSourceDatagrams,
+            fragmentedDatagrams: state.fragmentedDatagrams,
+            maxDatagramLength: state.maxDatagramLength
+        )
+
+        let inferredState: FlowConnectionState = {
+            if record.connectionState != .unknown {
+                return record.connectionState
+            }
+            return record.isClosed ? .closed : .established
+        }()
+
+        return ConnectionPCAPAnalysis(
+            clientEndpoint: record.clientEndpoint,
+            serverEndpoint: record.serverEndpoint,
+            handshake: nil,
+            termination: nil,
+            state: inferredState,
+            metrics: TCPFlowMetrics(),
+            packets: [],
+            streamClientToServer: Data(),
+            streamServerToClient: Data(),
+            udpPackets: state.packets,
+            udpDiagnostics: diagnostics
+        )
+    }
+
+    private func scanWindow() -> TimeWindow {
+        let timeSlack: TimeInterval = 15
+        let lowerBound = min(record.startTime, record.lastSeen).addingTimeInterval(-timeSlack)
+        let upperBound = max(record.startTime, record.lastSeen).addingTimeInterval(timeSlack)
+        return TimeWindow(lowerBound: lowerBound, upperBound: upperBound)
+    }
+
     private struct MetricsUpdateContext {
         let src: EndpointKey
         let dst: EndpointKey
@@ -437,12 +710,13 @@ private final class PCAPFlowAnalyzer {
         let server: FlowEndpoint?
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     private func updateMetrics(
         metrics: inout TCPFlowMetrics,
         endpointTrackers: inout [EndpointKey: EndpointTracker],
         windowScaleByEndpoint: inout [EndpointKey: UInt8],
         context: MetricsUpdateContext
-    ) {
+    ) -> TCPPacketIndicators {
         let src = context.src
         let dst = context.dst
         let tcpPacket = context.tcpPacket
@@ -450,6 +724,7 @@ private final class PCAPFlowAnalyzer {
         let client = context.client
         let server = context.server
 
+        var indicators = TCPPacketIndicators()
         var sender = endpointTrackers[src] ?? EndpointTracker()
         var receiver = endpointTrackers[dst] ?? EndpointTracker()
         let payloadBytes = UInt64(tcpPacket.payload.count)
@@ -457,16 +732,20 @@ private final class PCAPFlowAnalyzer {
         sender.metrics.bytes += payloadBytes
         sender.metrics.packets += 1
 
-        let isAckOnly = payloadBytes == 0 && tcpPacket.flags.contains(.ack)
+        indicators.isAckOnly = payloadBytes == 0 && tcpPacket.flags.contains(.ack)
         if tcpPacket.flags.contains(.ack) {
-            if let lastAck = sender.lastAck, lastAck == tcpPacket.acknowledgmentNumber, isAckOnly {
+            if let lastAck = sender.lastAck,
+               lastAck == tcpPacket.acknowledgmentNumber,
+               indicators.isAckOnly {
                 sender.metrics.duplicateAcks += 1
+                indicators.isDupAck = true
             }
             sender.lastAck = tcpPacket.acknowledgmentNumber
         }
 
         let scale = UInt64(windowScaleByEndpoint[src] ?? 0)
         let scaledWindow = UInt64(tcpPacket.windowSize) << scale
+        indicators.scaledWindow = scaledWindow
         sender.metrics.windowSamples += 1
         sender.metrics.windowSum += scaledWindow
         sender.metrics.windowMin = min(sender.metrics.windowMin ?? scaledWindow, scaledWindow)
@@ -487,6 +766,7 @@ private final class PCAPFlowAnalyzer {
                     isRetrans = true
                 } else if seq > expected {
                     sender.metrics.outOfOrder += 1
+                    indicators.isOutOfOrder = true
                 } else {
                     sender.expectedSeq = seq &+ UInt32(payloadBytes)
                 }
@@ -503,6 +783,7 @@ private final class PCAPFlowAnalyzer {
 
             if isRetrans {
                 sender.metrics.retransmissions += 1
+                indicators.isRetransmission = true
             }
 
             if sender.recentSegments.count < maxRecentSegments {
@@ -556,8 +837,11 @@ private final class PCAPFlowAnalyzer {
         case .serverToClient, .destinationToSource:
             metrics.serverToClient = sender.metrics
         }
+
+        return indicators
     }
 
+    // swiftlint:disable:next function_parameter_count
     private func appendThroughputSample(
         metrics: inout TCPFlowMetrics,
         src: EndpointKey,
@@ -629,19 +913,18 @@ private final class PCAPFlowAnalyzer {
         }
     }
 
+    // swiftlint:disable:next function_parameter_count
     private func buildPacketSummary(
-        endpointTrackers: [EndpointKey: EndpointTracker],
         src: EndpointKey,
+        dst: EndpointKey,
+        ipPacket: IPPacket,
         tcpPacket: TCPPacket,
         timestamp: Date,
         client: FlowEndpoint?,
-        server: FlowEndpoint?
+        server: FlowEndpoint?,
+        indicators: TCPPacketIndicators
     ) -> TCPPacketSummary {
         let direction = directionForEndpoint(src, client: client, server: server, record: record)
-        let tracker = endpointTrackers[src]
-        let isDupAck = tracker?.lastAck == tcpPacket.acknowledgmentNumber &&
-            tcpPacket.payload.isEmpty &&
-            tcpPacket.flags.contains(.ack)
         return TCPPacketSummary(
             timestamp: timestamp,
             direction: direction,
@@ -650,9 +933,22 @@ private final class PCAPFlowAnalyzer {
             length: tcpPacket.payload.count,
             flags: tcpPacket.flags,
             window: tcpPacket.windowSize,
-            isRetransmission: false,
-            isOutOfOrder: false,
-            isDupAck: isDupAck
+            isRetransmission: indicators.isRetransmission,
+            isOutOfOrder: indicators.isOutOfOrder,
+            isDupAck: indicators.isDupAck,
+            isAckOnly: indicators.isAckOnly,
+            sourceIP: src.ip,
+            destinationIP: dst.ip,
+            sourcePort: tcpPacket.sourcePort,
+            destinationPort: tcpPacket.destinationPort,
+            ipVersion: ipPacket.version,
+            hopLimit: ipPacket.hopLimit,
+            protocolNumber: ipPacket.protocolNumber,
+            ipHeaderLength: ipPacket.headerLength,
+            totalLength: ipPacket.totalLength,
+            fragmentOffset: ipPacket.fragmentOffset,
+            moreFragments: ipPacket.moreFragments,
+            scaledWindow: indicators.scaledWindow
         )
     }
 

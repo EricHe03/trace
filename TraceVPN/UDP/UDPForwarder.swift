@@ -38,6 +38,7 @@ final class UDPForwarder: @unchecked Sendable {
         var lastActivity: Date
         var isReady = false
         var pendingPayloads: [Data] = []
+        var pendingPayloadBytes = 0
 
         init(key: FlowKey, remoteAddress: SocketAddress, lastActivity: Date) {
             self.key = key
@@ -50,7 +51,11 @@ final class UDPForwarder: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.trace.vpn.udp_forwarder", qos: .userInitiated)
     private let cleanupInterval: TimeInterval
     private let idleTimeout: TimeInterval
+    private let maxPendingPayloadPackets: Int
+    private let maxPendingPayloadBytes: Int
+    private let inboundPacketObserver: (@Sendable (Data) -> Void)?
     private let logSampler = LogSampler()
+    private let runtimeLock = NSLock()
 
     private var group: NIOTSEventLoopGroup?
     private var runtimeAcquired = false
@@ -59,19 +64,29 @@ final class UDPForwarder: @unchecked Sendable {
     private var packetIdentifier: UInt16 = 0
     private var metrics = Metrics()
 
-    init(packetFlow: NEPacketTunnelFlow, idleTimeout: TimeInterval = 120, cleanupInterval: TimeInterval = 30) {
+    init(
+        packetFlow: NEPacketTunnelFlow,
+        idleTimeout: TimeInterval = 120,
+        cleanupInterval: TimeInterval = 30,
+        maxPendingPayloadPackets: Int = 128,
+        maxPendingPayloadBytes: Int = 1_048_576,
+        inboundPacketObserver: (@Sendable (Data) -> Void)? = nil
+    ) {
         self.packetFlow = packetFlow
         self.idleTimeout = idleTimeout
         self.cleanupInterval = cleanupInterval
+        self.maxPendingPayloadPackets = max(1, maxPendingPayloadPackets)
+        self.maxPendingPayloadBytes = max(1_024, maxPendingPayloadBytes)
+        self.inboundPacketObserver = inboundPacketObserver
 
         let resources = NIORuntime.shared.acquire(for: .networkExtension)
         if let eventLoopGroup = resources.eventLoopGroup as? NIOTSEventLoopGroup {
             group = eventLoopGroup
-            runtimeAcquired = true
+            setRuntimeAcquired(true)
         } else {
             try? NIORuntime.shared.release(for: .networkExtension)
             group = nil
-            runtimeAcquired = false
+            setRuntimeAcquired(false)
             VPNLog.tunnel.error("event=vpn.udp_forward_runtime outcome=failure reason=event_loop_group_unavailable")
         }
 
@@ -103,12 +118,18 @@ final class UDPForwarder: @unchecked Sendable {
             }
             self.connections.removeAll()
 
-            if self.runtimeAcquired {
-                self.runtimeAcquired = false
+            if self.isAvailable() {
+                self.setRuntimeAcquired(false)
                 self.group = nil
                 try? NIORuntime.shared.release(for: .networkExtension)
             }
         }
+    }
+
+    func isAvailable() -> Bool {
+        runtimeLock.lock()
+        defer { runtimeLock.unlock() }
+        return runtimeAcquired
     }
 
     func enqueue(packet: Data, ipPacket: IPPacket) {
@@ -193,6 +214,7 @@ final class UDPForwarder: @unchecked Sendable {
                     if !current.pendingPayloads.isEmpty {
                         let pending = current.pendingPayloads
                         current.pendingPayloads.removeAll(keepingCapacity: true)
+                        current.pendingPayloadBytes = 0
                         for payload in pending {
                             self.send(payload: payload, on: current)
                         }
@@ -211,7 +233,7 @@ final class UDPForwarder: @unchecked Sendable {
 
     private func send(payload: Data, on connection: UDPForwardConnection) {
         guard connection.isReady, let channel = connection.channel, channel.isActive else {
-            connection.pendingPayloads.append(payload)
+            enqueuePendingPayload(payload, on: connection)
             return
         }
 
@@ -267,6 +289,7 @@ final class UDPForwarder: @unchecked Sendable {
                 payload: udpPacket
             )
 
+            inboundPacketObserver?(packet)
             packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET)])
 
         case let (.v6(srcIP), .v6(dstIP)):
@@ -284,6 +307,7 @@ final class UDPForwarder: @unchecked Sendable {
                 payload: udpPacket
             )
 
+            inboundPacketObserver?(packet)
             packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET6)])
 
         default:
@@ -576,12 +600,38 @@ final class UDPForwarder: @unchecked Sendable {
         if metrics.flowsActive > 0 {
             metrics.flowsActive &-= 1
         }
+
+        connection.pendingPayloads.removeAll()
+        connection.pendingPayloadBytes = 0
     }
 
     private func logSummary(reason: String) {
         VPNLog.tunnel.info(
             "event=vpn.udp_forward_metrics reason=\(reason) udp_flows_created=\(self.metrics.flowsCreated) udp_flows_active=\(self.metrics.flowsActive) udp_out_packets=\(self.metrics.udpOutPackets) udp_in_packets=\(self.metrics.udpInPackets) udp_out_443=\(self.metrics.udpOut443) udp_in_443=\(self.metrics.udpIn443)"
         )
+    }
+
+    private func setRuntimeAcquired(_ value: Bool) {
+        runtimeLock.lock()
+        runtimeAcquired = value
+        runtimeLock.unlock()
+    }
+
+    private func enqueuePendingPayload(_ payload: Data, on connection: UDPForwardConnection) {
+        let projectedBytes = connection.pendingPayloadBytes + payload.count
+        let overPacketLimit = connection.pendingPayloads.count >= maxPendingPayloadPackets
+        let overByteLimit = projectedBytes > maxPendingPayloadBytes
+        guard !overPacketLimit, !overByteLimit else {
+            if logSampler.shouldLog(event: "vpn.udp_forward_pending", key: "overflow", first: 5, every: 200) {
+                VPNLog.tunnel.warning(
+                    "event=vpn.udp_forward_pending outcome=skipped reason=overflow packets=\(connection.pendingPayloads.count) bytes=\(connection.pendingPayloadBytes)"
+                )
+            }
+            return
+        }
+
+        connection.pendingPayloads.append(payload)
+        connection.pendingPayloadBytes = projectedBytes
     }
 }
 

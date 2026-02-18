@@ -8,6 +8,7 @@
 import Charts
 import SwiftUI
 import TraceCore
+import TracePacket
 import TraceUI
 
 struct ConnectionDetailView: View {
@@ -22,12 +23,20 @@ struct ConnectionDetailView: View {
         List {
             summarySection
             protocolSection
-            handshakeSection
-            terminationSection
-            metricsSection
-            graphsSection
-            anomaliesSection
-            streamSection
+
+            if isTCPTransport {
+                handshakeSection
+                terminationSection
+                metricsSection
+                graphsSection
+                anomaliesSection
+                streamSection
+            }
+
+            if isUDPTransport {
+                udpBehaviorSection
+            }
+
             packetListSection
             captureNoteSection
         }
@@ -111,8 +120,21 @@ struct ConnectionDetailView: View {
         viewModel.record
     }
 
+    private var activeTransport: FlowTransportProtocol {
+        activeRecord.transport
+    }
+
+    private var isTCPTransport: Bool {
+        activeTransport == .tcp
+    }
+
+    private var isUDPTransport: Bool {
+        activeTransport == .udp
+    }
+
     private var activeMetrics: TCPFlowMetrics? {
-        viewModel.analysis?.metrics ?? viewModel.record.tcpMetrics
+        guard isTCPTransport else { return nil }
+        return viewModel.analysis?.metrics ?? viewModel.record.tcpMetrics
     }
 
     private var clientEndpoint: FlowEndpoint? {
@@ -135,6 +157,10 @@ struct ConnectionDetailView: View {
         viewModel.analysis?.state ?? viewModel.record.connectionState
     }
 
+    private var udpDiagnostics: UDPPCAPDiagnostics? {
+        viewModel.analysis?.udpDiagnostics
+    }
+
     private var summarySection: some View {
         Section {
             LabeledContent("Source") {
@@ -145,6 +171,11 @@ struct ConnectionDetailView: View {
             LabeledContent("Destination") {
                 Text("\(activeRecord.destinationIP):\(activeRecord.destinationPort)")
                     .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+            LabeledContent("5-Tuple") {
+                Text("\(activeRecord.sourceIP):\(activeRecord.sourcePort) → \(activeRecord.destinationIP):\(activeRecord.destinationPort) / \(activeRecord.transport.rawValue.uppercased())")
+                    .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
             }
             LabeledContent("Role Guess") {
@@ -175,6 +206,9 @@ struct ConnectionDetailView: View {
             }
             if let alpn = activeRecord.alpn, !alpn.isEmpty {
                 LabeledContent("ALPN", value: alpn.joined(separator: ", "))
+            }
+            if isUDPTransport {
+                LabeledContent("Lifecycle", value: "Connectionless (no SYN/ACK/FIN/RST)")
             }
         } header: {
             Text("Protocol Details")
@@ -323,28 +357,34 @@ struct ConnectionDetailView: View {
         }
     }
 
+    private var udpBehaviorSection: some View {
+        Section {
+            if let diagnostics = udpDiagnostics {
+                LabeledContent("Datagrams (PCAP)", value: "\(diagnostics.totalDatagrams)")
+                LabeledContent("Source → Destination", value: "\(diagnostics.sourceToDestinationDatagrams)")
+                LabeledContent("Destination → Source", value: "\(diagnostics.destinationToSourceDatagrams)")
+                LabeledContent("Largest UDP Length", value: "\(diagnostics.maxDatagramLength) B")
+                LabeledContent("Fragmented Datagrams", value: "\(diagnostics.fragmentedDatagrams)")
+            } else {
+                Text("Load from PCAP to inspect UDP lengths, fragmentation, and per-packet timing.")
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("UDP Behavior")
+        } footer: {
+            Text("UDP has no built-in handshake or retransmission. Loss and reordering are inferred from timing and app-level sequence patterns.")
+        }
+    }
+
     private var packetListSection: some View {
         Section {
-            if let packets = viewModel.analysis?.packets, !packets.isEmpty {
-                ForEach(packets) { packet in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(packet.direction == .clientToServer || packet.direction == .sourceToDestination ? leftDirectionTitle : rightDirectionTitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(packet.timestamp.formatted(date: .omitted, time: .standard))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 4) {
-                            Text("Seq \(packet.sequence) Ack \(packet.acknowledgment)")
-                                .font(.system(.caption, design: .monospaced))
-                            Text("Len \(packet.length) Win \(packet.window)")
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+            if let tcpPackets = viewModel.analysis?.packets, !tcpPackets.isEmpty {
+                ForEach(tcpPackets) { packet in
+                    tcpPacketRow(packet)
+                }
+            } else if let udpPackets = viewModel.analysis?.udpPackets, !udpPackets.isEmpty {
+                ForEach(udpPackets) { packet in
+                    udpPacketRow(packet)
                 }
             } else {
                 Text("Load from PCAP to view packets.")
@@ -357,7 +397,10 @@ struct ConnectionDetailView: View {
 
     private var captureNoteSection: some View {
         Section {
-            Text("Capture point: TUN (L3). Packet timing and loss are inferred from user-space capture and may differ from on-the-wire behavior.")
+            Text("Capture point: TUN (L3). You see IPv4/IPv6 + TCP/UDP headers and payload bytes, but not Ethernet/Wi-Fi headers (MAC/802.11).")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Text("Packet timing, RTT, and loss are inferred from user-space capture and may differ from on-the-wire behavior.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -376,6 +419,9 @@ struct ConnectionDetailView: View {
     private var roleGuessText: String {
         if let client = clientEndpoint, let server = serverEndpoint {
             return "\(client.ip):\(client.port) (client) → \(server.ip):\(server.port) (server)"
+        }
+        if isUDPTransport {
+            return "UDP flow direction is inferred from first observed source/destination"
         }
         return "Unknown (SYN initiator not observed)"
     }
@@ -420,6 +466,131 @@ struct ConnectionDetailView: View {
             }
         }
         return result
+    }
+
+    private func tcpPacketRow(_ packet: TCPPacketSummary) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(directionTitle(for: packet.direction))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(packet.timestamp.formatted(date: .abbreviated, time: .standard))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("\(packet.sourceIP):\(packet.sourcePort) → \(packet.destinationIP):\(packet.destinationPort)")
+                .font(.system(.caption, design: .monospaced))
+
+            Text("TCP [\(flagsDescription(packet.flags))] Seq \(packet.sequence) Ack \(packet.acknowledgment)")
+                .font(.system(.caption, design: .monospaced))
+
+            Text("IP v\(packet.ipVersion) HL/TTL \(packet.hopLimit) Proto \(packet.protocolNumber) Hdr \(packet.ipHeaderLength) Len \(packet.totalLength)")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+
+            Text("Payload \(packet.length)B Win \(packet.window) ScaledWin \(packet.scaledWindow)")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+
+            if packet.moreFragments || packet.fragmentOffset > 0 {
+                Text("Fragmented IP packet (offset \(packet.fragmentOffset), more=\(packet.moreFragments ? "yes" : "no"))")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+
+            let tags = tcpPacketIndicators(packet)
+            if !tags.isEmpty {
+                Text(tags.joined(separator: " • "))
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func udpPacketRow(_ packet: UDPPacketSummary) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(directionTitle(for: packet.direction))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(packet.timestamp.formatted(date: .abbreviated, time: .standard))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("\(packet.sourceIP):\(packet.sourcePort) → \(packet.destinationIP):\(packet.destinationPort)")
+                .font(.system(.caption, design: .monospaced))
+
+            Text("UDP Length \(packet.udpLength)B Payload \(packet.payloadLength)B")
+                .font(.system(.caption, design: .monospaced))
+
+            Text("IP v\(packet.ipVersion) HL/TTL \(packet.hopLimit) Proto \(packet.protocolNumber) Hdr \(packet.ipHeaderLength) Len \(packet.totalLength)")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+
+            if packet.moreFragments || packet.fragmentOffset > 0 {
+                Text("Fragmented IP packet (offset \(packet.fragmentOffset), more=\(packet.moreFragments ? "yes" : "no"))")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func directionTitle(for direction: FlowDirection) -> String {
+        switch direction {
+        case .clientToServer, .sourceToDestination:
+            leftDirectionTitle
+        case .serverToClient, .destinationToSource:
+            rightDirectionTitle
+        }
+    }
+
+    private func flagsDescription(_ flags: TCPPacket.Flags) -> String {
+        var result: [String] = []
+        if flags.contains(.syn) {
+            result.append("SYN")
+        }
+        if flags.contains(.ack) {
+            result.append("ACK")
+        }
+        if flags.contains(.fin) {
+            result.append("FIN")
+        }
+        if flags.contains(.rst) {
+            result.append("RST")
+        }
+        if flags.contains(.psh) {
+            result.append("PSH")
+        }
+        if flags.contains(.urg) {
+            result.append("URG")
+        }
+        return result.isEmpty ? "-" : result.joined(separator: ",")
+    }
+
+    private func tcpPacketIndicators(_ packet: TCPPacketSummary) -> [String] {
+        var tags: [String] = []
+        if packet.isAckOnly {
+            tags.append("ACK-only")
+        }
+        if packet.isDupAck {
+            tags.append("Dup ACK")
+        }
+        if packet.isRetransmission {
+            tags.append("Retransmission")
+        }
+        if packet.isOutOfOrder {
+            tags.append("Out-of-order")
+        }
+        if packet.scaledWindow == 0 {
+            tags.append("Zero window")
+        }
+        return tags
     }
 
     private func formatTimestamp(_ date: Date?) -> String {
@@ -628,7 +799,11 @@ private struct TCPStreamView: View {
 
             let data = direction == .client ? clientStream : serverStream
             let content = viewMode == .text
-                ? (BodyStorage.decodeText(from: data) ?? String(decoding: data, as: UTF8.self))
+                ? (
+                    BodyStorage.decodeText(from: data) ??
+                        String(bytes: data, encoding: .utf8) ??
+                        ""
+                )
                 : hexDump(data)
             CodeViewerView(code: content, language: .plainText)
         }

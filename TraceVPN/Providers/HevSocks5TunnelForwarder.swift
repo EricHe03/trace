@@ -43,6 +43,7 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine, @unchecked Sendabl
     private let socks5Port: UInt16
     private let maxInputPending: Int
     private let ipv6Enabled: Bool
+    private let outputPacketObserver: (@Sendable ([Data]) -> Void)?
     private let eventLogHandler: (@Sendable (String, String) -> Void)?
     private let udpAssociateProbeHandler: (@Sendable (Socks5UDPSupport) -> Void)?
     private var inputPending = 0
@@ -58,6 +59,7 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine, @unchecked Sendabl
         mtu: Int,
         ipv6Enabled: Bool,
         maxInputPending: Int = 8192,
+        outputPacketObserver: (@Sendable ([Data]) -> Void)? = nil,
         eventLogHandler: (@Sendable (String, String) -> Void)? = nil,
         udpAssociateProbeHandler: (@Sendable (Socks5UDPSupport) -> Void)? = nil
     ) {
@@ -67,6 +69,7 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine, @unchecked Sendabl
         self.mtu = max(576, mtu)
         self.ipv6Enabled = ipv6Enabled
         self.maxInputPending = max(1, maxInputPending)
+        self.outputPacketObserver = outputPacketObserver
         self.eventLogHandler = eventLogHandler
         self.udpAssociateProbeHandler = udpAssociateProbeHandler
     }
@@ -250,6 +253,7 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine, @unchecked Sendabl
             break
         }
         if !pendingPackets.isEmpty {
+            outputPacketObserver?(pendingPackets)
             packetFlow.writePackets(pendingPackets, withProtocols: pendingProtocols)
         }
     }

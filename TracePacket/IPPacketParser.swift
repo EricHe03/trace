@@ -8,6 +8,13 @@
 import Foundation
 
 public enum IPPacketParser {
+    private struct IPv6HeaderChainResult {
+        let finalHeader: UInt8
+        let finalOffset: Int
+        let fragmentOffset: Int
+        let moreFragments: Bool
+    }
+
     public static func parse(_ data: Data) -> IPPacket? {
         guard data.count >= 1 else { return nil }
         let version = data[0] >> 4
@@ -28,14 +35,18 @@ public enum IPPacketParser {
         let totalLength = Int(UInt16(data[2]) << 8 | UInt16(data[3]))
         guard totalLength >= ihl, data.count >= totalLength else { return nil }
 
+        let flagsAndOffset = (UInt16(data[6]) << 8) | UInt16(data[7])
+        let moreFragments = (flagsAndOffset & 0x2000) != 0
+
         // If this is a non-initial fragment, we can't reliably parse transport headers.
         // We intentionally drop non-first fragments instead of mis-parsing them as TCP/UDP.
-        let fragmentOffset = Int((UInt16(data[6] & 0x1F) << 8) | UInt16(data[7]))
+        let fragmentOffset = Int(flagsAndOffset & 0x1FFF)
         if fragmentOffset != 0 {
             return nil
         }
 
         let proto = data[9]
+        let ttl = data[8]
         let src = readIPv4(data, offset: 12)
         let dst = readIPv4(data, offset: 16)
         let payload = data.subdata(in: ihl ..< totalLength)
@@ -44,6 +55,9 @@ public enum IPPacketParser {
             headerLength: ihl,
             totalLength: totalLength,
             protocolNumber: proto,
+            hopLimit: ttl,
+            fragmentOffset: fragmentOffset,
+            moreFragments: moreFragments,
             source: src,
             destination: dst,
             payload: payload
@@ -54,14 +68,17 @@ public enum IPPacketParser {
         guard data.count >= 40 else { return nil }
         let payloadLength = Int(UInt16(data[4]) << 8 | UInt16(data[5]))
         var nextHeader = data[6]
+        let hopLimit = data[7]
         let totalLength = 40 + payloadLength
         guard data.count >= totalLength else { return nil }
         let src = readIPv6(data, offset: 8)
         let dst = readIPv6(data, offset: 24)
 
         var headerLength = 40
+        var fragmentOffset = 0
+        var moreFragments = false
         if payloadLength > 0 {
-            guard let (finalHeader, finalOffset) = parseIPv6NextHeaderChain(
+            guard let chainInfo = parseIPv6NextHeaderChain(
                 data: data,
                 totalLength: totalLength,
                 initialNextHeader: nextHeader,
@@ -69,8 +86,10 @@ public enum IPPacketParser {
             ) else {
                 return nil
             }
-            nextHeader = finalHeader
-            headerLength = finalOffset
+            nextHeader = chainInfo.finalHeader
+            headerLength = chainInfo.finalOffset
+            fragmentOffset = chainInfo.fragmentOffset
+            moreFragments = chainInfo.moreFragments
         }
 
         let payload = headerLength <= totalLength ? data.subdata(in: headerLength ..< totalLength) : Data()
@@ -79,6 +98,9 @@ public enum IPPacketParser {
             headerLength: headerLength,
             totalLength: totalLength,
             protocolNumber: nextHeader,
+            hopLimit: hopLimit,
+            fragmentOffset: fragmentOffset,
+            moreFragments: moreFragments,
             source: src,
             destination: dst,
             payload: payload
@@ -90,9 +112,11 @@ public enum IPPacketParser {
         totalLength: Int,
         initialNextHeader: UInt8,
         initialOffset: Int
-    ) -> (finalHeader: UInt8, finalOffset: Int)? {
+    ) -> IPv6HeaderChainResult? {
         var nextHeader = initialNextHeader
         var offset = initialOffset
+        var fragmentOffset = 0
+        var moreFragments = false
 
         while true {
             switch nextHeader {
@@ -110,7 +134,8 @@ public enum IPPacketParser {
                 guard offset + 8 <= totalLength else { return nil }
                 let newNext = data[offset]
                 let offsetAndFlags = (UInt16(data[offset + 2]) << 8) | UInt16(data[offset + 3])
-                let fragmentOffset = offsetAndFlags >> 3
+                fragmentOffset = Int((offsetAndFlags & 0xFFF8) >> 3)
+                moreFragments = (offsetAndFlags & 0x0001) != 0
                 if fragmentOffset != 0 {
                     // Non-first fragment: transport header may not be present.
                     return nil
@@ -128,16 +153,36 @@ public enum IPPacketParser {
                 offset += headerBytes
             case 50:
                 // ESP: encrypted payload; stop here.
-                return (nextHeader, offset)
+                return IPv6HeaderChainResult(
+                    finalHeader: nextHeader,
+                    finalOffset: offset,
+                    fragmentOffset: fragmentOffset,
+                    moreFragments: moreFragments
+                )
             case 59:
                 // No Next Header
-                return (nextHeader, offset)
+                return IPv6HeaderChainResult(
+                    finalHeader: nextHeader,
+                    finalOffset: offset,
+                    fragmentOffset: fragmentOffset,
+                    moreFragments: moreFragments
+                )
             default:
-                return (nextHeader, offset)
+                return IPv6HeaderChainResult(
+                    finalHeader: nextHeader,
+                    finalOffset: offset,
+                    fragmentOffset: fragmentOffset,
+                    moreFragments: moreFragments
+                )
             }
 
             if offset >= totalLength {
-                return (nextHeader, offset)
+                return IPv6HeaderChainResult(
+                    finalHeader: nextHeader,
+                    finalOffset: offset,
+                    fragmentOffset: fragmentOffset,
+                    moreFragments: moreFragments
+                )
             }
         }
     }

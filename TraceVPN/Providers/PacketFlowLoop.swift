@@ -15,6 +15,7 @@ import TraceProxy
 
 final class PacketCapturePipeline: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.trace.vpn.packet_capture", qos: .utility)
+    private let queueKey = DispatchSpecificKey<Void>()
     private let pendingLock = NSLock()
     private let maxPending: Int
     private let logSampler = LogSampler()
@@ -30,6 +31,7 @@ final class PacketCapturePipeline: @unchecked Sendable {
 
     init(maxPending: Int) {
         self.maxPending = max(1, maxPending)
+        queue.setSpecific(key: queueKey, value: ())
     }
 
     func configure(enabled: Bool, limit: UInt64, writer: PCAPWriting?) {
@@ -61,11 +63,13 @@ final class PacketCapturePipeline: @unchecked Sendable {
     }
 
     func stop() {
-        queue.async { [weak self] in
-            guard let self else { return }
-            self.enabled = false
-            self.writer?.close()
-            self.writer = nil
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            stopOnQueue()
+            return
+        }
+
+        queue.sync { [weak self] in
+            self?.stopOnQueue()
         }
     }
 
@@ -154,14 +158,26 @@ final class PacketCapturePipeline: @unchecked Sendable {
         guard let tcpPacket = TCPParser.parse(ipPacket.payload) else { return }
 
         let outputs = reassembler.process(ipPacket: ipPacket, tcpPacket: tcpPacket)
-        for output in outputs where !output.data.isEmpty {
+        for output in outputs {
             flowRecorder.processReassembled(flow: output.flow, data: output.data, isFinal: output.isFinal)
-            if logSampler.shouldLog(event: "vpn.stream_reassembly", key: output.flow.description, first: 3, every: 200) {
+            if !output.data.isEmpty,
+               logSampler.shouldLog(event: "vpn.stream_reassembly", key: output.flow.description, first: 3, every: 200) {
                 VPNLog.tunnel.debug(
                     "event=vpn.stream_reassembly outcome=success flow=\(output.flow.description, privacy: .private(mask: .hash)) bytes=\(output.data.count) final=\(output.isFinal)"
                 )
             }
         }
+    }
+
+    private func stopOnQueue() {
+        enabled = false
+        flowRecorder.shutdown()
+        udpFlowManager.shutdown()
+        pendingLock.lock()
+        pendingCount = 0
+        pendingLock.unlock()
+        writer?.close()
+        writer = nil
     }
 }
 
@@ -305,6 +321,7 @@ final class PacketFlowLoop {
                 _ = self.capturePipeline.enqueue(packets: packets)
 
                 if let udpForwarder = self.udpForwarder {
+                    let udpForwarderAvailable = udpForwarder.isAvailable()
                     var forwardPackets: [Data] = []
                     var forwardProtocols: [NSNumber] = []
 
@@ -312,7 +329,7 @@ final class PacketFlowLoop {
                         if let ipPacket = IPPacketParser.parse(packet), ipPacket.transport == .udp,
                            let udpPacket = UDPParser.parse(ipPacket.payload) {
                             let decision = Self.decideUDPForwarding(
-                                udpForwarderAvailable: true,
+                                udpForwarderAvailable: udpForwarderAvailable,
                                 mode: self.udpForwardingMode,
                                 sourcePort: udpPacket.sourcePort,
                                 destinationPort: udpPacket.destinationPort,

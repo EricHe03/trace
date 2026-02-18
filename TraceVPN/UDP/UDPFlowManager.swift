@@ -65,7 +65,7 @@ final class UDPFlowManager {
     }
 
     deinit {
-        stopTimers()
+        shutdown()
     }
 
     func recordDatagram(ipPacket: IPPacket, udpPacket: UDPPacket) {
@@ -142,6 +142,16 @@ final class UDPFlowManager {
         }
         queue.sync(flags: .barrier) {
             persistDirtyFlows()
+        }
+    }
+
+    func shutdown() {
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            shutdownOnQueue()
+            return
+        }
+        queue.sync(flags: .barrier) {
+            shutdownOnQueue()
         }
     }
 
@@ -237,6 +247,29 @@ final class UDPFlowManager {
         cleanupTimer = nil
         persistTimer?.cancel()
         persistTimer = nil
+    }
+
+    private func shutdownOnQueue() {
+        stopTimers()
+        persistDirtyFlows()
+        guard !flows.isEmpty else { return }
+
+        let shutdownTime = Date()
+        for key in Array(flows.keys) {
+            guard var state = flows[key] else { continue }
+            state.metadata.termination = .closed
+            state.metadata.endTime = shutdownTime
+            do {
+                try AppGroupStorage.shared.saveUDPFlowMetadata(state.metadata)
+            } catch {
+                if logSampler.shouldLog(event: "vpn.udp_flow_store", key: "shutdown", first: 3, every: 200) {
+                    VPNLog.tunnel.warning("event=vpn.udp_flow_store outcome=failure error=\(error.localizedDescription, privacy: .public)")
+                }
+            }
+        }
+
+        flows.removeAll(keepingCapacity: false)
+        dirtyFlows.removeAll(keepingCapacity: false)
     }
 
     private func cleanupExpiredFlows() {
