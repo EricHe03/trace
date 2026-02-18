@@ -288,13 +288,11 @@ final class ConnectionDetailViewModel: ObservableObject {
         }
     }
 
-    private func shouldTryNextCandidate(error: Error, initiator: PCAPLoadInitiator) -> Bool {
-        if initiator == .auto,
-           let typed = error as? PCAPFlowAnalyzerError,
-           typed == .noPacketsForFlow {
-            return true
-        }
-        return false
+    private func shouldTryNextCandidate(error _: Error, initiator: PCAPLoadInitiator) -> Bool {
+        guard initiator == .auto else { return false }
+        // Best-effort auto mode: if one capture is invalid or doesn't contain the flow,
+        // continue scanning older candidates before giving up.
+        return true
     }
 
     private func rawPacketPCAPFiles() -> [PCAPFileItem] {

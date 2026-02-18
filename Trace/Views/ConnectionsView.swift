@@ -12,7 +12,8 @@ import TraceUI
 struct ConnectionsView: View {
     @State private var records: [PacketFlowRecord] = []
     @State private var searchText = ""
-    @State private var showingClearAlert = false
+    @State private var requestCount = 0
+    @State private var pendingAction: ConnectionAction?
     @State private var toastMessage: String?
 
     var body: some View {
@@ -58,12 +59,33 @@ struct ConnectionsView: View {
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic))
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button(role: .destructive) {
-                    showingClearAlert = true
+                Menu {
+                    Button {
+                        loadRecords()
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+
+                    Divider()
+
+                    Button(role: .destructive) {
+                        pendingAction = .clearConnections
+                    } label: {
+                        Label("Clear Connections", systemImage: "trash")
+                    }
+                    .disabled(records.isEmpty)
+
+                    Button(role: .destructive) {
+                        pendingAction = .deleteAllRequests
+                    } label: {
+                        Label("Delete All Requests", systemImage: "trash")
+                    }
+                    .disabled(requestCount == 0)
                 } label: {
-                    Label("Clear", systemImage: "trash")
+                    Label("More", systemImage: "ellipsis.circle")
                 }
-                .disabled(records.isEmpty)
+                .accessibilityLabel("More options")
+                .accessibilityHint("Double tap to refresh or clear connection data")
             }
         }
         .refreshable {
@@ -72,15 +94,44 @@ struct ConnectionsView: View {
         .onAppear {
             loadRecords()
         }
-        .alert("Clear Connections", isPresented: $showingClearAlert) {
-            Button("Cancel", role: .cancel) {}
-            Button("Clear", role: .destructive) {
-                clearRecords()
-            }
-        } message: {
-            Text("Remove all recorded connection summaries?")
+        .alert(item: $pendingAction) { action in
+            Alert(
+                title: Text(action.title),
+                message: Text(alertMessage(for: action)),
+                primaryButton: .destructive(Text(action.confirmButtonTitle)) {
+                    perform(action)
+                },
+                secondaryButton: .cancel()
+            )
         }
         .toast(message: $toastMessage)
+    }
+
+    private enum ConnectionAction: String, Identifiable {
+        case clearConnections
+        case deleteAllRequests
+
+        var id: String {
+            rawValue
+        }
+
+        var title: String {
+            switch self {
+            case .clearConnections:
+                "Clear Connections"
+            case .deleteAllRequests:
+                "Delete All Requests"
+            }
+        }
+
+        var confirmButtonTitle: String {
+            switch self {
+            case .clearConnections:
+                "Clear"
+            case .deleteAllRequests:
+                "Delete"
+            }
+        }
     }
 
     private var filteredRecords: [PacketFlowRecord] {
@@ -99,6 +150,12 @@ struct ConnectionsView: View {
         } catch {
             toastMessage = "Failed to load connections: \(error.localizedDescription)"
         }
+
+        do {
+            requestCount = try AppGroupStorage.shared.loadAllRequests().count
+        } catch {
+            toastMessage = "Failed to load requests: \(error.localizedDescription)"
+        }
     }
 
     private func clearRecords() {
@@ -107,6 +164,33 @@ struct ConnectionsView: View {
             records = []
         } catch {
             toastMessage = "Failed to clear connections: \(error.localizedDescription)"
+        }
+    }
+
+    private func clearRequests() {
+        do {
+            try AppGroupStorage.shared.clearAllRequests()
+            requestCount = 0
+        } catch {
+            toastMessage = "Failed to delete requests: \(error.localizedDescription)"
+        }
+    }
+
+    private func alertMessage(for action: ConnectionAction) -> String {
+        switch action {
+        case .clearConnections:
+            "Remove all \(records.count) recorded connection summaries?"
+        case .deleteAllRequests:
+            "Delete all \(requestCount) captured requests? This action cannot be undone."
+        }
+    }
+
+    private func perform(_ action: ConnectionAction) {
+        switch action {
+        case .clearConnections:
+            clearRecords()
+        case .deleteAllRequests:
+            clearRequests()
         }
     }
 }

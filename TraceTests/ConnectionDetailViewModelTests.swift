@@ -435,6 +435,69 @@ final class ConnectionDetailViewModelTests: XCTestCase {
         XCTAssertNil(vm.analysis)
     }
 
+    func testAutoLoadSkipsInvalidNewestCandidateAndLoadsOlderValidCapture() async throws {
+        // This test is only deterministic when there are no other eligible raw captures present.
+        guard let container = AppGroupStorage.shared.containerURL else {
+            XCTFail("Missing container URL")
+            return
+        }
+
+        let maxBytes: UInt64 = 25 * 1_048_576
+        let existingRaw = AppGroupStorage.shared.packetCaptureFiles(prefixes: ["capture_raw_packets"])
+        let hasEligibleExistingCapture = existingRaw.contains { url in
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?
+                .uint64Value ?? 0
+            return size > 0 && size <= maxBytes
+        }
+        if hasEligibleExistingCapture {
+            throw XCTSkip("Skipping: existing raw captures make auto-load nondeterministic in this environment.")
+        }
+
+        let now = Date()
+        let record = PacketFlowRecord(
+            id: UUID(),
+            sourceIP: "192.168.1.100",
+            destinationIP: "93.184.216.34",
+            sourcePort: 54321,
+            destinationPort: 443,
+            transport: .tcp,
+            startTime: now,
+            lastSeen: now,
+            isClosed: false,
+            connectionState: .unknown,
+            tcpHandshake: nil,
+            tcpTermination: nil,
+            tcpMetrics: nil
+        )
+        let vm = ConnectionDetailViewModel(record: record)
+
+        let matchingSyn = makeIPv4TCPPacket(
+            srcIP: "192.168.1.100",
+            dstIP: "93.184.216.34",
+            srcPort: 54321,
+            dstPort: 443,
+            flags: 0x02
+        )
+        let tmpValidURL = try createMockPCAPFile(withPackets: [(timestamp: now, data: matchingSyn)])
+        let validURL = container.appendingPathComponent("capture_raw_packets_auto_valid_\(UUID().uuidString).pcap")
+        try FileManager.default.copyItem(at: tmpValidURL, to: validURL)
+
+        let invalidURL = container.appendingPathComponent("capture_raw_packets_auto_invalid_\(UUID().uuidString).pcap")
+        FileManager.default.createFile(atPath: invalidURL.path, contents: Data("not-a-pcap".utf8))
+
+        defer {
+            try? FileManager.default.removeItem(at: validURL)
+            try? FileManager.default.removeItem(at: invalidURL)
+        }
+
+        vm.autoLoadPCAPIfPossible()
+        try await waitForLoadingToFinish(vm)
+
+        XCTAssertNil(vm.loadError)
+        XCTAssertNotNil(vm.analysis)
+        XCTAssertFalse(vm.analysis?.packets.isEmpty ?? true)
+    }
+
     // MARK: - Multiple File Tests
 
     func testMultiplePCAPFiles() {
