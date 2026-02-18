@@ -49,6 +49,7 @@ final class UDPForwarder: @unchecked Sendable {
 
     private let packetFlow: NEPacketTunnelFlow
     private let queue = DispatchQueue(label: "com.trace.vpn.udp_forwarder", qos: .userInitiated)
+    private let queueKey = DispatchSpecificKey<Void>()
     private let cleanupInterval: TimeInterval
     private let idleTimeout: TimeInterval
     private let maxPendingPayloadPackets: Int
@@ -78,6 +79,7 @@ final class UDPForwarder: @unchecked Sendable {
         self.maxPendingPayloadPackets = max(1, maxPendingPayloadPackets)
         self.maxPendingPayloadBytes = max(1_024, maxPendingPayloadBytes)
         self.inboundPacketObserver = inboundPacketObserver
+        queue.setSpecific(key: queueKey, value: ())
 
         let resources = NIORuntime.shared.acquire(for: .networkExtension)
         if let eventLoopGroup = resources.eventLoopGroup as? NIOTSEventLoopGroup {
@@ -94,7 +96,7 @@ final class UDPForwarder: @unchecked Sendable {
     }
 
     deinit {
-        stop()
+        stopSync()
     }
 
     func start() {
@@ -105,24 +107,7 @@ final class UDPForwarder: @unchecked Sendable {
 
     func stop() {
         queue.async { [weak self] in
-            guard let self else { return }
-            self.logSummary(reason: "stop")
-
-            self.cleanupTimer?.cancel()
-            self.cleanupTimer = nil
-
-            for connection in self.connections.values {
-                if let channel = connection.channel {
-                    channel.close(promise: nil)
-                }
-            }
-            self.connections.removeAll()
-
-            if self.isAvailable() {
-                self.setRuntimeAcquired(false)
-                self.group = nil
-                try? NIORuntime.shared.release(for: .networkExtension)
-            }
+            self?.stopOnQueue()
         }
     }
 
@@ -615,6 +600,36 @@ final class UDPForwarder: @unchecked Sendable {
         runtimeLock.lock()
         runtimeAcquired = value
         runtimeLock.unlock()
+    }
+
+    private func stopSync() {
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            stopOnQueue()
+            return
+        }
+        queue.sync { [weak self] in
+            self?.stopOnQueue()
+        }
+    }
+
+    private func stopOnQueue() {
+        logSummary(reason: "stop")
+
+        cleanupTimer?.cancel()
+        cleanupTimer = nil
+
+        for connection in connections.values {
+            if let channel = connection.channel {
+                channel.close(promise: nil)
+            }
+        }
+        connections.removeAll()
+
+        if isAvailable() {
+            setRuntimeAcquired(false)
+            group = nil
+            try? NIORuntime.shared.release(for: .networkExtension)
+        }
     }
 
     private func enqueuePendingPayload(_ payload: Data, on connection: UDPForwardConnection) {

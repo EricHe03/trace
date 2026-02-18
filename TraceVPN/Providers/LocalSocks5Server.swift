@@ -36,6 +36,8 @@ final class LocalSocks5Server: @unchecked Sendable {
     }
 
     private let lock = NSLock()
+    private let lifecycleQueue = DispatchQueue(label: "com.trace.vpn.local_socks5.lifecycle")
+    private let lifecycleQueueKey = DispatchSpecificKey<Void>()
     private let bindHost: String
     private let eventLogHandler: (@Sendable (String, String) -> Void)?
 
@@ -47,9 +49,29 @@ final class LocalSocks5Server: @unchecked Sendable {
     init(bindHost: String = "127.0.0.1", eventLogHandler: (@Sendable (String, String) -> Void)? = nil) {
         self.bindHost = bindHost
         self.eventLogHandler = eventLogHandler
+        lifecycleQueue.setSpecific(key: lifecycleQueueKey, value: ())
     }
 
     func start(preferredPort: UInt16) throws -> Endpoint {
+        if DispatchQueue.getSpecific(key: lifecycleQueueKey) != nil {
+            return try startOnLifecycleQueue(preferredPort: preferredPort)
+        }
+        return try lifecycleQueue.sync {
+            try startOnLifecycleQueue(preferredPort: preferredPort)
+        }
+    }
+
+    func stop() {
+        if DispatchQueue.getSpecific(key: lifecycleQueueKey) != nil {
+            stopOnLifecycleQueue()
+            return
+        }
+        lifecycleQueue.sync {
+            stopOnLifecycleQueue()
+        }
+    }
+
+    private func startOnLifecycleQueue(preferredPort: UInt16) throws -> Endpoint {
         lock.lock()
         if let endpoint {
             lock.unlock()
@@ -82,7 +104,7 @@ final class LocalSocks5Server: @unchecked Sendable {
         }
     }
 
-    func stop() {
+    private func stopOnLifecycleQueue() {
         let snapshot: (Channel?, [Channel], Bool)
         lock.lock()
         snapshot = (

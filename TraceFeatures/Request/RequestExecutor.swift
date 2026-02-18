@@ -102,6 +102,15 @@ public final class AsyncHTTPClientRequestTransport: @unchecked Sendable, Request
         self.maxRedirectCount = maxRedirectCount
     }
 
+    static func shouldFollowRedirectStatus(_ status: HTTPResponseStatus) -> Bool {
+        switch status {
+        case .movedPermanently, .found, .seeOther, .temporaryRedirect, .permanentRedirect:
+            true
+        default:
+            false
+        }
+    }
+
     public func execute(_ request: RequestExecutorTransportRequest) async throws -> RequestExecutorTransportResponse {
         var currentURL = request.url
         var currentMethod = request.methodRaw
@@ -251,10 +260,7 @@ private extension AsyncHTTPClientRequestTransport {
         location: String?,
         originalURL: URL
     ) -> URL? {
-        switch status {
-        case .movedPermanently, .found, .seeOther, .notModified, .useProxy, .temporaryRedirect, .permanentRedirect:
-            break
-        default:
+        guard Self.shouldFollowRedirectStatus(status) else {
             return nil
         }
 

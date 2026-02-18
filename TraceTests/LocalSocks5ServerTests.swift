@@ -186,6 +186,47 @@ final class LocalSocks5ServerTests: XCTestCase {
         XCTAssertEqual(response.addressType, 0x01)
         XCTAssertEqual(response.host, "127.0.0.1")
     }
+
+    func testConcurrentStartReturnsSameEndpoint() {
+        let localServer = LocalSocks5Server(bindHost: "127.0.0.1")
+        server = localServer
+
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var endpoints: [LocalSocks5Server.Endpoint] = []
+        var errors: [Error] = []
+
+        for _ in 0..<6 {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                defer { group.leave() }
+                do {
+                    let endpoint = try localServer.start(preferredPort: 0)
+                    lock.lock()
+                    endpoints.append(endpoint)
+                    lock.unlock()
+                } catch {
+                    lock.lock()
+                    errors.append(error)
+                    lock.unlock()
+                }
+            }
+        }
+
+        XCTAssertEqual(group.wait(timeout: .now() + 10), .success)
+        XCTAssertTrue(errors.isEmpty)
+        XCTAssertEqual(endpoints.count, 6)
+
+        guard let first = endpoints.first else {
+            XCTFail("Expected at least one endpoint")
+            return
+        }
+
+        for endpoint in endpoints {
+            XCTAssertEqual(endpoint.host, first.host)
+            XCTAssertEqual(endpoint.port, first.port)
+        }
+    }
 }
 
 private extension LocalSocks5ServerTests {

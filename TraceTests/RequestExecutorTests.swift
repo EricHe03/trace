@@ -6,6 +6,7 @@
 //
 
 import XCTest
+import NIOHTTP1
 @testable import Trace
 @testable import TraceCore
 @testable import TraceFeatures
@@ -72,6 +73,20 @@ final class RequestExecutorTests: XCTestCase {
     func testInitialState() {
         XCTAssertFalse(executor.isLoading)
         XCTAssertNil(executor.lastResponse)
+    }
+
+    func testShouldFollowRedirectStatus_AllowsRedirectCodes() {
+        XCTAssertTrue(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.movedPermanently))
+        XCTAssertTrue(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.found))
+        XCTAssertTrue(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.seeOther))
+        XCTAssertTrue(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.temporaryRedirect))
+        XCTAssertTrue(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.permanentRedirect))
+    }
+
+    func testShouldFollowRedirectStatus_RejectsNonRedirectCodes() {
+        XCTAssertFalse(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.ok))
+        XCTAssertFalse(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.notModified))
+        XCTAssertFalse(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.useProxy))
     }
 
     // MARK: - RequestBuilder Tests

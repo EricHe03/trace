@@ -23,6 +23,7 @@ final class PacketCapturePipeline: @unchecked Sendable {
     private let flowRecorder = PacketFlowRecorder()
     private let udpFlowManager = UDPFlowManager()
     private var pendingCount = 0
+    private var isStopped = false
 
     private var enabled = false
     private var limit: UInt64 = 0
@@ -37,6 +38,14 @@ final class PacketCapturePipeline: @unchecked Sendable {
     func configure(enabled: Bool, limit: UInt64, writer: PCAPWriting?) {
         queue.async { [weak self] in
             guard let self else { return }
+            self.pendingLock.lock()
+            let stopped = self.isStopped
+            self.pendingLock.unlock()
+            guard !stopped else {
+                writer?.close()
+                return
+            }
+
             if let current = self.writer, let next = writer {
                 if current !== next {
                     current.close()
@@ -58,7 +67,12 @@ final class PacketCapturePipeline: @unchecked Sendable {
 
     func updateLimit(_ limit: UInt64) {
         queue.async { [weak self] in
-            self?.limit = limit
+            guard let self else { return }
+            self.pendingLock.lock()
+            let stopped = self.isStopped
+            self.pendingLock.unlock()
+            guard !stopped else { return }
+            self.limit = limit
         }
     }
 
@@ -67,6 +81,10 @@ final class PacketCapturePipeline: @unchecked Sendable {
             stopOnQueue()
             return
         }
+
+        pendingLock.lock()
+        isStopped = true
+        pendingLock.unlock()
 
         queue.sync { [weak self] in
             self?.stopOnQueue()
@@ -84,6 +102,10 @@ final class PacketCapturePipeline: @unchecked Sendable {
         let acceptedPackets: [Data]
         let droppedCount: Int
         pendingLock.lock()
+        if isStopped {
+            pendingLock.unlock()
+            return 0
+        }
         let available = max(0, maxPending - pendingCount)
         let acceptedCount = min(available, packets.count)
         if acceptedCount > 0 {
@@ -170,12 +192,14 @@ final class PacketCapturePipeline: @unchecked Sendable {
     }
 
     private func stopOnQueue() {
+        pendingLock.lock()
+        isStopped = true
+        pendingCount = 0
+        pendingLock.unlock()
+
         enabled = false
         flowRecorder.shutdown()
         udpFlowManager.shutdown()
-        pendingLock.lock()
-        pendingCount = 0
-        pendingLock.unlock()
         writer?.close()
         writer = nil
     }
@@ -228,6 +252,7 @@ final class PacketFlowLoop {
     private var blockQUICEnabled: Bool
     private var tunnelUDPSupported = true
     private let queue = DispatchQueue(label: "com.trace.vpn.packet_flow_loop", qos: .userInitiated)
+    private let queueKey = DispatchSpecificKey<Void>()
     private var isRunning = false
     private var isStopping = false
     private var hasPendingRead = false
@@ -255,6 +280,7 @@ final class PacketFlowLoop {
         self.udpForwarder = udpForwarder
         self.udpForwardingMode = udpForwardingMode
         self.blockQUICEnabled = blockQUICEnabled
+        queue.setSpecific(key: queueKey, value: ())
     }
 
     func start() {
@@ -269,7 +295,13 @@ final class PacketFlowLoop {
     }
 
     func stop() {
-        queue.async { [weak self] in
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            isStopping = true
+            logUDPForwardSummary(reason: "stop")
+            return
+        }
+
+        queue.sync { [weak self] in
             guard let self else { return }
             self.isStopping = true
             self.logUDPForwardSummary(reason: "stop")
