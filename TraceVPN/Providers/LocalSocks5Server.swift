@@ -183,11 +183,10 @@ final class LocalSocks5Server: @unchecked Sendable {
                 return channel.pipeline.addHandler(handler)
             }
 
-        let channel: Channel
-        if let port {
-            channel = try bootstrap.bind(host: bindHost, port: Int(port)).wait()
+        let channel: Channel = if let port {
+            try bootstrap.bind(host: bindHost, port: Int(port)).wait()
         } else {
-            channel = try bootstrap.bind(host: bindHost, port: 0).wait()
+            try bootstrap.bind(host: bindHost, port: 0).wait()
         }
 
         guard let localAddress = channel.localAddress,
@@ -292,7 +291,7 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
         case failure
     }
 
-    // Avoid blocking the channel's event loop while creating the UDP relay socket.
+    /// Avoid blocking the channel's event loop while creating the UDP relay socket.
     private static let udpAssociateSetupQueue = DispatchQueue(
         label: "com.trace.vpn.local_socks5.udp_associate_setup",
         qos: .userInitiated
@@ -367,7 +366,7 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
                 case .invalid:
                     closeConnection(context: context)
                     return
-                case .value(let supportsNoAuth):
+                case let .value(supportsNoAuth):
                     let method: UInt8 = supportsNoAuth ? 0x00 : 0xFF
                     writeBytes([0x05, method], context: context)
                     guard supportsNoAuth else {
@@ -898,8 +897,7 @@ private final class Socks5UDPRelay: @unchecked Sendable {
         lock.lock()
         if let state = remoteStates[key],
            let current = state.channel,
-           Self.sameChannel(current, channel)
-        {
+           Self.sameChannel(current, channel) {
             remoteStates.removeValue(forKey: key)
         }
         lock.unlock()

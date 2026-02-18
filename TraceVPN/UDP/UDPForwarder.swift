@@ -7,9 +7,9 @@
 
 import Darwin
 import Foundation
+import NetworkExtension
 import NIOCore
 import NIOTransportServices
-import NetworkExtension
 import os
 import TraceCore
 import TracePacket
@@ -77,7 +77,7 @@ final class UDPForwarder: @unchecked Sendable {
         self.idleTimeout = idleTimeout
         self.cleanupInterval = cleanupInterval
         self.maxPendingPayloadPackets = max(1, maxPendingPayloadPackets)
-        self.maxPendingPayloadBytes = max(1_024, maxPendingPayloadBytes)
+        self.maxPendingPayloadBytes = max(1024, maxPendingPayloadBytes)
         self.inboundPacketObserver = inboundPacketObserver
         queue.setSpecific(key: queueKey, value: ())
 

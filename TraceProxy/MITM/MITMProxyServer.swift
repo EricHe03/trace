@@ -395,17 +395,16 @@ public class MITMProxyServer: @unchecked Sendable {
             lowercasedReason.contains("pinned certificate")
         guard pinningLikeFailure else { return }
 
-        let normalized: String
-        if lowercasedReason.contains("pinning requirements") {
-            normalized = "pinning requirements"
+        let normalized = if lowercasedReason.contains("pinning requirements") {
+            "pinning requirements"
         } else if lowercasedReason.contains("possible_pinning_or_strict_trust") {
-            normalized = "pinning/strict trust"
+            "pinning/strict trust"
         } else if lowercasedReason.contains("certificate pinning") || lowercasedReason.contains("cert pinning") {
-            normalized = "certificate pinning"
+            "certificate pinning"
         } else if lowercasedReason.contains("pinned certificate") {
-            normalized = "pinned certificate"
+            "pinned certificate"
         } else {
-            normalized = "pinning/strict trust"
+            "pinning/strict trust"
         }
 
         MITMAutoBypassCache.shared.record(host: host, reason: normalized)

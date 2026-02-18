@@ -8,9 +8,9 @@
 import Darwin
 import Foundation
 import HevSocks5Tunnel
+import NetworkExtension
 import NIOCore
 import NIOTransportServices
-import NetworkExtension
 import OSLog
 import TraceCore
 

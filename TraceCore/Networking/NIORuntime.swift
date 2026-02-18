@@ -2,7 +2,7 @@
 //  NIORuntime.swift
 //  TraceCore
 //
-//  Created by Codex on 2026/02/13.
+//  Created by Justin on 2026/02/13.
 //
 
 import AsyncHTTPClient
@@ -139,9 +139,9 @@ private extension NIORuntime {
         switch context {
         case .app:
             // App runtime is intentionally long-lived to avoid churn.
-            return false
+            false
         case .networkExtension, .tests:
-            return state.appRetainCount == 0 &&
+            state.appRetainCount == 0 &&
                 state.networkExtensionRetainCount == 0 &&
                 state.testRetainCount == 0
         }
@@ -161,4 +161,3 @@ private extension NIORuntime {
         try resources.eventLoopGroup.syncShutdownGracefully()
     }
 }
-

@@ -2,11 +2,11 @@
 //  NIOMITMProxyEngine.swift
 //  TraceProxy
 //
-//  Created by Codex on 2026/02/14.
+//  Created by Justin on 2026/02/14.
 //
 
-import Foundation
 import AsyncHTTPClient
+import Foundation
 import NIOCore
 import NIOHTTP1
 import NIOHTTP2
@@ -87,8 +87,7 @@ final class NIOMITMProxyEngine: @unchecked Sendable {
         if let listener = listenerChannel,
            let localAddress = listener.localAddress,
            let localPortRaw = localAddress.port,
-           let localPort = UInt16(exactly: localPortRaw)
-        {
+           let localPort = UInt16(exactly: localPortRaw) {
             lock.unlock()
             return Endpoint(host: "127.0.0.1", port: localPort)
         }
@@ -227,7 +226,7 @@ private final class NIOMITMInitialIngressHandler: ChannelInboundHandler, Removab
 
     private var state: State = .probing
     private var probeBuffer = ByteBuffer()
-    private let maxTLSProbeBytes = 4_096
+    private let maxTLSProbeBytes = 4096
 
     init(
         group: NIOTSEventLoopGroup,
@@ -711,12 +710,11 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
     }
 
     func handlerAdded(context: ChannelHandlerContext) {
-        let mode: String
-        switch ingressMode {
+        let mode = switch ingressMode {
         case .proxy:
-            mode = "proxy"
+            "proxy"
         case .tunneledHTTPS:
-            mode = "tunneled_https"
+            "tunneled_https"
         }
         logConnectStage(
             stage: "handler_added",
@@ -2051,9 +2049,9 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
     private func currentHTTPPipelineHandlerNames() -> [String] {
         switch ingressMode {
         case .proxy:
-            return [Self.handlerName, Self.decoderName, Self.encoderName]
+            [Self.handlerName, Self.decoderName, Self.encoderName]
         case .tunneledHTTPS:
-            return [Self.tunneledHandlerName, Self.tunneledDecoderName, Self.tunneledEncoderName]
+            [Self.tunneledHandlerName, Self.tunneledDecoderName, Self.tunneledEncoderName]
         }
     }
 
@@ -2082,19 +2080,17 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         if requestHeaders.first(name: "Host") == nil, let host = url.host {
             let scheme = (url.scheme ?? "http").lowercased()
             let defaultPort = scheme == "https" ? 443 : 80
-            let hostValue: String
-            if let port = url.port, port != defaultPort {
-                hostValue = "\(host):\(port)"
+            let hostValue: String = if let port = url.port, port != defaultPort {
+                "\(host):\(port)"
             } else {
-                hostValue = host
+                host
             }
             requestHeaders.add(name: "Host", value: hostValue)
         }
 
         if !body.isEmpty,
            requestHeaders.first(name: "Content-Length") == nil,
-           requestHeaders.first(name: "Transfer-Encoding") == nil
-        {
+           requestHeaders.first(name: "Transfer-Encoding") == nil {
             requestHeaders.add(name: "Content-Length", value: "\(body.count)")
         }
 
@@ -2582,13 +2578,12 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             }
 
             let hostHeader = head.headers.first(name: "Host")
-            let authority: String
-            if let hostHeader, !hostHeader.isEmpty {
-                authority = hostHeader
+            let authority: String = if let hostHeader, !hostHeader.isEmpty {
+                hostHeader
             } else if port == 443 {
-                authority = host
+                host
             } else {
-                authority = "\(host):\(port)"
+                "\(host):\(port)"
             }
             let path = uri.hasPrefix("/") ? uri : "/\(uri)"
             return "https://\(authority)\(path)"
@@ -3040,9 +3035,9 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
     private var ingressModeLabel: String {
         switch ingressMode {
         case .proxy:
-            return "proxy"
+            "proxy"
         case .tunneledHTTPS:
-            return "tunneled_https"
+            "tunneled_https"
         }
     }
 
@@ -3122,8 +3117,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             detail.contains("remote closed") ||
             detail.contains("channelerror error 5") ||
             detail.contains("nwerror error 54") ||
-            detail.contains("streamclosed")
-        {
+            detail.contains("streamclosed") {
             return "upstream_connection_closed"
         }
         if detail.contains("hostname") && detail.contains("mismatch") {
@@ -3294,8 +3288,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
     private static func parseConnectTarget(_ uri: String) -> (host: String, port: Int)? {
         if uri.hasPrefix("["),
            let closeBracket = uri.firstIndex(of: "]"),
-           closeBracket < uri.endIndex
-        {
+           closeBracket < uri.endIndex {
             let hostStart = uri.index(after: uri.startIndex)
             let host = String(uri[hostStart ..< closeBracket])
             let portStart = uri.index(after: closeBracket)
@@ -3303,7 +3296,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             let numericStart = uri.index(after: portStart)
             guard numericStart < uri.endIndex,
                   let port = Int(uri[numericStart...]),
-                  (1...65535).contains(port)
+                  (1 ... 65535).contains(port)
             else { return nil }
             return (host: host, port: port)
         }
@@ -3313,7 +3306,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         let portPart = String(uri[uri.index(after: colon)...])
         guard !hostPart.isEmpty,
               let port = Int(portPart),
-              (1...65535).contains(port)
+              (1 ... 65535).contains(port)
         else {
             return nil
         }
@@ -3407,8 +3400,8 @@ private final class NIOMITMSSECaptureState: @unchecked Sendable {
     private var publishThrottle = SSECapturePublishThrottle()
     private var finished = false
 
-    private let maxEvents = 1_000
-    private let maxTotalBytes = 10 * 1_024 * 1_024
+    private let maxEvents = 1000
+    private let maxTotalBytes = 10 * 1024 * 1024
 
     init(baseRequest: NetworkRequest) {
         self.baseRequest = baseRequest
@@ -3611,7 +3604,7 @@ private final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
     private var receivedContinuationType: WebSocketMessageType?
     private var receivedContinuationPayload = Data()
 
-    private let maxContinuationPayloadBytes = 5 * 1_024 * 1_024
+    private let maxContinuationPayloadBytes = 5 * 1024 * 1024
 
     init(url: String, requestHeaders: [TraceHTTPHeader]) {
         connection = WebSocketConnection(

@@ -57,7 +57,7 @@ public actor HardeningConfig {
         case mitmAllowlist = "hardening.mitmAllowlist"
         case blockQUIC = "hardening.blockQUIC"
         case enableNIOMITM = "hardening.enableNIOMITM"
-        // Legacy persisted key kept for backward compatibility.
+        /// Legacy persisted key kept for backward compatibility.
         case enableNetworkFrameworkMITM = "hardening.enableNetworkFrameworkMITM"
     }
 

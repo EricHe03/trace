@@ -71,7 +71,7 @@ public class StreamingZstdDecoder: StreamingDecoderProtocol {
 
             while true {
                 var produced = 0
-                var resultCode: Int = 0
+                var resultCode = 0
 
                 produced = outputChunk.withUnsafeMutableBytes { destination in
                     var outputBuffer = ZSTD_outBuffer(
@@ -141,7 +141,7 @@ public class StreamingZstdDecoder: StreamingDecoderProtocol {
 
             while true {
                 var produced = 0
-                var resultCode: Int = 0
+                var resultCode = 0
 
                 produced = outputChunk.withUnsafeMutableBytes { destination in
                     var outputBuffer = ZSTD_outBuffer(

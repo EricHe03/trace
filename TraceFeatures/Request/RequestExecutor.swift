@@ -294,13 +294,12 @@ private extension AsyncHTTPClientRequestTransport {
         var transformedHeaders = headers
         var transformedBody = body
 
-        let convertToGet: Bool
-        if responseStatus == .seeOther, transformedMethod != "HEAD" {
-            convertToGet = true
-        } else if (responseStatus == .movedPermanently || responseStatus == .found), transformedMethod == "POST" {
-            convertToGet = true
+        let convertToGet = if responseStatus == .seeOther, transformedMethod != "HEAD" {
+            true
+        } else if responseStatus == .movedPermanently || responseStatus == .found, transformedMethod == "POST" {
+            true
         } else {
-            convertToGet = false
+            false
         }
 
         if convertToGet {

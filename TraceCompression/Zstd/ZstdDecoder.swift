@@ -11,7 +11,9 @@ import libzstd
 /// Provides Zstandard decompression.
 public class ZstdDecoder {
     /// libzstd is vendored as an SPM dependency, so support is always present when this module loads.
-    public static var isSupported: Bool { true }
+    public static var isSupported: Bool {
+        true
+    }
 
     /// Decompresses Zstandard-compressed data.
     /// - Parameter data: Compressed data.
@@ -64,7 +66,7 @@ public class ZstdDecoder {
 
             while true {
                 var produced = 0
-                var resultCode: Int = 0
+                var resultCode = 0
 
                 produced = outputChunk.withUnsafeMutableBytes { destination in
                     var outputBuffer = ZSTD_outBuffer(
