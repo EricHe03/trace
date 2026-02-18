@@ -118,9 +118,7 @@ Trace/
 ├── TraceUI/                # Shared UI components/utilities
 ├── TraceTests/             # Unit tests
 ├── TraceUITests/           # UI tests
-├── ThirdParty/hev-socks5-tunnel/  # Git submodule: tun2socks for full-tunnel forwarding
-├── ThirdParty/mbedtls/            # Git submodule: TLS dependencies
-└── ThirdParty/nghttp2/            # Git submodule: HTTP/2 dependencies
+└── ThirdParty/hev-socks5-tunnel/  # Git submodule: tun2socks for full-tunnel forwarding
 ```
 
 ## Testing
