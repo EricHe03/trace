@@ -99,15 +99,47 @@ final class CurlCommandExecutorTests: XCTestCase {
         XCTAssertEqual(mockExecutor.executedURLs, ["https://one.example", "https://two.example"])
         XCTAssertEqual(result.transfers.count, 2)
     }
+
+    func testExecuteAppliesHTTP3OptionHintToRequestBuilder() async {
+        let mockExecutor = MockTransferExecutor()
+        let executor = CurlCommandExecutor(
+            analyzer: CurlCommandAnalyzer(capabilities: .nioAsyncHTTPClient),
+            requestExecutorFactory: { mockExecutor }
+        )
+
+        let result = await executor.execute("curl --http3 https://example.com")
+
+        XCTAssertFalse(result.plan.hasBlockingDiagnostics)
+        XCTAssertEqual(mockExecutor.executedBuilders.count, 1)
+        XCTAssertEqual(mockExecutor.executedBuilders.first?.protocolVersion, .http3)
+        XCTAssertFalse(mockExecutor.executedBuilders.first?.enforceProtocolVersion ?? true)
+    }
+
+    func testExecuteAppliesHTTP3OnlyConstraintToRequestBuilder() async {
+        let mockExecutor = MockTransferExecutor()
+        let executor = CurlCommandExecutor(
+            analyzer: CurlCommandAnalyzer(capabilities: .nioAsyncHTTPClient),
+            requestExecutorFactory: { mockExecutor }
+        )
+
+        let result = await executor.execute("curl --http3-only https://example.com")
+
+        XCTAssertFalse(result.plan.hasBlockingDiagnostics)
+        XCTAssertEqual(mockExecutor.executedBuilders.count, 1)
+        XCTAssertEqual(mockExecutor.executedBuilders.first?.protocolVersion, .http3)
+        XCTAssertTrue(mockExecutor.executedBuilders.first?.enforceProtocolVersion ?? false)
+    }
 }
 
 @MainActor
 private final class MockTransferExecutor: CurlTransferRequestExecuting {
     var executedURLs: [String] = []
+    var executedBuilders: [RequestBuilder] = []
     var errorsByURL: [String: Error] = [:]
 
     func execute(_ request: RequestBuilder) async throws -> NetworkRequest {
         executedURLs.append(request.url)
+        executedBuilders.append(request)
         if let error = errorsByURL[request.url] {
             throw error
         }

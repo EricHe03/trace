@@ -13,10 +13,11 @@ final class CurlRuntimeCapabilitiesTests: XCTestCase {
     func testResolvedDefaultUsesSwiftNIOBackendIdentity() {
         let capabilities = CurlRuntimeCapabilities.resolvedDefault
 
-        XCTAssertEqual(capabilities.backendName, "SwiftNIO + AsyncHTTPClient")
+        XCTAssertEqual(capabilities.backendName, "SwiftNIO + AsyncHTTPClient + TraceQUIC")
         XCTAssertEqual(capabilities.supportedProtocols, CurlRuntimeCapabilities.nioAsyncHTTPClient.supportedProtocols)
         XCTAssertEqual(capabilities.supportedOptions, CurlRuntimeCapabilities.nioAsyncHTTPClient.supportedOptions)
         XCTAssertTrue(capabilities.supportsHTTP2)
+        XCTAssertTrue(capabilities.supportsHTTP3)
         XCTAssertTrue(capabilities.supportsContentDecoding)
         XCTAssertTrue(capabilities.supportsNativeCA)
         XCTAssertFalse(capabilities.supportsNTLM)
@@ -27,6 +28,8 @@ final class CurlRuntimeCapabilitiesTests: XCTestCase {
 
         XCTAssertTrue(capabilities.supportedProtocols.contains("http"))
         XCTAssertTrue(capabilities.supportedProtocols.contains("https"))
+        XCTAssertTrue(capabilities.supportedOptions.contains("--http3"))
+        XCTAssertTrue(capabilities.supportedOptions.contains("--http3-only"))
     }
 
     func testParityValidationStillExposesFullRegistryForAnalyzerCoverage() {
@@ -34,6 +37,7 @@ final class CurlRuntimeCapabilitiesTests: XCTestCase {
 
         XCTAssertTrue(capabilities.supportedOptions.isSuperset(of: CurlOptionRegistry.allOptions))
         XCTAssertTrue(capabilities.supportsHTTP2)
+        XCTAssertTrue(capabilities.supportsHTTP3)
         XCTAssertTrue(capabilities.supportsContentDecoding)
         XCTAssertTrue(capabilities.supportsNativeCA)
         XCTAssertTrue(capabilities.supportsNTLM)

@@ -191,6 +191,14 @@ final class CurlCommandAnalyzerTests: XCTestCase {
         XCTAssertTrue(http2Plan.hasBlockingDiagnostics)
         XCTAssertTrue(http2Plan.diagnostics.contains { $0.option == "--http2" && $0.message.contains("HTTP/2") })
 
+        let http3Plan = analyzer.analyze("curl --http3 https://example.com")
+        XCTAssertTrue(http3Plan.hasBlockingDiagnostics)
+        XCTAssertTrue(http3Plan.diagnostics.contains { $0.option == "--http3" && $0.message.contains("HTTP/3") })
+
+        let http3OnlyPlan = analyzer.analyze("curl --http3-only https://example.com")
+        XCTAssertTrue(http3OnlyPlan.hasBlockingDiagnostics)
+        XCTAssertTrue(http3OnlyPlan.diagnostics.contains { $0.option == "--http3-only" && $0.message.contains("HTTP/3") })
+
         let compressedPlan = analyzer.analyze("curl --compressed https://example.com")
         XCTAssertTrue(compressedPlan.hasBlockingDiagnostics)
         XCTAssertTrue(compressedPlan.diagnostics.contains { $0.option == "--compressed" && $0.message.contains("Compressed response decoding") })
@@ -225,6 +233,52 @@ final class CurlCommandAnalyzerTests: XCTestCase {
         let compressedPlan = analyzer.analyze("curl --compressed https://example.com")
         XCTAssertFalse(compressedPlan.hasBlockingDiagnostics)
         XCTAssertFalse(compressedPlan.diagnostics.contains { $0.option == "--compressed" && $0.severity == .error })
+
+        let http3Plan = analyzer.analyze("curl --http3-only https://example.com")
+        XCTAssertFalse(http3Plan.hasBlockingDiagnostics)
+        XCTAssertFalse(http3Plan.diagnostics.contains { $0.option == "--http3-only" && $0.severity == .error })
+    }
+
+    func testAnalyzeRejectsHTTP3OnlyForNonHTTPSURLs() {
+        let analyzer = CurlCommandAnalyzer(capabilities: .parityValidation)
+
+        let plan = analyzer.analyze("curl --http3-only http://example.com")
+
+        XCTAssertTrue(plan.hasBlockingDiagnostics)
+        XCTAssertTrue(
+            plan.diagnostics.contains {
+                $0.option == "--http3-only" &&
+                    $0.message.contains("requires an https:// URL")
+            }
+        )
+    }
+
+    func testAnalyzeRejectsHTTP3ForNonHTTPSURLs() {
+        let analyzer = CurlCommandAnalyzer(capabilities: .parityValidation)
+
+        let plan = analyzer.analyze("curl --http3 http://example.com")
+
+        XCTAssertTrue(plan.hasBlockingDiagnostics)
+        XCTAssertTrue(
+            plan.diagnostics.contains {
+                $0.option == "--http3" &&
+                    $0.message.contains("requires an https:// URL")
+            }
+        )
+    }
+
+    func testAnalyzeRejectsHTTP3OnlyWithOtherVersionFlags() {
+        let analyzer = CurlCommandAnalyzer(capabilities: .parityValidation)
+
+        let plan = analyzer.analyze("curl --http3-only --http2 https://example.com")
+
+        XCTAssertTrue(plan.hasBlockingDiagnostics)
+        XCTAssertTrue(
+            plan.diagnostics.contains {
+                $0.option == "--http3-only" &&
+                    $0.message.contains("cannot be combined")
+            }
+        )
     }
 
     func testAnalyzeRejectsExplicitlyUnsupportedRuntimeProtocols() {
@@ -248,6 +302,7 @@ private extension CurlCommandAnalyzerTests {
             supportedProtocols: ["http", "https"],
             supportedOptions: CurlOptionRegistry.allOptions,
             supportsHTTP2: false,
+            supportsHTTP3: false,
             supportsContentDecoding: false,
             supportsNativeCA: false,
             supportsNTLM: false

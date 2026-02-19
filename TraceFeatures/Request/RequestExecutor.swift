@@ -17,6 +17,8 @@ public struct RequestExecutorTransportRequest: Sendable {
     public let methodRaw: String
     public let headers: [String: String]
     public let body: Data?
+    public let requestedProtocolVersion: HTTPProtocolVersion?
+    public let enforceRequestedProtocolVersion: Bool
     public let followRedirects: Bool
     public let timeout: TimeInterval
 
@@ -25,6 +27,8 @@ public struct RequestExecutorTransportRequest: Sendable {
         methodRaw: String,
         headers: [String: String],
         body: Data?,
+        requestedProtocolVersion: HTTPProtocolVersion? = nil,
+        enforceRequestedProtocolVersion: Bool = false,
         followRedirects: Bool,
         timeout: TimeInterval
     ) {
@@ -32,6 +36,8 @@ public struct RequestExecutorTransportRequest: Sendable {
         self.methodRaw = methodRaw
         self.headers = headers
         self.body = body
+        self.requestedProtocolVersion = requestedProtocolVersion
+        self.enforceRequestedProtocolVersion = enforceRequestedProtocolVersion
         self.followRedirects = followRedirects
         self.timeout = timeout
     }
@@ -75,6 +81,7 @@ public protocol RequestExecutorTransport: AnyObject, Sendable {
 public enum RequestExecutorTransportError: LocalizedError {
     case redirectLimitReached(Int)
     case redirectCycleDetected(String)
+    case protocolVersionNotSupported(HTTPProtocolVersion)
 
     public var errorDescription: String? {
         switch self {
@@ -82,6 +89,8 @@ public enum RequestExecutorTransportError: LocalizedError {
             "Redirect limit reached (\(limit))"
         case let .redirectCycleDetected(url):
             "Redirect cycle detected for URL: \(url)"
+        case let .protocolVersionNotSupported(version):
+            "Requested protocol version is not supported by this transport: \(version.rawValue)"
         }
     }
 }
@@ -112,6 +121,10 @@ public final class AsyncHTTPClientRequestTransport: @unchecked Sendable, Request
     }
 
     public func execute(_ request: RequestExecutorTransportRequest) async throws -> RequestExecutorTransportResponse {
+        if request.enforceRequestedProtocolVersion, request.requestedProtocolVersion == .http3 {
+            throw RequestExecutorTransportError.protocolVersionNotSupported(.http3)
+        }
+
         var currentURL = request.url
         var currentMethod = request.methodRaw
         var currentHeaders = request.headers
@@ -372,6 +385,7 @@ public final class RequestExecutor: ObservableObject {
     @Published public private(set) var lastResponse: NetworkRequest?
 
     private let transport: any RequestExecutorTransport
+    private let http3Transport: any RequestExecutorTransport
     private let cookieStore: CookieStore
     private static let localNetworkRetryDelayNanoseconds: UInt64 = 600_000_000
     private static let manualResponseBodyTruncationLimitBytes = 512 * 1024 * 1024
@@ -381,12 +395,15 @@ public final class RequestExecutor: ObservableObject {
     /// Creates a request executor using the provided transport or the default AsyncHTTPClient transport.
     /// - Parameters:
     ///   - transport: The transport used to execute HTTP requests.
+    ///   - http3Transport: Dedicated transport used when an HTTP/3 protocol hint is requested.
     ///   - cookieStore: The cookie store used for request cookie lookup and fallback cookie diffs.
     public init(
         transport: any RequestExecutorTransport = AsyncHTTPClientRequestTransport.shared,
+        http3Transport: any RequestExecutorTransport = HTTP3RequestTransport.shared,
         cookieStore: CookieStore = DefaultCookieStore()
     ) {
         self.transport = transport
+        self.http3Transport = http3Transport
         self.cookieStore = cookieStore
     }
 
@@ -432,16 +449,20 @@ public final class RequestExecutor: ObservableObject {
             methodRaw: methodRaw,
             headers: transportHeaders,
             body: requestBodyData,
+            requestedProtocolVersion: request.protocolVersion,
+            enforceRequestedProtocolVersion: request.enforceProtocolVersion,
             followRedirects: request.followRedirects,
             timeout: 30
         )
+        let selectedTransport = transportForRequest(transportRequest)
 
         let cookiesBefore = cookieStore.cookies(for: url)
 
         do {
             let transportResponse = try await executeWithPermissionRetry(
                 request: transportRequest,
-                targetURL: url
+                targetURL: url,
+                transport: selectedTransport
             )
 
             let duration = Date().timeIntervalSince(startTime)
@@ -537,6 +558,13 @@ public final class RequestExecutor: ObservableObject {
 }
 
 private extension RequestExecutor {
+    func transportForRequest(_ request: RequestExecutorTransportRequest) -> any RequestExecutorTransport {
+        if request.requestedProtocolVersion == .http3 {
+            return http3Transport
+        }
+        return transport
+    }
+
     static func makeManualResponseBodyStorage(from data: Data) -> BodyStorage {
         // Manual requests are explicit user actions; keep large payloads shareable by
         // preferring file-backed storage over preview-only truncation in common cases.
@@ -545,7 +573,8 @@ private extension RequestExecutor {
 
     func executeWithPermissionRetry(
         request: RequestExecutorTransportRequest,
-        targetURL: URL
+        targetURL: URL,
+        transport: any RequestExecutorTransport
     ) async throws -> RequestExecutorTransportResponse {
         do {
             return try await transport.execute(request)
@@ -634,6 +663,7 @@ public struct RequestBuilder {
     public var headers: [String: String]
     public var body: String?
     public var protocolVersion: HTTPProtocolVersion?
+    public var enforceProtocolVersion: Bool
     public var followRedirects: Bool
 
     public init(
@@ -643,6 +673,7 @@ public struct RequestBuilder {
         headers: [String: String] = [:],
         body: String? = nil,
         protocolVersion: HTTPProtocolVersion? = nil,
+        enforceProtocolVersion: Bool = false,
         followRedirects: Bool = true
     ) {
         self.url = url
@@ -651,6 +682,7 @@ public struct RequestBuilder {
         self.headers = headers
         self.body = body
         self.protocolVersion = protocolVersion
+        self.enforceProtocolVersion = enforceProtocolVersion
         self.followRedirects = followRedirects
     }
 
@@ -661,6 +693,7 @@ public struct RequestBuilder {
         self.method = request.method
         self.methodRaw = request.requestMethodRaw
         self.protocolVersion = request.protocolVersion
+        self.enforceProtocolVersion = false
         self.followRedirects = true
 
         var headersDict: [String: String] = [:]

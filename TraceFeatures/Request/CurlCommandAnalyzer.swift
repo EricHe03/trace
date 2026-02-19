@@ -351,6 +351,8 @@ public final class CurlCommandAnalyzer {
 
         for transfer in transfers {
             let options = transfer.effectiveOptions
+            let requestsHTTP3Only = optionEnabled("--http3-only", in: options)
+            let requestsHTTP3 = requestsHTTP3Only || optionEnabled("--http3", in: options)
 
             if optionEnabled("--http2", in: options) || optionEnabled("--http2-prior-knowledge", in: options),
                !capabilities.supportsHTTP2 {
@@ -359,6 +361,39 @@ public final class CurlCommandAnalyzer {
                     option: "--http2",
                     message: "HTTP/2 is not supported by the \(capabilities.backendName) backend"
                 )
+            }
+
+            if requestsHTTP3, !capabilities.supportsHTTP3 {
+                let option = requestsHTTP3Only ? "--http3-only" : "--http3"
+                emit(
+                    severity: .error,
+                    option: option,
+                    message: "HTTP/3 is not supported by the \(capabilities.backendName) backend"
+                )
+            }
+
+            if requestsHTTP3 {
+                let option = requestsHTTP3Only ? "--http3-only" : "--http3"
+                for url in transfer.urls where scheme(from: url) != "https" {
+                    emit(
+                        severity: .error,
+                        option: option,
+                        message: "\(option) requires an https:// URL"
+                    )
+                }
+            }
+
+            if requestsHTTP3Only {
+                if optionEnabled("--http1.0", in: options)
+                    || optionEnabled("--http1.1", in: options)
+                    || optionEnabled("--http2", in: options)
+                    || optionEnabled("--http2-prior-knowledge", in: options) {
+                    emit(
+                        severity: .error,
+                        option: "--http3-only",
+                        message: "--http3-only cannot be combined with other explicit HTTP version flags"
+                    )
+                }
             }
 
             if optionEnabled("--compressed", in: options), !capabilities.supportsContentDecoding {

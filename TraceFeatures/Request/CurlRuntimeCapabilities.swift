@@ -12,6 +12,7 @@ public struct CurlRuntimeCapabilities: Sendable {
     public let supportedProtocols: Set<String>
     public let supportedOptions: Set<String>
     public let supportsHTTP2: Bool
+    public let supportsHTTP3: Bool
     public let supportsContentDecoding: Bool
     public let supportsNativeCA: Bool
     public let supportsNTLM: Bool
@@ -21,6 +22,7 @@ public struct CurlRuntimeCapabilities: Sendable {
         supportedProtocols: Set<String>,
         supportedOptions: Set<String>,
         supportsHTTP2: Bool = false,
+        supportsHTTP3: Bool = false,
         supportsContentDecoding: Bool = false,
         supportsNativeCA: Bool = false,
         supportsNTLM: Bool = false
@@ -29,6 +31,7 @@ public struct CurlRuntimeCapabilities: Sendable {
         self.supportedProtocols = supportedProtocols
         self.supportedOptions = supportedOptions
         self.supportsHTTP2 = supportsHTTP2
+        self.supportsHTTP3 = supportsHTTP3
         self.supportsContentDecoding = supportsContentDecoding
         self.supportsNativeCA = supportsNativeCA
         self.supportsNTLM = supportsNTLM
@@ -38,7 +41,7 @@ public struct CurlRuntimeCapabilities: Sendable {
 public extension CurlRuntimeCapabilities {
     /// Current iOS runtime path (SwiftNIO + AsyncHTTPClient-backed RequestExecutor).
     static let nioAsyncHTTPClient: CurlRuntimeCapabilities = .init(
-        backendName: "SwiftNIO + AsyncHTTPClient",
+        backendName: "SwiftNIO + AsyncHTTPClient + TraceQUIC",
         supportedProtocols: ["http", "https"],
         supportedOptions: [
             "--compressed",
@@ -60,6 +63,7 @@ public extension CurlRuntimeCapabilities {
             "--http2",
             "--http2-prior-knowledge",
             "--http3",
+            "--http3-only",
             "--insecure",
             "--location",
             "--next",
@@ -89,6 +93,7 @@ public extension CurlRuntimeCapabilities {
             "-u"
         ],
         supportsHTTP2: true,
+        supportsHTTP3: true,
         supportsContentDecoding: true,
         supportsNativeCA: true,
         supportsNTLM: false
@@ -104,6 +109,7 @@ public extension CurlRuntimeCapabilities {
         ],
         supportedOptions: CurlOptionRegistry.allOptions,
         supportsHTTP2: true,
+        supportsHTTP3: true,
         supportsContentDecoding: true,
         supportsNativeCA: true,
         supportsNTLM: true

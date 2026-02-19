@@ -36,16 +36,19 @@ final class RequestExecutorTests: XCTestCase {
 
     private var executor: RequestExecutor!
     private var mockTransport: MockRequestExecutorTransport!
+    private var mockHTTP3Transport: MockRequestExecutorTransport!
 
     override func setUp() {
         super.setUp()
         mockTransport = MockRequestExecutorTransport()
-        executor = RequestExecutor(transport: mockTransport)
+        mockHTTP3Transport = MockRequestExecutorTransport()
+        executor = RequestExecutor(transport: mockTransport, http3Transport: mockHTTP3Transport)
     }
 
     override func tearDown() {
         executor = nil
         mockTransport = nil
+        mockHTTP3Transport = nil
         super.tearDown()
     }
 
@@ -265,6 +268,71 @@ final class RequestExecutorTests: XCTestCase {
         XCTAssertEqual(response.statusCode, 201)
         XCTAssertEqual(receivedRequest?.methodRaw, "POST")
         XCTAssertNotNil(receivedRequest?.body)
+    }
+
+    func testExecuteRoutesHTTP3HintToHTTP3Transport() async throws {
+        mockTransport.requestHandler = { _ in
+            XCTFail("HTTP/1.1+ transport should not be used for HTTP/3 requests")
+            throw URLError(.badServerResponse)
+        }
+
+        mockHTTP3Transport.requestHandler = { request in
+            XCTAssertEqual(request.requestedProtocolVersion, .http3)
+            XCTAssertFalse(request.enforceRequestedProtocolVersion)
+            return RequestExecutorTransportResponse(
+                finalURL: request.url,
+                statusCode: 200,
+                statusMessage: "OK",
+                protocolVersion: .http3,
+                responseHeaders: [],
+                body: Data(),
+                redirects: [],
+                responseCookies: []
+            )
+        }
+
+        var builder = RequestBuilder(
+            url: "https://api.example.com/h3",
+            method: .get,
+            headers: [:],
+            body: nil
+        )
+        builder.protocolVersion = .http3
+
+        _ = try await executor.execute(builder)
+
+        XCTAssertTrue(mockTransport.receivedRequests.isEmpty)
+        XCTAssertEqual(mockHTTP3Transport.receivedRequests.count, 1)
+    }
+
+    func testExecutePropagatesHTTP3OnlyConstraint() async throws {
+        mockHTTP3Transport.requestHandler = { request in
+            XCTAssertEqual(request.requestedProtocolVersion, .http3)
+            XCTAssertTrue(request.enforceRequestedProtocolVersion)
+            return RequestExecutorTransportResponse(
+                finalURL: request.url,
+                statusCode: 200,
+                statusMessage: "OK",
+                protocolVersion: .http3,
+                responseHeaders: [],
+                body: Data(),
+                redirects: [],
+                responseCookies: []
+            )
+        }
+
+        var builder = RequestBuilder(
+            url: "https://api.example.com/h3-only",
+            method: .get,
+            headers: [:],
+            body: nil
+        )
+        builder.protocolVersion = .http3
+        builder.enforceProtocolVersion = true
+
+        _ = try await executor.execute(builder)
+
+        XCTAssertEqual(mockHTTP3Transport.receivedRequests.count, 1)
     }
 
     func testExecuteHandlesNetworkError() async {

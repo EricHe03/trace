@@ -121,6 +121,7 @@ public final class CurlCommandExecutor {
         let executor = requestExecutorFactory()
         var builder = RequestBuilder(from: request)
         builder.followRedirects = followRedirects(from: transfer)
+        applyProtocolVersionOptions(from: transfer, to: &builder)
 
         var response = try await executor.execute(builder)
         response.requestMethodRaw = request.requestMethodRaw
@@ -145,6 +146,21 @@ public final class CurlCommandExecutor {
             return false
         }
         return last.lowercased() != "false"
+    }
+
+    private func applyProtocolVersionOptions(from transfer: CurlCommandTransferPlan, to builder: inout RequestBuilder) {
+        let options = transfer.effectiveOptions
+        let http3Only = optionEnabled("--http3-only", in: options)
+        let http3 = http3Only || optionEnabled("--http3", in: options)
+        if http3 {
+            builder.protocolVersion = .http3
+            builder.enforceProtocolVersion = http3Only
+        }
+    }
+
+    private func optionEnabled(_ option: String, in options: [String: [String]]) -> Bool {
+        guard let values = options[option], !values.isEmpty else { return false }
+        return values.contains { $0.lowercased() != "false" }
     }
 
     private func methodOverride(from transfer: CurlCommandTransferPlan, fallback: String) -> String {
