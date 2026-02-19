@@ -44,6 +44,63 @@ let externalDependencies: [Package.Dependency] = [
     .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.0.0")
 ]
 
+let packageRootPath = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
+let quicheBuildRoot = "\(packageRootPath)/build/quiche"
+let quicheIncludePath = "\(quicheBuildRoot)/include"
+let quicheXCFrameworkRelativePath = "build/quiche/quiche.xcframework"
+let quicheXCFrameworkPath = "\(packageRootPath)/\(quicheXCFrameworkRelativePath)"
+let quicheDeviceLibraryPath = "\(quicheBuildRoot)/lib/aarch64-apple-ios/libquiche.a"
+let quicheSimulatorLibraryPath = "\(quicheBuildRoot)/lib/ios-simulator-universal/libquiche.a"
+let quicheStaticLibrariesAvailable = FileManager.default.fileExists(atPath: quicheDeviceLibraryPath) &&
+    FileManager.default.fileExists(atPath: quicheSimulatorLibraryPath)
+let quicheXCFrameworkAvailable = FileManager.default.fileExists(atPath: quicheXCFrameworkPath)
+let quicheHeadersAvailable = FileManager.default.fileExists(atPath: quicheIncludePath)
+let quicheArtifactsAvailable = quicheHeadersAvailable && (quicheXCFrameworkAvailable || quicheStaticLibrariesAvailable)
+let quicheSDKName = ProcessInfo.processInfo.environment["SDK_NAME"]?.lowercased() ?? ""
+let quichePlatformName = ProcessInfo.processInfo.environment["PLATFORM_NAME"]?.lowercased() ?? ""
+let quicheEffectivePlatformName = ProcessInfo.processInfo.environment["EFFECTIVE_PLATFORM_NAME"]?.lowercased() ?? ""
+let quichePreferredLibraryPath: String = if quicheSDKName.contains("iphonesimulator") ||
+    quichePlatformName.contains("iphonesimulator") ||
+    quicheEffectivePlatformName.contains("iphonesimulator") {
+    quicheSimulatorLibraryPath
+} else if quicheSDKName.contains("iphoneos") ||
+    quichePlatformName == "iphoneos" ||
+    quicheEffectivePlatformName == "-iphoneos" {
+    quicheDeviceLibraryPath
+} else {
+    // Default to simulator archive when platform context is unavailable (for indexing/resolution).
+    quicheSimulatorLibraryPath
+}
+let quicheLinkerFlags = [quichePreferredLibraryPath]
+
+let cquicheFFICSettings: [CSetting] = quicheArtifactsAvailable
+    ? [
+        .headerSearchPath("../../build/quiche/include"),
+        .define("CQUICHE_WITH_QUICHE")
+    ]
+    : []
+
+let cquicheFFIDependencies: [Target.Dependency] = quicheXCFrameworkAvailable
+    ? [
+        "QuicheBinary"
+    ]
+    : []
+
+let cquicheFFILinkerSettings: [LinkerSetting] = (!quicheXCFrameworkAvailable && quicheStaticLibrariesAvailable)
+    ? [
+        .unsafeFlags(quicheLinkerFlags)
+    ]
+    : []
+
+let quicheBinaryTargets: [Target] = quicheXCFrameworkAvailable
+    ? [
+        .binaryTarget(
+            name: "QuicheBinary",
+            path: quicheXCFrameworkRelativePath
+        )
+    ]
+    : []
+
 let traceCompressionDependencies: [Target.Dependency] = [
     .product(name: "libzstd", package: "zstd")
 ]
@@ -67,10 +124,16 @@ let traceSecurityDependencies: [Target.Dependency] = [
     .product(name: "NIOTransportServices", package: "swift-nio-transport-services")
 ]
 
+let traceQUICDependencies: [Target.Dependency] = [
+    "TraceCore",
+    "CQuicheFFI"
+]
+
 let traceProxyDependencies: [Target.Dependency] = [
     "TraceCore",
     "TraceSecurity",
     "TraceFeatures",
+    "TraceQUIC",
     .product(name: "NIOCore", package: "swift-nio"),
     .product(name: "NIOHTTP1", package: "swift-nio"),
     .product(name: "NIOHTTP2", package: "swift-nio-http2"),
@@ -82,6 +145,7 @@ let traceProxyDependencies: [Target.Dependency] = [
 let traceFeaturesDependencies: [Target.Dependency] = [
     "TraceCore",
     "TraceSecurity",
+    "TraceQUIC",
     .product(name: "AsyncHTTPClient", package: "async-http-client"),
     .product(name: "NIOCore", package: "swift-nio"),
     .product(name: "NIOHTTP1", package: "swift-nio")
@@ -92,6 +156,7 @@ let traceVPNDependencies: [Target.Dependency] = [
     "TraceSecurity",
     "TraceNetworking",
     "TraceProxy",
+    "TraceQUIC",
     "HevSocks5Tunnel",
     "TracePacket",
     .product(name: "NIOCore", package: "swift-nio"),
@@ -127,6 +192,10 @@ let packageProducts: [Product] = appProducts + [
         targets: ["TracePacket"]
     ),
     .library(
+        name: "TraceQUIC",
+        targets: ["TraceQUIC"]
+    ),
+    .library(
         name: "HevSocks5Tunnel",
         targets: ["HevSocks5Tunnel"]
     ),
@@ -156,7 +225,7 @@ let packageProducts: [Product] = appProducts + [
     )
 ]
 
-let packageTargets: [Target] = [
+let packageTargets: [Target] = quicheBinaryTargets + [
     // ═══════════════════════════════════════════════════════
     // Foundation Layer
     // ═══════════════════════════════════════════════════════
@@ -202,6 +271,23 @@ let packageTargets: [Target] = [
         name: "TracePacket",
         dependencies: ["TraceCore"],
         path: "TracePacket"
+    ),
+
+    // CQuicheFFI: lightweight C shims that isolate quiche ABI calls.
+    .target(
+        name: "CQuicheFFI",
+        dependencies: cquicheFFIDependencies,
+        path: "ThirdParty/CQuicheFFI",
+        publicHeadersPath: "include",
+        cSettings: cquicheFFICSettings,
+        linkerSettings: cquicheFFILinkerSettings
+    ),
+
+    // TraceQUIC: QUIC/HTTP3 runtime abstractions and client/MITM orchestration.
+    .target(
+        name: "TraceQUIC",
+        dependencies: traceQUICDependencies,
+        path: "TraceQUIC"
     ),
 
     // HevSocks5Tunnel: C tunnel over SOCKS5 (tun2socks replacement)
@@ -306,6 +392,7 @@ let packageTargets: [Target] = [
             "TraceSecurity",
             "TraceNetworking",
             "TraceFeatures",
+            "TraceQUIC",
             "TraceUI",
             "TraceVPN",
             "TracePacket"
@@ -347,6 +434,7 @@ let packageTargets: [Target] = [
             "TraceNetworking",
             "TraceProxy",
             "TraceFeatures",
+            "TraceQUIC",
             .product(name: "libzstd", package: "zstd"),
             .product(name: "X509", package: "swift-certificates"),
             .product(name: "AsyncHTTPClient", package: "async-http-client"),

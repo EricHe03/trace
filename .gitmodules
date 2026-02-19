@@ -1,3 +1,6 @@
 [submodule "ThirdParty/hev-socks5-tunnel"]
 	path = ThirdParty/hev-socks5-tunnel
 	url = https://github.com/heiher/hev-socks5-tunnel.git
+[submodule "ThirdParty/quiche"]
+	path = ThirdParty/quiche
+	url = https://github.com/cloudflare/quiche.git
