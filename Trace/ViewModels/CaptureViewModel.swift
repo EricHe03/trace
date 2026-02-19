@@ -389,7 +389,7 @@ final class CaptureViewModel: ObservableObject {
         didSet { persistHardeningConfig() }
     }
 
-    @Published var blockQUICEnabled: Bool = true {
+    @Published var quicHandlingMode: QUICHandlingMode = .intercept {
         didSet { persistHardeningConfig() }
     }
 
@@ -545,10 +545,10 @@ final class CaptureViewModel: ObservableObject {
             guard let self else { return }
             let hardening = HardeningConfig.shared
             let allowlist = await hardening.mitmAllowlist
-            let blockQUIC = await hardening.blockQUIC
+            let quicHandlingMode = await hardening.quicHandlingMode
             await MainActor.run {
                 self.mitmAllowlist = allowlist
-                self.blockQUICEnabled = blockQUIC
+                self.quicHandlingMode = quicHandlingMode
                 self.isLoadingSettings = false
             }
         }
@@ -613,7 +613,7 @@ final class CaptureViewModel: ObservableObject {
         Task {
             let hardening = HardeningConfig.shared
             await hardening.setMitmAllowlist(appliedAllowlist)
-            await hardening.setBlockQUIC(blockQUICEnabled)
+            await hardening.setQUICHandlingMode(quicHandlingMode)
             do {
                 try storage.saveMITMAllowlist(appliedAllowlist)
             } catch {
@@ -627,7 +627,9 @@ final class CaptureViewModel: ObservableObject {
                         "command": "updateHardeningConfig",
                         "hardeningConfig": [
                             "mitmAllowlist": appliedAllowlist,
-                            "blockQUIC": blockQUICEnabled
+                            "quicHandlingMode": quicHandlingMode.rawValue,
+                            // Legacy key for older VPN payloads.
+                            "blockQUIC": quicHandlingMode.blocksQUIC
                         ]
                     ])
                 } catch {
