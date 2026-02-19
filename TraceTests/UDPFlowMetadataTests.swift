@@ -152,6 +152,8 @@ final class UDPFlowMetadataTests: XCTestCase {
         XCTAssertNil(metadata.endTime)
         XCTAssertEqual(metadata.termination, .active)
         XCTAssertEqual(metadata.detectedProtocol, .unknown)
+        XCTAssertNil(metadata.quicInspectionOutcome)
+        XCTAssertNil(metadata.quicFlowMetadata)
         XCTAssertTrue(metadata.recentDatagrams.isEmpty)
     }
 
@@ -161,6 +163,13 @@ final class UDPFlowMetadataTests: XCTestCase {
         let lastActivity = Date().addingTimeInterval(5)
         let endTime = Date().addingTimeInterval(10)
         let datagrams = [UDPDatagramSample(timestamp: Date(), size: 100, direction: .sourceToDestination)]
+        let quicMetadata = QUICFlowMetadata(
+            version: "0x00000001",
+            sourceConnectionIDLength: 8,
+            destinationConnectionIDLength: 8,
+            handshakeOutcome: .passThrough,
+            failureReason: "quic_mitm_engine_unavailable"
+        )
 
         let metadata = UDPFlowMetadata(
             id: id,
@@ -177,6 +186,8 @@ final class UDPFlowMetadataTests: XCTestCase {
             endTime: endTime,
             termination: .closed,
             detectedProtocol: .quic,
+            quicInspectionOutcome: .passThroughMarked,
+            quicFlowMetadata: quicMetadata,
             recentDatagrams: datagrams
         )
 
@@ -194,6 +205,8 @@ final class UDPFlowMetadataTests: XCTestCase {
         XCTAssertEqual(metadata.endTime, endTime)
         XCTAssertEqual(metadata.termination, .closed)
         XCTAssertEqual(metadata.detectedProtocol, .quic)
+        XCTAssertEqual(metadata.quicInspectionOutcome, .passThroughMarked)
+        XCTAssertEqual(metadata.quicFlowMetadata, quicMetadata)
         XCTAssertEqual(metadata.recentDatagrams.count, 1)
     }
 

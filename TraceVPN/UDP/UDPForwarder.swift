@@ -55,6 +55,7 @@ final class UDPForwarder: @unchecked Sendable {
     private let maxPendingPayloadPackets: Int
     private let maxPendingPayloadBytes: Int
     private let inboundPacketObserver: (@Sendable (Data) -> Void)?
+    private let inboundPacketInterceptor: (@Sendable (Data) -> Bool)?
     private let logSampler = LogSampler()
     private let runtimeLock = NSLock()
 
@@ -71,7 +72,8 @@ final class UDPForwarder: @unchecked Sendable {
         cleanupInterval: TimeInterval = 30,
         maxPendingPayloadPackets: Int = 128,
         maxPendingPayloadBytes: Int = 1_048_576,
-        inboundPacketObserver: (@Sendable (Data) -> Void)? = nil
+        inboundPacketObserver: (@Sendable (Data) -> Void)? = nil,
+        inboundPacketInterceptor: (@Sendable (Data) -> Bool)? = nil
     ) {
         self.packetFlow = packetFlow
         self.idleTimeout = idleTimeout
@@ -79,6 +81,7 @@ final class UDPForwarder: @unchecked Sendable {
         self.maxPendingPayloadPackets = max(1, maxPendingPayloadPackets)
         self.maxPendingPayloadBytes = max(1024, maxPendingPayloadBytes)
         self.inboundPacketObserver = inboundPacketObserver
+        self.inboundPacketInterceptor = inboundPacketInterceptor
         queue.setSpecific(key: queueKey, value: ())
 
         let resources = NIORuntime.shared.acquire(for: .networkExtension)
@@ -273,9 +276,7 @@ final class UDPForwarder: @unchecked Sendable {
                 destinationIP: dstIP,
                 payload: udpPacket
             )
-
-            inboundPacketObserver?(packet)
-            packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET)])
+            emitInboundPacket(packet, protocolNumber: NSNumber(value: AF_INET))
 
         case let (.v6(srcIP), .v6(dstIP)):
             let udpPacket = buildUDPDatagramV6(
@@ -291,13 +292,19 @@ final class UDPForwarder: @unchecked Sendable {
                 destinationIP: dstIP,
                 payload: udpPacket
             )
-
-            inboundPacketObserver?(packet)
-            packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET6)])
+            emitInboundPacket(packet, protocolNumber: NSNumber(value: AF_INET6))
 
         default:
             return
         }
+    }
+
+    private func emitInboundPacket(_ packet: Data, protocolNumber: NSNumber) {
+        inboundPacketObserver?(packet)
+        if inboundPacketInterceptor?(packet) == true {
+            return
+        }
+        packetFlow.writePackets([packet], withProtocols: [protocolNumber])
     }
 
     private func buildUDPDatagramV4(

@@ -17,6 +17,7 @@ public struct HardeningConfigSnapshot: Sendable {
     public let enableRawCapture: Bool
     public let maxRawCaptureSize: UInt64
     public let mitmAllowlist: [String]
+    public let quicHandlingMode: String
     public let blockQUIC: Bool
     public let enableNIOMITM: Bool
     /// Legacy key kept for compatibility with older app payloads.
@@ -31,6 +32,7 @@ public struct HardeningConfigSnapshot: Sendable {
             "enableRawCapture": enableRawCapture,
             "maxRawCaptureSize": maxRawCaptureSize,
             "mitmAllowlist": mitmAllowlist,
+            "quicHandlingMode": quicHandlingMode,
             "blockQUIC": blockQUIC,
             "enableNIOMITM": enableNIOMITM,
             "enableNetworkFrameworkMITM": enableNetworkFrameworkMITM
@@ -55,6 +57,7 @@ public actor HardeningConfig {
         case enableRawCapture = "hardening.enableRawCapture"
         case maxRawCaptureSize = "hardening.maxRawCaptureSize"
         case mitmAllowlist = "hardening.mitmAllowlist"
+        case quicHandlingMode = "hardening.quicHandlingMode"
         case blockQUIC = "hardening.blockQUIC"
         case enableNIOMITM = "hardening.enableNIOMITM"
         /// Legacy persisted key kept for backward compatibility.
@@ -83,6 +86,7 @@ public actor HardeningConfig {
     private var _enableRawCapture: Bool
     private var _maxRawCaptureSize: UInt64
     private var _mitmAllowlist: [String]
+    private var _quicHandlingMode: QUICHandlingMode
     private var _blockQUIC: Bool
     private var _enableNIOMITM: Bool
 
@@ -131,7 +135,16 @@ public actor HardeningConfig {
             _mitmAllowlist = ["*"]
         }
 
-        _blockQUIC = boolValue(.blockQUIC, default: true)
+        if let modeRaw = defaults?.string(forKey: ConfigKey.quicHandlingMode.rawValue),
+           let mode = QUICHandlingMode(rawValue: modeRaw) {
+            _quicHandlingMode = mode
+        } else if let storedBlockQUIC = defaults?.object(forKey: ConfigKey.blockQUIC.rawValue) as? Bool {
+            _quicHandlingMode = storedBlockQUIC ? .block : .passThrough
+        } else {
+            // Default to intercept mode for the new QUIC/H3 path.
+            _quicHandlingMode = .intercept
+        }
+        _blockQUIC = _quicHandlingMode.blocksQUIC
         if let stored = defaults?.object(forKey: ConfigKey.enableNIOMITM.rawValue) as? Bool {
             _enableNIOMITM = stored
         } else {
@@ -205,9 +218,14 @@ public actor HardeningConfig {
         _mitmAllowlist
     }
 
+    /// Returns the active QUIC handling mode.
+    public var quicHandlingMode: QUICHandlingMode {
+        _quicHandlingMode
+    }
+
     /// Returns whether QUIC (UDP/443) is blocked.
     public var blockQUIC: Bool {
-        _blockQUIC
+        _quicHandlingMode.blocksQUIC
     }
 
     /// Returns whether NIO MITM is enabled.
@@ -294,9 +312,19 @@ public actor HardeningConfig {
 
     /// Updates QUIC blocking.
     public func setBlockQUIC(_ enabled: Bool) {
-        _blockQUIC = enabled
-        defaults?.set(enabled, forKey: ConfigKey.blockQUIC.rawValue)
-        ProxyLog.mitm.info("event=config.block_quic_toggle outcome=success enabled=\(enabled)")
+        setQUICHandlingMode(enabled ? .block : .passThrough)
+    }
+
+    /// Updates QUIC handling mode.
+    public func setQUICHandlingMode(_ mode: QUICHandlingMode) {
+        _quicHandlingMode = mode
+        _blockQUIC = mode.blocksQUIC
+        defaults?.set(mode.rawValue, forKey: ConfigKey.quicHandlingMode.rawValue)
+        // Keep legacy key in sync for compatibility with older app payloads.
+        defaults?.set(_blockQUIC, forKey: ConfigKey.blockQUIC.rawValue)
+        ProxyLog.mitm.info(
+            "event=config.quic_mode_set outcome=success mode=\(mode.rawValue, privacy: .public) block_quic=\(self._blockQUIC)"
+        )
     }
 
     /// Updates MITM enablement for the NIO proxy engine.
@@ -366,7 +394,8 @@ public actor HardeningConfig {
         applyRolloutStage()
 
         _mitmAllowlist = ["*"]
-        _blockQUIC = true
+        _quicHandlingMode = .intercept
+        _blockQUIC = _quicHandlingMode.blocksQUIC
         _enableNIOMITM = true
         _enableRawCapture = false
         _maxRawCaptureSize = 10_485_760
@@ -378,6 +407,7 @@ public actor HardeningConfig {
         if let data = try? JSONEncoder().encode(_mitmAllowlist) {
             defaults?.set(data, forKey: ConfigKey.mitmAllowlist.rawValue)
         }
+        defaults?.set(_quicHandlingMode.rawValue, forKey: ConfigKey.quicHandlingMode.rawValue)
         defaults?.set(_blockQUIC, forKey: ConfigKey.blockQUIC.rawValue)
         defaults?.set(_enableNIOMITM, forKey: ConfigKey.enableNIOMITM.rawValue)
         defaults?.set(_enableNIOMITM, forKey: ConfigKey.enableNetworkFrameworkMITM.rawValue)
@@ -397,7 +427,8 @@ public actor HardeningConfig {
             enableRawCapture: _enableRawCapture,
             maxRawCaptureSize: _maxRawCaptureSize,
             mitmAllowlist: _mitmAllowlist,
-            blockQUIC: _blockQUIC,
+            quicHandlingMode: _quicHandlingMode.rawValue,
+            blockQUIC: _quicHandlingMode.blocksQUIC,
             enableNIOMITM: _enableNIOMITM,
             enableNetworkFrameworkMITM: _enableNIOMITM
         )
@@ -405,6 +436,8 @@ public actor HardeningConfig {
 
     /// Logs the current configuration.
     public func logCurrentConfig() {
-        ProxyLog.mitm.info("event=config.current stage=\(self._rolloutStage.rawValue, privacy: .public) reassembly=\(self._enableRobustReassembly) metrics=\(self._enableMetrics) debug=\(self._enableDebugLogging) raw_capture=\(self._enableRawCapture) max_size=\(self._maxRawCaptureSize) allowlist_count=\(self._mitmAllowlist.count) block_quic=\(self._blockQUIC) nio_mitm=\(self._enableNIOMITM)")
+        ProxyLog.mitm.info(
+            "event=config.current stage=\(self._rolloutStage.rawValue, privacy: .public) reassembly=\(self._enableRobustReassembly) metrics=\(self._enableMetrics) debug=\(self._enableDebugLogging) raw_capture=\(self._enableRawCapture) max_size=\(self._maxRawCaptureSize) allowlist_count=\(self._mitmAllowlist.count) quic_mode=\(self._quicHandlingMode.rawValue, privacy: .public) block_quic=\(self._quicHandlingMode.blocksQUIC) nio_mitm=\(self._enableNIOMITM)"
+        )
     }
 }

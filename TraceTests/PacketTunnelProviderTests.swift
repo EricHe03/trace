@@ -266,6 +266,48 @@ final class PacketTunnelProviderTests: XCTestCase {
         XCTAssertFalse(decision.isQUIC)
     }
 
+    func testDecideUDPForwardingInterceptModeMarksQUICForInterception() {
+        let decision = decideUDPForwarding(
+            udpForwarderAvailable: true,
+            mode: .direct,
+            sourcePort: 45_000,
+            destinationPort: 443,
+            quicHandlingMode: .intercept,
+            tunnelUDPSupported: true
+        )
+
+        XCTAssertEqual(decision.decision, .interceptQUIC)
+        XCTAssertTrue(decision.isQUIC)
+    }
+
+    func testDecideUDPForwardingPassThroughModeKeepsConnectivityPath() {
+        let decision = decideUDPForwarding(
+            udpForwarderAvailable: true,
+            mode: .split,
+            sourcePort: 45_000,
+            destinationPort: 443,
+            quicHandlingMode: .passThrough,
+            tunnelUDPSupported: false
+        )
+
+        XCTAssertEqual(decision.decision, .forwardDirect)
+        XCTAssertTrue(decision.isQUIC)
+    }
+
+    func testDecideUDPForwardingBlockModeDropsQUIC() {
+        let decision = decideUDPForwarding(
+            udpForwarderAvailable: true,
+            mode: .direct,
+            sourcePort: 45_000,
+            destinationPort: 443,
+            quicHandlingMode: .block,
+            tunnelUDPSupported: true
+        )
+
+        XCTAssertEqual(decision.decision, .dropQUIC)
+        XCTAssertTrue(decision.isQUIC)
+    }
+
     func testDNSSettings() {
         struct DNSSettings {
             let servers: [String]

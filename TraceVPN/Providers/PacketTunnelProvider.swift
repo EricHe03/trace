@@ -1132,9 +1132,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             }
         }
 
-        if let blockQUIC = config["blockQUIC"] as? Bool {
+        if let quicHandlingModeRaw = config["quicHandlingMode"] as? String,
+           let quicHandlingMode = QUICHandlingMode(rawValue: quicHandlingModeRaw) {
+            await hardeningConfig.setQUICHandlingMode(quicHandlingMode)
+            await runtimeState.setQUICHandlingMode(quicHandlingMode)
+            await runtimeState.appendEventLog(
+                type: "quic_mode",
+                msg: "mode=\(quicHandlingMode.rawValue) block_quic=\(quicHandlingMode.blocksQUIC)"
+            )
+        } else if let blockQUIC = config["blockQUIC"] as? Bool {
             await hardeningConfig.setBlockQUIC(blockQUIC)
-            await runtimeState.setBlockQUICEnabled(blockQUIC)
+            let mode: QUICHandlingMode = blockQUIC ? .block : .passThrough
+            await runtimeState.setQUICHandlingMode(mode)
             await runtimeState.appendEventLog(type: "block_quic", msg: "\(blockQUIC)")
         }
 
@@ -1162,7 +1171,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let config = HardeningConfig.shared
         let rawCaptureEnabled = await config.enableRawCapture
         let rawCaptureLimit = await config.maxRawCaptureSize
-        let blockQUICEnabled = await config.blockQUIC
+        let quicHandlingMode = await config.quicHandlingMode
 
         let enableProxyPCAP = shouldEnableProxyPCAP(rawCaptureEnabled: rawCaptureEnabled, mode: mode)
         let writer = await createPCAPWriterIfNeeded(enabled: enableProxyPCAP)
@@ -1171,7 +1180,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             limit: rawCaptureLimit,
             writer: writer
         )
-        await runtimeState.setBlockQUICEnabled(blockQUICEnabled)
+        await runtimeState.setQUICHandlingMode(quicHandlingMode)
     }
 
     private func shouldEnableProxyPCAP(rawCaptureEnabled: Bool, mode: CaptureMode) -> Bool {
@@ -1401,6 +1410,10 @@ struct HeartbeatSnapshot: Sendable {
     let proxyRunning: Bool
 }
 
+private final class PacketFlowLoopReference: @unchecked Sendable {
+    weak var loop: PacketFlowLoop?
+}
+
 /// Manages tunnel runtime state that must be mutated safely across async tasks.
 ///
 /// Discussion: This actor owns the proxy server instance and capture state to
@@ -1424,7 +1437,7 @@ actor PacketTunnelRuntimeState {
     private var rawCaptureBytes: UInt64 = 0
     private var rawCaptureEnabled = false
     private var rawCaptureLimit: UInt64 = 0
-    private var blockQUICEnabled = true
+    private var quicHandlingMode: QUICHandlingMode = .intercept
     // Fail safe for DNS/connectivity: assume SOCKS5 UDP tunnel is unavailable until probe confirms support.
     private var udpTunnelSupported = false
     private var isStopping = false
@@ -1502,6 +1515,10 @@ actor PacketTunnelRuntimeState {
             guard let pipeline else { return }
             _ = pipeline.enqueue(packet: packet)
         }
+        let packetFlowLoopReference = PacketFlowLoopReference()
+        let inboundQUICInterceptor: @Sendable (Data) -> Bool = { packet in
+            packetFlowLoopReference.loop?.consumeInboundQUICPacketIfIntercepted(packet) ?? false
+        }
         // Use direct UDP forwarding until SOCKS5 UDP ASSOCIATE probe explicitly enables tunnel UDP.
         udpTunnelSupported = false
 
@@ -1510,11 +1527,11 @@ actor PacketTunnelRuntimeState {
             let trimmedHost = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines)
             let socksHostHash = LogRedaction.hash(trimmedHost)
             VPNLog.tunnel.info(
-                "event=vpn.packet_flow_config mode=\(config.mode.rawValue, privacy: .public) socks_source=\(endpoint.source, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue, privacy: .public) block_quic=\(self.blockQUICEnabled)"
+                "event=vpn.packet_flow_config mode=\(config.mode.rawValue, privacy: .public) socks_source=\(endpoint.source, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue, privacy: .public) quic_mode=\(self.quicHandlingMode.rawValue, privacy: .public) block_quic=\(self.quicHandlingMode.blocksQUIC)"
             )
             appendEventLog(
                 type: "packet_flow_config",
-                msg: "mode=\(config.mode.rawValue) socks_source=\(endpoint.source) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue) block_quic=\(blockQUICEnabled)"
+                msg: "mode=\(config.mode.rawValue) socks_source=\(endpoint.source) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue) quic_mode=\(quicHandlingMode.rawValue) block_quic=\(quicHandlingMode.blocksQUIC)"
             )
 
             let eventLogger: @Sendable (String, String) -> Void = { [weak self] type, msg in
@@ -1530,6 +1547,7 @@ actor PacketTunnelRuntimeState {
                 mtu: config.mtu,
                 ipv6Enabled: ipv6Enabled,
                 outputPacketObserver: inboundCaptureObserver,
+                outputPacketInterceptor: inboundQUICInterceptor,
                 eventLogHandler: eventLogger
             ) { [weak self] support in
                 let usable = support.isUsable(forIPv6: ipv6Enabled)
@@ -1547,7 +1565,7 @@ actor PacketTunnelRuntimeState {
                         VPNLog.tunnel.warning(
                             "event=vpn.socks5_udp_associate outcome=failure support=\(support.rawValue) ipv6_enabled=\(ipv6Enabled) fallback=block_quic"
                         )
-                        await self?.setBlockQUICEnabled(true)
+                        await self?.setQUICHandlingMode(.block)
                         await self?.appendEventLog(
                             type: "socks5_udp_associate",
                             msg: "outcome=failure support=\(support.rawValue) ipv6_enabled=\(ipv6Enabled) action=block_quic"
@@ -1576,7 +1594,8 @@ actor PacketTunnelRuntimeState {
         // SOCKS5 server does not support UDP associate (common) or when IPv6 UDP isn't supported.
         let udpForwarder: UDPForwarder? = UDPForwarder(
             packetFlow: config.packetFlow,
-            inboundPacketObserver: inboundPacketObserver
+            inboundPacketObserver: inboundPacketObserver,
+            inboundPacketInterceptor: inboundQUICInterceptor
         )
         self.udpForwarder = udpForwarder
 
@@ -1586,9 +1605,11 @@ actor PacketTunnelRuntimeState {
             forwarder: packetForwarder,
             udpForwarder: udpForwarder,
             udpForwardingMode: config.udpForwardingMode,
-            blockQUICEnabled: blockQUICEnabled
+            quicHandlingMode: quicHandlingMode,
+            quicInterceptor: RequestInterceptor.shared
         )
         packetFlowLoop = loop
+        packetFlowLoopReference.loop = loop
         loop.updateUDPTunnelSupported(udpTunnelSupported)
         loop.start()
     }
@@ -1654,9 +1675,13 @@ actor PacketTunnelRuntimeState {
         localSocks5Server = nil
     }
 
+    func setQUICHandlingMode(_ mode: QUICHandlingMode) {
+        quicHandlingMode = mode
+        packetFlowLoop?.updateQUICHandlingMode(mode)
+    }
+
     func setBlockQUICEnabled(_ enabled: Bool) {
-        blockQUICEnabled = enabled
-        packetFlowLoop?.updateBlockQUICEnabled(enabled)
+        setQUICHandlingMode(enabled ? .block : .passThrough)
     }
 
     func setUDPTunnelSupported(_ supported: Bool, support: Socks5UDPSupport, ipv6Enabled: Bool) {

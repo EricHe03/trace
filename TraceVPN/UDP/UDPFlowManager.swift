@@ -135,6 +135,50 @@ final class UDPFlowManager {
         }
     }
 
+    func recordQUICInspection(
+        ipPacket: IPPacket,
+        udpPacket: UDPPacket,
+        outcome: QUICInspectionOutcome,
+        metadata: QUICFlowMetadata
+    ) {
+        let sourceIP = ipPacket.source.description
+        let destinationIP = ipPacket.destination.description
+        let key = FlowKey.normalized(
+            sourceIP: sourceIP,
+            sourcePort: udpPacket.sourcePort,
+            destinationIP: destinationIP,
+            destinationPort: udpPacket.destinationPort
+        )
+        let now = Date()
+
+        queue.async(flags: .barrier) { [weak self] in
+            guard let self else { return }
+            if self.flows[key] == nil {
+                self.evictIfNeeded(now: now)
+                let created = UDPFlowMetadata(
+                    sourceIP: key.sourceIP,
+                    destinationIP: key.destinationIP,
+                    sourcePort: key.sourcePort,
+                    destinationPort: key.destinationPort,
+                    startTime: now,
+                    lastActivity: now,
+                    termination: .active,
+                    detectedProtocol: .quic
+                )
+                self.flows[key] = FlowState(metadata: created)
+            }
+
+            guard var state = self.flows[key] else { return }
+            state.metadata.detectedProtocol = .quic
+            state.metadata.quicInspectionOutcome = outcome
+            state.metadata.quicFlowMetadata = metadata
+            state.metadata.lastActivity = now
+
+            self.flows[key] = state
+            self.dirtyFlows.insert(key)
+        }
+    }
+
     func flush() {
         if DispatchQueue.getSpecific(key: queueKey) != nil {
             persistDirtyFlows()

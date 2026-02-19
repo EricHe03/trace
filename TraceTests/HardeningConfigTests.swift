@@ -87,12 +87,20 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertEqual(allowlist, ["*"])
     }
 
-    func testDefaultBlockQUICEnabled() async {
+    func testDefaultQUICHandlingModeIsIntercept() async {
+        // Given / When
+        let mode = await sut.quicHandlingMode
+
+        // Then
+        XCTAssertEqual(mode, .intercept)
+    }
+
+    func testDefaultBlockQUICDisabled() async {
         // Given / When
         let enabled = await sut.blockQUIC
 
         // Then
-        XCTAssertTrue(enabled)
+        XCTAssertFalse(enabled)
     }
 
     func testDefaultNetworkFrameworkMITMEnabled() async {
@@ -465,6 +473,22 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertEqual(result, enabled)
     }
 
+    func testSetQUICHandlingModeUpdatesLegacyBlockCompatibility() async {
+        await sut.setQUICHandlingMode(.block)
+
+        let blockMode = await sut.quicHandlingMode
+        let blockFlag = await sut.blockQUIC
+        XCTAssertEqual(blockMode, .block)
+        XCTAssertTrue(blockFlag)
+
+        await sut.setQUICHandlingMode(.intercept)
+
+        let interceptMode = await sut.quicHandlingMode
+        let interceptBlockFlag = await sut.blockQUIC
+        XCTAssertEqual(interceptMode, .intercept)
+        XCTAssertFalse(interceptBlockFlag)
+    }
+
     // MARK: - Network Framework MITM Configuration Tests
 
     func testSetEnableNetworkFrameworkMITM() async {
@@ -501,7 +525,8 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertNotNil(snapshot)
         XCTAssertEqual(snapshot.rolloutStage, "production")
         XCTAssertEqual(snapshot.mitmAllowlist, ["*"])
-        XCTAssertTrue(snapshot.blockQUIC)
+        XCTAssertEqual(snapshot.quicHandlingMode, QUICHandlingMode.intercept.rawValue)
+        XCTAssertFalse(snapshot.blockQUIC)
         XCTAssertTrue(snapshot.enableNetworkFrameworkMITM)
     }
 
@@ -539,6 +564,7 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertNotNil(dict["enableRawCapture"])
         XCTAssertNotNil(dict["maxRawCaptureSize"])
         XCTAssertNotNil(dict["mitmAllowlist"])
+        XCTAssertNotNil(dict["quicHandlingMode"])
         XCTAssertNotNil(dict["blockQUIC"])
         XCTAssertNotNil(dict["enableNetworkFrameworkMITM"])
     }
@@ -569,7 +595,7 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertFalse(rawCapture)
         XCTAssertEqual(maxSize, 10_485_760)
         XCTAssertEqual(allowlist, ["*"])
-        XCTAssertTrue(blockQUIC)
+        XCTAssertFalse(blockQUIC)
         XCTAssertTrue(nwMITM)
     }
 
