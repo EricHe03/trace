@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -58,6 +59,7 @@ struct cquiche_mitm_session {
     quiche_conn *downstream_conn;
     quiche_h3_conn *downstream_h3_conn;
     bool close_action_emitted;
+    bool authority_retry_emitted;
 
     struct sockaddr_storage local_addr;
     socklen_t local_addr_len;
@@ -297,6 +299,114 @@ static int emit_fallback(cquiche_mitm_session_t *session, int32_t reason)
 }
 
 #if defined(CQUICHE_WITH_QUICHE)
+static bool equals_case_insensitive_len(
+    const char *lhs,
+    size_t lhs_len,
+    const char *rhs,
+    size_t rhs_len)
+{
+    if (lhs == NULL || rhs == NULL || lhs_len != rhs_len)
+    {
+        return false;
+    }
+
+    return strncasecmp(lhs, rhs, lhs_len) == 0;
+}
+
+static bool emit_retry_with_authority(cquiche_mitm_session_t *session)
+{
+    if (session == NULL || session->downstream_conn == NULL || session->authority_retry_emitted)
+    {
+        return false;
+    }
+
+    const uint8_t *server_name = NULL;
+    size_t server_name_len = 0;
+    quiche_conn_server_name(session->downstream_conn, &server_name, &server_name_len);
+
+    if (server_name == NULL || server_name_len == 0)
+    {
+        return false;
+    }
+
+    const char *server_name_chars = (const char *)server_name;
+    if (session->authority != NULL)
+    {
+        const size_t authority_len = strlen(session->authority);
+        if (equals_case_insensitive_len(session->authority, authority_len, server_name_chars, server_name_len))
+        {
+            return false;
+        }
+    }
+
+    const int enqueue_result = enqueue_action(
+        session,
+        CQUICHE_ACTION_RETRY_WITH_AUTHORITY,
+        0,
+        CQUICHE_FAILURE_HANDSHAKE_FAILED,
+        NULL,
+        0,
+        server_name_chars,
+        server_name_len
+    );
+    if (enqueue_result != CQUICHE_SUCCESS)
+    {
+        return false;
+    }
+
+    session->authority_retry_emitted = true;
+    session->stats.fallback_events += 1;
+    return true;
+}
+
+static void update_close_failure_reason(cquiche_mitm_session_t *session)
+{
+    if (session == NULL || session->downstream_conn == NULL || session->last_failure_reason != CQUICHE_FAILURE_NONE)
+    {
+        return;
+    }
+
+    bool is_app = false;
+    uint64_t error_code = 0;
+    const uint8_t *reason = NULL;
+    size_t reason_len = 0;
+    (void)reason;
+    (void)reason_len;
+
+    if (quiche_conn_peer_error(session->downstream_conn, &is_app, &error_code, &reason, &reason_len))
+    {
+        if (!is_app)
+        {
+            const uint64_t tls_alert_base = 0x100;
+            const uint64_t tls_alert_bad_certificate = tls_alert_base + 42;
+            const uint64_t tls_alert_certificate_unknown = tls_alert_base + 46;
+            const uint64_t tls_alert_unknown_ca = tls_alert_base + 48;
+
+            if (error_code == tls_alert_bad_certificate ||
+                error_code == tls_alert_certificate_unknown ||
+                error_code == tls_alert_unknown_ca)
+            {
+                session->last_failure_reason = CQUICHE_FAILURE_CERTIFICATE_PINNING;
+                return;
+            }
+        }
+
+        session->last_failure_reason = CQUICHE_FAILURE_HANDSHAKE_FAILED;
+        return;
+    }
+
+    if (quiche_conn_local_error(session->downstream_conn, &is_app, &error_code, &reason, &reason_len))
+    {
+        session->last_failure_reason = CQUICHE_FAILURE_HANDSHAKE_FAILED;
+        return;
+    }
+
+    if (!quiche_conn_is_established(session->downstream_conn))
+    {
+        session->last_failure_reason = CQUICHE_FAILURE_HANDSHAKE_FAILED;
+    }
+}
+
 static void close_and_unlink_path(char **path)
 {
     if (path == NULL || *path == NULL)
@@ -522,8 +632,24 @@ static char *write_temp_file(
         return NULL;
     }
 
+    const char *tmp_root = getenv("TMPDIR");
+    if (tmp_root == NULL || tmp_root[0] == '\0')
+    {
+        tmp_root = "/tmp";
+    }
+
+    const size_t tmp_root_len = strlen(tmp_root);
+    const bool needs_separator = tmp_root_len > 0 ? tmp_root[tmp_root_len - 1] != '/' : true;
+
     char path_template[PATH_MAX];
-    const int path_len = snprintf(path_template, sizeof(path_template), "/tmp/%sXXXXXX", prefix);
+    const int path_len = snprintf(
+        path_template,
+        sizeof(path_template),
+        "%s%s%sXXXXXX",
+        tmp_root,
+        needs_separator ? "/" : "",
+        prefix
+    );
     if (path_len <= 0 || (size_t)path_len >= sizeof(path_template))
     {
         return NULL;
@@ -836,6 +962,7 @@ static int drain_downstream_egress(cquiche_mitm_session_t *session)
 
     if (quiche_conn_is_closed(session->downstream_conn) && !session->close_action_emitted)
     {
+        update_close_failure_reason(session);
         session->close_action_emitted = true;
         enqueue_action(
             session,
@@ -1361,6 +1488,7 @@ static int ensure_downstream_connection(
     }
 
     session->close_action_emitted = false;
+    session->authority_retry_emitted = false;
     return CQUICHE_SUCCESS;
 }
 
@@ -1410,6 +1538,11 @@ static int process_downstream_datagram(
     if (recv_result < 0)
     {
         return emit_fallback(session, CQUICHE_FAILURE_HANDSHAKE_FAILED);
+    }
+
+    if (emit_retry_with_authority(session))
+    {
+        return CQUICHE_SUCCESS;
     }
 
     if (quiche_conn_is_established(session->downstream_conn) && session->downstream_h3_conn == NULL)
@@ -1494,6 +1627,7 @@ cquiche_mitm_session_t *cquiche_mitm_session_open_with_config(const cquiche_mitm
     session->ready = false;
     session->last_failure_reason = CQUICHE_FAILURE_ENGINE_UNAVAILABLE;
     session->next_stream_id = 0;
+    session->authority_retry_emitted = false;
     memset(&session->stats, 0, sizeof(cquiche_mitm_stats_t));
 
 #if defined(CQUICHE_WITH_QUICHE)
@@ -1697,7 +1831,6 @@ int cquiche_mitm_session_submit_response(
         while (offset < body_len)
         {
             const size_t remaining = body_len - offset;
-            const bool should_fin = fin && remaining == body_len;
 
             ssize_t body_sent = quiche_h3_send_body(
                 session->downstream_h3_conn,
@@ -1705,10 +1838,10 @@ int cquiche_mitm_session_submit_response(
                 stream_id,
                 body + offset,
                 remaining,
-                should_fin
+                false
             );
 
-            if (body_sent == QUICHE_H3_ERR_DONE || body_sent == QUICHE_H3_ERR_STREAM_BLOCKED)
+            if (body_sent == QUICHE_H3_ERR_DONE || body_sent == QUICHE_H3_ERR_STREAM_BLOCKED || body_sent == 0)
             {
                 int drain_result = drain_downstream_egress(session);
                 if (drain_result != CQUICHE_SUCCESS)
@@ -1731,35 +1864,49 @@ int cquiche_mitm_session_submit_response(
                 return CQUICHE_ERROR_INTERNAL;
             }
 
-            if (body_sent == 0)
-            {
-                break;
-            }
-
             blocked_retries = 0;
             offset += (size_t)body_sent;
+        }
+    }
 
-            if (offset >= body_len && fin)
+    if (fin && body_len > 0)
+    {
+        size_t fin_retries = 0;
+        while (true)
+        {
+            ssize_t fin_sent = quiche_h3_send_body(
+                session->downstream_h3_conn,
+                session->downstream_conn,
+                stream_id,
+                (const uint8_t *)"",
+                0,
+                true
+            );
+
+            if (fin_sent == QUICHE_H3_ERR_DONE || fin_sent == QUICHE_H3_ERR_STREAM_BLOCKED)
             {
-                // Final chunk should carry FIN. If previous chunk could not,
-                // send an explicit zero-length FIN frame.
-                if (!should_fin)
+                int drain_result = drain_downstream_egress(session);
+                if (drain_result != CQUICHE_SUCCESS)
                 {
-                    ssize_t fin_sent = quiche_h3_send_body(
-                        session->downstream_h3_conn,
-                        session->downstream_conn,
-                        stream_id,
-                        (const uint8_t *)"",
-                        0,
-                        true
-                    );
-                    if (fin_sent < 0 && fin_sent != QUICHE_H3_ERR_DONE)
-                    {
-                        session->last_failure_reason = CQUICHE_FAILURE_PROTOCOL_ERROR;
-                        return CQUICHE_ERROR_INTERNAL;
-                    }
+                    return drain_result;
                 }
+
+                fin_retries += 1;
+                if (fin_retries > 64)
+                {
+                    session->last_failure_reason = CQUICHE_FAILURE_PROTOCOL_ERROR;
+                    return CQUICHE_ERROR_INTERNAL;
+                }
+                continue;
             }
+
+            if (fin_sent < 0)
+            {
+                session->last_failure_reason = CQUICHE_FAILURE_PROTOCOL_ERROR;
+                return CQUICHE_ERROR_INTERNAL;
+            }
+
+            break;
         }
     }
 

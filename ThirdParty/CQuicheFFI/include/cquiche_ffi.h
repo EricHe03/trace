@@ -34,7 +34,8 @@ typedef enum cquiche_action_type {
     CQUICHE_ACTION_HTTP3_REQUEST_END = 5,
     CQUICHE_ACTION_HTTP3_RESET_STREAM = 6,
     CQUICHE_ACTION_CONNECTION_CLOSED = 7,
-    CQUICHE_ACTION_FALLBACK_REQUIRED = 8
+    CQUICHE_ACTION_FALLBACK_REQUIRED = 8,
+    CQUICHE_ACTION_RETRY_WITH_AUTHORITY = 9
 } cquiche_action_type_t;
 
 typedef struct cquiche_h3_event_info {
