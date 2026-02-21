@@ -61,6 +61,7 @@ public final class NIORuntime: @unchecked Sendable {
                 connect: .seconds(30),
                 read: .seconds(60)
             )
+            configuration.ignoreUncleanSSLShutdown = true
             let httpClient = HTTPClient(
                 eventLoopGroupProvider: .shared(eventLoopGroup),
                 configuration: configuration

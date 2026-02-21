@@ -52,4 +52,68 @@ final class MITMProxyServerTests: XCTestCase {
 
         XCTAssertEqual(server.activeConnectionCount(), 0)
     }
+
+    func testTransparentTLSModeConfigCanToggleWithoutCrash() {
+        let server = MITMProxyServer(port: 0)
+
+        server.updateConfiguration([
+            "transparentTLSModeEnabled": true
+        ])
+        server.updateConfiguration([
+            "transparentTLSModeEnabled": false
+        ])
+        server.updateConfiguration([
+            "enableTransparentTLSMode": true
+        ])
+
+        XCTAssertEqual(server.activeConnectionCount(), 0)
+    }
+
+    func testNormalizedAutoBypassReasonMapsTransparentTLSUpgradeTimeoutToNonHTTPProtocol() {
+        let reason = "mitm_non_http_protocol: transparent_tls_upgrade_timeout"
+        let normalized = MITMProxyServer.normalizedAutoBypassReason(forFailureReason: reason)
+        XCTAssertEqual(normalized, "mitm_non_http_protocol")
+    }
+
+    func testNormalizedAutoBypassReasonSkipsCANotTrustedFailures() {
+        let reason = "ca_not_trusted: root_ca_missing"
+        let normalized = MITMProxyServer.normalizedAutoBypassReason(forFailureReason: reason)
+        XCTAssertNil(normalized)
+    }
+
+    func testNormalizedAutoBypassReasonMapsUpstreamHostnameMismatch() {
+        let reason = "tls_upstream_hostname_mismatch: example.com"
+        let normalized = MITMProxyServer.normalizedAutoBypassReason(forFailureReason: reason)
+        XCTAssertEqual(normalized, "tls_upstream_hostname_mismatch")
+    }
+
+    func testNormalizedAutoBypassReasonMapsClientRejectedPinning() {
+        let reason = "client_rejected_mitm_or_pinning: niossl_error_0"
+        let normalized = MITMProxyServer.normalizedAutoBypassReason(forFailureReason: reason)
+        XCTAssertEqual(normalized, "client_rejected_mitm_or_pinning")
+    }
+
+    func testNormalizedAutoBypassReasonSkipsConnectionClosedEarly() {
+        let reason = "connection_closed_early"
+        let normalized = MITMProxyServer.normalizedAutoBypassReason(forFailureReason: reason)
+        XCTAssertNil(normalized)
+    }
+
+    func testRuntimeBypassCandidateReasonMapsConnectionClosedEarly() {
+        let reason = "connection_closed_early"
+        let normalized = MITMProxyServer.runtimeBypassCandidateReason(forFailureReason: reason)
+        XCTAssertEqual(normalized, "connection_closed_early")
+    }
+
+    func testRuntimeBypassCandidateReasonMapsUpstreamTimeout() {
+        let reason = "upstream_timeout"
+        let normalized = MITMProxyServer.runtimeBypassCandidateReason(forFailureReason: reason)
+        XCTAssertEqual(normalized, "upstream_timeout")
+    }
+
+    func testRuntimeBypassCandidateReasonReturnsNilForTrustFailure() {
+        let reason = "tls_upstream_trust_failed"
+        let normalized = MITMProxyServer.runtimeBypassCandidateReason(forFailureReason: reason)
+        XCTAssertNil(normalized)
+    }
 }

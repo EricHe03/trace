@@ -14,6 +14,17 @@ import TraceFeatures
 /// Runs inside the Network Extension and handles HTTP/HTTPS traffic routed to the local proxy
 /// (proxy-only mode via the tunnel's `proxySettings`).
 public class MITMProxyServer: @unchecked Sendable {
+    private struct TransientFailureTracker {
+        var firstFailureAt: Date
+        var lastFailureAt: Date
+        var count: Int
+    }
+
+    private struct RuntimeBypassState {
+        let reason: String
+        let expiresAt: Date
+    }
+
     private let port: UInt16
     private var nioEngine: NIOMITMProxyEngine?
 
@@ -39,6 +50,12 @@ public class MITMProxyServer: @unchecked Sendable {
     private var rawCaptureBytes: UInt64 = 0
     private var logSampler = LogSampler()
     private var samplingSequence: Int = 0
+    private var transientFailureTrackers: [String: TransientFailureTracker] = [:]
+    private var runtimeBypassStates: [String: RuntimeBypassState] = [:]
+    private let transientFailureThreshold = 3
+    private let transientFailureWindow: TimeInterval = 12
+    private let transientFailureRetention: TimeInterval = 120
+    private var runtimeBypassTTL: TimeInterval = 180
 
     /// Creates a local-only MITM proxy bound to loopback, with an optional shared event log sink.
     public init(port: UInt16, eventLog: NDJSONLogWriter? = nil) {
@@ -163,6 +180,7 @@ public class MITMProxyServer: @unchecked Sendable {
 
     private func emitConnectionLifecycleSample() {
         let active = nioEngine?.activeConnectionCount() ?? 0
+        purgeExpiredRuntimeBypasses(now: Date())
         if active > 0 {
             ProxyLog.mitm.debug("event=proxy.cleanup outcome=success active=\(active)")
         }
@@ -243,16 +261,45 @@ public class MITMProxyServer: @unchecked Sendable {
             )
         }
 
+        appendProxyCaptureEvent(
+            request,
+            outcome: "seen"
+        )
+
         let effectiveConfig = AppGroupStorage.shared.loadConfiguration()
-        guard shouldPersist(request, using: effectiveConfig) else { return }
+        guard shouldPersist(request, using: effectiveConfig) else {
+            appendProxyCaptureEvent(
+                request,
+                outcome: "skipped",
+                reason: "filter"
+            )
+            return
+        }
         saveCapturedRequest(request)
     }
 
     private func saveCapturedRequest(_ request: NetworkRequest) {
         let samplingConfig = AppGroupStorage.shared.loadSamplingConfig()
-        guard shouldSample(using: samplingConfig) else { return }
+        guard shouldSample(using: samplingConfig) else {
+            appendProxyCaptureEvent(
+                request,
+                outcome: "skipped",
+                reason: "sampling"
+            )
+            return
+        }
         do {
             try AppGroupStorage.shared.saveRequest(request)
+            appendProxyCaptureEvent(
+                request,
+                outcome: "success"
+            )
+            let hostHash = URL(string: request.url)?.host.map { LogRedaction.hash($0) } ?? "unknown"
+            let protocolVersion = request.protocolVersion?.rawValue ?? "http1.1"
+            eventLog?.append(
+                type: "tcp_plaintext_capture",
+                msg: "outcome=decrypted request_id=\(request.id.uuidString) host_hash=\(hostHash) protocol=\(protocolVersion)"
+            )
             if logSampler.shouldLog(key: "proxy.request_saved", first: 10, every: 200) {
                 let protocolVersion = request.protocolVersion?.rawValue ?? "unknown"
                 ProxyLog.mitm.debug(
@@ -265,7 +312,42 @@ public class MITMProxyServer: @unchecked Sendable {
             }
         } catch {
             ProxyLog.mitm.error("event=proxy.request_saved outcome=failure error=\(error.localizedDescription, privacy: .public)")
+            appendProxyCaptureEvent(
+                request,
+                outcome: "failure",
+                reason: "storage_write_failed",
+                error: error.localizedDescription
+            )
         }
+    }
+
+    private func appendProxyCaptureEvent(
+        _ request: NetworkRequest,
+        outcome: String,
+        reason: String? = nil,
+        error: String? = nil
+    ) {
+        let hostHash = URL(string: request.url)?.host.map { LogRedaction.hash($0) } ?? "unknown"
+        let protocolVersion = request.protocolVersion?.rawValue ?? "unknown"
+        let statusCode = request.statusCode.map(String.init) ?? "nil"
+        var fields = [
+            "outcome=\(outcome)",
+            "request_id=\(request.id.uuidString)",
+            "host_hash=\(hostHash)",
+            "method=\(request.method.rawValue)",
+            "protocol=\(protocolVersion)",
+            "status=\(statusCode)"
+        ]
+        if let reason, !reason.isEmpty {
+            fields.append("reason=\(reason)")
+        }
+        if let error, !error.isEmpty {
+            fields.append("error=\(error)")
+        }
+        eventLog?.append(
+            type: "proxy_request_saved",
+            msg: fields.joined(separator: " ")
+        )
     }
 
     private func shouldPersist(_ request: NetworkRequest, using config: CaptureConfiguration) -> Bool {
@@ -319,9 +401,16 @@ public class MITMProxyServer: @unchecked Sendable {
     private func mitmBypassReason(host: String) -> String? {
         guard mitmEnabled else { return "disabled" }
 
-        if MITMAutoBypassCache.shared.shouldBypass(host: host) {
-            let detail = MITMAutoBypassCache.shared.reason(host: host)
-            return detail.map { "auto-bypass (\($0))" } ?? "auto-bypass (previous MITM failure)"
+        let now = Date()
+        if let state = runtimeBypassStates[host], state.expiresAt > now {
+            return "runtime auto-bypass (\(state.reason))"
+        }
+        runtimeBypassStates.removeValue(forKey: host)
+
+        if let detail = MITMAutoBypassLookup.reasonForTCPMITM(host: host) {
+            return detail.isEmpty
+                ? "auto-bypass (previous MITM failure)"
+                : "auto-bypass (\(detail))"
         }
 
         guard !mitmAllowlist.isEmpty else { return "not allowlisted" }
@@ -335,83 +424,158 @@ public class MITMProxyServer: @unchecked Sendable {
     }
 
     private func recordMITMFailure(host: String, reason: String) {
-        maybeRecordMITMAutoBypass(host: host, reason: reason)
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedHost.isEmpty else { return }
+        let captureConfig = AppGroupStorage.shared.loadConfiguration()
+        let policy = captureConfig.dualMITMPolicy
+        runtimeBypassTTL = TimeInterval(captureConfig.tcpBypassTTLSeconds)
+
+        if policy == .strictMITM {
+            eventLog?.append(
+                type: "mitm_auto_bypass",
+                msg: "\(LogRedaction.hash(normalizedHost)) outcome=skipped policy=\(policy.rawValue) reason=strict_policy"
+            )
+            return
+        }
+
+        maybeRecordRuntimeBypassForTransientFailure(
+            host: normalizedHost,
+            reason: reason,
+            runtimeBypassTTL: runtimeBypassTTL
+        )
+        maybeRecordMITMAutoBypass(host: normalizedHost, reason: reason, policy: policy)
     }
 
-    private func maybeRecordMITMAutoBypass(host: String, reason: String) {
-        let lowercasedReason = reason.lowercased()
-
-        // Rule: user/device trust issues should not force host-level auto-bypass.
-        if lowercasedReason.contains("ca_not_trusted") {
+    private func maybeRecordMITMAutoBypass(host: String, reason: String, policy: DualMITMPolicy) {
+        guard let normalized = Self.normalizedAutoBypassReason(forFailureReason: reason) else {
             return
-        }
-
-        let isUpstreamTrustFailure =
-            lowercasedReason.contains("tls_upstream_hostname_mismatch") ||
-            lowercasedReason.contains("tls_upstream_trust_failed")
-        if isUpstreamTrustFailure {
-            let normalized = lowercasedReason.contains("hostname_mismatch")
-                ? "upstream hostname mismatch"
-                : "upstream trust failure"
-            MITMAutoBypassCache.shared.record(host: host, reason: normalized)
-            ProxyLog.mitm.info(
-                "event=proxy.mitm_auto_bypass outcome=success host=\(host, privacy: .private(mask: .hash)) reason=\(normalized, privacy: .public)"
-            )
-            eventLog?.append(type: "mitm_auto_bypass", msg: "\(LogRedaction.hash(host)) reason=\(normalized)")
-            return
-        }
-
-        let mitmSetupFailure =
-            lowercasedReason.contains("mitm_pipeline_failed") ||
-            lowercasedReason.contains("mitm_tls_handler_failed")
-        if mitmSetupFailure {
-            let normalized = "mitm setup failure"
-            MITMAutoBypassCache.shared.record(host: host, reason: normalized)
-            ProxyLog.mitm.info(
-                "event=proxy.mitm_auto_bypass outcome=success host=\(host, privacy: .private(mask: .hash)) reason=\(normalized, privacy: .public)"
-            )
-            eventLog?.append(type: "mitm_auto_bypass", msg: "\(LogRedaction.hash(host)) reason=\(normalized)")
-            return
-        }
-
-        let nonHTTPFailure =
-            lowercasedReason.contains("mitm_non_http_protocol") ||
-            lowercasedReason.contains("httpparsererror")
-        if nonHTTPFailure {
-            let normalized = "non-http protocol"
-            MITMAutoBypassCache.shared.record(host: host, reason: normalized)
-            ProxyLog.mitm.info(
-                "event=proxy.mitm_auto_bypass outcome=success host=\(host, privacy: .private(mask: .hash)) reason=\(normalized, privacy: .public)"
-            )
-            eventLog?.append(type: "mitm_auto_bypass", msg: "\(LogRedaction.hash(host)) reason=\(normalized)")
-            return
-        }
-
-        let pinningLikeFailure =
-            lowercasedReason.contains("possible_pinning_or_strict_trust") ||
-            lowercasedReason.contains("pinning requirements") ||
-            lowercasedReason.contains("certificate pinning") ||
-            lowercasedReason.contains("cert pinning") ||
-            lowercasedReason.contains("pinned certificate")
-        guard pinningLikeFailure else { return }
-
-        let normalized = if lowercasedReason.contains("pinning requirements") {
-            "pinning requirements"
-        } else if lowercasedReason.contains("possible_pinning_or_strict_trust") {
-            "pinning/strict trust"
-        } else if lowercasedReason.contains("certificate pinning") || lowercasedReason.contains("cert pinning") {
-            "certificate pinning"
-        } else if lowercasedReason.contains("pinned certificate") {
-            "pinned certificate"
-        } else {
-            "pinning/strict trust"
         }
 
         MITMAutoBypassCache.shared.record(host: host, reason: normalized)
         ProxyLog.mitm.info(
             "event=proxy.mitm_auto_bypass outcome=success host=\(host, privacy: .private(mask: .hash)) reason=\(normalized, privacy: .public)"
         )
-        eventLog?.append(type: "mitm_auto_bypass", msg: "\(LogRedaction.hash(host)) reason=\(normalized)")
+        eventLog?.append(
+            type: "mitm_auto_bypass",
+            msg: "\(LogRedaction.hash(host)) reason=\(normalized) policy=\(policy.rawValue)"
+        )
+    }
+
+    static func normalizedAutoBypassReason(forFailureReason reason: String) -> String? {
+        let lowercasedReason = reason.lowercased()
+
+        // Rule: user/device trust issues should not force host-level auto-bypass.
+        if lowercasedReason.contains("ca_not_trusted") {
+            return nil
+        }
+
+        let isUpstreamTrustFailure =
+            lowercasedReason.contains("tls_upstream_hostname_mismatch") ||
+            lowercasedReason.contains("tls_upstream_trust_failed")
+        if isUpstreamTrustFailure {
+            return lowercasedReason.contains("hostname_mismatch")
+                ? "tls_upstream_hostname_mismatch"
+                : "tls_upstream_trust_failed"
+        }
+
+        let mitmSetupFailure =
+            lowercasedReason.contains("mitm_pipeline_failed") ||
+            lowercasedReason.contains("mitm_tls_handler_failed") ||
+            lowercasedReason.contains("mitm_setup_failed")
+        if mitmSetupFailure {
+            return "mitm_setup_failed"
+        }
+
+        let nonHTTPFailure =
+            lowercasedReason.contains("mitm_non_http_protocol") ||
+            lowercasedReason.contains("httpparsererror")
+        if nonHTTPFailure {
+            return "mitm_non_http_protocol"
+        }
+
+        let pinningLikeFailure =
+            lowercasedReason.contains("client_rejected_mitm_or_pinning") ||
+            lowercasedReason.contains("possible_pinning_or_strict_trust") ||
+            lowercasedReason.contains("pinning requirements") ||
+            lowercasedReason.contains("certificate pinning") ||
+            lowercasedReason.contains("cert pinning") ||
+            lowercasedReason.contains("pinned certificate")
+        guard pinningLikeFailure else { return nil }
+
+        return "client_rejected_mitm_or_pinning"
+    }
+
+    static func runtimeBypassCandidateReason(forFailureReason reason: String) -> String? {
+        let normalized = reason
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else { return nil }
+
+        if normalized.contains("connection_closed_early") {
+            return "connection_closed_early"
+        }
+        if normalized.contains("upstream_timeout") {
+            return "upstream_timeout"
+        }
+        if normalized.contains("upstream_connection_closed") {
+            return "upstream_connection_closed"
+        }
+        return nil
+    }
+
+    private func maybeRecordRuntimeBypassForTransientFailure(host: String, reason: String, runtimeBypassTTL: TimeInterval) {
+        guard !host.isEmpty else { return }
+        guard let normalizedReason = Self.runtimeBypassCandidateReason(forFailureReason: reason) else { return }
+
+        let now = Date()
+        purgeExpiredRuntimeBypasses(now: now)
+        pruneTransientFailureTrackers(now: now)
+
+        let trackerKey = "\(host)|\(normalizedReason)"
+        var tracker = transientFailureTrackers[trackerKey] ?? TransientFailureTracker(
+            firstFailureAt: now,
+            lastFailureAt: now,
+            count: 0
+        )
+
+        if now.timeIntervalSince(tracker.firstFailureAt) > transientFailureWindow {
+            tracker.firstFailureAt = now
+            tracker.lastFailureAt = now
+            tracker.count = 1
+        } else {
+            tracker.lastFailureAt = now
+            tracker.count += 1
+        }
+
+        transientFailureTrackers[trackerKey] = tracker
+        guard tracker.count >= transientFailureThreshold else { return }
+
+        runtimeBypassStates[host] = RuntimeBypassState(
+            reason: normalizedReason,
+            expiresAt: now.addingTimeInterval(runtimeBypassTTL)
+        )
+        transientFailureTrackers.removeValue(forKey: trackerKey)
+        eventLog?.append(
+            type: "mitm_auto_bypass_runtime",
+            msg: "\(LogRedaction.hash(host)) reason=\(normalizedReason) ttl_ms=\(Int(runtimeBypassTTL * 1_000))"
+        )
+        ProxyLog.mitm.info(
+            "event=proxy.mitm_auto_bypass_runtime outcome=success host=\(host, privacy: .private(mask: .hash)) reason=\(normalizedReason, privacy: .public) ttl_ms=\(Int(self.runtimeBypassTTL * 1_000), privacy: .public)"
+        )
+    }
+
+    private func pruneTransientFailureTrackers(now: Date) {
+        guard !transientFailureTrackers.isEmpty else { return }
+        transientFailureTrackers = transientFailureTrackers.filter { _, tracker in
+            now.timeIntervalSince(tracker.lastFailureAt) <= transientFailureRetention
+        }
+    }
+
+    private func purgeExpiredRuntimeBypasses(now: Date) {
+        guard !runtimeBypassStates.isEmpty else { return }
+        runtimeBypassStates = runtimeBypassStates.filter { _, state in
+            state.expiresAt > now
+        }
     }
 
     private func shouldSample(using config: SamplingConfig) -> Bool {
