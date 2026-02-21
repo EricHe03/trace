@@ -12,7 +12,7 @@ Trace is built as a local Network Extension packet tunnel with on-device TLS MIT
 
 ## Features
 
-- Proxy-only and full-tunnel capture modes
+- Proxy-only, full-tunnel, and full-tunnel dual MITM capture modes
 - HTTP(S), WebSocket, and SSE capture in one network timeline
 - Request inspection for headers, body, timings, and TLS chain
 - Request replay and manual request builder
@@ -150,7 +150,7 @@ swiftlint lint --strict --config .swiftlint.yml
 
 - Apps that ignore system proxy settings require full-tunnel mode.
 - Certificate pinning/custom trust validation prevents HTTPS MITM decryption.
-- QUIC/HTTP3 is not decrypted; optional QUIC blocking can force HTTP/2 in many cases.
+- QUIC/HTTP3 decryption requires QUIC MITM mode with trusted root CA and may fail under certificate pinning/ECH constraints.
 - Packet-tunnel behavior cannot be fully validated in iOS Simulator.
 
 ## Contributing

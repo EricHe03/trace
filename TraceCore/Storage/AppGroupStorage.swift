@@ -1462,12 +1462,44 @@ public enum AppGroupConfiguration {
 public enum CaptureMode: String, Codable, Sendable {
     case proxyOnly
     case fullTunnel
+    case fullTunnelDualMITM
+
+    public var usesPacketTunnelRouting: Bool {
+        switch self {
+        case .proxyOnly:
+            false
+        case .fullTunnel, .fullTunnelDualMITM:
+            true
+        }
+    }
+
+    public var usesSystemHTTPProxy: Bool {
+        switch self {
+        case .proxyOnly, .fullTunnel:
+            true
+        case .fullTunnelDualMITM:
+            false
+        }
+    }
+
+    public var supportsCustomSocksServer: Bool {
+        self == .fullTunnel
+    }
+
+    public var enablesTCPTransparentMITM: Bool {
+        self == .fullTunnelDualMITM
+    }
 }
 
 public enum UDPForwardingMode: String, Codable, Sendable {
     case hevOnly
     case direct
     case split
+}
+
+public enum DualMITMPolicy: String, Codable, Sendable {
+    case adaptiveFailOpen
+    case strictMITM
 }
 
 public struct CaptureConfiguration: Codable, Sendable {
@@ -1486,6 +1518,10 @@ public struct CaptureConfiguration: Codable, Sendable {
     public var fullTunnelSocks5Host: String
     public var fullTunnelSocks5Port: UInt16
     public var fullTunnelUDPForwardingMode: UDPForwardingMode
+    public var dualMITMPolicy: DualMITMPolicy
+    public var tcpBypassTTLSeconds: Int
+    public var quicHostFailOpenSeconds: Int
+    public var dualMITMCircuitBreakerEnabled: Bool
 
     public static let `default` = {
         let captureDefaults = CaptureOptions.default
@@ -1503,7 +1539,11 @@ public struct CaptureConfiguration: Codable, Sendable {
             fullTunnelIPv6Enabled: true,
             fullTunnelSocks5Host: "",
             fullTunnelSocks5Port: 0,
-            fullTunnelUDPForwardingMode: .hevOnly
+            fullTunnelUDPForwardingMode: .hevOnly,
+            dualMITMPolicy: .adaptiveFailOpen,
+            tcpBypassTTLSeconds: 180,
+            quicHostFailOpenSeconds: 1800,
+            dualMITMCircuitBreakerEnabled: true
         )
     }()
 
@@ -1521,6 +1561,10 @@ public struct CaptureConfiguration: Codable, Sendable {
         case fullTunnelSocks5Host
         case fullTunnelSocks5Port
         case fullTunnelUDPForwardingMode
+        case dualMITMPolicy
+        case tcpBypassTTLSeconds
+        case quicHostFailOpenSeconds
+        case dualMITMCircuitBreakerEnabled
     }
 
     public init(
@@ -1536,7 +1580,11 @@ public struct CaptureConfiguration: Codable, Sendable {
         fullTunnelIPv6Enabled: Bool,
         fullTunnelSocks5Host: String,
         fullTunnelSocks5Port: UInt16,
-        fullTunnelUDPForwardingMode: UDPForwardingMode
+        fullTunnelUDPForwardingMode: UDPForwardingMode,
+        dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
+        tcpBypassTTLSeconds: Int = 180,
+        quicHostFailOpenSeconds: Int = 1800,
+        dualMITMCircuitBreakerEnabled: Bool = true
     ) {
         self.isEnabled = isEnabled
         self.filterMode = filterMode
@@ -1551,6 +1599,10 @@ public struct CaptureConfiguration: Codable, Sendable {
         self.fullTunnelSocks5Host = fullTunnelSocks5Host
         self.fullTunnelSocks5Port = fullTunnelSocks5Port
         self.fullTunnelUDPForwardingMode = fullTunnelUDPForwardingMode
+        self.dualMITMPolicy = dualMITMPolicy
+        self.tcpBypassTTLSeconds = tcpBypassTTLSeconds
+        self.quicHostFailOpenSeconds = quicHostFailOpenSeconds
+        self.dualMITMCircuitBreakerEnabled = dualMITMCircuitBreakerEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -1576,6 +1628,14 @@ public struct CaptureConfiguration: Codable, Sendable {
             ?? defaults.fullTunnelSocks5Port
         fullTunnelUDPForwardingMode = try container.decodeIfPresent(UDPForwardingMode.self, forKey: .fullTunnelUDPForwardingMode)
             ?? defaults.fullTunnelUDPForwardingMode
+        dualMITMPolicy = try container.decodeIfPresent(DualMITMPolicy.self, forKey: .dualMITMPolicy)
+            ?? defaults.dualMITMPolicy
+        tcpBypassTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .tcpBypassTTLSeconds)
+            ?? defaults.tcpBypassTTLSeconds
+        quicHostFailOpenSeconds = try container.decodeIfPresent(Int.self, forKey: .quicHostFailOpenSeconds)
+            ?? defaults.quicHostFailOpenSeconds
+        dualMITMCircuitBreakerEnabled = try container.decodeIfPresent(Bool.self, forKey: .dualMITMCircuitBreakerEnabled)
+            ?? defaults.dualMITMCircuitBreakerEnabled
         self = normalized()
     }
 
@@ -1595,6 +1655,10 @@ public struct CaptureConfiguration: Codable, Sendable {
         try container.encode(normalized.fullTunnelSocks5Host, forKey: .fullTunnelSocks5Host)
         try container.encode(normalized.fullTunnelSocks5Port, forKey: .fullTunnelSocks5Port)
         try container.encode(normalized.fullTunnelUDPForwardingMode, forKey: .fullTunnelUDPForwardingMode)
+        try container.encode(normalized.dualMITMPolicy, forKey: .dualMITMPolicy)
+        try container.encode(normalized.tcpBypassTTLSeconds, forKey: .tcpBypassTTLSeconds)
+        try container.encode(normalized.quicHostFailOpenSeconds, forKey: .quicHostFailOpenSeconds)
+        try container.encode(normalized.dualMITMCircuitBreakerEnabled, forKey: .dualMITMCircuitBreakerEnabled)
     }
 
     public func normalized() -> CaptureConfiguration {
@@ -1611,8 +1675,10 @@ public struct CaptureConfiguration: Codable, Sendable {
 
         fullTunnelDNSServers = Self.normalizedStringList(fullTunnelDNSServers)
         fullTunnelSearchDomains = Self.normalizedStringList(fullTunnelSearchDomains)
+        tcpBypassTTLSeconds = max(30, min(86_400, tcpBypassTTLSeconds))
+        quicHostFailOpenSeconds = max(60, min(86_400, quicHostFailOpenSeconds))
 
-        if captureMode == .fullTunnel, fullTunnelDNSServers.isEmpty {
+        if captureMode.usesPacketTunnelRouting, fullTunnelDNSServers.isEmpty {
             fullTunnelDNSServers = Self.defaultFullTunnelDNSServers
         }
     }

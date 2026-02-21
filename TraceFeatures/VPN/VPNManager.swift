@@ -37,6 +37,14 @@ public final class VPNManager: ObservableObject, VPNManaging {
     private var tunnelManager: NETunnelProviderManager?
     private var statusObserver: Any?
 
+    private struct ProtocolRoutingDefaults {
+        let includeAllNetworks: Bool
+        let excludeLocalNetworks: Bool
+        let excludeCellularServices: Bool
+        let excludeAPNs: Bool
+        let excludeDeviceCommunication: Bool
+    }
+
     private init() {
         checkSimulator()
         // Don't call setupVPN() here - it will be called lazily when needed
@@ -176,11 +184,10 @@ public final class VPNManager: ObservableObject, VPNManaging {
             "version": "1.0",
             "proxyPort": 8888
         ]
-        let routingDefaults = desiredRoutingDefaults()
-        protocolConfiguration.includeAllNetworks = routingDefaults.includeAllNetworks
-        protocolConfiguration.excludeLocalNetworks = routingDefaults.excludeLocalNetworks
-        // Keep the tunnel running during device sleep (avoid stop reason: sleep).
-        protocolConfiguration.disconnectOnSleep = false
+        let mode = AppGroupStorage.shared.loadConfiguration().captureMode
+        let routingDefaults = desiredRoutingDefaults(for: mode)
+        _ = applyProtocolRoutingDefaults(routingDefaults, to: protocolConfiguration)
+        logProtocolRoutingPolicy(protocolConfiguration, context: "create", mode: mode)
 
         manager.protocolConfiguration = protocolConfiguration
         manager.localizedDescription = "Trace Network Debugger"
@@ -217,18 +224,79 @@ public final class VPNManager: ObservableObject, VPNManaging {
             return
         }
 
+        let mode = AppGroupStorage.shared.loadConfiguration().captureMode
+        let routingDefaults = desiredRoutingDefaults(for: mode)
+        let needsSave = applyProtocolRoutingDefaults(routingDefaults, to: protocolConfiguration)
+
+        guard needsSave == true else {
+            logProtocolRoutingPolicy(protocolConfiguration, context: "unchanged", mode: mode)
+            return
+        }
+
+        manager.protocolConfiguration = protocolConfiguration
+        logProtocolRoutingPolicy(protocolConfiguration, context: "updated", mode: mode)
+        FeatureLog.vpn.info(
+            "event=vpn.config_update outcome=success changes=routing_defaults mode=\(self.captureModeLogLabel(mode), privacy: .public) include_all=\(routingDefaults.includeAllNetworks) exclude_local=\(routingDefaults.excludeLocalNetworks) exclude_cellular=\(routingDefaults.excludeCellularServices) exclude_apns=\(routingDefaults.excludeAPNs) exclude_device_comm=\(routingDefaults.excludeDeviceCommunication)"
+        )
+        try await manager.saveToPreferences()
+    }
+
+    private func desiredRoutingDefaults(for mode: CaptureMode) -> ProtocolRoutingDefaults {
+        switch mode {
+        case .proxyOnly:
+            return ProtocolRoutingDefaults(
+                includeAllNetworks: false,
+                excludeLocalNetworks: false,
+                excludeCellularServices: false,
+                excludeAPNs: false,
+                excludeDeviceCommunication: false
+            )
+        case .fullTunnel, .fullTunnelDualMITM:
+            // Full-tunnel routing is controlled by NEPacketTunnelNetworkSettings default routes.
+            // Keep protocol-level includeAllNetworks disabled to avoid cellular path denials and stale preference side effects.
+            return ProtocolRoutingDefaults(
+                includeAllNetworks: false,
+                excludeLocalNetworks: false,
+                excludeCellularServices: false,
+                excludeAPNs: false,
+                excludeDeviceCommunication: false
+            )
+        }
+    }
+
+    @discardableResult
+    private func applyProtocolRoutingDefaults(
+        _ defaults: ProtocolRoutingDefaults,
+        to protocolConfiguration: NETunnelProviderProtocol
+    ) -> Bool {
         var needsSave = false
 
-        let routingDefaults = desiredRoutingDefaults()
-
-        if protocolConfiguration.includeAllNetworks != routingDefaults.includeAllNetworks {
-            protocolConfiguration.includeAllNetworks = routingDefaults.includeAllNetworks
+        if protocolConfiguration.includeAllNetworks != defaults.includeAllNetworks {
+            protocolConfiguration.includeAllNetworks = defaults.includeAllNetworks
             needsSave = true
         }
 
-        if protocolConfiguration.excludeLocalNetworks != routingDefaults.excludeLocalNetworks {
-            protocolConfiguration.excludeLocalNetworks = routingDefaults.excludeLocalNetworks
+        if protocolConfiguration.excludeLocalNetworks != defaults.excludeLocalNetworks {
+            protocolConfiguration.excludeLocalNetworks = defaults.excludeLocalNetworks
             needsSave = true
+        }
+
+        if #available(iOS 16.4, macOS 13.3, *) {
+            if protocolConfiguration.excludeCellularServices != defaults.excludeCellularServices {
+                protocolConfiguration.excludeCellularServices = defaults.excludeCellularServices
+                needsSave = true
+            }
+            if protocolConfiguration.excludeAPNs != defaults.excludeAPNs {
+                protocolConfiguration.excludeAPNs = defaults.excludeAPNs
+                needsSave = true
+            }
+        }
+
+        if #available(iOS 17.4, macOS 14.4, *) {
+            if protocolConfiguration.excludeDeviceCommunication != defaults.excludeDeviceCommunication {
+                protocolConfiguration.excludeDeviceCommunication = defaults.excludeDeviceCommunication
+                needsSave = true
+            }
         }
 
         // Avoid disconnects on device sleep.
@@ -237,21 +305,45 @@ public final class VPNManager: ObservableObject, VPNManaging {
             needsSave = true
         }
 
-        guard needsSave else { return }
-        manager.protocolConfiguration = protocolConfiguration
-        FeatureLog.vpn.info(
-            "event=vpn.config_update outcome=success changes=routing_defaults include_all=\(routingDefaults.includeAllNetworks) exclude_local=\(routingDefaults.excludeLocalNetworks)"
-        )
-        try await manager.saveToPreferences()
+        return needsSave
     }
 
-    private func desiredRoutingDefaults() -> (includeAllNetworks: Bool, excludeLocalNetworks: Bool) {
-        let mode = AppGroupStorage.shared.loadConfiguration().captureMode
+    private func logProtocolRoutingPolicy(
+        _ protocolConfiguration: NETunnelProviderProtocol,
+        context: String,
+        mode: CaptureMode
+    ) {
+        let excludeCellularValue: String
+        let excludeAPNsValue: String
+        let excludeDeviceCommunicationValue: String
+
+        if #available(iOS 16.4, macOS 13.3, *) {
+            excludeCellularValue = protocolConfiguration.excludeCellularServices.description
+            excludeAPNsValue = protocolConfiguration.excludeAPNs.description
+        } else {
+            excludeCellularValue = "n/a"
+            excludeAPNsValue = "n/a"
+        }
+
+        if #available(iOS 17.4, macOS 14.4, *) {
+            excludeDeviceCommunicationValue = protocolConfiguration.excludeDeviceCommunication.description
+        } else {
+            excludeDeviceCommunicationValue = "n/a"
+        }
+
+        FeatureLog.vpn.info(
+            "event=vpn.routing_policy context=\(context, privacy: .public) mode=\(self.captureModeLogLabel(mode), privacy: .public) include_all=\(protocolConfiguration.includeAllNetworks) exclude_local=\(protocolConfiguration.excludeLocalNetworks) exclude_cellular=\(excludeCellularValue, privacy: .public) exclude_apns=\(excludeAPNsValue, privacy: .public) exclude_device_comm=\(excludeDeviceCommunicationValue, privacy: .public)"
+        )
+    }
+
+    private func captureModeLogLabel(_ mode: CaptureMode) -> String {
         switch mode {
         case .proxyOnly:
-            return (includeAllNetworks: false, excludeLocalNetworks: false)
+            "proxy_only"
         case .fullTunnel:
-            return (includeAllNetworks: true, excludeLocalNetworks: true)
+            "full_tunnel"
+        case .fullTunnelDualMITM:
+            "full_tunnel_dual_mitm"
         }
     }
 
@@ -357,6 +449,9 @@ public final class VPNManager: ObservableObject, VPNManaging {
         // This ensures we have the latest configuration from system preferences
         try await manager.loadFromPreferences()
         FeatureLog.vpn.info("event=vpn.start_preferences_loaded is_enabled=\(manager.isEnabled)")
+
+        // Normalize persisted protocol routing policy before starting.
+        try await applyProtocolRoutingDefaults(to: manager)
 
         // If another VPN was enabled recently, iOS may have disabled this configuration.
         // Re-enable and persist before starting to avoid start failures.

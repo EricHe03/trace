@@ -1,0 +1,100 @@
+//
+//  DualMITMCircuitBreakerTests.swift
+//  TraceTests
+//
+
+import XCTest
+@testable import TraceCore
+
+final class DualMITMCircuitBreakerTests: XCTestCase {
+    func testTripsOnTCPClientHandshakeFailureRateOverThreshold() {
+        let breaker = DualMITMCircuitBreaker()
+        let now = Date(timeIntervalSince1970: 10_000)
+        breaker.configure(
+            enabled: true,
+            cooldownSeconds: 300,
+            tcpWindowSize: 100
+        )
+
+        for _ in 0..<40 {
+            breaker.recordTCPClientHandshake(success: false, now: now)
+        }
+        for _ in 0..<60 {
+            breaker.recordTCPClientHandshake(success: true, now: now)
+        }
+
+        let snapshot = breaker.snapshot(now: now)
+        XCTAssertTrue(snapshot.isDegraded)
+        XCTAssertTrue(breaker.shouldForceTCPDirect(port: 443, now: now))
+        XCTAssertFalse(breaker.shouldForceTCPDirect(port: 80, now: now))
+    }
+
+    func testTripsOnQUICFailureRateWindowThreshold() {
+        let breaker = DualMITMCircuitBreaker()
+        let now = Date(timeIntervalSince1970: 20_000)
+        breaker.configure(
+            enabled: true,
+            cooldownSeconds: 300,
+            quicWindowSeconds: 60
+        )
+
+        breaker.recordQUICInterceptSample(failed: true, now: now)
+        breaker.recordQUICInterceptSample(failed: true, now: now)
+        breaker.recordQUICInterceptSample(failed: true, now: now)
+        breaker.recordQUICInterceptSample(failed: false, now: now)
+        breaker.recordQUICInterceptSample(failed: false, now: now)
+
+        let snapshot = breaker.snapshot(now: now)
+        XCTAssertTrue(snapshot.isDegraded)
+        XCTAssertTrue(breaker.shouldForceQUICPassThrough(now: now))
+    }
+
+    func testCooldownExitClearsDegradedMode() {
+        let breaker = DualMITMCircuitBreaker()
+        let now = Date(timeIntervalSince1970: 30_000)
+        breaker.configure(
+            enabled: true,
+            cooldownSeconds: 30,
+            quicWindowSeconds: 60
+        )
+
+        breaker.recordQUICInterceptSample(failed: true, now: now)
+        XCTAssertTrue(breaker.snapshot(now: now).isDegraded)
+        XCTAssertFalse(breaker.snapshot(now: now.addingTimeInterval(31)).isDegraded)
+        XCTAssertFalse(breaker.shouldForceQUICPassThrough(now: now.addingTimeInterval(31)))
+    }
+
+    func testConfigureResetsCollectedSamplesAndDegradedState() {
+        let breaker = DualMITMCircuitBreaker()
+        let now = Date(timeIntervalSince1970: 40_000)
+        breaker.configure(
+            enabled: true,
+            cooldownSeconds: 300,
+            tcpWindowSize: 100
+        )
+
+        for _ in 0..<40 {
+            breaker.recordTCPClientHandshake(success: false, now: now)
+        }
+        for _ in 0..<60 {
+            breaker.recordTCPClientHandshake(success: true, now: now)
+        }
+
+        XCTAssertTrue(breaker.snapshot(now: now).isDegraded)
+        XCTAssertTrue(breaker.shouldForceTCPDirect(port: 443, now: now))
+
+        breaker.configure(
+            enabled: true,
+            cooldownSeconds: 300,
+            tcpWindowSize: 100
+        )
+
+        let snapshotAfterConfigure = breaker.snapshot(now: now)
+        XCTAssertFalse(snapshotAfterConfigure.isDegraded)
+        XCTAssertEqual(snapshotAfterConfigure.tcpAttempts, 0)
+        XCTAssertEqual(snapshotAfterConfigure.tcpFailures, 0)
+        XCTAssertEqual(snapshotAfterConfigure.quicAttemptsInWindow, 0)
+        XCTAssertEqual(snapshotAfterConfigure.quicFailuresInWindow, 0)
+        XCTAssertFalse(breaker.shouldForceTCPDirect(port: 443, now: now))
+    }
+}

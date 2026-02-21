@@ -166,7 +166,11 @@ final class AppGroupStorageTests: XCTestCase {
             fullTunnelIPv6Enabled: false,
             fullTunnelSocks5Host: "127.0.0.1",
             fullTunnelSocks5Port: 1080,
-            fullTunnelUDPForwardingMode: .split
+            fullTunnelUDPForwardingMode: .split,
+            dualMITMPolicy: .strictMITM,
+            tcpBypassTTLSeconds: 900,
+            quicHostFailOpenSeconds: 2400,
+            dualMITMCircuitBreakerEnabled: false
         )
 
         try storage.saveConfiguration(config)
@@ -186,6 +190,10 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(loaded.fullTunnelSocks5Host, config.fullTunnelSocks5Host)
         XCTAssertEqual(loaded.fullTunnelSocks5Port, config.fullTunnelSocks5Port)
         XCTAssertEqual(loaded.fullTunnelUDPForwardingMode, config.fullTunnelUDPForwardingMode)
+        XCTAssertEqual(loaded.dualMITMPolicy, config.dualMITMPolicy)
+        XCTAssertEqual(loaded.tcpBypassTTLSeconds, config.tcpBypassTTLSeconds)
+        XCTAssertEqual(loaded.quicHostFailOpenSeconds, config.quicHostFailOpenSeconds)
+        XCTAssertEqual(loaded.dualMITMCircuitBreakerEnabled, config.dualMITMCircuitBreakerEnabled)
     }
 
     func testLoadConfigurationWithNoFile() {
@@ -316,9 +324,28 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(config.maxBodySize, 10 * 1024 * 1024)
     }
 
+    func testCaptureConfigurationDefaultDualMITMSettings() {
+        let config = CaptureConfiguration.default
+
+        XCTAssertEqual(config.dualMITMPolicy, .adaptiveFailOpen)
+        XCTAssertEqual(config.tcpBypassTTLSeconds, 180)
+        XCTAssertEqual(config.quicHostFailOpenSeconds, 1800)
+        XCTAssertTrue(config.dualMITMCircuitBreakerEnabled)
+    }
+
     func testCaptureConfigurationNormalizedAddsDefaultDNSForFullTunnel() {
         var config = CaptureConfiguration.default
         config.captureMode = .fullTunnel
+        config.fullTunnelDNSServers = []
+
+        let normalized = config.normalized()
+
+        XCTAssertEqual(normalized.fullTunnelDNSServers, CaptureConfiguration.defaultFullTunnelDNSServers)
+    }
+
+    func testCaptureConfigurationNormalizedAddsDefaultDNSForFullTunnelDualMITM() {
+        var config = CaptureConfiguration.default
+        config.captureMode = .fullTunnelDualMITM
         config.fullTunnelDNSServers = []
 
         let normalized = config.normalized()
@@ -346,10 +373,38 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(normalized.fullTunnelDNSServers, ["1.1.1.1", "8.8.8.8"])
     }
 
+    func testCaptureConfigurationNormalizedClampsDualMITMTTLs() {
+        var config = CaptureConfiguration.default
+        config.tcpBypassTTLSeconds = 5
+        config.quicHostFailOpenSeconds = 100_000
+
+        let normalized = config.normalized()
+
+        XCTAssertEqual(normalized.tcpBypassTTLSeconds, 30)
+        XCTAssertEqual(normalized.quicHostFailOpenSeconds, 86_400)
+    }
+
     func testFilterModeEnum() {
         XCTAssertEqual(FilterMode.all.rawValue, "all")
         XCTAssertEqual(FilterMode.whitelist.rawValue, "whitelist")
         XCTAssertEqual(FilterMode.blacklist.rawValue, "blacklist")
+    }
+
+    func testCaptureModeBehaviorHelpers() {
+        XCTAssertFalse(CaptureMode.proxyOnly.usesPacketTunnelRouting)
+        XCTAssertTrue(CaptureMode.fullTunnel.usesPacketTunnelRouting)
+        XCTAssertTrue(CaptureMode.fullTunnelDualMITM.usesPacketTunnelRouting)
+
+        XCTAssertTrue(CaptureMode.proxyOnly.usesSystemHTTPProxy)
+        XCTAssertTrue(CaptureMode.fullTunnel.usesSystemHTTPProxy)
+        XCTAssertFalse(CaptureMode.fullTunnelDualMITM.usesSystemHTTPProxy)
+
+        XCTAssertTrue(CaptureMode.fullTunnel.supportsCustomSocksServer)
+        XCTAssertFalse(CaptureMode.fullTunnelDualMITM.supportsCustomSocksServer)
+
+        XCTAssertFalse(CaptureMode.proxyOnly.enablesTCPTransparentMITM)
+        XCTAssertFalse(CaptureMode.fullTunnel.enablesTCPTransparentMITM)
+        XCTAssertTrue(CaptureMode.fullTunnelDualMITM.enablesTCPTransparentMITM)
     }
 
     // MARK: - StorageError Tests
