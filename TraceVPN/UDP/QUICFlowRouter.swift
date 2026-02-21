@@ -6,11 +6,13 @@
 //
 
 import Dispatch
+import Darwin
 import Foundation
 import OSLog
 import Security
 import TraceCore
 import TracePacket
+import TraceProxy
 import TraceQUIC
 import TraceSecurity
 
@@ -34,7 +36,7 @@ struct QUICFlowDatagramContext: Sendable {
 ///
 /// Current behavior is connectivity-first: when interception is requested but
 /// the QUIC MITM engine is unavailable, we mark and pass-through.
-final class QUICFlowRouter {
+final class QUICFlowRouter: @unchecked Sendable {
     private struct FlowKey: Hashable {
         let sourceIP: IPAddress
         let sourcePort: UInt16
@@ -74,6 +76,14 @@ final class QUICFlowRouter {
         var lastFailureAt: Date?
         var lastActivity: Date
         var tunnelPolicyRequired: Bool
+        var authorityRetryCount: Int
+        var lastAuthorityRetry: String?
+        var establishedAt: Date?
+        var lastProgressAt: Date?
+        var clientDatagramsSeen: Int
+        var processedStreamCount: Int
+        var recentClientDatagrams: [Data]
+        var lastRouteDecisionLogSignature: String?
 
         init(
             flowID: UUID = UUID(),
@@ -107,6 +117,14 @@ final class QUICFlowRouter {
             lastFailureAt = nil
             lastActivity = now
             self.tunnelPolicyRequired = tunnelPolicyRequired
+            authorityRetryCount = 0
+            lastAuthorityRetry = nil
+            establishedAt = nil
+            lastProgressAt = nil
+            clientDatagramsSeen = 0
+            processedStreamCount = 0
+            recentClientDatagrams = []
+            lastRouteDecisionLogSignature = nil
         }
     }
 
@@ -116,7 +134,21 @@ final class QUICFlowRouter {
         let failureReason: String?
         let alpn: String?
         let sniHash: String?
+        let forwardingDecision: UDPForwardDecision?
         let consumeOriginalDatagram: Bool
+        var flowID: UUID? = nil
+    }
+
+    private struct NoProgressSnapshot {
+        let establishedAt: Date?
+        let lastProgressAt: Date?
+        let clientDatagramsSeen: Int
+        let processedStreams: Int
+    }
+
+    private struct HostFailOpenState {
+        let reason: String
+        let expiresAt: Date
     }
 
     private let logSampler = LogSampler()
@@ -124,28 +156,57 @@ final class QUICFlowRouter {
     private let interceptor: (any InterceptionProviding)?
     private let http3ClientFactory: @Sendable () -> any HTTP3Client
     private let engineStatusProvider: @Sendable () -> QUICEngineStatus
+    private let dualMITMPolicy: DualMITMPolicy
+    private let dualMITMCircuitBreakerEnabled: Bool
+    private let eventLogHandler: (@Sendable (String, String) -> Void)?
     private let downstreamDatagramSink: (@Sendable (Data, QUICFlowDatagramContext) -> Void)?
     private let upstreamDatagramSink: (@Sendable (Data, QUICFlowDatagramContext) -> Void)?
     private var flowStates: [FlowKey: FlowSessionState] = [:]
+    private var routeDecisionLogSignaturesByFlowID: [UUID: String] = [:]
+    private var hostFailOpenStates: [String: HostFailOpenState] = [:]
     private var lastCleanupAt = Date.distantPast
 
     private let cleanupInterval: TimeInterval = 30
     private let flowIdleTimeout: TimeInterval = 120
     private let retryBackoff: TimeInterval = 15
+    private let hostFailOpenBackoff: TimeInterval
+    private let maxRouteDecisionLogEntries = 4096
+    private let maxHostFailOpenEntries = 2048
     private let maxQueuedIngestsPerFlow = 16
     private let maxBufferedDatagramsPerFlow = 64
+    private let maxAuthorityRetryAttempts = 2
     private let sessionTickInterval: UInt64 = 25_000_000
+    private let noProgressGracePeriod: TimeInterval
+    private let noProgressIdleTimeout: TimeInterval
+    private let noProgressAbsoluteTimeout: TimeInterval
+    private let noProgressMinimumClientDatagrams = 3
+    private let maxFailOpenReplayDatagrams = 8
+    private let maxFailOpenReplayDatagramBytes = 2_048
 
     init(
         interceptor: (any InterceptionProviding)? = nil,
         http3ClientFactory: @escaping @Sendable () -> any HTTP3Client = { URLSessionHTTP3Client() },
         engineStatusProvider: @escaping @Sendable () -> QUICEngineStatus = { QUICEngineRuntime.currentStatus() },
+        hostFailOpenBackoff: TimeInterval = 1800,
+        noProgressGracePeriod: TimeInterval = 3.0,
+        noProgressIdleTimeout: TimeInterval = 3.0,
+        noProgressAbsoluteTimeout: TimeInterval = 12.0,
+        dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
+        dualMITMCircuitBreakerEnabled: Bool = true,
+        eventLogHandler: (@Sendable (String, String) -> Void)? = nil,
         downstreamDatagramSink: (@Sendable (Data, QUICFlowDatagramContext) -> Void)? = nil,
         upstreamDatagramSink: (@Sendable (Data, QUICFlowDatagramContext) -> Void)? = nil
     ) {
         self.interceptor = interceptor
         self.http3ClientFactory = http3ClientFactory
         self.engineStatusProvider = engineStatusProvider
+        self.hostFailOpenBackoff = max(60, hostFailOpenBackoff)
+        self.noProgressGracePeriod = max(0.5, noProgressGracePeriod)
+        self.noProgressIdleTimeout = max(0.5, noProgressIdleTimeout)
+        self.noProgressAbsoluteTimeout = max(2.0, noProgressAbsoluteTimeout)
+        self.dualMITMPolicy = dualMITMPolicy
+        self.dualMITMCircuitBreakerEnabled = dualMITMCircuitBreakerEnabled
+        self.eventLogHandler = eventLogHandler
         self.downstreamDatagramSink = downstreamDatagramSink
         self.upstreamDatagramSink = upstreamDatagramSink
     }
@@ -168,10 +229,12 @@ final class QUICFlowRouter {
             ipPacket: ipPacket,
             udpPacket: udpPacket,
             authorityHint: authorityHint,
+            udpForwarderAvailable: udpForwarderAvailable,
             tunnelPolicyRequired: tunnelPolicyRequired,
             tunnelUDPSupported: tunnelUDPSupported,
             forwardingDecision: forwardingDecision
         )
+        let effectiveForwardingDecision = evaluation.forwardingDecision ?? forwardingDecision
         let metadata = makeFlowMetadata(
             udpPacket: udpPacket,
             handshakeOutcome: evaluation.handshakeOutcome,
@@ -179,21 +242,60 @@ final class QUICFlowRouter {
             alpn: evaluation.alpn,
             sniHash: evaluation.sniHash
         )
+        let flowIDLabel = evaluation.flowID?.uuidString ?? "unknown"
+        let routeDecision = evaluation.inspectionOutcome == .intercepted ? "intercept" : "pass_through"
+        let fallbackApplied = evaluation.inspectionOutcome == .passThroughMarked
+        let bypassReason = evaluation.failureReason ?? "none"
+        let upstreamHash = LogRedaction.hash(ipPacket.destination.description)
+        let policy = dualMITMPolicy.rawValue
 
         if evaluation.inspectionOutcome == .passThroughMarked,
            let reason = evaluation.failureReason,
            logSampler.shouldLog(event: "vpn.quic_intercept_fallback", key: reason, first: 5, every: 250) {
             VPNLog.tunnel.info(
-                "event=vpn.quic_intercept_fallback outcome=pass_through reason=\(reason, privacy: .public) forward=\(String(describing: forwardingDecision), privacy: .public)"
+                "event=vpn.quic_intercept_fallback flow_id=\(flowIDLabel, privacy: .public) outcome=pass_through reason=\(reason, privacy: .public) forward=\(String(describing: effectiveForwardingDecision), privacy: .public) sni_hash=\(evaluation.sniHash ?? "unknown", privacy: .public) upstream_hash=\(upstreamHash, privacy: .public) route_decision=\(routeDecision, privacy: .public) fallback_applied=\(fallbackApplied) bypass_reason=\(bypassReason, privacy: .public) policy=\(policy, privacy: .public)"
+            )
+        }
+        if evaluation.inspectionOutcome == .passThroughMarked, let reason = evaluation.failureReason {
+            let logSignature = "pass_through:\(reason):\(String(describing: effectiveForwardingDecision))"
+            if shouldEmitRouteDecisionEvent(flowID: evaluation.flowID, signature: logSignature) {
+                eventLogHandler?(
+                    "quic_intercept",
+                    "flow_id=\(flowIDLabel) outcome=pass_through reason=\(reason) forward=\(String(describing: effectiveForwardingDecision)) sni_hash=\(evaluation.sniHash ?? "unknown") upstream_hash=\(upstreamHash) route_decision=\(routeDecision) fallback_applied=\(fallbackApplied) bypass_reason=\(bypassReason) policy=\(policy)"
+                )
+            }
+        } else if evaluation.inspectionOutcome == .intercepted {
+            eventLogHandler?(
+                "quic_intercept",
+                "flow_id=\(flowIDLabel) outcome=intercepted flow_sni_hash=\(evaluation.sniHash ?? "unknown") upstream_hash=\(upstreamHash) route_decision=\(routeDecision) fallback_applied=\(fallbackApplied) bypass_reason=\(bypassReason) policy=\(policy)"
             )
         }
 
         return QUICRouteResult(
-            forwardingDecision: forwardingDecision,
+            forwardingDecision: effectiveForwardingDecision,
             inspectionOutcome: evaluation.inspectionOutcome,
             metadata: metadata,
             consumeOriginalDatagram: evaluation.consumeOriginalDatagram
         )
+    }
+
+    private func shouldEmitRouteDecisionEvent(flowID: UUID?, signature: String) -> Bool {
+        guard let flowID else { return true }
+
+        return stateQueue.sync {
+            if routeDecisionLogSignaturesByFlowID[flowID] == signature {
+                return false
+            }
+            routeDecisionLogSignaturesByFlowID[flowID] = signature
+            trimRouteDecisionLogsLocked()
+
+            if let flowKey = flowStates.first(where: { $0.value.flowID == flowID })?.key,
+               var state = flowStates[flowKey] {
+                state.lastRouteDecisionLogSignature = signature
+                flowStates[flowKey] = state
+            }
+            return true
+        }
     }
 
     /// Attempts to consume an upstream QUIC datagram for an active intercepted flow.
@@ -284,6 +386,27 @@ final class QUICFlowRouter {
         return .forwardDirect
     }
 
+    private func failOpenForwardingDecision(
+        current: UDPForwardDecision,
+        reason: String?,
+        udpForwarderAvailable: Bool,
+        tunnelUDPSupported: Bool
+    ) -> UDPForwardDecision {
+        guard dualMITMPolicy == .adaptiveFailOpen else {
+            return current
+        }
+        guard udpForwarderAvailable else {
+            return current
+        }
+        if current == .forwardTunnel, !tunnelUDPSupported {
+            return .forwardDirect
+        }
+        guard current == .forwardTunnel, let reason else {
+            return current
+        }
+        return Self.prefersDirectFailOpenForwarding(for: reason) ? .forwardDirect : current
+    }
+
     private func parseHeaderMetadata(payload: Data) -> ParsedHeaderMetadata {
         guard let first = payload.first else {
             return ParsedHeaderMetadata(
@@ -350,6 +473,7 @@ final class QUICFlowRouter {
         ipPacket: IPPacket,
         udpPacket: UDPPacket,
         authorityHint: String?,
+        udpForwarderAvailable: Bool,
         tunnelPolicyRequired: Bool,
         tunnelUDPSupported: Bool,
         forwardingDecision: UDPForwardDecision
@@ -363,18 +487,20 @@ final class QUICFlowRouter {
         )
         let trimmedAuthorityHint = authorityHint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let hostHint = trimmedAuthorityHint.isEmpty ? ipPacket.destination.description : trimmedAuthorityHint
+        let normalizedHostHint = normalizeAuthority(hostHint)
         let payload = udpPacket.payload
 
         var bootstrapTask: (flowID: UUID, session: QUICMitmSession)?
         var ingestTask: (flowID: UUID, session: QUICMitmSession, payload: Data)?
         var sessionToClose: QUICMitmSession?
         var fallbackMetricReason: String?
+        var evaluationFlowID: UUID?
 
-        let evaluation = stateQueue.sync { () -> RouteEvaluation in
+        var evaluation = stateQueue.sync { () -> RouteEvaluation in
             cleanupIdleFlowsIfNeeded(now: now)
 
             var state = flowStates[flowKey] ?? FlowSessionState(
-                host: hostHint,
+                host: normalizedHostHint.isEmpty ? hostHint : normalizedHostHint,
                 port: Int(udpPacket.destinationPort),
                 clientIP: ipPacket.source,
                 clientPort: udpPacket.sourcePort,
@@ -384,8 +510,20 @@ final class QUICFlowRouter {
                 now: now,
                 tunnelPolicyRequired: tunnelPolicyRequired
             )
+            evaluationFlowID = state.flowID
 
-            state.host = hostHint
+            let shouldPromoteAuthorityHint =
+                !normalizedHostHint.isEmpty &&
+                state.session == nil &&
+                !state.isEstablished &&
+                !state.isEstablishing &&
+                (
+                    state.host.isEmpty ||
+                        (Self.isIPAddressLiteral(state.host) && !Self.isIPAddressLiteral(normalizedHostHint))
+                )
+            if shouldPromoteAuthorityHint {
+                state.host = normalizedHostHint
+            }
             state.port = Int(udpPacket.destinationPort)
             state.clientIP = ipPacket.source
             state.clientPort = udpPacket.sourcePort
@@ -395,10 +533,96 @@ final class QUICFlowRouter {
             state.lastActivity = now
             state.tunnelPolicyRequired = tunnelPolicyRequired
 
+            if dualMITMCircuitBreakerEnabled,
+               dualMITMPolicy == .adaptiveFailOpen,
+               DualMITMCircuitBreaker.shared.shouldForceQUICPassThrough(now: now) {
+                let priorTickTask = state.tickTask
+                priorTickTask?.cancel()
+                sessionToClose = state.session
+                let fallbackForwardingDecision = failOpenForwardingDecision(
+                    current: forwardingDecision,
+                    reason: "dual_mitm_circuit_breaker",
+                    udpForwarderAvailable: udpForwarderAvailable,
+                    tunnelUDPSupported: tunnelUDPSupported
+                )
+                state.upstreamForwardingDecision = fallbackForwardingDecision
+                state.lastFailureReason = "dual_mitm_circuit_breaker"
+                state.lastFailureAt = now
+                state.isEstablishing = false
+                state.isEstablished = false
+                state.queuedIngests = 0
+                state.pendingDatagrams.removeAll(keepingCapacity: false)
+                state.session = nil
+                state.tickTask = nil
+                state.establishedAt = nil
+                state.lastProgressAt = nil
+                state.clientDatagramsSeen = 0
+                state.processedStreamCount = 0
+                flowStates[flowKey] = state
+                fallbackMetricReason = "dual_mitm_circuit_breaker"
+                return RouteEvaluation(
+                    inspectionOutcome: .passThroughMarked,
+                    handshakeOutcome: .passThrough,
+                    failureReason: "dual_mitm_circuit_breaker",
+                    alpn: state.negotiatedALPN,
+                    sniHash: state.sniHash,
+                    forwardingDecision: fallbackForwardingDecision,
+                    consumeOriginalDatagram: false
+                )
+            }
+
+            if !state.isEstablished,
+               let hostFailOpenReason = activeHostFailOpenReasonLocked(
+                   state: state,
+                   hostHint: normalizedHostHint,
+                   destinationIP: ipPacket.destination.description,
+                   now: now
+               ) {
+                let priorTickTask = state.tickTask
+                priorTickTask?.cancel()
+                sessionToClose = state.session
+                let fallbackForwardingDecision = failOpenForwardingDecision(
+                    current: forwardingDecision,
+                    reason: hostFailOpenReason,
+                    udpForwarderAvailable: udpForwarderAvailable,
+                    tunnelUDPSupported: tunnelUDPSupported
+                )
+                state.upstreamForwardingDecision = fallbackForwardingDecision
+                state.lastFailureReason = hostFailOpenReason
+                state.lastFailureAt = now
+                state.isEstablishing = false
+                state.isEstablished = false
+                state.queuedIngests = 0
+                state.pendingDatagrams.removeAll(keepingCapacity: false)
+                state.session = nil
+                state.tickTask = nil
+                state.establishedAt = nil
+                state.lastProgressAt = nil
+                state.clientDatagramsSeen = 0
+                state.processedStreamCount = 0
+                flowStates[flowKey] = state
+                return RouteEvaluation(
+                    inspectionOutcome: .passThroughMarked,
+                    handshakeOutcome: .passThrough,
+                    failureReason: hostFailOpenReason,
+                    alpn: state.negotiatedALPN,
+                    sniHash: state.sniHash,
+                    forwardingDecision: fallbackForwardingDecision,
+                    consumeOriginalDatagram: false
+                )
+            }
+
             if tunnelPolicyRequired, !tunnelUDPSupported {
                 let priorTickTask = state.tickTask
                 priorTickTask?.cancel()
                 sessionToClose = state.session
+                let fallbackForwardingDecision = failOpenForwardingDecision(
+                    current: forwardingDecision,
+                    reason: "quic_tunnel_required_unavailable",
+                    udpForwarderAvailable: udpForwarderAvailable,
+                    tunnelUDPSupported: tunnelUDPSupported
+                )
+                state.upstreamForwardingDecision = fallbackForwardingDecision
                 state.lastFailureReason = "quic_tunnel_required_unavailable"
                 state.lastFailureAt = now
                 state.isEstablishing = false
@@ -407,6 +631,10 @@ final class QUICFlowRouter {
                 state.pendingDatagrams.removeAll(keepingCapacity: false)
                 state.session = nil
                 state.tickTask = nil
+                state.establishedAt = nil
+                state.lastProgressAt = nil
+                state.clientDatagramsSeen = 0
+                state.processedStreamCount = 0
                 flowStates[flowKey] = state
                 return RouteEvaluation(
                     inspectionOutcome: .passThroughMarked,
@@ -414,12 +642,14 @@ final class QUICFlowRouter {
                     failureReason: "quic_tunnel_required_unavailable",
                     alpn: state.negotiatedALPN,
                     sniHash: state.sniHash,
+                    forwardingDecision: fallbackForwardingDecision,
                     consumeOriginalDatagram: false
                 )
             }
 
             if state.isEstablished, let session = state.session {
                 if !payload.isEmpty {
+                    recordRecentClientDatagramLocked(payload, state: &state)
                     if state.queuedIngests < maxQueuedIngestsPerFlow {
                         state.queuedIngests += 1
                         ingestTask = (state.flowID, session, payload)
@@ -434,6 +664,7 @@ final class QUICFlowRouter {
                     failureReason: nil,
                     alpn: state.negotiatedALPN,
                     sniHash: state.sniHash,
+                    forwardingDecision: nil,
                     consumeOriginalDatagram: true
                 )
             }
@@ -441,6 +672,13 @@ final class QUICFlowRouter {
             if let reason = state.lastFailureReason,
                let lastFailureAt = state.lastFailureAt,
                now.timeIntervalSince(lastFailureAt) < retryBackoff {
+                let fallbackForwardingDecision = failOpenForwardingDecision(
+                    current: forwardingDecision,
+                    reason: reason,
+                    udpForwarderAvailable: udpForwarderAvailable,
+                    tunnelUDPSupported: tunnelUDPSupported
+                )
+                state.upstreamForwardingDecision = fallbackForwardingDecision
                 flowStates[flowKey] = state
                 return RouteEvaluation(
                     inspectionOutcome: .passThroughMarked,
@@ -448,13 +686,17 @@ final class QUICFlowRouter {
                     failureReason: reason,
                     alpn: state.negotiatedALPN,
                     sniHash: state.sniHash,
+                    forwardingDecision: fallbackForwardingDecision,
                     consumeOriginalDatagram: false
                 )
             }
 
             if state.isEstablishing {
-                if !payload.isEmpty, state.pendingDatagrams.count < maxBufferedDatagramsPerFlow {
-                    state.pendingDatagrams.append(QueuedDatagram(payload: payload, fromClient: true))
+                if !payload.isEmpty {
+                    recordRecentClientDatagramLocked(payload, state: &state)
+                    if state.pendingDatagrams.count < maxBufferedDatagramsPerFlow {
+                        state.pendingDatagrams.append(QueuedDatagram(payload: payload, fromClient: true))
+                    }
                 }
                 flowStates[flowKey] = state
                 return RouteEvaluation(
@@ -463,6 +705,7 @@ final class QUICFlowRouter {
                     failureReason: "quic_mitm_session_establishing",
                     alpn: state.negotiatedALPN,
                     sniHash: state.sniHash,
+                    forwardingDecision: nil,
                     consumeOriginalDatagram: true
                 )
             }
@@ -470,6 +713,13 @@ final class QUICFlowRouter {
             let engineStatus = engineStatusProvider()
             if engineStatus.availability != .available {
                 let reason = QUICMitmFailureReason.engineUnavailable.rawValue
+                let fallbackForwardingDecision = failOpenForwardingDecision(
+                    current: forwardingDecision,
+                    reason: reason,
+                    udpForwarderAvailable: udpForwarderAvailable,
+                    tunnelUDPSupported: tunnelUDPSupported
+                )
+                state.upstreamForwardingDecision = fallbackForwardingDecision
                 state.lastFailureReason = reason
                 state.lastFailureAt = now
                 state.isEstablishing = false
@@ -478,7 +728,11 @@ final class QUICFlowRouter {
                 state.pendingDatagrams.removeAll(keepingCapacity: false)
                 state.session = nil
                 state.tickTask = nil
-                state.sniHash = LogRedaction.hash(hostHint)
+                state.establishedAt = nil
+                state.lastProgressAt = nil
+                state.clientDatagramsSeen = 0
+                state.processedStreamCount = 0
+                state.sniHash = LogRedaction.hash(state.host)
                 flowStates[flowKey] = state
                 fallbackMetricReason = reason
                 return RouteEvaluation(
@@ -487,6 +741,7 @@ final class QUICFlowRouter {
                     failureReason: reason,
                     alpn: state.negotiatedALPN,
                     sniHash: state.sniHash,
+                    forwardingDecision: fallbackForwardingDecision,
                     consumeOriginalDatagram: false
                 )
             }
@@ -495,7 +750,19 @@ final class QUICFlowRouter {
             state.lastFailureReason = nil
             state.lastFailureAt = nil
             state.negotiatedALPN = nil
-            state.sniHash = LogRedaction.hash(hostHint)
+            state.sniHash = LogRedaction.hash(state.host)
+            state.establishedAt = nil
+            state.lastProgressAt = nil
+            state.clientDatagramsSeen = 0
+            state.processedStreamCount = 0
+
+            let certificateMaterial = makeCertificateMaterial(for: state.host)
+            if certificateMaterial == nil {
+                eventLogHandler?(
+                    "quic_mitm_session",
+                    "stage=establish_prepare flow_id=\(state.flowID.uuidString) host_hash=\(state.sniHash ?? "unknown") cert_material=missing"
+                )
+            }
 
             let session = QUICMitmSession(
                 flowID: state.flowID,
@@ -503,11 +770,13 @@ final class QUICFlowRouter {
                 port: state.port,
                 interceptor: interceptor,
                 http3Client: http3ClientFactory(),
-                certificateMaterial: makeCertificateMaterial(for: state.host),
-                tunnelPolicyRequired: state.tunnelPolicyRequired
+                certificateMaterial: certificateMaterial,
+                tunnelPolicyRequired: state.tunnelPolicyRequired,
+                eventLogHandler: eventLogHandler
             )
             state.session = session
             if !payload.isEmpty {
+                recordRecentClientDatagramLocked(payload, state: &state)
                 state.pendingDatagrams.append(QueuedDatagram(payload: payload, fromClient: true))
             }
             flowStates[flowKey] = state
@@ -519,6 +788,7 @@ final class QUICFlowRouter {
                 failureReason: "quic_mitm_session_establishing",
                 alpn: state.negotiatedALPN,
                 sniHash: state.sniHash,
+                forwardingDecision: nil,
                 consumeOriginalDatagram: true
             )
         }
@@ -550,6 +820,7 @@ final class QUICFlowRouter {
             }
         }
 
+        evaluation.flowID = evaluationFlowID
         return evaluation
     }
 
@@ -563,13 +834,23 @@ final class QUICFlowRouter {
             let establishResult = await session.establish()
 
             if establishResult.outcome == .intercepted {
+                if self.dualMITMCircuitBreakerEnabled, self.dualMITMPolicy == .adaptiveFailOpen {
+                    DualMITMCircuitBreaker.shared.recordQUICInterceptSample(failed: false)
+                }
                 self.stateQueue.sync {
                     guard var state = self.flowStates[flowKey], state.flowID == flowID else { return }
+                    let now = Date()
                     state.isEstablishing = false
                     state.isEstablished = true
                     state.lastFailureReason = nil
                     state.lastFailureAt = nil
                     state.negotiatedALPN = "h3"
+                    state.authorityRetryCount = 0
+                    state.lastAuthorityRetry = nil
+                    state.establishedAt = now
+                    state.lastProgressAt = now
+                    state.clientDatagramsSeen = 0
+                    state.processedStreamCount = 0
                     state.tickTask?.cancel()
                     state.tickTask = self.makeSessionTickTask(
                         flowKey: flowKey,
@@ -625,10 +906,47 @@ final class QUICFlowRouter {
                     flowKey: flowKey,
                     flowID: flowID,
                     session: session,
-                    direction: fromClient ? "client" : "upstream"
+                    direction: fromClient ? "client" : "upstream",
+                    originalPayload: payload,
+                    fromClient: fromClient
                 )
             } catch {
-                let reason = "quic_mitm_ingest_failed"
+                if self.isGracefulSessionClosure(error) {
+                    let reason = self.gracefulSessionClosureReason(for: error)
+                    self.forwardOriginalDatagramIfNeeded(
+                        payload,
+                        fromClient: fromClient,
+                        flowKey: flowKey,
+                        flowID: flowID
+                    )
+                    let shouldCloseSession = self.closeFlowGracefully(
+                        flowKey: flowKey,
+                        flowID: flowID,
+                        reason: reason
+                    )
+                    if shouldCloseSession {
+                        if self.logSampler.shouldLog(event: "vpn.quic_session_ingest_closed", key: reason, first: 5, every: 250) {
+                            VPNLog.tunnel.info(
+                                "event=vpn.quic_session_ingest_closed outcome=closed reason=\(reason, privacy: .public) direction=\(fromClient ? "client" : "upstream", privacy: .public)"
+                            )
+                        }
+                        await session.close()
+                    }
+                    return
+                }
+
+                let errorDescription = String(describing: error)
+                let reason = self.ingestFailureReason(for: error)
+                self.eventLogHandler?(
+                    "quic_mitm_session",
+                    "outcome=ingest_exception flow_id=\(flowID.uuidString) reason=\(reason) direction=\(fromClient ? "client" : "upstream") error=\(errorDescription)"
+                )
+                self.forwardOriginalDatagramIfNeeded(
+                    payload,
+                    fromClient: fromClient,
+                    flowKey: flowKey,
+                    flowID: flowID
+                )
                 let shouldCloseSession = self.markFlowFailed(
                     flowKey: flowKey,
                     flowID: flowID,
@@ -636,9 +954,10 @@ final class QUICFlowRouter {
                 )
 
                 if shouldCloseSession {
+                    await QUICConnectionManager.shared.recordPassThroughFallback(reason: reason)
                     if self.logSampler.shouldLog(event: "vpn.quic_session_ingest_failed", key: reason, first: 5, every: 250) {
                         VPNLog.tunnel.info(
-                            "event=vpn.quic_session_ingest_failed outcome=pass_through reason=\(reason, privacy: .public) direction=\(fromClient ? "client" : "upstream", privacy: .public)"
+                            "event=vpn.quic_session_ingest_failed outcome=pass_through reason=\(reason, privacy: .public) direction=\(fromClient ? "client" : "upstream", privacy: .public) error=\(errorDescription, privacy: .public)"
                         )
                     }
                     await session.close()
@@ -647,12 +966,126 @@ final class QUICFlowRouter {
         }
     }
 
+    private func scheduleAuthorityRetry(
+        flowKey: FlowKey,
+        flowID: UUID,
+        authorityHint: String,
+        replayDatagram: Data?,
+        fromClient: Bool
+    ) -> (oldSession: QUICMitmSession, flowID: UUID, session: QUICMitmSession, authorityHash: String, attempt: Int)? {
+        guard fromClient else {
+            return nil
+        }
+
+        let normalizedAuthority = normalizeAuthority(authorityHint)
+        guard shouldIssueCertificate(for: normalizedAuthority) else {
+            eventLogHandler?(
+                "quic_mitm_session",
+                "outcome=retry_with_authority_skipped flow_id=\(flowID.uuidString) reason=invalid_authority"
+            )
+            return nil
+        }
+
+        var retryTask: (oldSession: QUICMitmSession, flowID: UUID, session: QUICMitmSession, authorityHash: String, attempt: Int)?
+        stateQueue.sync {
+            guard var state = flowStates[flowKey],
+                  state.flowID == flowID,
+                  let activeSession = state.session else { return }
+
+            let currentAuthority = normalizeAuthority(state.host)
+            guard currentAuthority.caseInsensitiveCompare(normalizedAuthority) != .orderedSame else {
+                eventLogHandler?(
+                    "quic_mitm_session",
+                    "outcome=retry_with_authority_skipped flow_id=\(flowID.uuidString) reason=same_authority authority_hash=\(LogRedaction.hash(normalizedAuthority))"
+                )
+                return
+            }
+
+            if state.authorityRetryCount >= maxAuthorityRetryAttempts ||
+                state.lastAuthorityRetry?.caseInsensitiveCompare(normalizedAuthority) == .orderedSame {
+                eventLogHandler?(
+                    "quic_mitm_session",
+                    "outcome=retry_with_authority_skipped flow_id=\(flowID.uuidString) reason=attempt_exhausted authority_hash=\(LogRedaction.hash(normalizedAuthority)) attempts=\(state.authorityRetryCount)"
+                )
+                return
+            }
+
+            let now = Date()
+            if let hostFailOpenReason = activeHostFailOpenReasonLocked(
+                state: state,
+                hostHint: normalizedAuthority,
+                destinationIP: state.serverIP.description,
+                now: now
+            ) {
+                eventLogHandler?(
+                    "quic_mitm_session",
+                    "outcome=retry_with_authority_skipped flow_id=\(flowID.uuidString) reason=host_fail_open_active authority_hash=\(LogRedaction.hash(normalizedAuthority)) fail_open_reason=\(hostFailOpenReason)"
+                )
+                return
+            }
+
+            guard let certificateMaterial = makeCertificateMaterial(for: normalizedAuthority) else {
+                eventLogHandler?(
+                    "quic_mitm_session",
+                    "outcome=retry_with_authority_skipped flow_id=\(flowID.uuidString) reason=cert_material_unavailable authority_hash=\(LogRedaction.hash(normalizedAuthority))"
+                )
+                return
+            }
+
+            state.tickTask?.cancel()
+            state.tickTask = nil
+            state.host = normalizedAuthority
+            state.port = Int(state.serverPort)
+            state.isEstablishing = true
+            state.isEstablished = false
+            state.queuedIngests = 0
+            state.pendingDatagrams.removeAll(keepingCapacity: false)
+            if let replayDatagram, !replayDatagram.isEmpty, state.pendingDatagrams.count < maxBufferedDatagramsPerFlow {
+                recordRecentClientDatagramLocked(replayDatagram, state: &state)
+                state.pendingDatagrams.append(QueuedDatagram(payload: replayDatagram, fromClient: true))
+            }
+            state.negotiatedALPN = nil
+            state.sniHash = LogRedaction.hash(normalizedAuthority)
+            state.lastFailureReason = nil
+            state.lastFailureAt = nil
+            state.authorityRetryCount += 1
+            state.lastAuthorityRetry = normalizedAuthority
+            state.establishedAt = nil
+            state.lastProgressAt = nil
+            state.clientDatagramsSeen = 0
+            state.processedStreamCount = 0
+
+            let newSession = QUICMitmSession(
+                flowID: state.flowID,
+                host: state.host,
+                port: state.port,
+                interceptor: interceptor,
+                http3Client: http3ClientFactory(),
+                certificateMaterial: certificateMaterial,
+                tunnelPolicyRequired: state.tunnelPolicyRequired,
+                eventLogHandler: eventLogHandler
+            )
+            state.session = newSession
+            flowStates[flowKey] = state
+            retryTask = (
+                oldSession: activeSession,
+                flowID: state.flowID,
+                session: newSession,
+                authorityHash: state.sniHash ?? "unknown",
+                attempt: state.authorityRetryCount
+            )
+        }
+        return retryTask
+    }
+
     private func handleSessionResult(
         _ ingestResult: QUICMitmIngestResult,
         flowKey: FlowKey,
         flowID: UUID,
         session: QUICMitmSession,
-        direction: String
+        direction: String,
+        originalPayload: Data? = nil,
+        fromClient: Bool
     ) async {
         if let context = datagramContext(for: flowKey, flowID: flowID) {
             if let sink = downstreamDatagramSink, !ingestResult.datagramsToClient.isEmpty {
@@ -667,11 +1100,156 @@ final class QUICFlowRouter {
             }
         }
 
+        if ingestResult.processedStreams > 0 {
+            eventLogHandler?(
+                "quic_plaintext_capture",
+                "outcome=decrypted flow_id=\(flowID.uuidString) streams=\(ingestResult.processedStreams)"
+            )
+        }
+        let now = Date()
+        let noProgressSnapshot = updateNoProgressSnapshot(
+            flowKey: flowKey,
+            flowID: flowID,
+            fromClient: fromClient,
+            ingestResult: ingestResult,
+            now: now
+        )
+
+        if let retryAuthorityHint = ingestResult.retryAuthorityHint {
+            if let retryTask = scheduleAuthorityRetry(
+                flowKey: flowKey,
+                flowID: flowID,
+                authorityHint: retryAuthorityHint,
+                replayDatagram: originalPayload,
+                fromClient: fromClient
+            ) {
+                eventLogHandler?(
+                    "quic_mitm_session",
+                    "outcome=retry_with_authority_scheduled flow_id=\(flowID.uuidString) authority_hash=\(retryTask.authorityHash) attempt=\(retryTask.attempt)"
+                )
+                launchBootstrapTask(
+                    flowKey: flowKey,
+                    flowID: retryTask.flowID,
+                    session: retryTask.session
+                )
+                await retryTask.oldSession.close()
+                return
+            }
+
+            let reason = "quic_retry_with_authority_failed"
+            forwardOriginalDatagramIfNeeded(
+                originalPayload,
+                fromClient: fromClient,
+                flowKey: flowKey,
+                flowID: flowID
+            )
+            let shouldCloseSession = markFlowFailed(
+                flowKey: flowKey,
+                flowID: flowID,
+                reason: reason
+            )
+            if shouldCloseSession {
+                await QUICConnectionManager.shared.recordPassThroughFallback(reason: reason)
+                await session.close()
+            }
+            return
+        }
+
+        if ingestResult.connectionClosed, ingestResult.fallbackReason == nil {
+            let reason = ingestResult.connectionCloseReason?.rawValue ?? "none"
+            let shouldFailOpen = ingestResult.processedStreams == 0
+            if shouldFailOpen {
+                if originalPayload == nil {
+                    replayRecentClientDatagramsIfNeeded(
+                        flowKey: flowKey,
+                        flowID: flowID,
+                        reason: "quic_closed_before_http3_\(reason)"
+                    )
+                }
+                forwardOriginalDatagramIfNeeded(
+                    originalPayload,
+                    fromClient: fromClient,
+                    flowKey: flowKey,
+                    flowID: flowID
+                )
+            }
+
+            let effectiveReason = shouldFailOpen ? "quic_closed_before_http3_\(reason)" : reason
+            let shouldCloseSession = shouldFailOpen
+                ? markFlowFailed(flowKey: flowKey, flowID: flowID, reason: effectiveReason)
+                : closeFlowGracefully(flowKey: flowKey, flowID: flowID, reason: effectiveReason)
+            if shouldCloseSession {
+                if shouldFailOpen {
+                    await QUICConnectionManager.shared.recordPassThroughFallback(reason: effectiveReason)
+                }
+                if logSampler.shouldLog(event: "vpn.quic_session_closed", key: effectiveReason, first: 5, every: 250) {
+                    VPNLog.tunnel.debug(
+                        "event=vpn.quic_session_closed outcome=\(shouldFailOpen ? "pass_through" : "success", privacy: .public) reason=\(effectiveReason, privacy: .public) direction=\(direction, privacy: .public)"
+                    )
+                }
+                await session.close()
+            }
+            return
+        }
+
         guard let fallbackReason = ingestResult.fallbackReason else {
+            let shouldFailOpenForNoProgress = shouldFailOpenForNoProgress(
+                snapshot: noProgressSnapshot,
+                now: now
+            )
+            if shouldFailOpenForNoProgress {
+                let reason = "quic_no_progress_fail_open"
+                if originalPayload == nil {
+                    replayRecentClientDatagramsIfNeeded(
+                        flowKey: flowKey,
+                        flowID: flowID,
+                        reason: reason
+                    )
+                }
+                forwardOriginalDatagramIfNeeded(
+                    originalPayload,
+                    fromClient: fromClient,
+                    flowKey: flowKey,
+                    flowID: flowID
+                )
+                let shouldCloseSession = markFlowFailed(
+                    flowKey: flowKey,
+                    flowID: flowID,
+                    reason: reason
+                )
+                if shouldCloseSession {
+                    let idleMs = noProgressSnapshot?.lastProgressAt
+                        .map { max(0, Int(now.timeIntervalSince($0) * 1_000)) } ?? -1
+                    eventLogHandler?(
+                        "quic_mitm_session",
+                        "outcome=no_progress_fail_open flow_id=\(flowID.uuidString) direction=\(direction) client_datagrams=\(noProgressSnapshot?.clientDatagramsSeen ?? -1) idle_ms=\(idleMs)"
+                    )
+                    await QUICConnectionManager.shared.recordPassThroughFallback(reason: reason)
+                    if logSampler.shouldLog(event: "vpn.quic_no_progress_fail_open", key: reason, first: 5, every: 250) {
+                        VPNLog.tunnel.info(
+                            "event=vpn.quic_no_progress_fail_open outcome=pass_through reason=\(reason, privacy: .public) direction=\(direction, privacy: .public)"
+                        )
+                    }
+                    await session.close()
+                }
+            }
             return
         }
 
         let reason = failureReason(from: fallbackReason)
+        if originalPayload == nil {
+            replayRecentClientDatagramsIfNeeded(
+                flowKey: flowKey,
+                flowID: flowID,
+                reason: reason
+            )
+        }
+        forwardOriginalDatagramIfNeeded(
+            originalPayload,
+            fromClient: fromClient,
+            flowKey: flowKey,
+            flowID: flowID
+        )
         let shouldCloseSession = markFlowFailed(
             flowKey: flowKey,
             flowID: flowID,
@@ -687,6 +1265,83 @@ final class QUICFlowRouter {
             }
             await session.close()
         }
+    }
+
+    private func updateNoProgressSnapshot(
+        flowKey: FlowKey,
+        flowID: UUID,
+        fromClient: Bool,
+        ingestResult: QUICMitmIngestResult,
+        now: Date
+    ) -> NoProgressSnapshot? {
+        stateQueue.sync {
+            guard var state = flowStates[flowKey], state.flowID == flowID else {
+                return nil
+            }
+
+            if fromClient {
+                state.clientDatagramsSeen += 1
+            }
+
+            if ingestResult.processedStreams > 0 {
+                state.processedStreamCount += ingestResult.processedStreams
+            }
+
+            if ingestResult.processedStreams > 0 ||
+                !ingestResult.datagramsToClient.isEmpty ||
+                !ingestResult.datagramsToUpstream.isEmpty {
+                state.lastProgressAt = now
+            }
+
+            flowStates[flowKey] = state
+            return NoProgressSnapshot(
+                establishedAt: state.establishedAt,
+                lastProgressAt: state.lastProgressAt,
+                clientDatagramsSeen: state.clientDatagramsSeen,
+                processedStreams: state.processedStreamCount
+            )
+        }
+    }
+
+    private func shouldFailOpenForNoProgress(
+        snapshot: NoProgressSnapshot?,
+        now: Date
+    ) -> Bool {
+        guard let snapshot else { return false }
+        return Self.shouldFailOpenForNoProgress(
+            establishedAt: snapshot.establishedAt,
+            lastProgressAt: snapshot.lastProgressAt,
+            clientDatagramsSeen: snapshot.clientDatagramsSeen,
+            processedStreams: snapshot.processedStreams,
+            now: now,
+            gracePeriod: noProgressGracePeriod,
+            idleTimeout: noProgressIdleTimeout,
+            minimumClientDatagrams: noProgressMinimumClientDatagrams,
+            absoluteTimeout: noProgressAbsoluteTimeout
+        )
+    }
+
+    static func shouldFailOpenForNoProgress(
+        establishedAt: Date?,
+        lastProgressAt: Date?,
+        clientDatagramsSeen: Int,
+        processedStreams: Int,
+        now: Date,
+        gracePeriod: TimeInterval,
+        idleTimeout: TimeInterval,
+        minimumClientDatagrams: Int,
+        absoluteTimeout: TimeInterval? = nil
+    ) -> Bool {
+        guard processedStreams == 0 else { return false }
+        guard clientDatagramsSeen >= minimumClientDatagrams else { return false }
+        guard let establishedAt else { return false }
+        let establishedDuration = now.timeIntervalSince(establishedAt)
+        guard establishedDuration >= gracePeriod else { return false }
+        if let absoluteTimeout, absoluteTimeout > 0, establishedDuration >= absoluteTimeout {
+            return true
+        }
+        let progressReference = lastProgressAt ?? establishedAt
+        return now.timeIntervalSince(progressReference) >= idleTimeout
     }
 
     private func schedulePendingDatagramsIfPossible(flowKey: FlowKey, flowID: UUID) {
@@ -759,10 +1414,34 @@ final class QUICFlowRouter {
                         flowKey: flowKey,
                         flowID: flowID,
                         session: session,
-                        direction: "timer"
+                        direction: "timer",
+                        fromClient: false
                     )
                 } catch {
-                    let reason = "quic_mitm_tick_failed"
+                    if self.isGracefulSessionClosure(error) {
+                        let reason = self.gracefulSessionClosureReason(for: error)
+                        let shouldCloseSession = self.closeFlowGracefully(
+                            flowKey: flowKey,
+                            flowID: flowID,
+                            reason: reason
+                        )
+                        if shouldCloseSession {
+                            if self.logSampler.shouldLog(event: "vpn.quic_session_tick_closed", key: reason, first: 5, every: 250) {
+                                VPNLog.tunnel.debug(
+                                    "event=vpn.quic_session_tick_closed outcome=closed reason=\(reason, privacy: .public)"
+                                )
+                            }
+                            await session.close()
+                        }
+                        return
+                    }
+
+                    let errorDescription = String(describing: error)
+                    let reason = self.ingestFailureReason(for: error)
+                    self.eventLogHandler?(
+                        "quic_mitm_session",
+                        "outcome=tick_exception flow_id=\(flowID.uuidString) reason=\(reason) error=\(errorDescription)"
+                    )
                     let shouldCloseSession = self.markFlowFailed(
                         flowKey: flowKey,
                         flowID: flowID,
@@ -770,9 +1449,10 @@ final class QUICFlowRouter {
                     )
 
                     if shouldCloseSession {
+                        await QUICConnectionManager.shared.recordPassThroughFallback(reason: reason)
                         if self.logSampler.shouldLog(event: "vpn.quic_session_tick_failed", key: reason, first: 5, every: 250) {
                             VPNLog.tunnel.info(
-                                "event=vpn.quic_session_tick_failed outcome=pass_through reason=\(reason, privacy: .public)"
+                                "event=vpn.quic_session_tick_failed outcome=pass_through reason=\(reason, privacy: .public) error=\(errorDescription, privacy: .public)"
                             )
                         }
                         await session.close()
@@ -783,15 +1463,72 @@ final class QUICFlowRouter {
         }
     }
 
+    private func closeFlowGracefully(
+        flowKey: FlowKey,
+        flowID: UUID,
+        reason: String
+    ) -> Bool {
+        var tickTask: Task<Void, Never>?
+        var hostHash: String?
+        let shouldClose = stateQueue.sync { () -> Bool in
+            guard var state = flowStates[flowKey], state.flowID == flowID else { return false }
+            tickTask = state.tickTask
+            hostHash = LogRedaction.hash(state.host)
+            state.isEstablishing = false
+            state.isEstablished = false
+            state.queuedIngests = 0
+            state.pendingDatagrams.removeAll(keepingCapacity: false)
+            state.session = nil
+            state.tickTask = nil
+            // Graceful close should not force fail-open backoff for subsequent datagrams.
+            state.lastFailureReason = nil
+            state.lastFailureAt = nil
+            state.establishedAt = nil
+            state.lastProgressAt = nil
+            state.clientDatagramsSeen = 0
+            state.processedStreamCount = 0
+            state.recentClientDatagrams.removeAll(keepingCapacity: false)
+            flowStates[flowKey] = state
+            return true
+        }
+        tickTask?.cancel()
+        if shouldClose {
+            eventLogHandler?(
+                "quic_mitm_session",
+                "outcome=closed flow_id=\(flowID.uuidString) host_hash=\(hostHash ?? "unknown") reason=\(reason)"
+            )
+        }
+        return shouldClose
+    }
+
+    private func forwardOriginalDatagramIfNeeded(
+        _ payload: Data?,
+        fromClient: Bool,
+        flowKey: FlowKey,
+        flowID: UUID
+    ) {
+        guard let payload, !payload.isEmpty else { return }
+        guard let context = datagramContext(for: flowKey, flowID: flowID) else { return }
+        if fromClient {
+            upstreamDatagramSink?(payload, context)
+        } else {
+            downstreamDatagramSink?(payload, context)
+        }
+    }
+
     private func markFlowFailed(
         flowKey: FlowKey,
         flowID: UUID,
         reason: String
     ) -> Bool {
         var tickTask: Task<Void, Never>?
+        var hostHash: String?
+        var hostFailOpenHashes: String?
+        let failureAt = Date()
         let shouldClose = stateQueue.sync { () -> Bool in
             guard var state = flowStates[flowKey], state.flowID == flowID else { return false }
             tickTask = state.tickTask
+            hostHash = LogRedaction.hash(state.host)
             state.isEstablishing = false
             state.isEstablished = false
             state.queuedIngests = 0
@@ -799,12 +1536,49 @@ final class QUICFlowRouter {
             state.session = nil
             state.tickTask = nil
             state.lastFailureReason = reason
-            state.lastFailureAt = Date()
+            state.lastFailureAt = failureAt
+            state.establishedAt = nil
+            state.lastProgressAt = nil
+            state.clientDatagramsSeen = 0
+            state.processedStreamCount = 0
+            state.recentClientDatagrams.removeAll(keepingCapacity: false)
+            let failOpenKeys = markHostFailOpenLocked(
+                state: state,
+                reason: reason,
+                now: failureAt
+            )
+            if !failOpenKeys.isEmpty {
+                hostFailOpenHashes = failOpenKeys
+                    .map { LogRedaction.hash($0) }
+                    .sorted()
+                    .joined(separator: "|")
+            }
             flowStates[flowKey] = state
             return true
         }
         tickTask?.cancel()
+        if shouldClose {
+            if dualMITMCircuitBreakerEnabled, dualMITMPolicy == .adaptiveFailOpen {
+                DualMITMCircuitBreaker.shared.recordQUICInterceptSample(failed: true)
+            }
+            eventLogHandler?(
+                "quic_mitm_session",
+                "outcome=failed flow_id=\(flowID.uuidString) host_hash=\(hostHash ?? "unknown") reason=\(reason) route_decision=pass_through fallback_applied=true bypass_reason=\(reason) policy=\(dualMITMPolicy.rawValue)"
+            )
+            if let hostFailOpenHashes, !hostFailOpenHashes.isEmpty {
+                eventLogHandler?(
+                    "quic_mitm_session",
+                    "outcome=host_fail_open_marked flow_id=\(flowID.uuidString) reason=\(reason) host_hashes=\(hostFailOpenHashes) ttl_ms=\(Int(hostFailOpenBackoff * 1_000)) policy=\(dualMITMPolicy.rawValue)"
+                )
+            }
+        }
         return shouldClose
+    }
+
+    static func mitmAutoBypassReason(forQUICFailure reason: String) -> String? {
+        // QUIC fail-open is transport fallback and should not poison shared host
+        // bypass used by TCP MITM routing/capture.
+        return nil
     }
 
     private func datagramContext(for flowKey: FlowKey, flowID: UUID) -> QUICFlowDatagramContext? {
@@ -828,6 +1602,8 @@ final class QUICFlowRouter {
             return
         }
         lastCleanupAt = now
+        pruneHostFailOpenLocked(now: now)
+        pruneRouteDecisionLogsLocked()
 
         var sessionsToClose: [QUICMitmSession] = []
         var tickTasksToCancel: [Task<Void, Never>] = []
@@ -853,39 +1629,386 @@ final class QUICFlowRouter {
                 await session.close()
             }
         }
+
+        pruneRouteDecisionLogsLocked()
+    }
+
+    private func activeHostFailOpenReasonLocked(
+        state: FlowSessionState,
+        hostHint: String,
+        destinationIP: String,
+        now: Date
+    ) -> String? {
+        pruneHostFailOpenLocked(now: now)
+
+        var candidateKeys: [String] = []
+        if !hostHint.isEmpty {
+            candidateKeys.append(hostHint)
+        }
+
+        let normalizedStateHost = normalizeAuthority(state.host)
+        if !normalizedStateHost.isEmpty {
+            candidateKeys.append(normalizedStateHost)
+        }
+
+        if let lastAuthorityRetry = state.lastAuthorityRetry {
+            let normalizedRetry = normalizeAuthority(lastAuthorityRetry)
+            if !normalizedRetry.isEmpty {
+                candidateKeys.append(normalizedRetry)
+            }
+        }
+
+        let normalizedDestinationIP = normalizeAuthority(destinationIP)
+        if !normalizedDestinationIP.isEmpty {
+            candidateKeys.append(normalizedDestinationIP)
+        }
+
+        for key in candidateKeys {
+            if let hostFailOpen = hostFailOpenStates[key], hostFailOpen.expiresAt > now {
+                return hostFailOpen.reason
+            }
+        }
+
+        return nil
+    }
+
+    private func recordRecentClientDatagramLocked(_ payload: Data, state: inout FlowSessionState) {
+        guard !payload.isEmpty else { return }
+        guard payload.count <= maxFailOpenReplayDatagramBytes else { return }
+
+        state.recentClientDatagrams.append(payload)
+        let overflow = state.recentClientDatagrams.count - maxFailOpenReplayDatagrams
+        if overflow > 0 {
+            state.recentClientDatagrams.removeFirst(overflow)
+        }
+    }
+
+    private func replayRecentClientDatagramsIfNeeded(
+        flowKey: FlowKey,
+        flowID: UUID,
+        reason: String
+    ) {
+        var replayDatagrams: [Data] = []
+        stateQueue.sync {
+            guard var state = flowStates[flowKey], state.flowID == flowID else { return }
+
+            replayDatagrams = state.recentClientDatagrams
+            if !state.pendingDatagrams.isEmpty {
+                replayDatagrams.append(
+                    contentsOf: state.pendingDatagrams
+                        .filter(\.fromClient)
+                        .map(\.payload)
+                )
+            }
+            state.recentClientDatagrams.removeAll(keepingCapacity: false)
+            flowStates[flowKey] = state
+        }
+
+        guard !replayDatagrams.isEmpty else { return }
+        var deduplicated: [Data] = []
+        deduplicated.reserveCapacity(replayDatagrams.count)
+        for payload in replayDatagrams where !payload.isEmpty {
+            if deduplicated.last == payload {
+                continue
+            }
+            deduplicated.append(payload)
+        }
+        guard !deduplicated.isEmpty else { return }
+
+        for payload in deduplicated {
+            forwardOriginalDatagramIfNeeded(
+                payload,
+                fromClient: true,
+                flowKey: flowKey,
+                flowID: flowID
+            )
+        }
+        eventLogHandler?(
+            "quic_mitm_session",
+            "outcome=fail_open_replay flow_id=\(flowID.uuidString) reason=\(reason) datagrams=\(deduplicated.count)"
+        )
+    }
+
+    private func markHostFailOpenLocked(
+        state: FlowSessionState,
+        reason: String,
+        now: Date
+    ) -> [String] {
+        guard Self.shouldEnableHostFailOpen(for: reason) else {
+            return []
+        }
+
+        var keys = Set<String>()
+        let normalizedStateHost = normalizeAuthority(state.host)
+        if !normalizedStateHost.isEmpty {
+            keys.insert(normalizedStateHost)
+        }
+
+        if let lastAuthorityRetry = state.lastAuthorityRetry {
+            let normalizedRetry = normalizeAuthority(lastAuthorityRetry)
+            if !normalizedRetry.isEmpty {
+                keys.insert(normalizedRetry)
+            }
+        }
+
+        let normalizedServerIP = normalizeAuthority(state.serverIP.description)
+        if !normalizedServerIP.isEmpty {
+            keys.insert(normalizedServerIP)
+        }
+
+        guard !keys.isEmpty else { return [] }
+        let expiresAt = now.addingTimeInterval(hostFailOpenBackoff)
+        var newlyMarkedKeys: [String] = []
+        for key in keys {
+            if let existing = hostFailOpenStates[key],
+               existing.reason == reason,
+               existing.expiresAt > now {
+                continue
+            }
+            newlyMarkedKeys.append(key)
+        }
+        for key in keys {
+            hostFailOpenStates[key] = HostFailOpenState(reason: reason, expiresAt: expiresAt)
+        }
+        trimHostFailOpenLocked(now: now)
+        return newlyMarkedKeys
+    }
+
+    private func pruneHostFailOpenLocked(now: Date) {
+        guard !hostFailOpenStates.isEmpty else { return }
+        hostFailOpenStates = hostFailOpenStates.filter { _, state in
+            state.expiresAt > now
+        }
+    }
+
+    private func trimHostFailOpenLocked(now: Date) {
+        pruneHostFailOpenLocked(now: now)
+        let overflow = hostFailOpenStates.count - maxHostFailOpenEntries
+        guard overflow > 0 else { return }
+
+        let oldestKeys = hostFailOpenStates
+            .sorted { lhs, rhs in
+                lhs.value.expiresAt < rhs.value.expiresAt
+            }
+            .prefix(overflow)
+            .map(\.key)
+        for key in oldestKeys {
+            hostFailOpenStates.removeValue(forKey: key)
+        }
+    }
+
+    private func pruneRouteDecisionLogsLocked() {
+        guard !routeDecisionLogSignaturesByFlowID.isEmpty else { return }
+
+        let activeFlowIDs = Set(flowStates.values.map(\.flowID))
+        routeDecisionLogSignaturesByFlowID = routeDecisionLogSignaturesByFlowID.filter { flowID, _ in
+            activeFlowIDs.contains(flowID)
+        }
+
+        trimRouteDecisionLogsLocked()
+    }
+
+    private func trimRouteDecisionLogsLocked() {
+        let overflow = routeDecisionLogSignaturesByFlowID.count - maxRouteDecisionLogEntries
+        guard overflow > 0 else { return }
+
+        // Dictionary order is undefined; trimming an arbitrary overflow set is sufficient.
+        let keysToDrop = Array(routeDecisionLogSignaturesByFlowID.keys.prefix(overflow))
+        for key in keysToDrop {
+            routeDecisionLogSignaturesByFlowID.removeValue(forKey: key)
+        }
+    }
+
+    private static func isIPAddressLiteral(_ host: String) -> Bool {
+        guard !host.isEmpty else { return false }
+
+        var ipv4Address = in_addr()
+        if host.withCString({ inet_pton(AF_INET, $0, &ipv4Address) }) == 1 {
+            return true
+        }
+
+        var ipv6Address = in6_addr()
+        return host.withCString { inet_pton(AF_INET6, $0, &ipv6Address) } == 1
+    }
+
+    static func shouldEnableHostFailOpen(for reason: String) -> Bool {
+        let normalized = reason
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else { return false }
+
+        if normalized == "quic_no_progress_fail_open" ||
+            normalized == "handshakefailed" ||
+            normalized == "certificatepinning" ||
+            normalized == "quic_retry_with_authority_failed" {
+            return true
+        }
+
+        return normalized.hasPrefix("quic_closed_before_http3_")
+    }
+
+    static func prefersDirectFailOpenForwarding(for reason: String) -> Bool {
+        let normalized = reason
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else { return false }
+
+        if normalized == "quic_no_progress_fail_open" ||
+            normalized == "quic_tunnel_required_unavailable" ||
+            normalized == "quic_retry_with_authority_failed" ||
+            normalized == "dual_mitm_circuit_breaker" ||
+            normalized == "handshakefailed" ||
+            normalized == "certificatepinning" {
+            return true
+        }
+
+        return normalized.hasPrefix("quic_closed_before_http3_")
     }
 
     private func failureReason(from reason: QUICMitmFailureReason?) -> String {
         reason?.rawValue ?? "quic_mitm_failed_open"
     }
 
-    func makeCertificateMaterial(for authority: String) -> QUICMitmCertificateMaterial? {
-        let trimmed = authority.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard shouldIssueCertificate(for: trimmed) else { return nil }
+    private func ingestFailureReason(for error: Error) -> String {
+        guard let sessionError = error as? QUICMitmSessionError else {
+            return "quic_mitm_ingest_failed"
+        }
 
-        if TLSHandler.preflightServerLeafTrust(for: trimmed) != nil {
+        switch sessionError {
+        case .sessionNotEstablished:
+            return "quic_mitm_session_not_established"
+        case .ingestFailed:
+            return "quic_mitm_ingest_failed"
+        case .eventPollFailed:
+            return "quic_mitm_action_poll_failed"
+        case .submitResponseFailed:
+            return "quic_mitm_submit_response_failed"
+        case .tickFailed:
+            return "quic_mitm_tick_failed"
+        }
+    }
+
+    private func isGracefulSessionClosure(_ error: Error) -> Bool {
+        guard let sessionError = error as? QUICMitmSessionError else {
+            return false
+        }
+
+        switch sessionError {
+        case .sessionNotEstablished:
+            return true
+        case let .ingestFailed(code), let .tickFailed(code):
+            return code == -2
+        case let .eventPollFailed(code), let .submitResponseFailed(code):
+            return code == -2
+        }
+    }
+
+    private func gracefulSessionClosureReason(for error: Error) -> String {
+        guard let sessionError = error as? QUICMitmSessionError else {
+            return "session_closed"
+        }
+
+        switch sessionError {
+        case .sessionNotEstablished:
+            return "session_not_established"
+        case let .ingestFailed(code):
+            return "ingest_code_\(code)"
+        case let .tickFailed(code):
+            return "tick_code_\(code)"
+        case let .eventPollFailed(code):
+            return "poll_code_\(code)"
+        case let .submitResponseFailed(code):
+            return "submit_code_\(code)"
+        }
+    }
+
+    func makeCertificateMaterial(for authority: String) -> QUICMitmCertificateMaterial? {
+        let normalized = normalizeAuthority(authority)
+        guard shouldIssueCertificate(for: normalized) else {
+            eventLogHandler?(
+                "quic_cert_material",
+                "outcome=skipped reason=empty_or_invalid_authority"
+            )
             return nil
         }
 
+        let authorityHash = LogRedaction.hash(normalized)
+        if let preflightDetail = TLSHandler.preflightServerLeafTrust(for: normalized) {
+            // Best-effort note only: QUIC MITM still attempts cert material generation even
+            // when preflight warns, to avoid premature fail-open for non-pinned flows.
+            eventLogHandler?(
+                "quic_cert_material",
+                "outcome=preflight_warning authority_hash=\(authorityHash) detail=\(preflightDetail)"
+            )
+        }
+
         do {
-            let (certificate, privateKey) = try CertificateManager.shared.generateCertificateForDomain(trimmed)
+            let (certificate, privateKey) = try CertificateManager.shared.generateCertificateForDomain(normalized)
             let certificateDER = SecCertificateCopyData(certificate) as Data
             var keyError: Unmanaged<CFError>?
             guard let privateKeyDER = SecKeyCopyExternalRepresentation(privateKey, &keyError) as Data? else {
+                let detail = keyError?.takeRetainedValue().localizedDescription ?? "unknown"
+                eventLogHandler?(
+                    "quic_cert_material",
+                    "outcome=failure authority_hash=\(authorityHash) reason=private_key_export_failed detail=\(detail)"
+                )
                 return nil
             }
+            eventLogHandler?(
+                "quic_cert_material",
+                "outcome=ready authority_hash=\(authorityHash) cert_bytes=\(certificateDER.count) key_bytes=\(privateKeyDER.count)"
+            )
             return QUICMitmCertificateMaterial(
                 leafCertificateDER: certificateDER,
                 privateKeyDER: privateKeyDER
             )
         } catch {
+            eventLogHandler?(
+                "quic_cert_material",
+                "outcome=failure authority_hash=\(authorityHash) reason=certificate_generate_failed detail=\(error.localizedDescription)"
+            )
             return nil
         }
     }
 
     func shouldIssueCertificate(for authority: String) -> Bool {
         guard !authority.isEmpty else { return false }
-        // Best effort: skip IP literals and unknown authorities.
-        return authority.contains { $0.isLetter }
+        return !authority.contains(where: \.isWhitespace)
+    }
+
+    func normalizeAuthority(_ authority: String) -> String {
+        var normalized = authority.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return "" }
+
+        if normalized.hasPrefix("["),
+           normalized.hasSuffix("]"),
+           normalized.count > 2 {
+            normalized = String(normalized.dropFirst().dropLast())
+        }
+
+        if normalized.hasSuffix("."),
+           normalized.count > 1 {
+            normalized.removeLast()
+        }
+
+        if let scopeIndex = normalized.firstIndex(of: "%") {
+            normalized = String(normalized[..<scopeIndex])
+        }
+
+        if let hostOnly = splitHostAndPortIfNeeded(normalized) {
+            normalized = hostOnly
+        }
+
+        return normalized
+    }
+
+    func splitHostAndPortIfNeeded(_ authority: String) -> String? {
+        guard let colonIndex = authority.lastIndex(of: ":") else { return nil }
+        let hostCandidate = String(authority[..<colonIndex])
+        let portCandidate = String(authority[authority.index(after: colonIndex)...])
+        guard !hostCandidate.isEmpty, !portCandidate.isEmpty else { return nil }
+        guard !hostCandidate.contains(":") else { return nil }
+        guard UInt16(portCandidate) != nil else { return nil }
+        return hostCandidate
     }
 }

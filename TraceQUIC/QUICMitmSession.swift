@@ -50,17 +50,26 @@ public struct QUICMitmIngestResult: Sendable {
     public let datagramsToClient: [Data]
     public let datagramsToUpstream: [Data]
     public let fallbackReason: QUICMitmFailureReason?
+    public let retryAuthorityHint: String?
+    public let connectionClosed: Bool
+    public let connectionCloseReason: QUICMitmFailureReason?
 
     public init(
         processedStreams: Int,
         datagramsToClient: [Data] = [],
         datagramsToUpstream: [Data] = [],
-        fallbackReason: QUICMitmFailureReason? = nil
+        fallbackReason: QUICMitmFailureReason? = nil,
+        retryAuthorityHint: String? = nil,
+        connectionClosed: Bool = false,
+        connectionCloseReason: QUICMitmFailureReason? = nil
     ) {
         self.processedStreams = processedStreams
         self.datagramsToClient = datagramsToClient
         self.datagramsToUpstream = datagramsToUpstream
         self.fallbackReason = fallbackReason
+        self.retryAuthorityHint = retryAuthorityHint
+        self.connectionClosed = connectionClosed
+        self.connectionCloseReason = connectionCloseReason
     }
 }
 
@@ -104,13 +113,15 @@ public actor QUICMitmSession {
         case requestBody(streamID: UInt64, bodyChunk: Data)
         case requestEnd(streamID: UInt64)
         case fallback(reason: QUICMitmFailureReason)
-        case connectionClosed(reason: QUICMitmFailureReason)
+        case retryWithAuthority(String)
+        case connectionClosed(reason: QUICMitmFailureReason?)
         case resetStream(streamID: UInt64)
     }
 
     private let pipeline: HTTP3MitmPipeline
     private let certificateMaterial: QUICMitmCertificateMaterial?
     private let tunnelPolicyRequired: Bool
+    private let eventLogHandler: (@Sendable (String, String) -> Void)?
     private var connectionAttemptID: UUID?
     private var isEstablished = false
     private var pendingStreams: [UInt64: PendingStreamState] = [:]
@@ -126,16 +137,19 @@ public actor QUICMitmSession {
         interceptor: (any InterceptionProviding)? = nil,
         http3Client: any HTTP3Client = URLSessionHTTP3Client(),
         certificateMaterial: QUICMitmCertificateMaterial? = nil,
-        tunnelPolicyRequired: Bool = false
+        tunnelPolicyRequired: Bool = false,
+        eventLogHandler: (@Sendable (String, String) -> Void)? = nil
     ) {
         self.flowID = flowID
         self.host = host
         self.port = port
         self.certificateMaterial = certificateMaterial
         self.tunnelPolicyRequired = tunnelPolicyRequired
+        self.eventLogHandler = eventLogHandler
         pipeline = HTTP3MitmPipeline(
             interceptor: interceptor,
-            http3Client: http3Client
+            http3Client: http3Client,
+            captureEventHandler: eventLogHandler
         )
     }
 
@@ -148,27 +162,46 @@ public actor QUICMitmSession {
         connectionAttemptID = attemptID
 
         let engineStatus = QUICEngineRuntime.currentStatus()
+        let certMaterialState = certificateMaterial == nil ? "missing" : "present"
+        eventLogHandler?(
+            "quic_mitm_session",
+            "stage=establish flow_id=\(flowID.uuidString) host_hash=\(LogRedaction.hash(host)) port=\(port) engine_availability=\(engineStatus.availability.rawValue) engine_version=\(engineStatus.version) ffi=\(engineStatus.usingQuicheFFI) cert_material=\(certMaterialState)"
+        )
         guard engineStatus.availability == .available else {
-            return await failOpen(reason: .engineUnavailable)
+            return await failOpen(
+                reason: .engineUnavailable,
+                detail: "engine_availability=\(engineStatus.availability.rawValue) engine_version=\(engineStatus.version) ffi=\(engineStatus.usingQuicheFFI)"
+            )
         }
 
         #if canImport(CQuicheFFI)
         guard let openedSession = openFFISession() else {
-            return await failOpen(reason: .sessionCreateFailed)
+            return await failOpen(
+                reason: .sessionCreateFailed,
+                detail: "open_failed cert_material=\(certMaterialState) engine_version=\(engineStatus.version)"
+            )
         }
         ffiSession = openedSession
 
         guard cquiche_mitm_session_ready(openedSession) else {
             let reasonCode = cquiche_mitm_session_last_failure_reason(openedSession)
+            let mappedReason = mapFailureReason(code: reasonCode)
             cquiche_mitm_session_close(openedSession)
             ffiSession = nil
-            return await failOpen(reason: mapFailureReason(code: reasonCode))
+            return await failOpen(
+                reason: mappedReason,
+                detail: "session_not_ready reason_code=\(reasonCode) mapped_reason=\(mappedReason.rawValue) cert_material=\(certMaterialState)"
+            )
         }
         #else
-        return await failOpen(reason: .engineUnavailable)
+        return await failOpen(reason: .engineUnavailable, detail: "ffi_not_linked")
         #endif
 
         isEstablished = true
+        eventLogHandler?(
+            "quic_mitm_session",
+            "outcome=established flow_id=\(flowID.uuidString) host_hash=\(LogRedaction.hash(host)) port=\(port)"
+        )
         await QUICConnectionManager.shared.recordIntercepted()
         return QUICMitmResult(outcome: .intercepted)
     }
@@ -194,6 +227,10 @@ public actor QUICMitmSession {
             )
         } catch {
             await QUICConnectionManager.shared.recordFailure(reason: "http3_mitm_pipeline_failed")
+            eventLogHandler?(
+                "quic_mitm_session",
+                "outcome=http3_pipeline_failed flow_id=\(flowID.uuidString) host_hash=\(LogRedaction.hash(host)) error=\(error.localizedDescription)"
+            )
             throw error
         }
     }
@@ -245,6 +282,12 @@ public actor QUICMitmSession {
         }
 
         guard ingestCode == 0 else {
+            let failureCode = cquiche_mitm_session_last_failure_reason(ffiSession)
+            let failureReason = mapFailureReasonAllowNone(code: failureCode)?.rawValue ?? "none"
+            eventLogHandler?(
+                "quic_mitm_session",
+                "outcome=ingest_error flow_id=\(flowID.uuidString) host_hash=\(LogRedaction.hash(host)) direction=\(fromClient ? "client" : "upstream") payload_bytes=\(payload.count) code=\(ingestCode) failure_code=\(failureCode) failure_reason=\(failureReason)"
+            )
             await QUICConnectionManager.shared.recordFailure(reason: "quic_mitm_ingest_failed")
             throw QUICMitmSessionError.ingestFailed(ingestCode)
         }
@@ -268,6 +311,12 @@ public actor QUICMitmSession {
 
         let tickCode = cquiche_mitm_session_tick(ffiSession, nowNanoseconds)
         guard tickCode == 0 else {
+            let failureCode = cquiche_mitm_session_last_failure_reason(ffiSession)
+            let failureReason = mapFailureReasonAllowNone(code: failureCode)?.rawValue ?? "none"
+            eventLogHandler?(
+                "quic_mitm_session",
+                "outcome=tick_error flow_id=\(flowID.uuidString) host_hash=\(LogRedaction.hash(host)) code=\(tickCode) failure_code=\(failureCode) failure_reason=\(failureReason)"
+            )
             await QUICConnectionManager.shared.recordFailure(reason: "quic_mitm_tick_failed")
             throw QUICMitmSessionError.tickFailed(tickCode)
         }
@@ -335,6 +384,12 @@ private extension QUICMitmSession {
             return nil
         }
         guard pollCode == 1 else {
+            let failureCode = cquiche_mitm_session_last_failure_reason(ffiSession)
+            let failureReason = mapFailureReasonAllowNone(code: failureCode)?.rawValue ?? "none"
+            eventLogHandler?(
+                "quic_mitm_session",
+                "outcome=action_poll_error flow_id=\(flowID.uuidString) host_hash=\(LogRedaction.hash(host)) code=\(pollCode) failure_code=\(failureCode) failure_reason=\(failureReason)"
+            )
             await QUICConnectionManager.shared.recordFailure(reason: "quic_mitm_action_poll_failed")
             throw QUICMitmSessionError.eventPollFailed(pollCode)
         }
@@ -364,7 +419,13 @@ private extension QUICMitmSession {
         case Int32(truncatingIfNeeded: CQUICHE_ACTION_HTTP3_RESET_STREAM.rawValue):
             return .resetStream(streamID: actionInfo.stream_id)
         case Int32(truncatingIfNeeded: CQUICHE_ACTION_CONNECTION_CLOSED.rawValue):
-            return .connectionClosed(reason: mapFailureReason(code: actionInfo.failure_reason))
+            return .connectionClosed(reason: mapFailureReasonAllowNone(code: actionInfo.failure_reason))
+        case Int32(truncatingIfNeeded: CQUICHE_ACTION_RETRY_WITH_AUTHORITY.rawValue):
+            let authority = metadataString.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !authority.isEmpty else {
+                return .fallback(reason: .handshakeFailed)
+            }
+            return .retryWithAuthority(authority)
         case Int32(truncatingIfNeeded: CQUICHE_ACTION_FALLBACK_REQUIRED.rawValue):
             let reason = metadataString.asNonEmpty.flatMap(QUICMitmFailureReason.init(rawValue:)) ??
                 mapFailureReason(code: actionInfo.failure_reason)
@@ -410,8 +471,19 @@ private extension QUICMitmSession {
         }
 
         guard submitCode == 0 else {
+            let failureCode = cquiche_mitm_session_last_failure_reason(ffiSession)
+            let failureReason = mapFailureReasonAllowNone(code: failureCode)?.rawValue ?? "none"
+            eventLogHandler?(
+                "quic_mitm_session",
+                "outcome=submit_response_error flow_id=\(flowID.uuidString) host_hash=\(LogRedaction.hash(host)) stream_id=\(streamID) status=\(response.statusCode) body_bytes=\(bodyData.count) code=\(submitCode) failure_code=\(failureCode) failure_reason=\(failureReason)"
+            )
             throw QUICMitmSessionError.submitResponseFailed(submitCode)
         }
+
+        eventLogHandler?(
+            "quic_mitm_session",
+            "outcome=submit_response_success flow_id=\(flowID.uuidString) host_hash=\(LogRedaction.hash(host)) stream_id=\(streamID) status=\(response.statusCode) body_bytes=\(bodyData.count)"
+        )
     }
 
     func drainPolledActions(from ffiSession: OpaquePointer) async throws -> QUICMitmIngestResult {
@@ -419,6 +491,9 @@ private extension QUICMitmSession {
         var datagramsToClient: [Data] = []
         var datagramsToUpstream: [Data] = []
         var fallbackReason: QUICMitmFailureReason?
+        var retryAuthorityHint: String?
+        var connectionClosed = false
+        var connectionCloseReason: QUICMitmFailureReason?
 
         while true {
             guard let action = try await pollAction(from: ffiSession) else {
@@ -439,11 +514,31 @@ private extension QUICMitmSession {
                 state.body.append(bodyChunk)
                 pendingStreams[streamID] = state
             case let .requestEnd(streamID):
-                let response = try await handleRequestCompletion(streamID: streamID)
-                try submitResponse(response, streamID: streamID, ffiSession: ffiSession)
-                processedStreams += 1
-            case let .fallback(reason), let .connectionClosed(reason):
+                do {
+                    let response = try await handleRequestCompletion(streamID: streamID)
+                    try submitResponse(response, streamID: streamID, ffiSession: ffiSession)
+                    processedStreams += 1
+                } catch {
+                    eventLogHandler?(
+                        "quic_mitm_session",
+                        "outcome=request_end_error flow_id=\(flowID.uuidString) host_hash=\(LogRedaction.hash(host)) stream_id=\(streamID) error=\(String(describing: error))"
+                    )
+                    throw error
+                }
+            case let .fallback(reason):
                 fallbackReason = reason
+            case let .retryWithAuthority(authority):
+                retryAuthorityHint = authority
+                eventLogHandler?(
+                    "quic_mitm_session",
+                    "outcome=retry_with_authority flow_id=\(flowID.uuidString) host_hash=\(LogRedaction.hash(host)) authority_hash=\(LogRedaction.hash(authority))"
+                )
+            case let .connectionClosed(reason):
+                connectionClosed = true
+                if let reason {
+                    connectionCloseReason = reason
+                    fallbackReason = reason
+                }
             case let .resetStream(streamID):
                 pendingStreams.removeValue(forKey: streamID)
             }
@@ -453,7 +548,10 @@ private extension QUICMitmSession {
             processedStreams: processedStreams,
             datagramsToClient: datagramsToClient,
             datagramsToUpstream: datagramsToUpstream,
-            fallbackReason: fallbackReason
+            fallbackReason: fallbackReason,
+            retryAuthorityHint: retryAuthorityHint,
+            connectionClosed: connectionClosed,
+            connectionCloseReason: connectionCloseReason
         )
     }
 
@@ -506,7 +604,7 @@ private extension QUICMitmSession {
         case Int32(truncatingIfNeeded: CQUICHE_FAILURE_ENGINE_UNAVAILABLE.rawValue):
             .engineUnavailable
         default:
-            .engineUnavailable
+            .internalError
         }
         #else
         _ = code
@@ -514,9 +612,26 @@ private extension QUICMitmSession {
         #endif
     }
 
-    func failOpen(reason: QUICMitmFailureReason) async -> QUICMitmResult {
+    func mapFailureReasonAllowNone(code: Int32) -> QUICMitmFailureReason? {
+        #if canImport(CQuicheFFI)
+        if code == Int32(truncatingIfNeeded: CQUICHE_FAILURE_NONE.rawValue) {
+            return nil
+        }
+        #endif
+        return mapFailureReason(code: code)
+    }
+
+    func failOpen(reason: QUICMitmFailureReason, detail: String? = nil) async -> QUICMitmResult {
         isEstablished = false
         pendingStreams.removeAll(keepingCapacity: false)
+        var message = "outcome=pass_through flow_id=\(flowID.uuidString) host_hash=\(LogRedaction.hash(host)) reason=\(reason.rawValue)"
+        if let detail, !detail.isEmpty {
+            message += " detail=\(detail)"
+        }
+        eventLogHandler?(
+            "quic_mitm_session",
+            message
+        )
         await QUICConnectionManager.shared.recordPassThroughFallback(reason: reason.rawValue)
         if let connectionAttemptID {
             self.connectionAttemptID = nil

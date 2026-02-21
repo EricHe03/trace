@@ -242,6 +242,20 @@ final class PacketFlowLoop: @unchecked Sendable {
         let expiresAt: Date
     }
 
+    private struct DualMITMHealthSnapshot {
+        let enabled: Bool
+        let policy: DualMITMPolicy
+        let degraded: Bool
+        let degradedUntil: Date?
+        let degradeReason: String?
+        let tcpAttempts: Int
+        let tcpFailures: Int
+        let tcpFailureRate: Double
+        let quicAttempts: Int
+        let quicFailures: Int
+        let quicFailureRate: Double
+    }
+
     private static let quicICMPRateLimitNanos: UInt64 = 1_000_000_000
     private static let quicICMPStateCleanupIntervalNanos: UInt64 = 30_000_000_000
     private static let quicICMPStateExpireNanos: UInt64 = 120_000_000_000
@@ -276,6 +290,7 @@ final class PacketFlowLoop: @unchecked Sendable {
     private weak var forwarder: PacketForwardingEngine?
     private weak var udpForwarder: UDPForwarder?
     private lazy var quicFlowRouter: QUICFlowRouter = makeQUICFlowRouter()
+    private let eventLogHandler: (@Sendable (String, String) -> Void)?
     private let initialQUICInterceptor: (any InterceptionProviding)?
     private let udpForwardingMode: UDPForwardingMode
     private var quicHandlingMode: QUICHandlingMode
@@ -299,6 +314,10 @@ final class PacketFlowLoop: @unchecked Sendable {
     private var icmpPacketIdentifier: UInt16 = 0
     private var quicAuthorityHintsByIP: [String: QUICAuthorityHint] = [:]
     private var observedQUICFlows: Set<String> = []
+    private let dualMITMPolicy: DualMITMPolicy
+    private let quicHostFailOpenSeconds: Int
+    private let dualMITMCircuitBreakerEnabled: Bool
+    private var lastDualMITMDegradedState = false
 
     init(
         packetFlow: NEPacketTunnelFlow,
@@ -307,7 +326,11 @@ final class PacketFlowLoop: @unchecked Sendable {
         udpForwarder: UDPForwarder?,
         udpForwardingMode: UDPForwardingMode,
         quicHandlingMode: QUICHandlingMode,
-        quicInterceptor: (any InterceptionProviding)? = nil
+        dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
+        quicHostFailOpenSeconds: Int = 1800,
+        dualMITMCircuitBreakerEnabled: Bool = true,
+        quicInterceptor: (any InterceptionProviding)? = nil,
+        eventLogHandler: (@Sendable (String, String) -> Void)? = nil
     ) {
         self.packetFlow = packetFlow
         self.capturePipeline = capturePipeline
@@ -315,7 +338,11 @@ final class PacketFlowLoop: @unchecked Sendable {
         self.udpForwarder = udpForwarder
         self.udpForwardingMode = udpForwardingMode
         self.quicHandlingMode = quicHandlingMode
+        self.dualMITMPolicy = dualMITMPolicy
+        self.quicHostFailOpenSeconds = quicHostFailOpenSeconds
+        self.dualMITMCircuitBreakerEnabled = dualMITMCircuitBreakerEnabled
         self.initialQUICInterceptor = quicInterceptor
+        self.eventLogHandler = eventLogHandler
         queue.setSpecific(key: queueKey, value: ())
     }
 
@@ -376,6 +403,13 @@ final class PacketFlowLoop: @unchecked Sendable {
     private func makeQUICFlowRouter() -> QUICFlowRouter {
         QUICFlowRouter(
             interceptor: initialQUICInterceptor,
+            hostFailOpenBackoff: TimeInterval(max(180, quicHostFailOpenSeconds)),
+            noProgressGracePeriod: 3.0,
+            noProgressIdleTimeout: 3.0,
+            noProgressAbsoluteTimeout: 12.0,
+            dualMITMPolicy: dualMITMPolicy,
+            dualMITMCircuitBreakerEnabled: dualMITMCircuitBreakerEnabled,
+            eventLogHandler: eventLogHandler,
             downstreamDatagramSink: { [weak self] payload, context in
                 self?.queue.async {
                     self?.handleInterceptedQUICDatagramToClient(payload, context: context)
@@ -759,6 +793,7 @@ final class PacketFlowLoop: @unchecked Sendable {
     }
 
     private func logUDPForwardSummary(reason: String) {
+        let dualMITMHealth = makeDualMITMHealthSnapshot()
         guard self.udpForwardedPackets > 0 ||
             self.udpForwardedPackets443 > 0 ||
             self.quicBlockedPackets > 0 ||
@@ -766,7 +801,41 @@ final class PacketFlowLoop: @unchecked Sendable {
             self.quicPassThroughMarked > 0 ||
             self.quicBlockedICMPSent > 0 else { return }
         VPNLog.tunnel.info(
-            "event=vpn.udp_forward_summary reason=\(reason, privacy: .public) udp_out_packets=\(self.udpForwardedPackets) udp_out_443=\(self.udpForwardedPackets443) quic_mode=\(self.quicHandlingMode.rawValue, privacy: .public) quic_intercept_candidates=\(self.quicInterceptCandidates) quic_pass_through_marked=\(self.quicPassThroughMarked) quic_blocked=\(self.quicBlockedPackets) quic_icmp=\(self.quicBlockedICMPSent) quic_icmp_rl=\(self.quicBlockedICMPRateLimited)"
+            "event=vpn.udp_forward_summary reason=\(reason, privacy: .public) udp_out_packets=\(self.udpForwardedPackets) udp_out_443=\(self.udpForwardedPackets443) quic_mode=\(self.quicHandlingMode.rawValue, privacy: .public) quic_intercept_candidates=\(self.quicInterceptCandidates) quic_pass_through_marked=\(self.quicPassThroughMarked) quic_blocked=\(self.quicBlockedPackets) quic_icmp=\(self.quicBlockedICMPSent) quic_icmp_rl=\(self.quicBlockedICMPRateLimited) dual_mitm_policy=\(dualMITMHealth.policy.rawValue, privacy: .public) dual_mitm_breaker_enabled=\(dualMITMHealth.enabled) dual_mitm_breaker_degraded=\(dualMITMHealth.degraded) dual_mitm_breaker_reason=\(dualMITMHealth.degradeReason ?? "none", privacy: .public) dual_mitm_tcp_failure_rate=\(dualMITMHealth.tcpFailureRate) dual_mitm_quic_failure_rate=\(dualMITMHealth.quicFailureRate)"
+        )
+        if dualMITMHealth.degraded != lastDualMITMDegradedState {
+            lastDualMITMDegradedState = dualMITMHealth.degraded
+            let outcome = dualMITMHealth.degraded ? "entered" : "exited"
+            eventLogHandler?(
+                "dual_mitm_breaker",
+                "outcome=\(outcome) degraded=\(dualMITMHealth.degraded) reason=\(dualMITMHealth.degradeReason ?? "none") policy=\(dualMITMHealth.policy.rawValue) cooldown_until=\(dualMITMHealth.degradedUntil?.timeIntervalSince1970 ?? 0)"
+            )
+        }
+        if let eventLogHandler {
+            Task {
+                let snapshot = await QUICConnectionManager.shared.snapshot()
+                eventLogHandler(
+                    "quic_summary",
+                    "reason=\(reason) flows_seen=\(snapshot.quicFlowsSeenTotal) intercepted=\(snapshot.quicFlowsInterceptedTotal) pass_through=\(snapshot.quicFlowsPassThroughTotal) blocked=\(snapshot.quicFlowsBlockedTotal) tunnel_forwarded=\(snapshot.quicFlowsTunnelForwardedTotal) http3_captured=\(snapshot.http3RequestsCapturedTotal) failures=\(snapshot.quicMitmFailuresTotal) dual_mitm_policy=\(dualMITMHealth.policy.rawValue) dual_mitm_breaker_enabled=\(dualMITMHealth.enabled) dual_mitm_breaker_degraded=\(dualMITMHealth.degraded) dual_mitm_tcp_failure_rate=\(dualMITMHealth.tcpFailureRate) dual_mitm_quic_failure_rate=\(dualMITMHealth.quicFailureRate)"
+                )
+            }
+        }
+    }
+
+    private func makeDualMITMHealthSnapshot() -> DualMITMHealthSnapshot {
+        let breakerSnapshot = DualMITMCircuitBreaker.shared.snapshot()
+        return DualMITMHealthSnapshot(
+            enabled: dualMITMCircuitBreakerEnabled && breakerSnapshot.enabled,
+            policy: dualMITMPolicy,
+            degraded: dualMITMCircuitBreakerEnabled && breakerSnapshot.isDegraded,
+            degradedUntil: breakerSnapshot.degradedUntil,
+            degradeReason: breakerSnapshot.degradeReason,
+            tcpAttempts: breakerSnapshot.tcpAttempts,
+            tcpFailures: breakerSnapshot.tcpFailures,
+            tcpFailureRate: breakerSnapshot.tcpFailureRate,
+            quicAttempts: breakerSnapshot.quicAttemptsInWindow,
+            quicFailures: breakerSnapshot.quicFailuresInWindow,
+            quicFailureRate: breakerSnapshot.quicFailureRate
         )
     }
 

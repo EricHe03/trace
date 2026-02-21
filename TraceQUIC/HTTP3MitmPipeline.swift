@@ -51,14 +51,17 @@ public struct HTTP3MitmPipelineResponse: Sendable {
 public actor HTTP3MitmPipeline {
     private let interceptor: (any InterceptionProviding)?
     private let http3Client: any HTTP3Client
+    private let captureEventHandler: (@Sendable (String, String) -> Void)?
     private var samplingSequence: UInt64 = 0
 
     public init(
         interceptor: (any InterceptionProviding)? = nil,
-        http3Client: any HTTP3Client = URLSessionHTTP3Client()
+        http3Client: any HTTP3Client = URLSessionHTTP3Client(),
+        captureEventHandler: (@Sendable (String, String) -> Void)? = nil
     ) {
         self.interceptor = interceptor
         self.http3Client = http3Client
+        self.captureEventHandler = captureEventHandler
     }
 
     public func process(
@@ -79,7 +82,6 @@ public actor HTTP3MitmPipeline {
         var upstreamBody = requestBody
 
         let seedRequest = makeBaseRequest(
-            flowID: flowID,
             requestHead: requestHead,
             requestBody: requestBody
         )
@@ -172,8 +174,24 @@ public actor HTTP3MitmPipeline {
 }
 
 private extension HTTP3MitmPipeline {
+    enum PersistDecision {
+        case saved
+        case skippedFilter
+        case skippedSampling
+
+        var eventSuffix: String {
+            switch self {
+            case .saved:
+                "outcome=success"
+            case .skippedFilter:
+                "outcome=skipped reason=filter"
+            case .skippedSampling:
+                "outcome=skipped reason=sampling"
+            }
+        }
+    }
+
     func makeBaseRequest(
-        flowID: UUID,
         requestHead: HTTP3RequestHead,
         requestBody: Data?
     ) -> NetworkRequest {
@@ -194,7 +212,7 @@ private extension HTTP3MitmPipeline {
         }
 
         return NetworkRequest(
-            id: flowID,
+            id: UUID(),
             url: requestHead.url.absoluteString,
             method: method,
             requestMethodRaw: requestMethodRaw,
@@ -242,11 +260,27 @@ private extension HTTP3MitmPipeline {
         finalRequest.protocolVersion = .http3
         finalRequest.extractHTTPFields()
 
+        emitCaptureEvent(
+            type: "http3_capture_saved",
+            request: finalRequest,
+            msgPrefix: "outcome=seen stream_id=\(streamID)"
+        )
+
         do {
-            try await persistIfNeeded(finalRequest)
+            let persistDecision = try await persistIfNeeded(finalRequest)
+            emitCaptureEvent(
+                type: "http3_capture_saved",
+                request: finalRequest,
+                msgPrefix: "\(persistDecision.eventSuffix) stream_id=\(streamID)"
+            )
         } catch {
             CoreLog.storage.error(
                 "event=http3.capture_save outcome=failure request_id=\(finalRequest.id.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+            emitCaptureEvent(
+                type: "http3_capture_saved",
+                request: finalRequest,
+                msgPrefix: "outcome=failure stream_id=\(streamID) error=\(error.localizedDescription)"
             )
         }
         await QUICConnectionManager.shared.recordHTTP3RequestCaptured(
@@ -278,15 +312,30 @@ private extension HTTP3MitmPipeline {
         }
     }
 
-    func persistIfNeeded(_ request: NetworkRequest) async throws {
+    func emitCaptureEvent(
+        type: String,
+        request: NetworkRequest,
+        msgPrefix: String
+    ) {
+        guard let captureEventHandler else { return }
+        let hostHash = URL(string: request.url)?.host.map { LogRedaction.hash($0) } ?? "unknown"
+        let statusCode = request.statusCode.map(String.init) ?? "nil"
+        captureEventHandler(
+            type,
+            "\(msgPrefix) request_id=\(request.id.uuidString) host_hash=\(hostHash) status=\(statusCode)"
+        )
+    }
+
+    func persistIfNeeded(_ request: NetworkRequest) async throws -> PersistDecision {
         let captureConfig = AppGroupStorage.shared.loadConfiguration().normalized()
-        guard shouldPersist(request, using: captureConfig) else { return }
+        guard shouldPersist(request, using: captureConfig) else { return .skippedFilter }
 
         let samplingConfig = AppGroupStorage.shared.loadSamplingConfig().normalized()
-        guard await shouldSample(using: samplingConfig) else { return }
+        guard await shouldSample(using: samplingConfig) else { return .skippedSampling }
 
         let persisted = makePersistedCapture(from: request, captureConfig: captureConfig)
         try AppGroupStorage.shared.saveRequest(persisted)
+        return .saved
     }
 
     func makePersistedCapture(

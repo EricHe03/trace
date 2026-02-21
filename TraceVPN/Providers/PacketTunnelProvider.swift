@@ -136,6 +136,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let localSocks5Host = "127.0.0.1"
     // Bind embedded SOCKS5 on an ephemeral port to avoid collisions with existing local listeners.
     private let localSocks5Port: UInt16 = 0
+    private let transparentMITMPorts: Set<UInt16> = [443]
     private var currentCaptureMode: CaptureMode = .proxyOnly
 
     // MARK: - Diagnostics
@@ -231,12 +232,23 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         await configureCaptureSettings(for: captureConfig.captureMode)
         await initializeEventLog(mode: captureConfig.captureMode)
+        await logProtocolRoutingConfiguration()
+        await runtimeState.appendEventLog(
+            type: "capture_config",
+            msg: "mode=\(captureConfig.captureMode.rawValue) enabled=\(captureConfig.isEnabled) filter_mode=\(captureConfig.filterMode.rawValue) domain_filters=\(captureConfig.domainFilters.count) capture_headers=\(captureConfig.captureHeaders) capture_body=\(captureConfig.captureBody) max_body_size=\(captureConfig.maxBodySize)"
+        )
+        let samplingConfig = AppGroupStorage.shared.loadSamplingConfig().normalized()
+        await runtimeState.appendEventLog(
+            type: "capture_sampling",
+            msg: "enabled=\(samplingConfig.enabled) rate=\(samplingConfig.sampleRate) strategy=\(samplingConfig.strategy.rawValue)"
+        )
 
         await preloadRootCertificate()
 
         do {
             VPNLog.proxy.info("event=vpn.proxy_start_begin port=\(self.proxyPort)")
             try await startProxyServer()
+            await applyProxyIngressMode(for: captureConfig.captureMode)
             VPNLog.proxy.info("event=vpn.proxy_start outcome=success port=\(self.proxyPort)")
         } catch {
             VPNLog.proxy.error(
@@ -261,7 +273,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let rawCaptureEnabled = await HardeningConfig.shared.enableRawCapture
         let rawCaptureLimit = await HardeningConfig.shared.maxRawCaptureSize
         let packetCaptureWriter = createPacketCaptureWriterIfNeeded(
-            enabled: rawCaptureEnabled && captureConfig.captureMode == .fullTunnel
+            enabled: rawCaptureEnabled && captureConfig.captureMode.usesPacketTunnelRouting
         )
         let flowConfig = PacketTunnelRuntimeState.PacketFlowConfig(
             packetFlow: self.packetFlow,
@@ -275,7 +287,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             localSocks5Host: localSocks5Host,
             localSocks5Port: localSocks5Port,
             udpForwardingMode: captureConfig.fullTunnelUDPForwardingMode,
-            ipv6Enabled: captureConfig.fullTunnelIPv6Enabled
+            ipv6Enabled: captureConfig.fullTunnelIPv6Enabled,
+            tcpTransparentMITMEnabled: captureConfig.captureMode.enablesTCPTransparentMITM,
+            tcpTransparentMITMPorts: transparentMITMPorts,
+            mitmProxyHost: proxyHost,
+            mitmProxyPort: proxyPort,
+            dualMITMPolicy: captureConfig.dualMITMPolicy,
+            tcpBypassTTLSeconds: captureConfig.tcpBypassTTLSeconds,
+            quicHostFailOpenSeconds: captureConfig.quicHostFailOpenSeconds,
+            dualMITMCircuitBreakerEnabled: captureConfig.dualMITMCircuitBreakerEnabled
         )
         await runtimeState.configurePacketFlow(flowConfig)
 
@@ -292,6 +312,39 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
 
         loadInitialThrottlingState()
+    }
+
+    private func logProtocolRoutingConfiguration() async {
+        guard let protocolConfiguration = self.protocolConfiguration as? NETunnelProviderProtocol else {
+            VPNLog.config.warning("event=vpn.protocol_routing outcome=skipped reason=invalid_protocol_configuration")
+            return
+        }
+
+        let excludeCellularValue: String
+        let excludeAPNsValue: String
+        let excludeDeviceCommunicationValue: String
+
+        if #available(iOS 16.4, macOS 13.3, *) {
+            excludeCellularValue = protocolConfiguration.excludeCellularServices.description
+            excludeAPNsValue = protocolConfiguration.excludeAPNs.description
+        } else {
+            excludeCellularValue = "n/a"
+            excludeAPNsValue = "n/a"
+        }
+
+        if #available(iOS 17.4, macOS 14.4, *) {
+            excludeDeviceCommunicationValue = protocolConfiguration.excludeDeviceCommunication.description
+        } else {
+            excludeDeviceCommunicationValue = "n/a"
+        }
+
+        VPNLog.config.info(
+            "event=vpn.protocol_routing include_all=\(protocolConfiguration.includeAllNetworks) exclude_local=\(protocolConfiguration.excludeLocalNetworks) exclude_cellular=\(excludeCellularValue, privacy: .public) exclude_apns=\(excludeAPNsValue, privacy: .public) exclude_device_comm=\(excludeDeviceCommunicationValue, privacy: .public)"
+        )
+        await runtimeState.appendEventLog(
+            type: "protocol_routing",
+            msg: "include_all=\(protocolConfiguration.includeAllNetworks) exclude_local=\(protocolConfiguration.excludeLocalNetworks) exclude_cellular=\(excludeCellularValue) exclude_apns=\(excludeAPNsValue) exclude_device_comm=\(excludeDeviceCommunicationValue)"
+        )
     }
 
     private func validateSharedStorage() throws {
@@ -539,14 +592,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     // MARK: - Network Setup
 
-    /// Configures virtual network settings for proxy-only mode.
+    /// Configures virtual network settings for the active capture mode.
     ///
     /// Discussion: Proxy-only mode injects `NEProxySettings` without routing
     /// packets, which avoids TUN/TAP forwarding and NAT complexity.
     ///
     /// - Throws: `PacketTunnelProviderError.networkSettingsFailed` if system rejects settings
     private func configureNetworkSettings(using config: CaptureConfiguration) async throws {
-        let modeLabel = config.captureMode == .fullTunnel ? "full_tunnel" : "proxy_only"
+        let modeLabel = captureModeLogLabel(config.captureMode)
         VPNLog.config.debug("event=vpn.network_settings_begin mode=\(modeLabel, privacy: .public)")
         await runtimeState.appendEventLog(
             type: "network_settings",
@@ -554,21 +607,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         )
 
         let networkSettings = buildNetworkSettings(using: config)
-        if config.captureMode == .fullTunnel {
+        if config.captureMode.usesPacketTunnelRouting {
             await runtimeState.appendEventLog(
                 type: "dns_config",
-                msg: "mode=full_tunnel servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count)"
+                msg: "mode=\(modeLabel) servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count)"
             )
         } else {
             await runtimeState.appendEventLog(type: "dns_config", msg: "mode=system_default")
         }
 
         VPNLog.config.info(
-            "event=vpn.network_settings_configured mode=\(modeLabel, privacy: .public) proxy_host=\(self.proxyHost, privacy: .public) proxy_port=\(self.proxyPort)"
+            "event=vpn.network_settings_configured mode=\(modeLabel, privacy: .public) proxy_enabled=\(config.captureMode.usesSystemHTTPProxy)"
         )
         await runtimeState.appendEventLog(
             type: "network_settings",
-            msg: "configured mode=\(modeLabel) proxy_host=\(self.proxyHost) proxy_port=\(self.proxyPort)"
+            msg: "configured mode=\(modeLabel) proxy_enabled=\(config.captureMode.usesSystemHTTPProxy)"
         )
 
         VPNLog.config.debug("event=vpn.network_settings_apply mode=\(modeLabel, privacy: .public)")
@@ -592,7 +645,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
     }
 
-    /// Builds VPN network settings for proxy-only mode.
+    private func captureModeLogLabel(_ mode: CaptureMode) -> String {
+        switch mode {
+        case .proxyOnly:
+            "proxy_only"
+        case .fullTunnel:
+            "full_tunnel"
+        case .fullTunnelDualMITM:
+            "full_tunnel_dual_mitm"
+        }
+    }
+
+    /// Builds VPN network settings for the active capture mode.
     ///
     /// - Returns: Configured network settings ready to apply to the system
     private func buildNetworkSettings(using config: CaptureConfiguration) -> NEPacketTunnelNetworkSettings {
@@ -616,13 +680,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             // Rationale: Disable IPv6 until proxy-only capture supports it.
             networkSettings.ipv6Settings = nil
 
-        case .fullTunnel:
+        case .fullTunnel, .fullTunnelDualMITM:
             if let dnsSettings = buildDNSSettings(using: config) {
                 networkSettings.dnsSettings = dnsSettings
-                VPNLog.config.debug("event=vpn.dns_config mode=full_tunnel servers=\(dnsSettings.servers.count)")
+                VPNLog.config.debug(
+                    "event=vpn.dns_config mode=\(self.captureModeLogLabel(config.captureMode), privacy: .public) servers=\(dnsSettings.servers.count)"
+                )
             } else {
                 networkSettings.dnsSettings = nil
-                VPNLog.config.debug("event=vpn.dns_config mode=full_tunnel servers=none")
+                VPNLog.config.debug(
+                    "event=vpn.dns_config mode=\(self.captureModeLogLabel(config.captureMode), privacy: .public) servers=none"
+                )
             }
 
             let ipv4Settings = NEIPv4Settings(
@@ -652,33 +720,36 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             }
         }
 
-        // Rationale: HTTP/HTTPS proxy settings drive capture through the local MITM proxy.
-        let proxy = NEProxySettings()
-        proxy.httpEnabled = true
-        proxy.httpsEnabled = true
-        proxy.httpServer = NEProxyServer(address: proxyHost, port: Int(proxyPort))
-        proxy.httpsServer = NEProxyServer(address: proxyHost, port: Int(proxyPort))
-        proxy.excludeSimpleHostnames = false
+        if config.captureMode.usesSystemHTTPProxy {
+            // Rationale: HTTP/HTTPS proxy settings drive capture through the local MITM proxy.
+            let proxy = NEProxySettings()
+            proxy.httpEnabled = true
+            proxy.httpsEnabled = true
+            proxy.httpServer = NEProxyServer(address: proxyHost, port: Int(proxyPort))
+            proxy.httpsServer = NEProxyServer(address: proxyHost, port: Int(proxyPort))
+            proxy.excludeSimpleHostnames = false
 
-        // Rule: Match all domains to force HTTP/HTTPS traffic through the proxy.
-        proxy.matchDomains = [""]
+            // Rule: Match all domains to force HTTP/HTTPS traffic through the proxy.
+            proxy.matchDomains = [""]
 
-        // Rule: Exclude local addresses to prevent proxy routing loops.
-        proxy.exceptionList = [
-            "localhost",
-            "*.local",
-            "127.0.0.1",
-            "10.*",
-            "172.16.*", "172.17.*", "172.18.*", "172.19.*",
-            "172.20.*", "172.21.*", "172.22.*", "172.23.*",
-            "172.24.*", "172.25.*", "172.26.*", "172.27.*",
-            "172.28.*", "172.29.*", "172.30.*", "172.31.*",
-            "192.168.*"
-        ]
+            // Rule: Exclude local addresses to prevent proxy routing loops.
+            proxy.exceptionList = [
+                "localhost",
+                "*.local",
+                "127.0.0.1",
+                "10.*",
+                "172.16.*", "172.17.*", "172.18.*", "172.19.*",
+                "172.20.*", "172.21.*", "172.22.*", "172.23.*",
+                "172.24.*", "172.25.*", "172.26.*", "172.27.*",
+                "172.28.*", "172.29.*", "172.30.*", "172.31.*",
+                "192.168.*"
+            ]
+            networkSettings.proxySettings = proxy
+        } else {
+            networkSettings.proxySettings = nil
+        }
 
-        networkSettings.proxySettings = proxy
-
-        if config.captureMode == .fullTunnel {
+        if config.captureMode.usesPacketTunnelRouting {
             // Rationale: Full-tunnel encapsulation adds overhead; use a safer MTU to avoid fragmentation stalls.
             networkSettings.mtu = NSNumber(value: fullTunnelMTU)
         }
@@ -699,9 +770,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         var ipv4Targets = Set<String>()
         var ipv6Targets = Set<String>()
 
-        let socksHost = config.fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !socksHost.isEmpty {
-            addExcludedHost(socksHost, ipv4: &ipv4Targets, ipv6: &ipv6Targets)
+        if config.captureMode.supportsCustomSocksServer {
+            let socksHost = config.fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !socksHost.isEmpty {
+                addExcludedHost(socksHost, ipv4: &ipv4Targets, ipv6: &ipv6Targets)
+            }
         }
 
         for server in config.fullTunnelDNSServers {
@@ -987,15 +1060,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let trimmedHost = config.fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
         let socksHostHash = LogRedaction.hash(trimmedHost)
         VPNLog.tunnel.info(
-            "event=vpn.capture_config mode=\(config.captureMode.rawValue, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue, privacy: .public) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count)"
+            "event=vpn.capture_config mode=\(config.captureMode.rawValue, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue, privacy: .public) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count) dual_mitm_policy=\(config.dualMITMPolicy.rawValue, privacy: .public) tcp_bypass_ttl=\(config.tcpBypassTTLSeconds) quic_fail_open_ttl=\(config.quicHostFailOpenSeconds) dual_mitm_breaker=\(config.dualMITMCircuitBreakerEnabled)"
         )
         await runtimeState.appendEventLog(
             type: "capture_config",
-            msg: "mode=\(config.captureMode.rawValue) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count)"
+            msg: "mode=\(config.captureMode.rawValue) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count) dual_mitm_policy=\(config.dualMITMPolicy.rawValue) tcp_bypass_ttl=\(config.tcpBypassTTLSeconds) quic_fail_open_ttl=\(config.quicHostFailOpenSeconds) dual_mitm_breaker=\(config.dualMITMCircuitBreakerEnabled)"
         )
 
         do {
             try await configureNetworkSettings(using: config)
+            await applyProxyIngressMode(for: config.captureMode)
             VPNLog.tunnel.info("event=vpn.capture_mode_refresh outcome=success mode=\(config.captureMode.rawValue)")
         } catch {
             VPNLog.tunnel.error(
@@ -1013,7 +1087,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             writer: proxyWriter
         )
         let packetCaptureWriter = createPacketCaptureWriterIfNeeded(
-            enabled: rawCaptureEnabled && config.captureMode == .fullTunnel
+            enabled: rawCaptureEnabled && config.captureMode.usesPacketTunnelRouting
         )
         let flowConfig = PacketTunnelRuntimeState.PacketFlowConfig(
             packetFlow: packetFlow,
@@ -1027,7 +1101,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             localSocks5Host: localSocks5Host,
             localSocks5Port: localSocks5Port,
             udpForwardingMode: config.fullTunnelUDPForwardingMode,
-            ipv6Enabled: config.fullTunnelIPv6Enabled
+            ipv6Enabled: config.fullTunnelIPv6Enabled,
+            tcpTransparentMITMEnabled: config.captureMode.enablesTCPTransparentMITM,
+            tcpTransparentMITMPorts: transparentMITMPorts,
+            mitmProxyHost: proxyHost,
+            mitmProxyPort: proxyPort,
+            dualMITMPolicy: config.dualMITMPolicy,
+            tcpBypassTTLSeconds: config.tcpBypassTTLSeconds,
+            quicHostFailOpenSeconds: config.quicHostFailOpenSeconds,
+            dualMITMCircuitBreakerEnabled: config.dualMITMCircuitBreakerEnabled
         )
         await runtimeState.configurePacketFlow(flowConfig)
         await runtimeState.appendEventLog(
@@ -1086,7 +1168,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 limit: limit,
                 writer: writer
             )
-            if currentCaptureMode == .fullTunnel {
+            if currentCaptureMode.usesPacketTunnelRouting {
                 let packetWriter = createPacketCaptureWriterIfNeeded(enabled: enableRawCapture)
                 await runtimeState.updatePacketCaptureSettings(
                     enabled: enableRawCapture,
@@ -1099,7 +1181,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         if let maxRawCaptureSize = readUInt64(from: config["maxRawCaptureSize"]) {
             await hardeningConfig.setMaxRawCaptureSize(maxRawCaptureSize)
             await runtimeState.updateRawCaptureLimit(maxRawCaptureSize)
-            if currentCaptureMode == .fullTunnel {
+            if currentCaptureMode.usesPacketTunnelRouting {
                 await runtimeState.updatePacketCaptureLimit(maxRawCaptureSize)
             }
         }
@@ -1183,8 +1265,20 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         await runtimeState.setQUICHandlingMode(quicHandlingMode)
     }
 
+    private func applyProxyIngressMode(for mode: CaptureMode) async {
+        let transparentTLSModeEnabled = mode.enablesTCPTransparentMITM
+        let payload: UnsafeSendable<[String: Any]> = UnsafeSendable(
+            ["transparentTLSModeEnabled": transparentTLSModeEnabled]
+        )
+        await runtimeState.updateProxyConfiguration(payload)
+        await runtimeState.appendEventLog(
+            type: "proxy_ingress_mode",
+            msg: "mode=\(mode.rawValue) transparent_tls=\(transparentTLSModeEnabled)"
+        )
+    }
+
     private func shouldEnableProxyPCAP(rawCaptureEnabled: Bool, mode: CaptureMode) -> Bool {
-        // Avoid duplicate capture in full-tunnel mode; packet-level PCAP already captures traffic there.
+        // Avoid duplicate capture in packet-routing modes; packet-level PCAP already captures traffic there.
         rawCaptureEnabled && mode == .proxyOnly
     }
 
@@ -1456,6 +1550,14 @@ actor PacketTunnelRuntimeState {
         let localSocks5Port: UInt16
         let udpForwardingMode: UDPForwardingMode
         let ipv6Enabled: Bool
+        let tcpTransparentMITMEnabled: Bool
+        let tcpTransparentMITMPorts: Set<UInt16>
+        let mitmProxyHost: String
+        let mitmProxyPort: UInt16
+        let dualMITMPolicy: DualMITMPolicy
+        let tcpBypassTTLSeconds: Int
+        let quicHostFailOpenSeconds: Int
+        let dualMITMCircuitBreakerEnabled: Bool
     }
 
     func setStopping(_ value: Bool) {
@@ -1497,7 +1599,7 @@ actor PacketTunnelRuntimeState {
     func configurePacketFlow(_ config: PacketFlowConfig) async {
         stopPacketFlow()
 
-        guard config.mode == .fullTunnel else {
+        guard config.mode.usesPacketTunnelRouting else {
             stopLocalSocks5Server()
             config.writer?.close()
             return
@@ -1519,6 +1621,14 @@ actor PacketTunnelRuntimeState {
         let inboundQUICInterceptor: @Sendable (Data) -> Bool = { packet in
             packetFlowLoopReference.loop?.consumeInboundQUICPacketIfIntercepted(packet) ?? false
         }
+        let eventLogger: @Sendable (String, String) -> Void = { [weak self] type, msg in
+            Task { [weak self] in
+                await self?.appendEventLog(type: type, msg: msg)
+            }
+        }
+        DualMITMCircuitBreaker.shared.configure(
+            enabled: config.dualMITMCircuitBreakerEnabled
+        )
         // Use direct UDP forwarding until SOCKS5 UDP ASSOCIATE probe explicitly enables tunnel UDP.
         udpTunnelSupported = false
 
@@ -1527,18 +1637,13 @@ actor PacketTunnelRuntimeState {
             let trimmedHost = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines)
             let socksHostHash = LogRedaction.hash(trimmedHost)
             VPNLog.tunnel.info(
-                "event=vpn.packet_flow_config mode=\(config.mode.rawValue, privacy: .public) socks_source=\(endpoint.source, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue, privacy: .public) quic_mode=\(self.quicHandlingMode.rawValue, privacy: .public) block_quic=\(self.quicHandlingMode.blocksQUIC)"
+                "event=vpn.packet_flow_config mode=\(config.mode.rawValue, privacy: .public) socks_source=\(endpoint.source, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue, privacy: .public) quic_mode=\(self.quicHandlingMode.rawValue, privacy: .public) block_quic=\(self.quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.tcpTransparentMITMEnabled) dual_mitm_policy=\(config.dualMITMPolicy.rawValue, privacy: .public) breaker=\(config.dualMITMCircuitBreakerEnabled)"
             )
             appendEventLog(
                 type: "packet_flow_config",
-                msg: "mode=\(config.mode.rawValue) socks_source=\(endpoint.source) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue) quic_mode=\(quicHandlingMode.rawValue) block_quic=\(quicHandlingMode.blocksQUIC)"
+                msg: "mode=\(config.mode.rawValue) socks_source=\(endpoint.source) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue) quic_mode=\(quicHandlingMode.rawValue) block_quic=\(quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.tcpTransparentMITMEnabled) dual_mitm_policy=\(config.dualMITMPolicy.rawValue) breaker=\(config.dualMITMCircuitBreakerEnabled)"
             )
 
-            let eventLogger: @Sendable (String, String) -> Void = { [weak self] type, msg in
-                Task { [weak self] in
-                    await self?.appendEventLog(type: type, msg: msg)
-                }
-            }
             let ipv6Enabled = config.ipv6Enabled
             let forwarder = HevSocks5TunnelForwarder(
                 packetFlow: config.packetFlow,
@@ -1606,7 +1711,11 @@ actor PacketTunnelRuntimeState {
             udpForwarder: udpForwarder,
             udpForwardingMode: config.udpForwardingMode,
             quicHandlingMode: quicHandlingMode,
-            quicInterceptor: RequestInterceptor.shared
+            dualMITMPolicy: config.dualMITMPolicy,
+            quicHostFailOpenSeconds: config.quicHostFailOpenSeconds,
+            dualMITMCircuitBreakerEnabled: config.dualMITMCircuitBreakerEnabled,
+            quicInterceptor: RequestInterceptor.shared,
+            eventLogHandler: eventLogger
         )
         packetFlowLoop = loop
         packetFlowLoopReference.loop = loop
@@ -1640,7 +1749,7 @@ actor PacketTunnelRuntimeState {
 
     private func resolveSocksEndpoint(using config: PacketFlowConfig) throws -> EffectiveSocksEndpoint {
         let source = selectSocksEndpointSource(host: config.socks5Host, port: config.socks5Port)
-        if source == .configured {
+        if config.mode.supportsCustomSocksServer, source == .configured {
             let trimmedHost = config.socks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
             stopLocalSocks5Server()
             return EffectiveSocksEndpoint(host: trimmedHost, port: config.socks5Port, source: SocksEndpointSource.configured.rawValue)
@@ -1655,7 +1764,53 @@ actor PacketTunnelRuntimeState {
                     await self?.appendEventLog(type: type, msg: msg)
                 }
             }
-            let server = LocalSocks5Server(bindHost: config.localSocks5Host, eventLogHandler: eventLogger)
+            let dualMITMPolicy = config.dualMITMPolicy
+            let tcpConnectRoutingPolicy = LocalSocks5Server.TCPConnectRoutingPolicy(
+                enabled: config.tcpTransparentMITMEnabled,
+                interceptPorts: config.tcpTransparentMITMPorts,
+                mitmProxyHost: config.mitmProxyHost,
+                mitmProxyPort: config.mitmProxyPort,
+                failOpen: dualMITMPolicy == .adaptiveFailOpen,
+                dualMITMPolicy: dualMITMPolicy,
+                shouldBypassHost: { host in
+                    guard dualMITMPolicy == .adaptiveFailOpen else {
+                        return false
+                    }
+                    guard MITMAutoBypassLookup.shouldBypass(host: host) else {
+                        return false
+                    }
+                    guard let reason = MITMAutoBypassLookup.reason(for: host) else {
+                        return true
+                    }
+                    let normalized = reason
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                    if normalized.hasPrefix("quic ") || normalized.hasPrefix("quic_") {
+                        return false
+                    }
+                    return true
+                },
+                bypassReasonForHost: { host in
+                    guard dualMITMPolicy == .adaptiveFailOpen else {
+                        return nil
+                    }
+                    guard let reason = MITMAutoBypassLookup.reason(for: host) else {
+                        return MITMAutoBypassLookup.shouldBypass(host: host) ? "" : nil
+                    }
+                    let normalized = reason
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                    if normalized.hasPrefix("quic ") || normalized.hasPrefix("quic_") {
+                        return nil
+                    }
+                    return reason
+                }
+            )
+            let server = LocalSocks5Server(
+                bindHost: config.localSocks5Host,
+                tcpConnectRoutingPolicy: tcpConnectRoutingPolicy,
+                eventLogHandler: eventLogger
+            )
             localSocks5Server = server
             localServer = server
         }
