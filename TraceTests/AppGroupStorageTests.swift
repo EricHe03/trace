@@ -170,7 +170,13 @@ final class AppGroupStorageTests: XCTestCase {
             dualMITMPolicy: .strictMITM,
             tcpBypassTTLSeconds: 900,
             quicHostFailOpenSeconds: 2400,
-            dualMITMCircuitBreakerEnabled: false
+            dualMITMCircuitBreakerEnabled: false,
+            quicNoProgressGraceMs: 1500,
+            quicNoProgressIdleMs: 1600,
+            quicNoProgressAbsoluteMs: 5000,
+            quicNoProgressMinClientDatagrams: 4,
+            quicAuthorityRetryAttempts: 2,
+            quicCertMaterialCacheTTLSeconds: 2400
         )
 
         try storage.saveConfiguration(config)
@@ -194,6 +200,12 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(loaded.tcpBypassTTLSeconds, config.tcpBypassTTLSeconds)
         XCTAssertEqual(loaded.quicHostFailOpenSeconds, config.quicHostFailOpenSeconds)
         XCTAssertEqual(loaded.dualMITMCircuitBreakerEnabled, config.dualMITMCircuitBreakerEnabled)
+        XCTAssertEqual(loaded.quicNoProgressGraceMs, config.quicNoProgressGraceMs)
+        XCTAssertEqual(loaded.quicNoProgressIdleMs, config.quicNoProgressIdleMs)
+        XCTAssertEqual(loaded.quicNoProgressAbsoluteMs, config.quicNoProgressAbsoluteMs)
+        XCTAssertEqual(loaded.quicNoProgressMinClientDatagrams, config.quicNoProgressMinClientDatagrams)
+        XCTAssertEqual(loaded.quicAuthorityRetryAttempts, config.quicAuthorityRetryAttempts)
+        XCTAssertEqual(loaded.quicCertMaterialCacheTTLSeconds, config.quicCertMaterialCacheTTLSeconds)
     }
 
     func testLoadConfigurationWithNoFile() {
@@ -331,6 +343,12 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(config.tcpBypassTTLSeconds, 180)
         XCTAssertEqual(config.quicHostFailOpenSeconds, 1800)
         XCTAssertTrue(config.dualMITMCircuitBreakerEnabled)
+        XCTAssertEqual(config.quicNoProgressGraceMs, 1200)
+        XCTAssertEqual(config.quicNoProgressIdleMs, 1200)
+        XCTAssertEqual(config.quicNoProgressAbsoluteMs, 4500)
+        XCTAssertEqual(config.quicNoProgressMinClientDatagrams, 2)
+        XCTAssertEqual(config.quicAuthorityRetryAttempts, 1)
+        XCTAssertEqual(config.quicCertMaterialCacheTTLSeconds, 1800)
     }
 
     func testCaptureConfigurationNormalizedAddsDefaultDNSForFullTunnel() {
@@ -377,11 +395,56 @@ final class AppGroupStorageTests: XCTestCase {
         var config = CaptureConfiguration.default
         config.tcpBypassTTLSeconds = 5
         config.quicHostFailOpenSeconds = 100_000
+        config.quicNoProgressGraceMs = 100
+        config.quicNoProgressIdleMs = 11_000
+        config.quicNoProgressAbsoluteMs = 100
+        config.quicNoProgressMinClientDatagrams = 16
+        config.quicAuthorityRetryAttempts = -1
+        config.quicCertMaterialCacheTTLSeconds = 30
 
         let normalized = config.normalized()
 
         XCTAssertEqual(normalized.tcpBypassTTLSeconds, 30)
         XCTAssertEqual(normalized.quicHostFailOpenSeconds, 86_400)
+        XCTAssertEqual(normalized.quicNoProgressGraceMs, 200)
+        XCTAssertEqual(normalized.quicNoProgressIdleMs, 10_000)
+        XCTAssertEqual(normalized.quicNoProgressAbsoluteMs, 1_000)
+        XCTAssertEqual(normalized.quicNoProgressMinClientDatagrams, 8)
+        XCTAssertEqual(normalized.quicAuthorityRetryAttempts, 0)
+        XCTAssertEqual(normalized.quicCertMaterialCacheTTLSeconds, 60)
+    }
+
+    func testCaptureConfigurationDecodeWithoutNewQUICFieldsUsesDefaults() throws {
+        let json = """
+        {
+          "isEnabled": true,
+          "filterMode": "all",
+          "domainFilters": [],
+          "captureHeaders": true,
+          "captureBody": true,
+          "maxBodySize": 4096,
+          "captureMode": "fullTunnelDualMITM",
+          "fullTunnelDNSServers": ["1.1.1.1"],
+          "fullTunnelSearchDomains": [],
+          "fullTunnelIPv6Enabled": true,
+          "fullTunnelSocks5Host": "127.0.0.1",
+          "fullTunnelSocks5Port": 1080,
+          "fullTunnelUDPForwardingMode": "split",
+          "dualMITMPolicy": "adaptiveFailOpen",
+          "tcpBypassTTLSeconds": 180,
+          "quicHostFailOpenSeconds": 1800,
+          "dualMITMCircuitBreakerEnabled": true
+        }
+        """
+
+        let config = try JSONDecoder().decode(CaptureConfiguration.self, from: Data(json.utf8))
+
+        XCTAssertEqual(config.quicNoProgressGraceMs, 1200)
+        XCTAssertEqual(config.quicNoProgressIdleMs, 1200)
+        XCTAssertEqual(config.quicNoProgressAbsoluteMs, 4500)
+        XCTAssertEqual(config.quicNoProgressMinClientDatagrams, 2)
+        XCTAssertEqual(config.quicAuthorityRetryAttempts, 1)
+        XCTAssertEqual(config.quicCertMaterialCacheTTLSeconds, 1800)
     }
 
     func testFilterModeEnum() {

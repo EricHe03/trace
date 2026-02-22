@@ -84,6 +84,8 @@ final class QUICFlowRouter: @unchecked Sendable {
         var processedStreamCount: Int
         var recentClientDatagrams: [Data]
         var lastRouteDecisionLogSignature: String?
+        var bootstrapToken: UUID?
+        var noProgressBudgetStartAt: Date?
 
         init(
             flowID: UUID = UUID(),
@@ -125,6 +127,8 @@ final class QUICFlowRouter: @unchecked Sendable {
             processedStreamCount = 0
             recentClientDatagrams = []
             lastRouteDecisionLogSignature = nil
+            bootstrapToken = nil
+            noProgressBudgetStartAt = nil
         }
     }
 
@@ -140,6 +144,7 @@ final class QUICFlowRouter: @unchecked Sendable {
     }
 
     private struct NoProgressSnapshot {
+        let budgetStartAt: Date?
         let establishedAt: Date?
         let lastProgressAt: Date?
         let clientDatagramsSeen: Int
@@ -149,6 +154,27 @@ final class QUICFlowRouter: @unchecked Sendable {
     private struct HostFailOpenState {
         let reason: String
         let expiresAt: Date
+    }
+
+    private struct BootstrapPreparation {
+        let flowKey: FlowKey
+        let flowID: UUID
+        let bootstrapToken: UUID
+        let host: String
+        let port: Int
+        let tunnelPolicyRequired: Bool
+    }
+
+    private struct RetryBootstrapPreparation {
+        let flowKey: FlowKey
+        let flowID: UUID
+        let bootstrapToken: UUID
+        let authority: String
+        let port: Int
+        let authorityHash: String
+        let attempt: Int
+        let tunnelPolicyRequired: Bool
+        let oldSession: QUICMitmSession
     }
 
     private let logSampler = LogSampler()
@@ -161,6 +187,7 @@ final class QUICFlowRouter: @unchecked Sendable {
     private let eventLogHandler: (@Sendable (String, String) -> Void)?
     private let downstreamDatagramSink: (@Sendable (Data, QUICFlowDatagramContext) -> Void)?
     private let upstreamDatagramSink: (@Sendable (Data, QUICFlowDatagramContext) -> Void)?
+    private let certificateMaterialProvider: QUICCertificateMaterialProvider
     private var flowStates: [FlowKey: FlowSessionState] = [:]
     private var routeDecisionLogSignaturesByFlowID: [UUID: String] = [:]
     private var hostFailOpenStates: [String: HostFailOpenState] = [:]
@@ -174,12 +201,12 @@ final class QUICFlowRouter: @unchecked Sendable {
     private let maxHostFailOpenEntries = 2048
     private let maxQueuedIngestsPerFlow = 16
     private let maxBufferedDatagramsPerFlow = 64
-    private let maxAuthorityRetryAttempts = 2
+    private let maxAuthorityRetryAttempts: Int
     private let sessionTickInterval: UInt64 = 25_000_000
     private let noProgressGracePeriod: TimeInterval
     private let noProgressIdleTimeout: TimeInterval
     private let noProgressAbsoluteTimeout: TimeInterval
-    private let noProgressMinimumClientDatagrams = 3
+    private let noProgressMinimumClientDatagrams: Int
     private let maxFailOpenReplayDatagrams = 8
     private let maxFailOpenReplayDatagramBytes = 2_048
 
@@ -191,6 +218,9 @@ final class QUICFlowRouter: @unchecked Sendable {
         noProgressGracePeriod: TimeInterval = 3.0,
         noProgressIdleTimeout: TimeInterval = 3.0,
         noProgressAbsoluteTimeout: TimeInterval = 12.0,
+        noProgressMinimumClientDatagrams: Int = 2,
+        maxAuthorityRetryAttempts: Int = 1,
+        certificateMaterialCacheTTL: TimeInterval = 1800,
         dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
         dualMITMCircuitBreakerEnabled: Bool = true,
         eventLogHandler: (@Sendable (String, String) -> Void)? = nil,
@@ -209,6 +239,14 @@ final class QUICFlowRouter: @unchecked Sendable {
         self.eventLogHandler = eventLogHandler
         self.downstreamDatagramSink = downstreamDatagramSink
         self.upstreamDatagramSink = upstreamDatagramSink
+        self.noProgressMinimumClientDatagrams = max(1, min(8, noProgressMinimumClientDatagrams))
+        self.maxAuthorityRetryAttempts = max(0, min(2, maxAuthorityRetryAttempts))
+        self.certificateMaterialProvider = QUICCertificateMaterialProvider(
+            ttl: max(60, certificateMaterialCacheTTL),
+            materialGenerator: { [weak self] authority in
+                self?.makeCertificateMaterial(for: authority)
+            }
+        )
     }
 
     func resolveInterceptRoute(
@@ -248,27 +286,29 @@ final class QUICFlowRouter: @unchecked Sendable {
         let bypassReason = evaluation.failureReason ?? "none"
         let upstreamHash = LogRedaction.hash(ipPacket.destination.description)
         let policy = dualMITMPolicy.rawValue
+        let forwardingLabel = String(describing: effectiveForwardingDecision)
+        let outcomeLabel = evaluation.inspectionOutcome == .intercepted ? "intercepted" : "pass_through"
+        let routeLogSignature = "\(outcomeLabel):\(bypassReason):\(forwardingLabel):\(evaluation.sniHash ?? "unknown"):\(policy)"
 
         if evaluation.inspectionOutcome == .passThroughMarked,
            let reason = evaluation.failureReason,
            logSampler.shouldLog(event: "vpn.quic_intercept_fallback", key: reason, first: 5, every: 250) {
             VPNLog.tunnel.info(
-                "event=vpn.quic_intercept_fallback flow_id=\(flowIDLabel, privacy: .public) outcome=pass_through reason=\(reason, privacy: .public) forward=\(String(describing: effectiveForwardingDecision), privacy: .public) sni_hash=\(evaluation.sniHash ?? "unknown", privacy: .public) upstream_hash=\(upstreamHash, privacy: .public) route_decision=\(routeDecision, privacy: .public) fallback_applied=\(fallbackApplied) bypass_reason=\(bypassReason, privacy: .public) policy=\(policy, privacy: .public)"
+                "event=vpn.quic_intercept_fallback flow_id=\(flowIDLabel, privacy: .public) outcome=pass_through reason=\(reason, privacy: .public) forward=\(forwardingLabel, privacy: .public) sni_hash=\(evaluation.sniHash ?? "unknown", privacy: .public) upstream_hash=\(upstreamHash, privacy: .public) route_decision=\(routeDecision, privacy: .public) fallback_applied=\(fallbackApplied) bypass_reason=\(bypassReason, privacy: .public) policy=\(policy, privacy: .public)"
             )
         }
-        if evaluation.inspectionOutcome == .passThroughMarked, let reason = evaluation.failureReason {
-            let logSignature = "pass_through:\(reason):\(String(describing: effectiveForwardingDecision))"
-            if shouldEmitRouteDecisionEvent(flowID: evaluation.flowID, signature: logSignature) {
+        if shouldEmitRouteDecisionEvent(flowID: evaluation.flowID, signature: routeLogSignature) {
+            if evaluation.inspectionOutcome == .passThroughMarked, let reason = evaluation.failureReason {
                 eventLogHandler?(
                     "quic_intercept",
-                    "flow_id=\(flowIDLabel) outcome=pass_through reason=\(reason) forward=\(String(describing: effectiveForwardingDecision)) sni_hash=\(evaluation.sniHash ?? "unknown") upstream_hash=\(upstreamHash) route_decision=\(routeDecision) fallback_applied=\(fallbackApplied) bypass_reason=\(bypassReason) policy=\(policy)"
+                    "flow_id=\(flowIDLabel) outcome=pass_through reason=\(reason) forward=\(forwardingLabel) sni_hash=\(evaluation.sniHash ?? "unknown") upstream_hash=\(upstreamHash) route_decision=\(routeDecision) fallback_applied=\(fallbackApplied) bypass_reason=\(bypassReason) policy=\(policy)"
+                )
+            } else if evaluation.inspectionOutcome == .intercepted {
+                eventLogHandler?(
+                    "quic_intercept",
+                    "flow_id=\(flowIDLabel) outcome=intercepted flow_sni_hash=\(evaluation.sniHash ?? "unknown") upstream_hash=\(upstreamHash) route_decision=\(routeDecision) fallback_applied=\(fallbackApplied) bypass_reason=\(bypassReason) policy=\(policy)"
                 )
             }
-        } else if evaluation.inspectionOutcome == .intercepted {
-            eventLogHandler?(
-                "quic_intercept",
-                "flow_id=\(flowIDLabel) outcome=intercepted flow_sni_hash=\(evaluation.sniHash ?? "unknown") upstream_hash=\(upstreamHash) route_decision=\(routeDecision) fallback_applied=\(fallbackApplied) bypass_reason=\(bypassReason) policy=\(policy)"
-            )
         }
 
         return QUICRouteResult(
@@ -490,7 +530,7 @@ final class QUICFlowRouter: @unchecked Sendable {
         let normalizedHostHint = normalizeAuthority(hostHint)
         let payload = udpPacket.payload
 
-        var bootstrapTask: (flowID: UUID, session: QUICMitmSession)?
+        var bootstrapPreparation: BootstrapPreparation?
         var ingestTask: (flowID: UUID, session: QUICMitmSession, payload: Data)?
         var sessionToClose: QUICMitmSession?
         var fallbackMetricReason: String?
@@ -553,9 +593,11 @@ final class QUICFlowRouter: @unchecked Sendable {
                 state.queuedIngests = 0
                 state.pendingDatagrams.removeAll(keepingCapacity: false)
                 state.session = nil
+                state.bootstrapToken = nil
                 state.tickTask = nil
                 state.establishedAt = nil
                 state.lastProgressAt = nil
+                state.noProgressBudgetStartAt = nil
                 state.clientDatagramsSeen = 0
                 state.processedStreamCount = 0
                 flowStates[flowKey] = state
@@ -595,9 +637,11 @@ final class QUICFlowRouter: @unchecked Sendable {
                 state.queuedIngests = 0
                 state.pendingDatagrams.removeAll(keepingCapacity: false)
                 state.session = nil
+                state.bootstrapToken = nil
                 state.tickTask = nil
                 state.establishedAt = nil
                 state.lastProgressAt = nil
+                state.noProgressBudgetStartAt = nil
                 state.clientDatagramsSeen = 0
                 state.processedStreamCount = 0
                 flowStates[flowKey] = state
@@ -630,9 +674,11 @@ final class QUICFlowRouter: @unchecked Sendable {
                 state.queuedIngests = 0
                 state.pendingDatagrams.removeAll(keepingCapacity: false)
                 state.session = nil
+                state.bootstrapToken = nil
                 state.tickTask = nil
                 state.establishedAt = nil
                 state.lastProgressAt = nil
+                state.noProgressBudgetStartAt = nil
                 state.clientDatagramsSeen = 0
                 state.processedStreamCount = 0
                 flowStates[flowKey] = state
@@ -727,9 +773,11 @@ final class QUICFlowRouter: @unchecked Sendable {
                 state.queuedIngests = 0
                 state.pendingDatagrams.removeAll(keepingCapacity: false)
                 state.session = nil
+                state.bootstrapToken = nil
                 state.tickTask = nil
                 state.establishedAt = nil
                 state.lastProgressAt = nil
+                state.noProgressBudgetStartAt = nil
                 state.clientDatagramsSeen = 0
                 state.processedStreamCount = 0
                 state.sniHash = LogRedaction.hash(state.host)
@@ -753,34 +801,27 @@ final class QUICFlowRouter: @unchecked Sendable {
             state.sniHash = LogRedaction.hash(state.host)
             state.establishedAt = nil
             state.lastProgressAt = nil
+            if state.noProgressBudgetStartAt == nil {
+                state.noProgressBudgetStartAt = now
+            }
             state.clientDatagramsSeen = 0
             state.processedStreamCount = 0
-
-            let certificateMaterial = makeCertificateMaterial(for: state.host)
-            if certificateMaterial == nil {
-                eventLogHandler?(
-                    "quic_mitm_session",
-                    "stage=establish_prepare flow_id=\(state.flowID.uuidString) host_hash=\(state.sniHash ?? "unknown") cert_material=missing"
-                )
-            }
-
-            let session = QUICMitmSession(
-                flowID: state.flowID,
-                host: state.host,
-                port: state.port,
-                interceptor: interceptor,
-                http3Client: http3ClientFactory(),
-                certificateMaterial: certificateMaterial,
-                tunnelPolicyRequired: state.tunnelPolicyRequired,
-                eventLogHandler: eventLogHandler
-            )
-            state.session = session
+            state.session = nil
+            let bootstrapToken = UUID()
+            state.bootstrapToken = bootstrapToken
             if !payload.isEmpty {
                 recordRecentClientDatagramLocked(payload, state: &state)
                 state.pendingDatagrams.append(QueuedDatagram(payload: payload, fromClient: true))
             }
             flowStates[flowKey] = state
-            bootstrapTask = (state.flowID, session)
+            bootstrapPreparation = BootstrapPreparation(
+                flowKey: flowKey,
+                flowID: state.flowID,
+                bootstrapToken: bootstrapToken,
+                host: state.host,
+                port: state.port,
+                tunnelPolicyRequired: state.tunnelPolicyRequired
+            )
 
             return RouteEvaluation(
                 inspectionOutcome: .intercepted,
@@ -793,12 +834,8 @@ final class QUICFlowRouter: @unchecked Sendable {
             )
         }
 
-        if let bootstrapTask {
-            launchBootstrapTask(
-                flowKey: flowKey,
-                flowID: bootstrapTask.flowID,
-                session: bootstrapTask.session
-            )
+        if let bootstrapPreparation {
+            launchBootstrapPreparationTask(bootstrapPreparation)
         }
         if let sessionToClose {
             Task {
@@ -849,8 +886,12 @@ final class QUICFlowRouter: @unchecked Sendable {
                     state.lastAuthorityRetry = nil
                     state.establishedAt = now
                     state.lastProgressAt = now
+                    if state.noProgressBudgetStartAt == nil {
+                        state.noProgressBudgetStartAt = now
+                    }
                     state.clientDatagramsSeen = 0
                     state.processedStreamCount = 0
+                    state.bootstrapToken = nil
                     state.tickTask?.cancel()
                     state.tickTask = self.makeSessionTickTask(
                         flowKey: flowKey,
@@ -878,6 +919,104 @@ final class QUICFlowRouter: @unchecked Sendable {
                 }
                 await session.close()
             }
+        }
+    }
+
+    private func launchBootstrapPreparationTask(_ preparation: BootstrapPreparation) {
+        Task { [weak self] in
+            guard let self else { return }
+            let certificateMaterial = await self.certificateMaterialProvider.material(for: preparation.host)
+            if certificateMaterial == nil {
+                self.eventLogHandler?(
+                    "quic_mitm_session",
+                    "stage=establish_prepare flow_id=\(preparation.flowID.uuidString) host_hash=\(LogRedaction.hash(preparation.host)) cert_material=missing"
+                )
+            }
+            let session = QUICMitmSession(
+                flowID: preparation.flowID,
+                host: preparation.host,
+                port: preparation.port,
+                interceptor: self.interceptor,
+                http3Client: self.http3ClientFactory(),
+                certificateMaterial: certificateMaterial,
+                tunnelPolicyRequired: preparation.tunnelPolicyRequired,
+                eventLogHandler: self.eventLogHandler
+            )
+
+            let shouldLaunch = self.stateQueue.sync { () -> Bool in
+                guard var state = self.flowStates[preparation.flowKey],
+                      state.flowID == preparation.flowID,
+                      state.isEstablishing,
+                      state.session == nil,
+                      state.bootstrapToken == preparation.bootstrapToken else {
+                    return false
+                }
+                state.session = session
+                self.flowStates[preparation.flowKey] = state
+                return true
+            }
+
+            if shouldLaunch {
+                self.launchBootstrapTask(
+                    flowKey: preparation.flowKey,
+                    flowID: preparation.flowID,
+                    session: session
+                )
+            } else {
+                await session.close()
+            }
+        }
+    }
+
+    private func launchRetryBootstrapPreparationTask(_ retry: RetryBootstrapPreparation) {
+        Task { [weak self] in
+            guard let self else {
+                await retry.oldSession.close()
+                return
+            }
+
+            let certificateMaterial = await self.certificateMaterialProvider.material(for: retry.authority)
+            if certificateMaterial == nil {
+                self.eventLogHandler?(
+                    "quic_mitm_session",
+                    "stage=retry_prepare flow_id=\(retry.flowID.uuidString) authority_hash=\(retry.authorityHash) cert_material=missing"
+                )
+            }
+            let session = QUICMitmSession(
+                flowID: retry.flowID,
+                host: retry.authority,
+                port: retry.port,
+                interceptor: self.interceptor,
+                http3Client: self.http3ClientFactory(),
+                certificateMaterial: certificateMaterial,
+                tunnelPolicyRequired: retry.tunnelPolicyRequired,
+                eventLogHandler: self.eventLogHandler
+            )
+
+            let shouldLaunch = self.stateQueue.sync { () -> Bool in
+                guard var state = self.flowStates[retry.flowKey],
+                      state.flowID == retry.flowID,
+                      state.isEstablishing,
+                      state.session == nil,
+                      state.host.caseInsensitiveCompare(retry.authority) == .orderedSame,
+                      state.bootstrapToken == retry.bootstrapToken else {
+                    return false
+                }
+                state.session = session
+                self.flowStates[retry.flowKey] = state
+                return true
+            }
+
+            if shouldLaunch {
+                self.launchBootstrapTask(
+                    flowKey: retry.flowKey,
+                    flowID: retry.flowID,
+                    session: session
+                )
+            } else {
+                await session.close()
+            }
+            await retry.oldSession.close()
         }
     }
 
@@ -972,7 +1111,7 @@ final class QUICFlowRouter: @unchecked Sendable {
         authorityHint: String,
         replayDatagram: Data?,
         fromClient: Bool
-    ) -> (oldSession: QUICMitmSession, flowID: UUID, session: QUICMitmSession, authorityHash: String, attempt: Int)? {
+    ) -> RetryBootstrapPreparation? {
         guard fromClient else {
             return nil
         }
@@ -986,26 +1125,23 @@ final class QUICFlowRouter: @unchecked Sendable {
             return nil
         }
 
-        var retryTask: (oldSession: QUICMitmSession, flowID: UUID, session: QUICMitmSession, authorityHash: String, attempt: Int)?
+        var retryTask: RetryBootstrapPreparation?
         stateQueue.sync {
             guard var state = flowStates[flowKey],
                   state.flowID == flowID,
                   let activeSession = state.session else { return }
 
             let currentAuthority = normalizeAuthority(state.host)
-            guard currentAuthority.caseInsensitiveCompare(normalizedAuthority) != .orderedSame else {
+            if let skipReason = Self.authorityRetrySkipReason(
+                currentAuthority: currentAuthority,
+                nextAuthority: normalizedAuthority,
+                attemptsUsed: state.authorityRetryCount,
+                maxAttempts: maxAuthorityRetryAttempts,
+                lastAuthorityRetry: state.lastAuthorityRetry
+            ) {
                 eventLogHandler?(
                     "quic_mitm_session",
-                    "outcome=retry_with_authority_skipped flow_id=\(flowID.uuidString) reason=same_authority authority_hash=\(LogRedaction.hash(normalizedAuthority))"
-                )
-                return
-            }
-
-            if state.authorityRetryCount >= maxAuthorityRetryAttempts ||
-                state.lastAuthorityRetry?.caseInsensitiveCompare(normalizedAuthority) == .orderedSame {
-                eventLogHandler?(
-                    "quic_mitm_session",
-                    "outcome=retry_with_authority_skipped flow_id=\(flowID.uuidString) reason=attempt_exhausted authority_hash=\(LogRedaction.hash(normalizedAuthority)) attempts=\(state.authorityRetryCount)"
+                    "outcome=retry_with_authority_skipped flow_id=\(flowID.uuidString) reason=\(skipReason) authority_hash=\(LogRedaction.hash(normalizedAuthority)) attempts=\(state.authorityRetryCount)"
                 )
                 return
             }
@@ -1020,14 +1156,6 @@ final class QUICFlowRouter: @unchecked Sendable {
                 eventLogHandler?(
                     "quic_mitm_session",
                     "outcome=retry_with_authority_skipped flow_id=\(flowID.uuidString) reason=host_fail_open_active authority_hash=\(LogRedaction.hash(normalizedAuthority)) fail_open_reason=\(hostFailOpenReason)"
-                )
-                return
-            }
-
-            guard let certificateMaterial = makeCertificateMaterial(for: normalizedAuthority) else {
-                eventLogHandler?(
-                    "quic_mitm_session",
-                    "outcome=retry_with_authority_skipped flow_id=\(flowID.uuidString) reason=cert_material_unavailable authority_hash=\(LogRedaction.hash(normalizedAuthority))"
                 )
                 return
             }
@@ -1052,27 +1180,25 @@ final class QUICFlowRouter: @unchecked Sendable {
             state.lastAuthorityRetry = normalizedAuthority
             state.establishedAt = nil
             state.lastProgressAt = nil
+            if state.noProgressBudgetStartAt == nil {
+                state.noProgressBudgetStartAt = now
+            }
             state.clientDatagramsSeen = 0
             state.processedStreamCount = 0
-
-            let newSession = QUICMitmSession(
-                flowID: state.flowID,
-                host: state.host,
-                port: state.port,
-                interceptor: interceptor,
-                http3Client: http3ClientFactory(),
-                certificateMaterial: certificateMaterial,
-                tunnelPolicyRequired: state.tunnelPolicyRequired,
-                eventLogHandler: eventLogHandler
-            )
-            state.session = newSession
+            let bootstrapToken = UUID()
+            state.bootstrapToken = bootstrapToken
+            state.session = nil
             flowStates[flowKey] = state
-            retryTask = (
-                oldSession: activeSession,
+            retryTask = RetryBootstrapPreparation(
+                flowKey: flowKey,
                 flowID: state.flowID,
-                session: newSession,
+                bootstrapToken: bootstrapToken,
+                authority: normalizedAuthority,
+                port: state.port,
                 authorityHash: state.sniHash ?? "unknown",
-                attempt: state.authorityRetryCount
+                attempt: state.authorityRetryCount,
+                tunnelPolicyRequired: state.tunnelPolicyRequired,
+                oldSession: activeSession
             )
         }
         return retryTask
@@ -1127,12 +1253,7 @@ final class QUICFlowRouter: @unchecked Sendable {
                     "quic_mitm_session",
                     "outcome=retry_with_authority_scheduled flow_id=\(flowID.uuidString) authority_hash=\(retryTask.authorityHash) attempt=\(retryTask.attempt)"
                 )
-                launchBootstrapTask(
-                    flowKey: flowKey,
-                    flowID: retryTask.flowID,
-                    session: retryTask.session
-                )
-                await retryTask.oldSession.close()
+                launchRetryBootstrapPreparationTask(retryTask)
                 return
             }
 
@@ -1295,6 +1416,7 @@ final class QUICFlowRouter: @unchecked Sendable {
 
             flowStates[flowKey] = state
             return NoProgressSnapshot(
+                budgetStartAt: state.noProgressBudgetStartAt,
                 establishedAt: state.establishedAt,
                 lastProgressAt: state.lastProgressAt,
                 clientDatagramsSeen: state.clientDatagramsSeen,
@@ -1309,6 +1431,7 @@ final class QUICFlowRouter: @unchecked Sendable {
     ) -> Bool {
         guard let snapshot else { return false }
         return Self.shouldFailOpenForNoProgress(
+            budgetStartAt: snapshot.budgetStartAt,
             establishedAt: snapshot.establishedAt,
             lastProgressAt: snapshot.lastProgressAt,
             clientDatagramsSeen: snapshot.clientDatagramsSeen,
@@ -1322,6 +1445,7 @@ final class QUICFlowRouter: @unchecked Sendable {
     }
 
     static func shouldFailOpenForNoProgress(
+        budgetStartAt: Date? = nil,
         establishedAt: Date?,
         lastProgressAt: Date?,
         clientDatagramsSeen: Int,
@@ -1335,9 +1459,11 @@ final class QUICFlowRouter: @unchecked Sendable {
         guard processedStreams == 0 else { return false }
         guard clientDatagramsSeen >= minimumClientDatagrams else { return false }
         guard let establishedAt else { return false }
+        let budgetReference = budgetStartAt ?? establishedAt
+        let budgetDuration = now.timeIntervalSince(budgetReference)
         let establishedDuration = now.timeIntervalSince(establishedAt)
         guard establishedDuration >= gracePeriod else { return false }
-        if let absoluteTimeout, absoluteTimeout > 0, establishedDuration >= absoluteTimeout {
+        if let absoluteTimeout, absoluteTimeout > 0, budgetDuration >= absoluteTimeout {
             return true
         }
         let progressReference = lastProgressAt ?? establishedAt
@@ -1479,12 +1605,14 @@ final class QUICFlowRouter: @unchecked Sendable {
             state.queuedIngests = 0
             state.pendingDatagrams.removeAll(keepingCapacity: false)
             state.session = nil
+            state.bootstrapToken = nil
             state.tickTask = nil
             // Graceful close should not force fail-open backoff for subsequent datagrams.
             state.lastFailureReason = nil
             state.lastFailureAt = nil
             state.establishedAt = nil
             state.lastProgressAt = nil
+            state.noProgressBudgetStartAt = nil
             state.clientDatagramsSeen = 0
             state.processedStreamCount = 0
             state.recentClientDatagrams.removeAll(keepingCapacity: false)
@@ -1534,11 +1662,13 @@ final class QUICFlowRouter: @unchecked Sendable {
             state.queuedIngests = 0
             state.pendingDatagrams.removeAll(keepingCapacity: false)
             state.session = nil
+            state.bootstrapToken = nil
             state.tickTask = nil
             state.lastFailureReason = reason
             state.lastFailureAt = failureAt
             state.establishedAt = nil
             state.lastProgressAt = nil
+            state.noProgressBudgetStartAt = nil
             state.clientDatagramsSeen = 0
             state.processedStreamCount = 0
             state.recentClientDatagrams.removeAll(keepingCapacity: false)
@@ -1829,6 +1959,29 @@ final class QUICFlowRouter: @unchecked Sendable {
 
         var ipv6Address = in6_addr()
         return host.withCString { inet_pton(AF_INET6, $0, &ipv6Address) } == 1
+    }
+
+    static func authorityRetrySkipReason(
+        currentAuthority: String,
+        nextAuthority: String,
+        attemptsUsed: Int,
+        maxAttempts: Int,
+        lastAuthorityRetry: String?
+    ) -> String? {
+        if currentAuthority.caseInsensitiveCompare(nextAuthority) == .orderedSame {
+            return "same_authority"
+        }
+
+        if !currentAuthority.isEmpty, !isIPAddressLiteral(currentAuthority) {
+            return "retry_policy_hostname_already_known"
+        }
+
+        if attemptsUsed >= maxAttempts ||
+            lastAuthorityRetry?.caseInsensitiveCompare(nextAuthority) == .orderedSame {
+            return "attempt_exhausted"
+        }
+
+        return nil
     }
 
     static func shouldEnableHostFailOpen(for reason: String) -> Bool {

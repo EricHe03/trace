@@ -39,4 +39,21 @@ final class QUICConnectionManagerTests: XCTestCase {
         XCTAssertEqual(snapshot.quicMitmFailuresByReason["handshake_failed"], 1)
         XCTAssertEqual(snapshot.recentFallbackReasons.last, "handshake_failed")
     }
+
+    func testRecordBatchAggregatesCountersInSingleActorCall() async {
+        let manager = QUICConnectionManager()
+
+        await manager.recordBatch(
+            flowSeen: 3,
+            blocked: 2,
+            tunnelForwarded: 4,
+            policyPassThrough: 1
+        )
+
+        let snapshot = await manager.snapshot()
+        XCTAssertEqual(snapshot.quicFlowsSeenTotal, 3)
+        XCTAssertEqual(snapshot.quicFlowsBlockedTotal, 2)
+        XCTAssertEqual(snapshot.quicFlowsTunnelForwardedTotal, 4)
+        XCTAssertEqual(snapshot.quicFlowsPassThroughTotal, 1)
+    }
 }

@@ -256,6 +256,17 @@ final class PacketFlowLoop: @unchecked Sendable {
         let quicFailureRate: Double
     }
 
+    private struct QUICMetricBatch {
+        var flowSeen: UInt64 = 0
+        var blocked: UInt64 = 0
+        var tunnelForwarded: UInt64 = 0
+        var policyPassThrough: UInt64 = 0
+
+        var hasUpdates: Bool {
+            flowSeen > 0 || blocked > 0 || tunnelForwarded > 0 || policyPassThrough > 0
+        }
+    }
+
     private static let quicICMPRateLimitNanos: UInt64 = 1_000_000_000
     private static let quicICMPStateCleanupIntervalNanos: UInt64 = 30_000_000_000
     private static let quicICMPStateExpireNanos: UInt64 = 120_000_000_000
@@ -317,6 +328,12 @@ final class PacketFlowLoop: @unchecked Sendable {
     private let dualMITMPolicy: DualMITMPolicy
     private let quicHostFailOpenSeconds: Int
     private let dualMITMCircuitBreakerEnabled: Bool
+    private let quicNoProgressGraceMs: Int
+    private let quicNoProgressIdleMs: Int
+    private let quicNoProgressAbsoluteMs: Int
+    private let quicNoProgressMinClientDatagrams: Int
+    private let quicAuthorityRetryAttempts: Int
+    private let quicCertMaterialCacheTTLSeconds: Int
     private var lastDualMITMDegradedState = false
 
     init(
@@ -329,6 +346,12 @@ final class PacketFlowLoop: @unchecked Sendable {
         dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
         quicHostFailOpenSeconds: Int = 1800,
         dualMITMCircuitBreakerEnabled: Bool = true,
+        quicNoProgressGraceMs: Int = 1200,
+        quicNoProgressIdleMs: Int = 1200,
+        quicNoProgressAbsoluteMs: Int = 4500,
+        quicNoProgressMinClientDatagrams: Int = 2,
+        quicAuthorityRetryAttempts: Int = 1,
+        quicCertMaterialCacheTTLSeconds: Int = 1800,
         quicInterceptor: (any InterceptionProviding)? = nil,
         eventLogHandler: (@Sendable (String, String) -> Void)? = nil
     ) {
@@ -341,6 +364,12 @@ final class PacketFlowLoop: @unchecked Sendable {
         self.dualMITMPolicy = dualMITMPolicy
         self.quicHostFailOpenSeconds = quicHostFailOpenSeconds
         self.dualMITMCircuitBreakerEnabled = dualMITMCircuitBreakerEnabled
+        self.quicNoProgressGraceMs = quicNoProgressGraceMs
+        self.quicNoProgressIdleMs = quicNoProgressIdleMs
+        self.quicNoProgressAbsoluteMs = quicNoProgressAbsoluteMs
+        self.quicNoProgressMinClientDatagrams = quicNoProgressMinClientDatagrams
+        self.quicAuthorityRetryAttempts = quicAuthorityRetryAttempts
+        self.quicCertMaterialCacheTTLSeconds = quicCertMaterialCacheTTLSeconds
         self.initialQUICInterceptor = quicInterceptor
         self.eventLogHandler = eventLogHandler
         queue.setSpecific(key: queueKey, value: ())
@@ -404,9 +433,12 @@ final class PacketFlowLoop: @unchecked Sendable {
         QUICFlowRouter(
             interceptor: initialQUICInterceptor,
             hostFailOpenBackoff: TimeInterval(max(180, quicHostFailOpenSeconds)),
-            noProgressGracePeriod: 3.0,
-            noProgressIdleTimeout: 3.0,
-            noProgressAbsoluteTimeout: 12.0,
+            noProgressGracePeriod: TimeInterval(quicNoProgressGraceMs) / 1_000,
+            noProgressIdleTimeout: TimeInterval(quicNoProgressIdleMs) / 1_000,
+            noProgressAbsoluteTimeout: TimeInterval(quicNoProgressAbsoluteMs) / 1_000,
+            noProgressMinimumClientDatagrams: quicNoProgressMinClientDatagrams,
+            maxAuthorityRetryAttempts: quicAuthorityRetryAttempts,
+            certificateMaterialCacheTTL: TimeInterval(quicCertMaterialCacheTTLSeconds),
             dualMITMPolicy: dualMITMPolicy,
             dualMITMCircuitBreakerEnabled: dualMITMCircuitBreakerEnabled,
             eventLogHandler: eventLogHandler,
@@ -432,7 +464,8 @@ final class PacketFlowLoop: @unchecked Sendable {
         }
     }
 
-    private func maybeRecordQUICFlowSeen(ipPacket: IPPacket, udpPacket: UDPPacket) {
+    @discardableResult
+    private func maybeRecordQUICFlowSeen(ipPacket: IPPacket, udpPacket: UDPPacket) -> Bool {
         let endpointA = "\(ipPacket.source.description):\(udpPacket.sourcePort)"
         let endpointB = "\(ipPacket.destination.description):\(udpPacket.destinationPort)"
         let key = endpointA <= endpointB ? "\(endpointA)|\(endpointB)" : "\(endpointB)|\(endpointA)"
@@ -441,9 +474,18 @@ final class PacketFlowLoop: @unchecked Sendable {
             observedQUICFlows.removeAll(keepingCapacity: true)
             _ = observedQUICFlows.insert(key)
         }
-        guard inserted else { return }
+        return inserted
+    }
+
+    private func submitQUICMetricBatchIfNeeded(_ batch: QUICMetricBatch) {
+        guard batch.hasUpdates else { return }
         Task {
-            await QUICConnectionManager.shared.recordFlowSeen()
+            await QUICConnectionManager.shared.recordBatch(
+                flowSeen: batch.flowSeen,
+                blocked: batch.blocked,
+                tunnelForwarded: batch.tunnelForwarded,
+                policyPassThrough: batch.policyPassThrough
+            )
         }
     }
 
@@ -478,6 +520,7 @@ final class PacketFlowLoop: @unchecked Sendable {
                 }
 
                 _ = self.capturePipeline.enqueue(packets: packets)
+                var quicMetricBatch = QUICMetricBatch()
 
                 if let udpForwarder = self.udpForwarder {
                     let udpForwarderAvailable = udpForwarder.isAvailable()
@@ -499,8 +542,9 @@ final class PacketFlowLoop: @unchecked Sendable {
                                 quicHandlingMode: self.quicHandlingMode,
                                 tunnelUDPSupported: self.tunnelUDPSupported
                             )
-                            if decision.isQUIC {
-                                self.maybeRecordQUICFlowSeen(ipPacket: ipPacket, udpPacket: udpPacket)
+                            if decision.isQUIC,
+                               self.maybeRecordQUICFlowSeen(ipPacket: ipPacket, udpPacket: udpPacket) {
+                                quicMetricBatch.flowSeen &+= 1
                             }
 
                             if decision.decision == .dropQUIC {
@@ -520,9 +564,7 @@ final class PacketFlowLoop: @unchecked Sendable {
                                     outcome: .blocked,
                                     metadata: metadata
                                 )
-                                Task {
-                                    await QUICConnectionManager.shared.recordBlocked()
-                                }
+                                quicMetricBatch.blocked &+= 1
                                 let proto = protocols.indices.contains(index) ? protocols[index] : nil
                                 self.maybeInjectQUICBlockedICMP(
                                     originalPacket: packet,
@@ -556,9 +598,7 @@ final class PacketFlowLoop: @unchecked Sendable {
                                         metadata: metadata
                                     )
                                     self.quicPassThroughMarked &+= 1
-                                    Task {
-                                        await QUICConnectionManager.shared.recordPolicyPassThrough(reason: reason)
-                                    }
+                                    quicMetricBatch.policyPassThrough &+= 1
                                 }
                                 udpForwarder.enqueue(packet: packet, ipPacket: ipPacket)
                             case .forwardTunnel:
@@ -582,9 +622,7 @@ final class PacketFlowLoop: @unchecked Sendable {
                                             outcome: .tunnelForwarded,
                                             metadata: metadata
                                         )
-                                        Task {
-                                            await QUICConnectionManager.shared.recordTunnelForwarded()
-                                        }
+                                        quicMetricBatch.tunnelForwarded &+= 1
                                     }
                                 }
                             case .interceptQUIC:
@@ -609,13 +647,9 @@ final class PacketFlowLoop: @unchecked Sendable {
                                 if quicRoute.inspectionOutcome == .passThroughMarked {
                                     self.quicPassThroughMarked &+= 1
                                 } else if quicRoute.inspectionOutcome == .blocked {
-                                    Task {
-                                        await QUICConnectionManager.shared.recordBlocked()
-                                    }
+                                    quicMetricBatch.blocked &+= 1
                                 } else if quicRoute.inspectionOutcome == .tunnelForwarded {
-                                    Task {
-                                        await QUICConnectionManager.shared.recordTunnelForwarded()
-                                    }
+                                    quicMetricBatch.tunnelForwarded &+= 1
                                 }
                                 switch quicRoute.forwardingDecision {
                                 case .forwardDirect:
@@ -673,8 +707,9 @@ final class PacketFlowLoop: @unchecked Sendable {
                                 quicHandlingMode: self.quicHandlingMode,
                                 tunnelUDPSupported: self.tunnelUDPSupported
                             )
-                            if decision.isQUIC {
-                                self.maybeRecordQUICFlowSeen(ipPacket: ipPacket, udpPacket: udpPacket)
+                            if decision.isQUIC,
+                               self.maybeRecordQUICFlowSeen(ipPacket: ipPacket, udpPacket: udpPacket) {
+                                quicMetricBatch.flowSeen &+= 1
                             }
                             if decision.decision == .dropQUIC {
                                 if self.logSampler.shouldLog(event: "vpn.packet_forward", key: "quic_blocked", first: 3, every: 200) {
@@ -693,9 +728,7 @@ final class PacketFlowLoop: @unchecked Sendable {
                                     outcome: .blocked,
                                     metadata: metadata
                                 )
-                                Task {
-                                    await QUICConnectionManager.shared.recordBlocked()
-                                }
+                                quicMetricBatch.blocked &+= 1
                                 let proto = protocols.indices.contains(index) ? protocols[index] : nil
                                 self.maybeInjectQUICBlockedICMP(
                                     originalPacket: packet,
@@ -728,13 +761,9 @@ final class PacketFlowLoop: @unchecked Sendable {
                                         )
                                         if outcome == .passThroughMarked {
                                             self.quicPassThroughMarked &+= 1
-                                            Task {
-                                                await QUICConnectionManager.shared.recordPolicyPassThrough(reason: reason)
-                                            }
+                                            quicMetricBatch.policyPassThrough &+= 1
                                         } else {
-                                            Task {
-                                                await QUICConnectionManager.shared.recordTunnelForwarded()
-                                            }
+                                            quicMetricBatch.tunnelForwarded &+= 1
                                         }
                                     }
                                 }
@@ -760,13 +789,9 @@ final class PacketFlowLoop: @unchecked Sendable {
                                 if quicRoute.inspectionOutcome == .passThroughMarked {
                                     self.quicPassThroughMarked &+= 1
                                 } else if quicRoute.inspectionOutcome == .blocked {
-                                    Task {
-                                        await QUICConnectionManager.shared.recordBlocked()
-                                    }
+                                    quicMetricBatch.blocked &+= 1
                                 } else if quicRoute.inspectionOutcome == .tunnelForwarded {
-                                    Task {
-                                        await QUICConnectionManager.shared.recordTunnelForwarded()
-                                    }
+                                    quicMetricBatch.tunnelForwarded &+= 1
                                 }
                                 if quicRoute.consumeOriginalDatagram {
                                     continue
@@ -787,6 +812,7 @@ final class PacketFlowLoop: @unchecked Sendable {
                     VPNLog.tunnel.debug("event=vpn.packet_forward outcome=skipped reason=forwarder_disabled")
                 }
 
+                self.submitQUICMetricBatchIfNeeded(quicMetricBatch)
                 self.scheduleRead()
             }
         }

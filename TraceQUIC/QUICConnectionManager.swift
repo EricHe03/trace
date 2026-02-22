@@ -109,6 +109,26 @@ public actor QUICConnectionManager {
         quicFlowsPassThroughTotal &+= 1
     }
 
+    public func recordBatch(
+        flowSeen: UInt64 = 0,
+        blocked: UInt64 = 0,
+        tunnelForwarded: UInt64 = 0,
+        policyPassThrough: UInt64 = 0
+    ) {
+        if flowSeen > 0 {
+            quicFlowsSeenTotal &+= flowSeen
+        }
+        if blocked > 0 {
+            quicFlowsBlockedTotal &+= blocked
+        }
+        if tunnelForwarded > 0 {
+            quicFlowsTunnelForwardedTotal &+= tunnelForwarded
+        }
+        if policyPassThrough > 0 {
+            quicFlowsPassThroughTotal &+= policyPassThrough
+        }
+    }
+
     public func recordPassThroughFallback(reason: String = "unknown") {
         totalPassThroughFallbacks &+= 1
         quicFlowsPassThroughTotal &+= 1

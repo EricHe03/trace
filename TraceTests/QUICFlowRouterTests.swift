@@ -121,6 +121,61 @@ final class QUICFlowRouterTests: XCTestCase {
         XCTAssertEqual(passThroughLogs.count, 1)
     }
 
+    func testResolveInterceptRouteSuppressesDuplicateInterceptLogsForSameFlowSignature() {
+        final class EventStore: @unchecked Sendable {
+            private let lock = NSLock()
+            private var events: [String] = []
+
+            func append(_ value: String) {
+                lock.lock()
+                events.append(value)
+                lock.unlock()
+            }
+
+            func snapshot() -> [String] {
+                lock.lock()
+                defer { lock.unlock() }
+                return events
+            }
+        }
+        let eventStore = EventStore()
+
+        let router = QUICFlowRouter(
+            engineStatusProvider: {
+                QUICEngineStatus(
+                    availability: .available,
+                    version: "test",
+                    usingQuicheFFI: true
+                )
+            },
+            eventLogHandler: { type, message in
+                guard type == "quic_intercept" else { return }
+                eventStore.append(message)
+            }
+        )
+
+        let ipPacket = makeIPPacket()
+        let udpPacket = makeUDPPacket()
+
+        _ = router.resolveInterceptRoute(
+            ipPacket: ipPacket,
+            udpPacket: udpPacket,
+            udpForwarderAvailable: true,
+            tunnelUDPSupported: true,
+            tunnelPolicyRequired: false
+        )
+        _ = router.resolveInterceptRoute(
+            ipPacket: ipPacket,
+            udpPacket: udpPacket,
+            udpForwarderAvailable: true,
+            tunnelUDPSupported: true,
+            tunnelPolicyRequired: false
+        )
+
+        let interceptLogs = eventStore.snapshot().filter { $0.contains("outcome=intercepted") }
+        XCTAssertEqual(interceptLogs.count, 1)
+    }
+
     func testResolveInterceptRoutePassesThroughWhenDualMITMCircuitBreakerIsDegraded() {
         DualMITMCircuitBreaker.shared.resetForTesting()
         defer {
@@ -381,6 +436,81 @@ final class QUICFlowRouterTests: XCTestCase {
         )
 
         XCTAssertTrue(shouldFailOpen)
+    }
+
+    func testShouldFailOpenForNoProgressUsesBudgetStartAcrossRetries() {
+        let budgetStart = Date(timeIntervalSinceReferenceDate: 100)
+        let establishedAtAfterRetry = Date(timeIntervalSinceReferenceDate: 103)
+        let now = Date(timeIntervalSinceReferenceDate: 105)
+
+        let shouldFailOpen = QUICFlowRouter.shouldFailOpenForNoProgress(
+            budgetStartAt: budgetStart,
+            establishedAt: establishedAtAfterRetry,
+            lastProgressAt: establishedAtAfterRetry,
+            clientDatagramsSeen: 6,
+            processedStreams: 0,
+            now: now,
+            gracePeriod: 1.0,
+            idleTimeout: 10.0,
+            minimumClientDatagrams: 2,
+            absoluteTimeout: 4.0
+        )
+
+        XCTAssertTrue(shouldFailOpen)
+    }
+
+    func testShouldFailOpenForNoProgressHonorsConfiguredMinimumDatagrams() {
+        let establishedAt = Date(timeIntervalSinceReferenceDate: 100)
+        let now = Date(timeIntervalSinceReferenceDate: 106)
+
+        let shouldFailOpen = QUICFlowRouter.shouldFailOpenForNoProgress(
+            establishedAt: establishedAt,
+            lastProgressAt: Date(timeIntervalSinceReferenceDate: 101),
+            clientDatagramsSeen: 2,
+            processedStreams: 0,
+            now: now,
+            gracePeriod: 2.5,
+            idleTimeout: 1.0,
+            minimumClientDatagrams: 2
+        )
+
+        XCTAssertTrue(shouldFailOpen)
+    }
+
+    func testAuthorityRetryPolicySkipsHostnameToHostname() {
+        let reason = QUICFlowRouter.authorityRetrySkipReason(
+            currentAuthority: "example.com",
+            nextAuthority: "api.example.com",
+            attemptsUsed: 0,
+            maxAttempts: 1,
+            lastAuthorityRetry: nil
+        )
+
+        XCTAssertEqual(reason, "retry_policy_hostname_already_known")
+    }
+
+    func testAuthorityRetryPolicyAllowsIPToHostnameWithinLimit() {
+        let reason = QUICFlowRouter.authorityRetrySkipReason(
+            currentAuthority: "192.0.2.10",
+            nextAuthority: "example.com",
+            attemptsUsed: 0,
+            maxAttempts: 1,
+            lastAuthorityRetry: nil
+        )
+
+        XCTAssertNil(reason)
+    }
+
+    func testAuthorityRetryPolicyStopsWhenAttemptLimitReached() {
+        let reason = QUICFlowRouter.authorityRetrySkipReason(
+            currentAuthority: "192.0.2.10",
+            nextAuthority: "example.com",
+            attemptsUsed: 1,
+            maxAttempts: 1,
+            lastAuthorityRetry: nil
+        )
+
+        XCTAssertEqual(reason, "attempt_exhausted")
     }
 }
 

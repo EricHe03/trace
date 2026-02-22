@@ -295,7 +295,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             dualMITMPolicy: captureConfig.dualMITMPolicy,
             tcpBypassTTLSeconds: captureConfig.tcpBypassTTLSeconds,
             quicHostFailOpenSeconds: captureConfig.quicHostFailOpenSeconds,
-            dualMITMCircuitBreakerEnabled: captureConfig.dualMITMCircuitBreakerEnabled
+            dualMITMCircuitBreakerEnabled: captureConfig.dualMITMCircuitBreakerEnabled,
+            quicNoProgressGraceMs: captureConfig.quicNoProgressGraceMs,
+            quicNoProgressIdleMs: captureConfig.quicNoProgressIdleMs,
+            quicNoProgressAbsoluteMs: captureConfig.quicNoProgressAbsoluteMs,
+            quicNoProgressMinClientDatagrams: captureConfig.quicNoProgressMinClientDatagrams,
+            quicAuthorityRetryAttempts: captureConfig.quicAuthorityRetryAttempts,
+            quicCertMaterialCacheTTLSeconds: captureConfig.quicCertMaterialCacheTTLSeconds
         )
         await runtimeState.configurePacketFlow(flowConfig)
 
@@ -1060,11 +1066,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let trimmedHost = config.fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
         let socksHostHash = LogRedaction.hash(trimmedHost)
         VPNLog.tunnel.info(
-            "event=vpn.capture_config mode=\(config.captureMode.rawValue, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue, privacy: .public) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count) dual_mitm_policy=\(config.dualMITMPolicy.rawValue, privacy: .public) tcp_bypass_ttl=\(config.tcpBypassTTLSeconds) quic_fail_open_ttl=\(config.quicHostFailOpenSeconds) dual_mitm_breaker=\(config.dualMITMCircuitBreakerEnabled)"
+            "event=vpn.capture_config mode=\(config.captureMode.rawValue, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue, privacy: .public) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count) dual_mitm_policy=\(config.dualMITMPolicy.rawValue, privacy: .public) tcp_bypass_ttl=\(config.tcpBypassTTLSeconds) quic_fail_open_ttl=\(config.quicHostFailOpenSeconds) dual_mitm_breaker=\(config.dualMITMCircuitBreakerEnabled) quic_no_progress_grace_ms=\(config.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.quicCertMaterialCacheTTLSeconds)"
         )
         await runtimeState.appendEventLog(
             type: "capture_config",
-            msg: "mode=\(config.captureMode.rawValue) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count) dual_mitm_policy=\(config.dualMITMPolicy.rawValue) tcp_bypass_ttl=\(config.tcpBypassTTLSeconds) quic_fail_open_ttl=\(config.quicHostFailOpenSeconds) dual_mitm_breaker=\(config.dualMITMCircuitBreakerEnabled)"
+            msg: "mode=\(config.captureMode.rawValue) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count) dual_mitm_policy=\(config.dualMITMPolicy.rawValue) tcp_bypass_ttl=\(config.tcpBypassTTLSeconds) quic_fail_open_ttl=\(config.quicHostFailOpenSeconds) dual_mitm_breaker=\(config.dualMITMCircuitBreakerEnabled) quic_no_progress_grace_ms=\(config.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.quicCertMaterialCacheTTLSeconds)"
         )
 
         do {
@@ -1109,7 +1115,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             dualMITMPolicy: config.dualMITMPolicy,
             tcpBypassTTLSeconds: config.tcpBypassTTLSeconds,
             quicHostFailOpenSeconds: config.quicHostFailOpenSeconds,
-            dualMITMCircuitBreakerEnabled: config.dualMITMCircuitBreakerEnabled
+            dualMITMCircuitBreakerEnabled: config.dualMITMCircuitBreakerEnabled,
+            quicNoProgressGraceMs: config.quicNoProgressGraceMs,
+            quicNoProgressIdleMs: config.quicNoProgressIdleMs,
+            quicNoProgressAbsoluteMs: config.quicNoProgressAbsoluteMs,
+            quicNoProgressMinClientDatagrams: config.quicNoProgressMinClientDatagrams,
+            quicAuthorityRetryAttempts: config.quicAuthorityRetryAttempts,
+            quicCertMaterialCacheTTLSeconds: config.quicCertMaterialCacheTTLSeconds
         )
         await runtimeState.configurePacketFlow(flowConfig)
         await runtimeState.appendEventLog(
@@ -1558,6 +1570,12 @@ actor PacketTunnelRuntimeState {
         let tcpBypassTTLSeconds: Int
         let quicHostFailOpenSeconds: Int
         let dualMITMCircuitBreakerEnabled: Bool
+        let quicNoProgressGraceMs: Int
+        let quicNoProgressIdleMs: Int
+        let quicNoProgressAbsoluteMs: Int
+        let quicNoProgressMinClientDatagrams: Int
+        let quicAuthorityRetryAttempts: Int
+        let quicCertMaterialCacheTTLSeconds: Int
     }
 
     func setStopping(_ value: Bool) {
@@ -1637,11 +1655,11 @@ actor PacketTunnelRuntimeState {
             let trimmedHost = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines)
             let socksHostHash = LogRedaction.hash(trimmedHost)
             VPNLog.tunnel.info(
-                "event=vpn.packet_flow_config mode=\(config.mode.rawValue, privacy: .public) socks_source=\(endpoint.source, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue, privacy: .public) quic_mode=\(self.quicHandlingMode.rawValue, privacy: .public) block_quic=\(self.quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.tcpTransparentMITMEnabled) dual_mitm_policy=\(config.dualMITMPolicy.rawValue, privacy: .public) breaker=\(config.dualMITMCircuitBreakerEnabled)"
+                "event=vpn.packet_flow_config mode=\(config.mode.rawValue, privacy: .public) socks_source=\(endpoint.source, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue, privacy: .public) quic_mode=\(self.quicHandlingMode.rawValue, privacy: .public) block_quic=\(self.quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.tcpTransparentMITMEnabled) dual_mitm_policy=\(config.dualMITMPolicy.rawValue, privacy: .public) breaker=\(config.dualMITMCircuitBreakerEnabled) quic_no_progress_grace_ms=\(config.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.quicCertMaterialCacheTTLSeconds)"
             )
             appendEventLog(
                 type: "packet_flow_config",
-                msg: "mode=\(config.mode.rawValue) socks_source=\(endpoint.source) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue) quic_mode=\(quicHandlingMode.rawValue) block_quic=\(quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.tcpTransparentMITMEnabled) dual_mitm_policy=\(config.dualMITMPolicy.rawValue) breaker=\(config.dualMITMCircuitBreakerEnabled)"
+                msg: "mode=\(config.mode.rawValue) socks_source=\(endpoint.source) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue) quic_mode=\(quicHandlingMode.rawValue) block_quic=\(quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.tcpTransparentMITMEnabled) dual_mitm_policy=\(config.dualMITMPolicy.rawValue) breaker=\(config.dualMITMCircuitBreakerEnabled) quic_no_progress_grace_ms=\(config.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.quicCertMaterialCacheTTLSeconds)"
             )
 
             let ipv6Enabled = config.ipv6Enabled
@@ -1714,6 +1732,12 @@ actor PacketTunnelRuntimeState {
             dualMITMPolicy: config.dualMITMPolicy,
             quicHostFailOpenSeconds: config.quicHostFailOpenSeconds,
             dualMITMCircuitBreakerEnabled: config.dualMITMCircuitBreakerEnabled,
+            quicNoProgressGraceMs: config.quicNoProgressGraceMs,
+            quicNoProgressIdleMs: config.quicNoProgressIdleMs,
+            quicNoProgressAbsoluteMs: config.quicNoProgressAbsoluteMs,
+            quicNoProgressMinClientDatagrams: config.quicNoProgressMinClientDatagrams,
+            quicAuthorityRetryAttempts: config.quicAuthorityRetryAttempts,
+            quicCertMaterialCacheTTLSeconds: config.quicCertMaterialCacheTTLSeconds,
             quicInterceptor: RequestInterceptor.shared,
             eventLogHandler: eventLogger
         )
