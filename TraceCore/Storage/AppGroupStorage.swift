@@ -1550,10 +1550,10 @@ public struct CaptureConfiguration: Codable, Sendable {
             tcpBypassTTLSeconds: 180,
             quicHostFailOpenSeconds: 1800,
             dualMITMCircuitBreakerEnabled: true,
-            quicNoProgressGraceMs: 1200,
-            quicNoProgressIdleMs: 1200,
-            quicNoProgressAbsoluteMs: 4500,
-            quicNoProgressMinClientDatagrams: 2,
+            quicNoProgressGraceMs: 6000,
+            quicNoProgressIdleMs: 6000,
+            quicNoProgressAbsoluteMs: 20000,
+            quicNoProgressMinClientDatagrams: 6,
             quicAuthorityRetryAttempts: 1,
             quicCertMaterialCacheTTLSeconds: 1800
         )
@@ -1603,10 +1603,10 @@ public struct CaptureConfiguration: Codable, Sendable {
         tcpBypassTTLSeconds: Int = 180,
         quicHostFailOpenSeconds: Int = 1800,
         dualMITMCircuitBreakerEnabled: Bool = true,
-        quicNoProgressGraceMs: Int = 1200,
-        quicNoProgressIdleMs: Int = 1200,
-        quicNoProgressAbsoluteMs: Int = 4500,
-        quicNoProgressMinClientDatagrams: Int = 2,
+        quicNoProgressGraceMs: Int = 6000,
+        quicNoProgressIdleMs: Int = 6000,
+        quicNoProgressAbsoluteMs: Int = 20000,
+        quicNoProgressMinClientDatagrams: Int = 6,
         quicAuthorityRetryAttempts: Int = 1,
         quicCertMaterialCacheTTLSeconds: Int = 1800
     ) {
@@ -1725,9 +1725,9 @@ public struct CaptureConfiguration: Codable, Sendable {
         fullTunnelSearchDomains = Self.normalizedStringList(fullTunnelSearchDomains)
         tcpBypassTTLSeconds = max(30, min(86_400, tcpBypassTTLSeconds))
         quicHostFailOpenSeconds = max(60, min(86_400, quicHostFailOpenSeconds))
-        quicNoProgressGraceMs = max(200, min(10_000, quicNoProgressGraceMs))
-        quicNoProgressIdleMs = max(200, min(10_000, quicNoProgressIdleMs))
-        quicNoProgressAbsoluteMs = max(1_000, min(15_000, quicNoProgressAbsoluteMs))
+        quicNoProgressGraceMs = max(3_000, min(20_000, quicNoProgressGraceMs))
+        quicNoProgressIdleMs = max(3_000, min(20_000, quicNoProgressIdleMs))
+        quicNoProgressAbsoluteMs = max(8_000, min(30_000, quicNoProgressAbsoluteMs))
         quicNoProgressMinClientDatagrams = max(1, min(8, quicNoProgressMinClientDatagrams))
         quicAuthorityRetryAttempts = max(0, min(2, quicAuthorityRetryAttempts))
         quicCertMaterialCacheTTLSeconds = max(60, min(86_400, quicCertMaterialCacheTTLSeconds))

@@ -810,7 +810,7 @@ public actor RequestInterceptor {
         actions: [RewriteAction],
         request: inout NetworkRequest,
         target: ActionTarget
-    ) async -> InterceptionFailure? {
+    ) async -> RequestInterceptionFailure? {
         guard !actions.isEmpty else { return nil }
         let simulator = NetworkSimulator()
 

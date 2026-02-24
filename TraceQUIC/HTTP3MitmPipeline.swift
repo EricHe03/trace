@@ -10,7 +10,7 @@ import TraceCore
 
 public enum HTTP3MitmPipelineError: LocalizedError, Sendable {
     case blockedByInterceptor
-    case interceptorFailure(InterceptionFailure)
+    case interceptorFailure(RequestInterceptionFailure)
     case invalidModifiedRequestURL(String)
 
     public var errorDescription: String? {

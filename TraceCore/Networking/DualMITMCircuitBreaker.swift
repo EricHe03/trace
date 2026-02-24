@@ -25,7 +25,7 @@ public struct DualMITMCircuitBreakerSnapshot: Sendable {
 /// The breaker degrades interception temporarily when failure rates indicate
 /// broad instability:
 /// - TCP MITM client-handshake failures > 35% over the last 100 attempts.
-/// - QUIC intercept failures > 40% over the last 60 seconds.
+/// - QUIC intercept failures > 40% over the last 60 seconds once enough samples exist.
 public final class DualMITMCircuitBreaker: @unchecked Sendable {
     public static let shared = DualMITMCircuitBreaker()
 
@@ -40,6 +40,7 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
     private var cooldownSeconds: TimeInterval = 300
     private var tcpWindowSize = 100
     private var quicWindowSeconds: TimeInterval = 60
+    private var quicMinimumSamples = 20
     private var tcpFailureThreshold = 0.35
     private var quicFailureThreshold = 0.40
 
@@ -55,6 +56,7 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
         cooldownSeconds: TimeInterval = 300,
         tcpWindowSize: Int = 100,
         quicWindowSeconds: TimeInterval = 60,
+        quicMinimumSamples: Int = 20,
         tcpFailureThreshold: Double = 0.35,
         quicFailureThreshold: Double = 0.40
     ) {
@@ -63,8 +65,9 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
 
         self.enabled = enabled
         self.cooldownSeconds = max(30, cooldownSeconds)
-        self.tcpWindowSize = max(20, tcpWindowSize)
+        self.tcpWindowSize = max(10, tcpWindowSize)
         self.quicWindowSeconds = max(10, quicWindowSeconds)
+        self.quicMinimumSamples = max(1, quicMinimumSamples)
         self.tcpFailureThreshold = max(0.05, min(1.0, tcpFailureThreshold))
         self.quicFailureThreshold = max(0.05, min(1.0, quicFailureThreshold))
         // Reset rolling windows and degraded status when configuration changes so
@@ -179,7 +182,7 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
             return
         }
 
-        if quicAttempts > 0, quicFailureRate > quicFailureThreshold {
+        if quicAttempts >= quicMinimumSamples, quicFailureRate > quicFailureThreshold {
             degradedUntil = now.addingTimeInterval(cooldownSeconds)
             degradeReason = "quic_intercept_failure_rate"
         }

@@ -35,7 +35,8 @@ final class DualMITMCircuitBreakerTests: XCTestCase {
         breaker.configure(
             enabled: true,
             cooldownSeconds: 300,
-            quicWindowSeconds: 60
+            quicWindowSeconds: 60,
+            quicMinimumSamples: 5
         )
 
         breaker.recordQUICInterceptSample(failed: true, now: now)
@@ -55,13 +56,33 @@ final class DualMITMCircuitBreakerTests: XCTestCase {
         breaker.configure(
             enabled: true,
             cooldownSeconds: 30,
-            quicWindowSeconds: 60
+            quicWindowSeconds: 60,
+            quicMinimumSamples: 1
         )
 
         breaker.recordQUICInterceptSample(failed: true, now: now)
         XCTAssertTrue(breaker.snapshot(now: now).isDegraded)
         XCTAssertFalse(breaker.snapshot(now: now.addingTimeInterval(31)).isDegraded)
         XCTAssertFalse(breaker.shouldForceQUICPassThrough(now: now.addingTimeInterval(31)))
+    }
+
+    func testDoesNotTripQUICBeforeMinimumSamples() {
+        let breaker = DualMITMCircuitBreaker()
+        let now = Date(timeIntervalSince1970: 35_000)
+        breaker.configure(
+            enabled: true,
+            cooldownSeconds: 300,
+            quicWindowSeconds: 60,
+            quicMinimumSamples: 10,
+            quicFailureThreshold: 0.4
+        )
+
+        for _ in 0..<5 {
+            breaker.recordQUICInterceptSample(failed: true, now: now)
+        }
+
+        XCTAssertFalse(breaker.snapshot(now: now).isDegraded)
+        XCTAssertFalse(breaker.shouldForceQUICPassThrough(now: now))
     }
 
     func testConfigureResetsCollectedSamplesAndDegradedState() {
@@ -96,5 +117,29 @@ final class DualMITMCircuitBreakerTests: XCTestCase {
         XCTAssertEqual(snapshotAfterConfigure.quicAttemptsInWindow, 0)
         XCTAssertEqual(snapshotAfterConfigure.quicFailuresInWindow, 0)
         XCTAssertFalse(breaker.shouldForceTCPDirect(port: 443, now: now))
+    }
+
+    func testAllowsSmallTCPWindowForFastFailOpen() {
+        let breaker = DualMITMCircuitBreaker()
+        let now = Date(timeIntervalSince1970: 50_000)
+        breaker.configure(
+            enabled: true,
+            cooldownSeconds: 300,
+            tcpWindowSize: 16,
+            tcpFailureThreshold: 0.40
+        )
+
+        for _ in 0..<7 {
+            breaker.recordTCPClientHandshake(success: false, now: now)
+        }
+        for _ in 0..<9 {
+            breaker.recordTCPClientHandshake(success: true, now: now)
+        }
+
+        let snapshot = breaker.snapshot(now: now)
+        XCTAssertEqual(snapshot.tcpAttempts, 16)
+        XCTAssertEqual(snapshot.tcpFailures, 7)
+        XCTAssertTrue(snapshot.isDegraded)
+        XCTAssertTrue(breaker.shouldForceTCPDirect(port: 443, now: now))
     }
 }

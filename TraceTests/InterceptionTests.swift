@@ -58,24 +58,24 @@ final class InterceptionTests: XCTestCase {
         }
     }
 
-    // MARK: - InterceptionFailure Tests
+    // MARK: - RequestInterceptionFailure Tests
 
     func testInterceptionFailureRawValues() {
-        XCTAssertEqual(InterceptionFailure.timeout.rawValue, "timeout")
-        XCTAssertEqual(InterceptionFailure.connectionReset.rawValue, "connectionReset")
-        XCTAssertEqual(InterceptionFailure.dropConnection.rawValue, "dropConnection")
-        XCTAssertEqual(InterceptionFailure.packetLoss.rawValue, "packetLoss")
+        XCTAssertEqual(RequestInterceptionFailure.timeout.rawValue, "timeout")
+        XCTAssertEqual(RequestInterceptionFailure.connectionReset.rawValue, "connectionReset")
+        XCTAssertEqual(RequestInterceptionFailure.dropConnection.rawValue, "dropConnection")
+        XCTAssertEqual(RequestInterceptionFailure.packetLoss.rawValue, "packetLoss")
     }
 
     func testInterceptionFailureFromRawValue() {
-        XCTAssertEqual(InterceptionFailure(rawValue: "timeout"), .timeout)
-        XCTAssertEqual(InterceptionFailure(rawValue: "connectionReset"), .connectionReset)
-        XCTAssertEqual(InterceptionFailure(rawValue: "dropConnection"), .dropConnection)
-        XCTAssertEqual(InterceptionFailure(rawValue: "packetLoss"), .packetLoss)
+        XCTAssertEqual(RequestInterceptionFailure(rawValue: "timeout"), .timeout)
+        XCTAssertEqual(RequestInterceptionFailure(rawValue: "connectionReset"), .connectionReset)
+        XCTAssertEqual(RequestInterceptionFailure(rawValue: "dropConnection"), .dropConnection)
+        XCTAssertEqual(RequestInterceptionFailure(rawValue: "packetLoss"), .packetLoss)
     }
 
     func testInterceptionFailureAllCases() {
-        let failures: [InterceptionFailure] = [
+        let failures: [RequestInterceptionFailure] = [
             .timeout,
             .connectionReset,
             .dropConnection,
@@ -169,13 +169,13 @@ final class InterceptionTests: XCTestCase {
 
     func testInterceptionFailureIsSendable() {
         // This is primarily a compile-time check
-        let failure: InterceptionFailure = .timeout
+        let failure: RequestInterceptionFailure = .timeout
 
         Task {
             let _ = failure
         }
 
-        XCTAssertTrue(true, "InterceptionFailure is Sendable")
+        XCTAssertTrue(true, "RequestInterceptionFailure is Sendable")
     }
 
     func testResponsePipelineIsSendable() {
@@ -192,7 +192,7 @@ final class InterceptionTests: XCTestCase {
     // MARK: - Edge Cases Tests
 
     func testMultipleFailureTypes() {
-        let failures: [InterceptionFailure] = [
+        let failures: [RequestInterceptionFailure] = [
             .timeout,
             .connectionReset,
             .dropConnection,
