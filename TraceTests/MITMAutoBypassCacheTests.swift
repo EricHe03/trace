@@ -475,6 +475,21 @@ final class MITMAutoBypassCacheTests: XCTestCase {
         XCTAssertFalse(cache.shouldBypass(host: "transient.example.com"))
     }
 
+    func testReasonSpecificTTLUpstreamTimeoutExpiresQuickly() {
+        var now = Date(timeIntervalSince1970: 3_000)
+        let cache = MITMAutoBypassCache(
+            defaults: nil,
+            ttl: 3_600,
+            nowProvider: { now },
+            aliasResolver: { _ in [] },
+            resolveAliasesAsynchronously: false
+        )
+
+        cache.record(host: "timeout.example.com", reason: "upstream_timeout")
+        now = now.addingTimeInterval(181)
+        XCTAssertFalse(cache.shouldBypass(host: "timeout.example.com"))
+    }
+
     func testRecordingRelatedHostsUsesSharedLookupKeyspace() {
         let cache = MITMAutoBypassCache(
             defaults: nil,

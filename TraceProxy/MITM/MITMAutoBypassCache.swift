@@ -469,6 +469,10 @@ final class MITMAutoBypassCache: @unchecked Sendable {
         if normalized.contains("mitm_setup_failed") || normalized.contains("mitm setup failure") {
             return 3_600
         }
+        if normalized.contains("upstream_timeout") ||
+            normalized.contains("upstream_connection_closed") {
+            return 180
+        }
         if normalized.contains("connection_closed_early") || normalized.contains("connection closed early") {
             return 180
         }

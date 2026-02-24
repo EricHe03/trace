@@ -7,6 +7,9 @@
 
 import Darwin
 import Foundation
+import NIOCore
+import NIOSSL
+import NIOTransportServices
 import XCTest
 @testable import TraceCore
 @testable import TraceProxy
@@ -23,6 +26,10 @@ final class NIOMITMProxyEngineTests: XCTestCase {
         case socketReadFailed(Int32)
         case invalidHTTPMessage
         case invalidUTF8Data
+        case metadataEncodingFailed
+        case channelCloseTimedOut
+        case eventLoopGroupUnavailable
+        case privateKeyExportFailed(String)
     }
 
     private struct ParsedHTTPResponse {
@@ -70,6 +77,186 @@ final class NIOMITMProxyEngineTests: XCTestCase {
 
         func requiresHTTP1Interception() async -> Bool {
             false
+        }
+    }
+
+    private actor BlockingInterceptor: InterceptionProviding {
+        func interceptRequest(
+            flowId _: UUID,
+            url _: String,
+            method _: String,
+            headers _: [String: String],
+            body _: Data?
+        ) async -> InterceptionResult {
+            .blocked
+        }
+
+        func interceptResponse(
+            request: NetworkRequest,
+            statusCode _: Int,
+            statusMessage _: String,
+            headers _: [TraceHTTPHeader],
+            body _: Data?
+        ) async -> NetworkRequest {
+            request
+        }
+    }
+
+    private final class TLSHandshakeObserver: ChannelInboundHandler, @unchecked Sendable {
+        typealias InboundIn = ByteBuffer
+
+        private let lock = NSLock()
+        private var handshakeObserved = false
+        private let handshakeSemaphore = DispatchSemaphore(value: 0)
+
+        func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+            if case TLSUserEvent.handshakeCompleted(negotiatedProtocol: _) = event {
+                lock.lock()
+                if !handshakeObserved {
+                    handshakeObserved = true
+                    handshakeSemaphore.signal()
+                }
+                lock.unlock()
+            }
+            context.fireUserInboundEventTriggered(event)
+        }
+
+        func waitForHandshake(timeout: TimeInterval = 5) -> Bool {
+            handshakeSemaphore.wait(timeout: .now() + timeout) == .success
+        }
+
+        func didObserveHandshake() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return handshakeObserved
+        }
+    }
+
+    private final class TLSByteAccumulatorHandler: ChannelInboundHandler, @unchecked Sendable {
+        typealias InboundIn = ByteBuffer
+
+        private let lock = NSLock()
+        private var bytes = Data()
+
+        func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+            var buffer = unwrapInboundIn(data)
+            if let chunk = buffer.readData(length: buffer.readableBytes), !chunk.isEmpty {
+                lock.lock()
+                bytes.append(chunk)
+                lock.unlock()
+            }
+            context.fireChannelRead(data)
+        }
+
+        func dataSnapshot() -> Data {
+            lock.lock()
+            defer { lock.unlock() }
+            return bytes
+        }
+    }
+
+    private final class SingleConnectionTLSServer: @unchecked Sendable {
+        private(set) var port: UInt16 = 0
+
+        private var listenerChannel: Channel?
+        private let lock = NSLock()
+        private let handshakeObserver = TLSHandshakeObserver()
+        private var childChannels: [Channel] = []
+        private var closed = false
+
+        init(serverName: String, applicationProtocols: [String] = ["http/1.1"]) throws {
+            let resources = NIORuntime.shared.acquire(for: .tests)
+            guard let group = resources.eventLoopGroup as? NIOTSEventLoopGroup else {
+                throw TestError.eventLoopGroupUnavailable
+            }
+
+            let tlsContext = try Self.makeServerTLSContext(
+                for: serverName,
+                applicationProtocols: applicationProtocols
+            )
+            let handshakeObserver = self.handshakeObserver
+            let lock = self.lock
+
+            let listener = try NIOTSListenerBootstrap(group: group)
+                .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+                .childChannelInitializer { [weak self] channel in
+                    guard let self else {
+                        return channel.eventLoop.makeSucceededVoidFuture()
+                    }
+                    lock.lock()
+                    self.childChannels.append(channel)
+                    lock.unlock()
+
+                    let tlsHandler: NIOSSLServerHandler
+                    do {
+                        tlsHandler = try NIOSSLServerHandler(context: tlsContext)
+                    } catch {
+                        return channel.eventLoop.makeFailedFuture(error)
+                    }
+
+                    return channel.pipeline.addHandler(tlsHandler, position: .first)
+                        .flatMap {
+                            channel.pipeline.addHandler(handshakeObserver)
+                        }
+                }
+                .bind(host: "127.0.0.1", port: 0)
+                .wait()
+
+            guard let localAddress = listener.localAddress,
+                  let localPortRaw = localAddress.port,
+                  let localPort = UInt16(exactly: localPortRaw)
+            else {
+                listener.close(promise: nil)
+                throw TestError.socketAddressFailed
+            }
+            listenerChannel = listener
+            port = localPort
+        }
+
+        deinit {
+            stop()
+        }
+
+        func stop() {
+            lock.lock()
+            let shouldClose = !closed
+            let children = childChannels
+            childChannels.removeAll()
+            closed = true
+            lock.unlock()
+
+            guard shouldClose else { return }
+            listenerChannel?.close(promise: nil)
+            for child in children {
+                child.close(promise: nil)
+            }
+        }
+
+        func waitForHandshake(timeout: TimeInterval = 5) -> Bool {
+            handshakeObserver.waitForHandshake(timeout: timeout)
+        }
+
+        private static func makeServerTLSContext(
+            for host: String,
+            applicationProtocols: [String]
+        ) throws -> NIOSSLContext {
+            let (leafCertificate, leafPrivateKey) = try CertificateManager.shared.generateCertificateForDomain(host)
+            let leafData = SecCertificateCopyData(leafCertificate) as Data
+
+            var exportError: Unmanaged<CFError>?
+            guard let privateKeyData = SecKeyCopyExternalRepresentation(leafPrivateKey, &exportError) as Data? else {
+                let detail = exportError?.takeRetainedValue().localizedDescription ?? "unknown"
+                throw TestError.privateKeyExportFailed(detail)
+            }
+
+            let leafNIOSSL = try NIOSSLCertificate(bytes: [UInt8](leafData), format: .der)
+            let privateKeyNIOSSL = try NIOSSLPrivateKey(bytes: [UInt8](privateKeyData), format: .der)
+            var tlsConfiguration = TLSConfiguration.makeServerConfiguration(
+                certificateChain: [.certificate(leafNIOSSL)],
+                privateKey: .privateKey(privateKeyNIOSSL)
+            )
+            tlsConfiguration.applicationProtocols = applicationProtocols
+            return try NIOSSLContext(configuration: tlsConfiguration)
         }
     }
 
@@ -357,9 +544,245 @@ final class NIOMITMProxyEngineTests: XCTestCase {
         let echoedPayload = try Self.readExactByteCount(payload.count, from: clientFD, pendingBytes: &pendingBytes)
         XCTAssertEqual(echoedPayload, payload)
     }
+
+    func testTransparentTLSMITMCapturesRequestInTunneledHTTPPath() throws {
+        let targetHost = "transparent.trace.test"
+        let upstreamServer = try SingleConnectionTLSServer(serverName: targetHost)
+        defer { upstreamServer.stop() }
+
+        let capturedExpectation = expectation(description: "captured transparent tunneled request")
+        capturedExpectation.assertForOverFulfill = false
+
+        let capturedLock = NSLock()
+        var capturedRequest: NetworkRequest?
+
+        let engine = NIOMITMProxyEngine(
+            port: 0,
+            eventLog: nil,
+            interceptor: BlockingInterceptor(),
+            onRequestCaptured: { request in
+                guard request.url == "https://\(targetHost)/dual-mitm-recovery" else { return }
+                capturedLock.lock()
+                capturedRequest = request
+                capturedLock.unlock()
+                capturedExpectation.fulfill()
+            },
+            shouldMitmConnect: { host, port in
+                host == targetHost && port == upstreamServer.port
+            },
+            isTransparentTLSEnabled: { true }
+        )
+        let endpoint = try engine.start()
+        defer { engine.stop() }
+
+        let response = try Self.sendTransparentTLSRequest(
+            proxyHost: endpoint.host,
+            proxyPort: endpoint.port,
+            upstreamHost: "127.0.0.1",
+            upstreamPort: upstreamServer.port,
+            sniHost: targetHost,
+            path: "/dual-mitm-recovery"
+        )
+
+        XCTAssertTrue(upstreamServer.waitForHandshake(timeout: 3))
+        XCTAssertTrue(response.handshakeObserved)
+        XCTAssertTrue(response.responseText.hasPrefix("HTTP/1.1 403"))
+
+        wait(for: [capturedExpectation], timeout: 3)
+
+        capturedLock.lock()
+        let captured = capturedRequest
+        capturedLock.unlock()
+
+        XCTAssertEqual(captured?.method, .get)
+        XCTAssertEqual(captured?.statusCode, 403)
+        XCTAssertEqual(captured?.url, "https://\(targetHost)/dual-mitm-recovery")
+    }
+
+    func testTransparentTLSMITMModifiedRequestPublishesPendingSnapshotBeforeUpstreamCompletes() throws {
+        let targetHost = "pending.trace.test"
+        let path = "/pending-capture"
+        let upstreamServer = try SingleConnectionTLSServer(serverName: targetHost)
+        defer { upstreamServer.stop() }
+
+        let capturedExpectation = expectation(description: "captured pending tunneled request snapshot")
+        capturedExpectation.assertForOverFulfill = false
+
+        let capturedLock = NSLock()
+        var capturedRequest: NetworkRequest?
+
+        let engine = NIOMITMProxyEngine(
+            port: 0,
+            eventLog: nil,
+            interceptor: StreamOnlyInterceptor(),
+            onRequestCaptured: { request in
+                guard request.url == "https://\(targetHost)\(path)",
+                      request.statusCode == nil
+                else { return }
+                capturedLock.lock()
+                capturedRequest = request
+                capturedLock.unlock()
+                capturedExpectation.fulfill()
+            },
+            shouldMitmConnect: { host, port in
+                host == targetHost && port == upstreamServer.port
+            },
+            isTransparentTLSEnabled: { true }
+        )
+        let endpoint = try engine.start()
+        defer { engine.stop() }
+
+        let resources = NIORuntime.shared.acquire(for: .tests)
+        guard let group = resources.eventLoopGroup as? NIOTSEventLoopGroup else {
+            throw TestError.eventLoopGroupUnavailable
+        }
+
+        let channel = try NIOTSConnectionBootstrap(group: group)
+            .connect(host: endpoint.host, port: Int(endpoint.port))
+            .wait()
+        defer {
+            if channel.isActive {
+                channel.close(promise: nil)
+            }
+        }
+
+        guard let metadataBytes = TransparentProxyMetadata.encodeUpstreamHint(
+            host: "127.0.0.1",
+            port: upstreamServer.port,
+            addressTypeRaw: 0x01
+        ) else {
+            throw TestError.metadataEncodingFailed
+        }
+        var metadataBuffer = channel.allocator.buffer(capacity: metadataBytes.count)
+        metadataBuffer.writeBytes(metadataBytes)
+        try channel.writeAndFlush(metadataBuffer).wait()
+
+        var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
+        tlsConfiguration.certificateVerification = .none
+        tlsConfiguration.applicationProtocols = ["http/1.1"]
+        let tlsContext = try NIOSSLContext(configuration: tlsConfiguration)
+        let tlsHandler = try NIOSSLClientHandler(context: tlsContext, serverHostname: targetHost)
+        let handshakeObserver = TLSHandshakeObserver()
+        try channel.pipeline.addHandler(tlsHandler, position: .first)
+            .flatMap {
+                channel.pipeline.addHandler(handshakeObserver)
+            }
+            .wait()
+        XCTAssertTrue(handshakeObserver.waitForHandshake(timeout: 3))
+
+        let request = """
+        GET \(path) HTTP/1.1\r
+        Host: \(targetHost)\r
+        Connection: keep-alive\r
+        \r
+        """
+        var requestBuffer = channel.allocator.buffer(capacity: request.utf8.count)
+        requestBuffer.writeString(request)
+        try channel.writeAndFlush(requestBuffer).wait()
+
+        wait(for: [capturedExpectation], timeout: 3)
+
+        capturedLock.lock()
+        let captured = capturedRequest
+        capturedLock.unlock()
+
+        XCTAssertEqual(captured?.method, .get)
+        XCTAssertNil(captured?.statusCode)
+        XCTAssertEqual(captured?.url, "https://\(targetHost)\(path)")
+    }
 }
 
 private extension NIOMITMProxyEngineTests {
+    struct TransparentTLSRequestResult {
+        let responseText: String
+        let handshakeObserved: Bool
+    }
+
+    static func sendTransparentTLSRequest(
+        proxyHost: String,
+        proxyPort: UInt16,
+        upstreamHost: String,
+        upstreamPort: UInt16,
+        sniHost: String,
+        path: String
+    ) throws -> TransparentTLSRequestResult {
+        let resources = NIORuntime.shared.acquire(for: .tests)
+        guard let group = resources.eventLoopGroup as? NIOTSEventLoopGroup else {
+            throw TestError.eventLoopGroupUnavailable
+        }
+
+        let channel = try NIOTSConnectionBootstrap(group: group)
+            .connect(host: proxyHost, port: Int(proxyPort))
+            .wait()
+        defer {
+            if channel.isActive {
+                channel.close(promise: nil)
+            }
+        }
+
+        guard let metadataBytes = TransparentProxyMetadata.encodeUpstreamHint(
+            host: upstreamHost,
+            port: upstreamPort,
+            addressTypeRaw: 0x01
+        ) else {
+            throw TestError.metadataEncodingFailed
+        }
+
+        var metadataBuffer = channel.allocator.buffer(capacity: metadataBytes.count)
+        metadataBuffer.writeBytes(metadataBytes)
+        try channel.writeAndFlush(metadataBuffer).wait()
+
+        var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
+        tlsConfiguration.certificateVerification = .none
+        tlsConfiguration.applicationProtocols = ["http/1.1"]
+        let tlsContext = try NIOSSLContext(configuration: tlsConfiguration)
+        let tlsHandler = try NIOSSLClientHandler(context: tlsContext, serverHostname: sniHost)
+
+        let handshakeObserver = TLSHandshakeObserver()
+        let byteAccumulator = TLSByteAccumulatorHandler()
+        try channel.pipeline.addHandler(tlsHandler, position: .first)
+            .flatMap {
+                channel.pipeline.addHandler(handshakeObserver)
+            }
+            .flatMap {
+                channel.pipeline.addHandler(byteAccumulator)
+            }
+            .wait()
+
+        let request = """
+        GET \(path) HTTP/1.1\r
+        Host: \(sniHost)\r
+        Connection: close\r
+        \r
+        """
+        var requestBuffer = channel.allocator.buffer(capacity: request.utf8.count)
+        requestBuffer.writeString(request)
+        try channel.writeAndFlush(requestBuffer).wait()
+
+        let closeSemaphore = DispatchSemaphore(value: 0)
+        var closeError: Error?
+        channel.closeFuture.whenComplete { result in
+            if case let .failure(error) = result {
+                closeError = error
+            }
+            closeSemaphore.signal()
+        }
+        guard closeSemaphore.wait(timeout: .now() + 5) == .success else {
+            channel.close(promise: nil)
+            throw TestError.channelCloseTimedOut
+        }
+        if let closeError {
+            throw closeError
+        }
+
+        let responseData = byteAccumulator.dataSnapshot()
+        let responseText = String(data: responseData, encoding: .utf8) ?? ""
+        return TransparentTLSRequestResult(
+            responseText: responseText,
+            handshakeObserved: handshakeObserver.didObserveHandshake()
+        )
+    }
+
     static func configureSocketTimeout(_ fd: Int32) {
         var timeout = timeval(tv_sec: 5, tv_usec: 0)
         _ = withUnsafePointer(to: &timeout) {

@@ -99,10 +99,10 @@ final class MITMProxyServerTests: XCTestCase {
         XCTAssertNil(normalized)
     }
 
-    func testRuntimeBypassCandidateReasonMapsConnectionClosedEarly() {
+    func testRuntimeBypassCandidateReasonSkipsConnectionClosedEarly() {
         let reason = "connection_closed_early"
         let normalized = MITMProxyServer.runtimeBypassCandidateReason(forFailureReason: reason)
-        XCTAssertEqual(normalized, "connection_closed_early")
+        XCTAssertNil(normalized)
     }
 
     func testRuntimeBypassCandidateReasonMapsUpstreamTimeout() {
@@ -115,5 +115,19 @@ final class MITMProxyServerTests: XCTestCase {
         let reason = "tls_upstream_trust_failed"
         let normalized = MITMProxyServer.runtimeBypassCandidateReason(forFailureReason: reason)
         XCTAssertNil(normalized)
+    }
+
+    func testTransientFailureThresholdUsesDefaultForConnectionClosedEarly() {
+        let threshold = MITMProxyServer.transientFailureThreshold(
+            forRuntimeBypassReason: "connection_closed_early"
+        )
+        XCTAssertEqual(threshold, 5)
+    }
+
+    func testTransientFailureThresholdUsesDefaultForOtherReasons() {
+        let threshold = MITMProxyServer.transientFailureThreshold(
+            forRuntimeBypassReason: "upstream_timeout"
+        )
+        XCTAssertEqual(threshold, 5)
     }
 }

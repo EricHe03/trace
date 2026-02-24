@@ -26,7 +26,8 @@ public class MITMProxyServer: @unchecked Sendable {
     }
 
     private let port: UInt16
-    private var nioEngine: NIOMITMProxyEngine?
+    private var mitmEngine: (any MITMEngine)?
+    private var dualMITMPolicyEngine: DualMITMPolicyEngine?
 
     // Concurrency: Serialize mutable state and persistence I/O to avoid cross-connection races.
     private let queue = DispatchQueue(label: "com.trace.proxy", qos: .userInitiated)
@@ -36,6 +37,10 @@ public class MITMProxyServer: @unchecked Sendable {
     private var cleanupTimer: DispatchSourceTimer?
     private var mitmAllowlist: [String] = []
     private var mitmEnabled = false
+    private var dualMITMPolicyEngineEnforcedProxy = false
+    private var dualMITMMITMEngineV2Enabled = false
+    private var dualMITMHttp2MITMEnabled = false
+    private var dualMITMStrictEnforcementHardFail = true
     // Rule: Transparent TLS accepts raw ClientHello bytes without an HTTP CONNECT and must be
     // explicitly enabled because it is outside the explicit HTTP proxy contract.
     private var transparentTLSModeEnabled = false
@@ -52,8 +57,8 @@ public class MITMProxyServer: @unchecked Sendable {
     private var samplingSequence: Int = 0
     private var transientFailureTrackers: [String: TransientFailureTracker] = [:]
     private var runtimeBypassStates: [String: RuntimeBypassState] = [:]
-    private let transientFailureThreshold = 3
-    private let transientFailureWindow: TimeInterval = 12
+    private let transientFailureThreshold = 5
+    private let transientFailureWindow: TimeInterval = 20
     private let transientFailureRetention: TimeInterval = 120
     private var runtimeBypassTTL: TimeInterval = 180
 
@@ -111,13 +116,13 @@ public class MITMProxyServer: @unchecked Sendable {
 
     /// Starts the listener and housekeeping timers.
     public func start() throws {
-        if nioEngine != nil {
+        if mitmEngine != nil {
             return
         }
 
         let interceptor: (any InterceptionProviding)? = RequestInterceptor.shared
 
-        let engine = NIOMITMProxyEngine(
+        let engine = makeMITMEngine(
             port: port,
             eventLog: eventLog,
             throttler: throttler,
@@ -140,6 +145,17 @@ public class MITMProxyServer: @unchecked Sendable {
                     self.transparentTLSModeEnabled
                 }
             },
+            shouldFailOpenAfterMITMFailure: { [weak self] host, port, reason, context in
+                guard let self else { return true }
+                return self.performOnQueueSync {
+                    self.shouldFailOpenAfterMITMFailure(
+                        host: host,
+                        port: port,
+                        reason: reason,
+                        context: context
+                    )
+                }
+            },
             onMITMFailure: { [weak self] host, reason in
                 guard let self else { return }
                 self.performOnQueue {
@@ -148,11 +164,54 @@ public class MITMProxyServer: @unchecked Sendable {
             }
         )
 
-        _ = try engine.start()
-        self.nioEngine = engine
+        try engine.start()
+        self.mitmEngine = engine
         startCleanupTimer()
 
-        ProxyLog.mitm.info("event=proxy.server_start outcome=success backend=nio")
+        ProxyLog.mitm.info(
+            "event=proxy.server_start outcome=success backend=\(self.dualMITMMITMEngineV2Enabled ? "nio_v2" : "nio")"
+        )
+    }
+
+    private func makeMITMEngine(
+        port: UInt16,
+        eventLog: NDJSONLogWriter?,
+        throttler: PacketThrottler,
+        interceptor: (any InterceptionProviding)?,
+        captureConfigProvider: @escaping () -> CaptureConfiguration,
+        onRequestCaptured: ((NetworkRequest) -> Void)?,
+        shouldMitmConnect: @escaping (String, UInt16) -> Bool,
+        isTransparentTLSEnabled: @escaping () -> Bool,
+        shouldFailOpenAfterMITMFailure: @escaping (String, UInt16, String, MITMFailoverContext) -> Bool,
+        onMITMFailure: ((String, String) -> Void)?
+    ) -> any MITMEngine {
+        if dualMITMMITMEngineV2Enabled {
+            return MITMEngineV2(
+                port: port,
+                eventLog: eventLog,
+                throttler: throttler,
+                interceptor: interceptor,
+                captureConfigProvider: captureConfigProvider,
+                onRequestCaptured: onRequestCaptured,
+                shouldMitmConnect: shouldMitmConnect,
+                isTransparentTLSEnabled: isTransparentTLSEnabled,
+                shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
+                onMITMFailure: onMITMFailure
+            )
+        }
+
+        return NIOMITMProxyEngine(
+            port: port,
+            eventLog: eventLog,
+            throttler: throttler,
+            interceptor: interceptor,
+            captureConfigProvider: captureConfigProvider,
+            onRequestCaptured: onRequestCaptured,
+            shouldMitmConnect: shouldMitmConnect,
+            isTransparentTLSEnabled: isTransparentTLSEnabled,
+            shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
+            onMITMFailure: onMITMFailure
+        )
     }
 
     /// Stops the listener and closes all active connections.
@@ -160,8 +219,8 @@ public class MITMProxyServer: @unchecked Sendable {
         cleanupTimer?.cancel()
         cleanupTimer = nil
 
-        nioEngine?.stop()
-        nioEngine = nil
+        mitmEngine?.stop()
+        mitmEngine = nil
 
         ProxyLog.mitm.info("event=proxy.server_stop outcome=success")
     }
@@ -179,7 +238,7 @@ public class MITMProxyServer: @unchecked Sendable {
     }
 
     private func emitConnectionLifecycleSample() {
-        let active = nioEngine?.activeConnectionCount() ?? 0
+        let active = mitmEngine?.activeConnectionCount() ?? 0
         purgeExpiredRuntimeBypasses(now: Date())
         if active > 0 {
             ProxyLog.mitm.debug("event=proxy.cleanup outcome=success active=\(active)")
@@ -201,6 +260,25 @@ public class MITMProxyServer: @unchecked Sendable {
                 ProxyLog.mitm.warning("event=proxy.config_legacy_key outcome=success key=\(legacyKey, privacy: .public) mapped_to=\(canonicalKey, privacy: .public)")
             }
 
+            if let enforcedProxy = config["dualMitmPolicyEngineEnforcedProxy"] as? Bool {
+                self.dualMITMPolicyEngineEnforcedProxy = enforcedProxy
+            }
+            if let mitmEngineV2 = config["dualMitmMITMEngineV2"] as? Bool {
+                self.dualMITMMITMEngineV2Enabled = mitmEngineV2
+            }
+            if let http2MITMEnabled = config["dualMitmHttp2MITMEnabled"] as? Bool {
+                self.dualMITMHttp2MITMEnabled = http2MITMEnabled
+            }
+            if let strictHardFail = config["dualMitmStrictEnforcementHardFail"] as? Bool {
+                self.dualMITMStrictEnforcementHardFail = strictHardFail
+            }
+            if let dualMITMPolicyEngine = self.dualMITMPolicyEngine {
+                var snapshot = dualMITMPolicyEngine.currentSnapshot()
+                snapshot.featureFlags.http2MITMEnabled = self.dualMITMHttp2MITMEnabled
+                snapshot.featureFlags.strictEnforcementHardFail = self.dualMITMStrictEnforcementHardFail
+                dualMITMPolicyEngine.updateSnapshot(snapshot)
+            }
+
             if config["proxyTransportBackend"] != nil || config["useNIOProxyEngine"] != nil {
                 ProxyLog.mitm.info("event=proxy.config_update outcome=ignored key=legacy_backend_toggle backend=nio_only")
             }
@@ -211,13 +289,18 @@ public class MITMProxyServer: @unchecked Sendable {
 
     /// Updates the allowlist used to decide which hosts may be MITM'd.
     public func setMitmAllowlist(_ list: [String]) {
-        performOnQueue {
+        performOnQueueSync {
             // Rule: Trim and lowercase. An empty list disables MITM for all hosts.
             let sanitized = list
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
                 .filter { !$0.isEmpty }
 
             self.mitmAllowlist = sanitized
+            if let dualMITMPolicyEngine = self.dualMITMPolicyEngine {
+                var snapshot = dualMITMPolicyEngine.currentSnapshot()
+                snapshot.allowlist = sanitized
+                dualMITMPolicyEngine.updateSnapshot(snapshot)
+            }
 
             ProxyLog.mitm.info("event=proxy.allowlist_update outcome=success count=\(self.mitmAllowlist.count)")
             self.eventLog?.append(type: "mitm_allowlist", msg: "size=\(self.mitmAllowlist.count)")
@@ -226,16 +309,48 @@ public class MITMProxyServer: @unchecked Sendable {
 
     /// Enables or disables MITM globally (used by hardening and UI toggles).
     public func setMitmEnabled(_ enabled: Bool) {
-        performOnQueue {
+        performOnQueueSync {
             self.mitmEnabled = enabled
+            if let dualMITMPolicyEngine = self.dualMITMPolicyEngine {
+                var snapshot = dualMITMPolicyEngine.currentSnapshot()
+                snapshot.mitmEnabled = enabled
+                dualMITMPolicyEngine.updateSnapshot(snapshot)
+            }
             ProxyLog.mitm.info("event=proxy.mitm_toggle outcome=success enabled=\(enabled, privacy: .public)")
             self.eventLog?.append(type: "mitm_enabled", msg: "\(enabled)")
         }
     }
 
+    /// Sets the shared dual-MITM policy engine used for proxy gating and failover decisions.
+    public func setDualMITMPolicyEngine(_ engine: DualMITMPolicyEngine?) {
+        performOnQueueSync {
+            dualMITMPolicyEngine = engine
+            if let engine {
+                var snapshot = engine.currentSnapshot()
+                snapshot.allowlist = mitmAllowlist
+                snapshot.mitmEnabled = mitmEnabled
+                snapshot.featureFlags.http2MITMEnabled = dualMITMHttp2MITMEnabled
+                snapshot.featureFlags.strictEnforcementHardFail = dualMITMStrictEnforcementHardFail
+                engine.updateSnapshot(snapshot)
+            }
+        }
+    }
+
+    public func setDualMITMProxyPolicyEnforcement(_ enabled: Bool) {
+        performOnQueueSync {
+            dualMITMPolicyEngineEnforcedProxy = enabled
+        }
+    }
+
+    public func setMITMEngineV2Enabled(_ enabled: Bool) {
+        performOnQueueSync {
+            dualMITMMITMEngineV2Enabled = enabled
+        }
+    }
+
     /// Returns the number of active client proxy connections.
     public func activeConnectionCount() -> Int {
-        nioEngine?.activeConnectionCount() ?? 0
+        mitmEngine?.activeConnectionCount() ?? 0
     }
 
     private func performOnQueue(_ block: @escaping () -> Void) {
@@ -395,7 +510,112 @@ public class MITMProxyServer: @unchecked Sendable {
         let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalizedHost.isEmpty else { return false }
 
-        return mitmBypassReason(host: normalizedHost) == nil
+        let legacyBypassReason = mitmBypassReason(host: normalizedHost)
+        let legacyDecision = legacyBypassReason == nil
+        guard let dualMITMPolicyEngine else {
+            return legacyDecision
+        }
+
+        let policyPlan = dualMITMPolicyEngine.planNewFlow(
+            protocolName: .httpConnect,
+            destination: HostPort(host: normalizedHost, port: Int(port))
+        )
+        let policyDecision: Bool
+        let policyReason: String
+        switch policyPlan.action {
+        case .mitm:
+            policyDecision = true
+            policyReason = "none"
+        case let .passThrough(reason), let .direct(reason), let .block(reason):
+            policyDecision = false
+            policyReason = reason
+        }
+        let proxyEnforced = policyPlan.enforced || dualMITMPolicyEngineEnforcedProxy
+
+        if policyPlan.shadowEnabled, policyDecision != legacyDecision {
+            eventLog?.append(
+                type: "dual_mitm_policy_shadow",
+                msg: "scope=proxy_gate host_hash=\(LogRedaction.hash(normalizedHost)) port=\(port) legacy_mitm=\(legacyDecision) legacy_reason=\(legacyBypassReason ?? "none") policy_mitm=\(policyDecision) policy_reason=\(policyReason) enforced=\(proxyEnforced)"
+            )
+        }
+
+        return proxyEnforced ? policyDecision : legacyDecision
+    }
+
+    private func shouldFailOpenAfterMITMFailure(
+        host: String,
+        port: UInt16,
+        reason: String,
+        context: MITMFailoverContext
+    ) -> Bool {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let legacyDecision = legacyShouldFailOpenAfterMITMFailure(
+            reason: reason,
+            context: context
+        )
+        guard let dualMITMPolicyEngine,
+              !normalizedHost.isEmpty,
+              port > 0
+        else {
+            return legacyDecision
+        }
+
+        let protocolName: InterceptionProtocol = switch context {
+        case .transparentTLS:
+            .tcpTransparent
+        case .httpConnect:
+            .httpConnect
+        }
+        let startPlan = dualMITMPolicyEngine.planNewFlow(
+            protocolName: protocolName,
+            destination: HostPort(host: normalizedHost, port: Int(port))
+        )
+        let decoded = LegacyReasonCodec.decode(reason)
+        let failure = decoded.failure ?? .internalError(code: .legacyUnknownToken, context: reason)
+        let policyPlan = dualMITMPolicyEngine.handleFailure(
+            profile: startPlan.profile,
+            failure: failure
+        )
+        let policyDecision: Bool
+        let policyReason: String
+        switch policyPlan.action {
+        case let .failOpenPassThrough(reason),
+             let .failOpenDirect(reason),
+             let .retry(reason):
+            policyDecision = true
+            policyReason = reason
+        case let .failClosedBlock(reason):
+            policyDecision = false
+            policyReason = reason
+        case .noop:
+            policyDecision = legacyDecision
+            policyReason = reason
+        }
+        let proxyEnforced = policyPlan.enforced || dualMITMPolicyEngineEnforcedProxy
+
+        if policyPlan.shadowEnabled, policyDecision != legacyDecision {
+            eventLog?.append(
+                type: "dual_mitm_policy_shadow",
+                msg: "scope=proxy_failover context=\(context.rawValue) host_hash=\(LogRedaction.hash(normalizedHost)) port=\(port) failure_reason=\(reason) legacy_fail_open=\(legacyDecision) policy_fail_open=\(policyDecision) policy_reason=\(policyReason) enforced=\(proxyEnforced)"
+            )
+        }
+
+        return proxyEnforced ? policyDecision : legacyDecision
+    }
+
+    private func legacyShouldFailOpenAfterMITMFailure(
+        reason: String,
+        context: MITMFailoverContext
+    ) -> Bool {
+        switch context {
+        case .transparentTLS:
+            let normalized = reason
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            return !normalized.contains("sni_invalid_or_missing")
+        case .httpConnect:
+            return true
+        }
     }
 
     private func mitmBypassReason(host: String) -> String? {
@@ -462,65 +682,69 @@ public class MITMProxyServer: @unchecked Sendable {
     }
 
     static func normalizedAutoBypassReason(forFailureReason reason: String) -> String? {
-        let lowercasedReason = reason.lowercased()
-
-        // Rule: user/device trust issues should not force host-level auto-bypass.
-        if lowercasedReason.contains("ca_not_trusted") {
+        let normalized = LegacyReasonCodec.normalizedToken(reason)
+        if normalized.contains("ca_not_trusted") {
             return nil
         }
 
-        let isUpstreamTrustFailure =
-            lowercasedReason.contains("tls_upstream_hostname_mismatch") ||
-            lowercasedReason.contains("tls_upstream_trust_failed")
-        if isUpstreamTrustFailure {
-            return lowercasedReason.contains("hostname_mismatch")
-                ? "tls_upstream_hostname_mismatch"
-                : "tls_upstream_trust_failed"
+        let decoded = LegacyReasonCodec.decode(reason)
+        let failure = decoded.failure
+        guard let bypassReason = decoded.bypassReason else {
+            return nil
         }
 
-        let mitmSetupFailure =
-            lowercasedReason.contains("mitm_pipeline_failed") ||
-            lowercasedReason.contains("mitm_tls_handler_failed") ||
-            lowercasedReason.contains("mitm_setup_failed")
-        if mitmSetupFailure {
+        switch bypassReason {
+        case .certificatePinning, .clientRejected:
+            return "client_rejected_mitm_or_pinning"
+        case .upstreamTLSIssue:
+            if case .upstreamTLSHostnameMismatch = failure {
+                return "tls_upstream_hostname_mismatch"
+            }
+            return "tls_upstream_trust_failed"
+        case .mitmSetupInstability:
             return "mitm_setup_failed"
+        case .protocolMismatch:
+            if case .nonHTTPProtocol = failure {
+                return "mitm_non_http_protocol"
+            }
+            return "protocol_mismatch"
+        case .legacyToken:
+            return nil
+        default:
+            return nil
         }
-
-        let nonHTTPFailure =
-            lowercasedReason.contains("mitm_non_http_protocol") ||
-            lowercasedReason.contains("httpparsererror")
-        if nonHTTPFailure {
-            return "mitm_non_http_protocol"
-        }
-
-        let pinningLikeFailure =
-            lowercasedReason.contains("client_rejected_mitm_or_pinning") ||
-            lowercasedReason.contains("possible_pinning_or_strict_trust") ||
-            lowercasedReason.contains("pinning requirements") ||
-            lowercasedReason.contains("certificate pinning") ||
-            lowercasedReason.contains("cert pinning") ||
-            lowercasedReason.contains("pinned certificate")
-        guard pinningLikeFailure else { return nil }
-
-        return "client_rejected_mitm_or_pinning"
     }
 
     static func runtimeBypassCandidateReason(forFailureReason reason: String) -> String? {
+        let decoded = LegacyReasonCodec.decode(reason)
+        guard let bypassReason = decoded.bypassReason else {
+            return nil
+        }
+
+        switch bypassReason {
+        case .transientUpstreamFailure:
+            if case .upstreamConnectionClosed = decoded.failure {
+                return "upstream_connection_closed"
+            }
+            if case .connectionClosedEarly = decoded.failure {
+                return nil
+            }
+            return "upstream_timeout"
+        default:
+            return nil
+        }
+    }
+
+    static func transientFailureThreshold(
+        forRuntimeBypassReason reason: String,
+        defaultThreshold: Int = 5
+    ) -> Int {
         let normalized = reason
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        guard !normalized.isEmpty else { return nil }
-
-        if normalized.contains("connection_closed_early") {
-            return "connection_closed_early"
-        }
-        if normalized.contains("upstream_timeout") {
-            return "upstream_timeout"
-        }
-        if normalized.contains("upstream_connection_closed") {
-            return "upstream_connection_closed"
-        }
-        return nil
+        let normalizedDefault = max(1, defaultThreshold)
+        guard !normalized.isEmpty else { return normalizedDefault }
+        return normalizedDefault
     }
 
     private func maybeRecordRuntimeBypassForTransientFailure(host: String, reason: String, runtimeBypassTTL: TimeInterval) {
@@ -548,12 +772,18 @@ public class MITMProxyServer: @unchecked Sendable {
         }
 
         transientFailureTrackers[trackerKey] = tracker
-        guard tracker.count >= transientFailureThreshold else { return }
+        let threshold = Self.transientFailureThreshold(
+            forRuntimeBypassReason: normalizedReason,
+            defaultThreshold: transientFailureThreshold
+        )
+        guard tracker.count >= threshold else { return }
 
         runtimeBypassStates[host] = RuntimeBypassState(
             reason: normalizedReason,
             expiresAt: now.addingTimeInterval(runtimeBypassTTL)
         )
+        // Keep Local SOCKS route decisions aligned with proxy-side runtime bypasses.
+        MITMAutoBypassLookup.record(host: host, reason: normalizedReason)
         transientFailureTrackers.removeValue(forKey: trackerKey)
         eventLog?.append(
             type: "mitm_auto_bypass_runtime",
@@ -592,7 +822,7 @@ public class MITMProxyServer: @unchecked Sendable {
             let interval = max(1, Int((1.0 / rate).rounded()))
             return samplingSequence % interval == 0
         case .adaptive:
-            let activeConnections = max(1, nioEngine?.activeConnectionCount() ?? 1)
+            let activeConnections = max(1, mitmEngine?.activeConnectionCount() ?? 1)
             let scale = 50.0 / Double(max(50, activeConnections))
             let adjustedRate = min(rate, rate * scale)
             return Double.random(in: 0 ..< 1) < adjustedRate

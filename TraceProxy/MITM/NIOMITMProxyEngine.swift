@@ -73,6 +73,11 @@ enum TransparentMITMFailureKind: Sendable {
     }
 }
 
+enum MITMFailoverContext: String, Sendable {
+    case transparentTLS = "tcp_transparent"
+    case httpConnect = "http_connect"
+}
+
 /// NIO/NIOTS transport engine for MITM proxy listener lifecycle.
 ///
 /// NIO is the sole transport backend for MITM server lifecycle.
@@ -105,6 +110,7 @@ final class NIOMITMProxyEngine: @unchecked Sendable {
     private let onRequestCaptured: ((NetworkRequest) -> Void)?
     private let shouldMitmConnect: (String, UInt16) -> Bool
     private let isTransparentTLSEnabled: () -> Bool
+    private let shouldFailOpenAfterMITMFailure: (String, UInt16, String, MITMFailoverContext) -> Bool
     private let onMITMFailure: ((String, String) -> Void)?
 
     private var listenerChannel: Channel?
@@ -120,6 +126,14 @@ final class NIOMITMProxyEngine: @unchecked Sendable {
         onRequestCaptured: ((NetworkRequest) -> Void)? = nil,
         shouldMitmConnect: @escaping (String, UInt16) -> Bool = { _, _ in false },
         isTransparentTLSEnabled: @escaping () -> Bool = { false },
+        shouldFailOpenAfterMITMFailure: @escaping (String, UInt16, String, MITMFailoverContext) -> Bool = { _, _, reason, context in
+            switch context {
+            case .transparentTLS:
+                return !reason.lowercased().contains("sni_invalid_or_missing")
+            case .httpConnect:
+                return true
+            }
+        },
         onMITMFailure: ((String, String) -> Void)? = nil
     ) {
         self.port = port
@@ -130,6 +144,7 @@ final class NIOMITMProxyEngine: @unchecked Sendable {
         self.onRequestCaptured = onRequestCaptured
         self.shouldMitmConnect = shouldMitmConnect
         self.isTransparentTLSEnabled = isTransparentTLSEnabled
+        self.shouldFailOpenAfterMITMFailure = shouldFailOpenAfterMITMFailure
         self.onMITMFailure = onMITMFailure
     }
 
@@ -173,6 +188,7 @@ final class NIOMITMProxyEngine: @unchecked Sendable {
                     onRequestCaptured: self.onRequestCaptured,
                     shouldMitmConnect: self.shouldMitmConnect,
                     shouldEnableTransparentTLS: self.isTransparentTLSEnabled,
+                    shouldFailOpenAfterMITMFailure: self.shouldFailOpenAfterMITMFailure,
                     onMITMFailure: self.onMITMFailure
                 )
                 return channel.pipeline.addHandler(
@@ -274,6 +290,7 @@ private final class NIOMITMInitialIngressHandler: ChannelInboundHandler, Removab
     private let onRequestCaptured: ((NetworkRequest) -> Void)?
     private let shouldMitmConnect: (String, UInt16) -> Bool
     private let shouldEnableTransparentTLS: () -> Bool
+    private let shouldFailOpenAfterMITMFailure: (String, UInt16, String, MITMFailoverContext) -> Bool
     private let onMITMFailure: ((String, String) -> Void)?
     private let flowID = UUID().uuidString
 
@@ -286,7 +303,9 @@ private final class NIOMITMInitialIngressHandler: ChannelInboundHandler, Removab
     private var sniHash = "unknown"
     private var upstreamHash = "unknown"
     private let maxTLSProbeBytes = 4096
-    private static let transparentRelayALPNProtocols: [String] = ["h2", "http/1.1"]
+    // Transparent MITM remains HTTP/1.1-only for stability; h2 negotiation here has
+    // produced intermittent early-close failures under Dual MITM load.
+    private static let transparentRelayALPNProtocols: [String] = ["http/1.1"]
     private static let transparentTLSHandshakeTimeout: TimeAmount = .seconds(5)
     private static let transparentTLSConnectTimeout: TimeAmount = .seconds(6)
 
@@ -315,6 +334,7 @@ private final class NIOMITMInitialIngressHandler: ChannelInboundHandler, Removab
         onRequestCaptured: ((NetworkRequest) -> Void)?,
         shouldMitmConnect: @escaping (String, UInt16) -> Bool,
         shouldEnableTransparentTLS: @escaping () -> Bool,
+        shouldFailOpenAfterMITMFailure: @escaping (String, UInt16, String, MITMFailoverContext) -> Bool,
         onMITMFailure: ((String, String) -> Void)?
     ) {
         self.group = group
@@ -325,6 +345,7 @@ private final class NIOMITMInitialIngressHandler: ChannelInboundHandler, Removab
         self.onRequestCaptured = onRequestCaptured
         self.shouldMitmConnect = shouldMitmConnect
         self.shouldEnableTransparentTLS = shouldEnableTransparentTLS
+        self.shouldFailOpenAfterMITMFailure = shouldFailOpenAfterMITMFailure
         self.onMITMFailure = onMITMFailure
     }
 
@@ -452,16 +473,32 @@ private extension NIOMITMInitialIngressHandler {
               let host = normalizeSNIHost(parsedHost) else {
             if let hintedUpstreamHost {
                 let hintedHostHash = LogRedaction.hash(hintedUpstreamHost)
-                routeDecision = "passthrough"
-                fallbackApplied = true
-                bypassReason = "sni_invalid_or_missing_upstream_hint"
+                let failureReason = "sni_invalid_or_missing_upstream_hint"
+                onMITMFailure?(hintedUpstreamHost, failureReason)
+                let shouldFailOpen = shouldFailOpenAfterMITMFailure(
+                    hintedUpstreamHost,
+                    hintedUpstreamPort,
+                    failureReason,
+                    .transparentTLS
+                )
+                routeDecision = shouldFailOpen ? "passthrough" : "block"
+                fallbackApplied = shouldFailOpen
+                bypassReason = shouldFailOpen ? failureReason : "strict_fail_closed"
                 sniHash = hintedHostHash
                 upstreamHash = hintedHostHash
-                appendTransparentTLSEvent(
-                    "outcome=passthrough host_hash=\(hintedHostHash) port=\(hintedUpstreamPort) reason=sni_invalid_or_missing_upstream_hint"
-                )
-                Task { await ProxyNetworkMetrics.shared.recordMITMBypassed() }
-                installTransparentPassthrough(host: hintedUpstreamHost, port: Int(hintedUpstreamPort), context: context)
+                if shouldFailOpen {
+                    appendTransparentTLSEvent(
+                        "outcome=passthrough host_hash=\(hintedHostHash) port=\(hintedUpstreamPort) reason=\(failureReason)"
+                    )
+                    Task { await ProxyNetworkMetrics.shared.recordMITMBypassed() }
+                    installTransparentPassthrough(host: hintedUpstreamHost, port: Int(hintedUpstreamPort), context: context)
+                } else {
+                    appendTransparentTLSEvent(
+                        "outcome=blocked host_hash=\(hintedHostHash) port=\(hintedUpstreamPort) reason=\(failureReason)"
+                    )
+                    state = .closed
+                    context.close(promise: nil)
+                }
                 return
             }
             if probeBuffer.readableBytes < maxTLSProbeBytes {
@@ -491,21 +528,36 @@ private extension NIOMITMInitialIngressHandler {
             fallbackApplied = false
             bypassReason = "none"
             if let bypassDetail = TLSHandler.preflightServerLeafTrust(for: host) {
-                onMITMFailure?(host, "possible_pinning_or_strict_trust: \(bypassDetail)")
+                let failureReason = "client_rejected_mitm_or_pinning: \(bypassDetail)"
+                onMITMFailure?(host, failureReason)
                 if host.caseInsensitiveCompare(upstreamHost) != .orderedSame {
-                    onMITMFailure?(upstreamHost, "possible_pinning_or_strict_trust: \(bypassDetail)")
+                    onMITMFailure?(upstreamHost, failureReason)
                 }
-                routeDecision = "passthrough"
-                fallbackApplied = true
-                bypassReason = "possible_pinning_or_strict_trust"
-                ProxyLog.mitm.info(
-                    "event=proxy.nio_transparent_tls outcome=passthrough host=\(host, privacy: .private(mask: .hash)) reason=\(bypassDetail, privacy: .public)"
+                let shouldFailOpen = shouldFailOpenAfterMITMFailure(
+                    host,
+                    upstreamPort,
+                    failureReason,
+                    .transparentTLS
                 )
-                appendTransparentTLSEvent(
-                    "outcome=passthrough host_hash=\(hostHash) port=\(upstreamPort) reason=\(bypassDetail) upstream_hash=\(upstreamHostHash)"
-                )
-                Task { await ProxyNetworkMetrics.shared.recordMITMBypassed() }
-                installTransparentPassthrough(host: upstreamHost, port: Int(upstreamPort), context: context)
+                routeDecision = shouldFailOpen ? "passthrough" : "block"
+                fallbackApplied = shouldFailOpen
+                bypassReason = shouldFailOpen ? "possible_pinning_or_strict_trust" : "strict_fail_closed"
+                if shouldFailOpen {
+                    ProxyLog.mitm.info(
+                        "event=proxy.nio_transparent_tls outcome=passthrough host=\(host, privacy: .private(mask: .hash)) reason=\(bypassDetail, privacy: .public)"
+                    )
+                    appendTransparentTLSEvent(
+                        "outcome=passthrough host_hash=\(hostHash) port=\(upstreamPort) reason=\(bypassDetail) upstream_hash=\(upstreamHostHash)"
+                    )
+                    Task { await ProxyNetworkMetrics.shared.recordMITMBypassed() }
+                    installTransparentPassthrough(host: upstreamHost, port: Int(upstreamPort), context: context)
+                } else {
+                    appendTransparentTLSEvent(
+                        "outcome=blocked host_hash=\(hostHash) port=\(upstreamPort) reason=strict_fail_closed upstream_hash=\(upstreamHostHash)"
+                    )
+                    state = .closed
+                    context.close(promise: nil)
+                }
                 return
             }
 
@@ -546,7 +598,7 @@ private extension NIOMITMInitialIngressHandler {
         let upstreamALPNCandidates = preferredUpstreamALPNCandidates(fromClientOffer: clientALPNOffer)
         let upstreamALPNCandidatesLabel = upstreamALPNCandidates.isEmpty ? "none" : upstreamALPNCandidates.joined(separator: "|")
         appendTransparentTLSEvent(
-            "stage=mitm_prepare host_hash=\(hostHash) port=\(upstreamConnectPort) mode=tls_raw_relay alpn_candidates=\(upstreamALPNCandidatesLabel) upstream_hash=\(upstreamHash)"
+            "stage=mitm_prepare host_hash=\(hostHash) port=\(upstreamConnectPort) mode=decoded_http_capture alpn_candidates=\(upstreamALPNCandidatesLabel) upstream_hash=\(upstreamHash)"
         )
 
         appendTransparentTLSEvent(
@@ -588,10 +640,14 @@ private extension NIOMITMInitialIngressHandler {
                         .whenComplete { relayResult in
                             if case let .failure(error) = relayResult {
                                 let failureKind = self.classifyTransparentMITMFailure(error)
-                                let classifiedFailure = failureKind.reasonString
-                                self.onMITMFailure?(sniHost, classifiedFailure)
+                                if self.shouldRecordTCPHandshakeFailure(for: failureKind) {
+                                    DualMITMCircuitBreaker.shared.recordTCPClientHandshake(success: false)
+                                }
+                                let failureToken = self.transparentFailureToken(for: failureKind)
+                                let classifiedFailure = self.transparentFailureLogReason(for: failureKind)
+                                self.onMITMFailure?(sniHost, failureToken)
                                 if sniHost.caseInsensitiveCompare(upstreamConnectHost) != .orderedSame {
-                                    self.onMITMFailure?(upstreamConnectHost, classifiedFailure)
+                                    self.onMITMFailure?(upstreamConnectHost, failureToken)
                                 }
                                 self.appendTransparentTLSEvent(
                                     "outcome=mitm_failed host_hash=\(hostHash) port=\(upstreamConnectPort) reason=\(error.localizedDescription) classified=\(classifiedFailure) upstream_hash=\(upstreamHash)"
@@ -604,12 +660,17 @@ private extension NIOMITMInitialIngressHandler {
                                 // preconnects; keep the failure local instead of mutating
                                 // this channel into passthrough after partial TLS setup.
                                 if self.state == .installing,
-                                   self.shouldFailOpenToPassthrough(for: failureKind.normalizedToken) {
+                                   self.shouldFailOpenAfterMITMFailure(
+                                       sniHost,
+                                       UInt16(upstreamConnectPort),
+                                       failureToken,
+                                       .transparentTLS
+                                   ) {
                                     upstream.close(promise: nil)
                                     self.state = .probing
                                     self.routeDecision = "passthrough"
                                     self.fallbackApplied = true
-                                    self.bypassReason = failureKind.normalizedToken
+                                    self.bypassReason = failureToken
                                     self.installTransparentPassthrough(
                                         host: upstreamConnectHost,
                                         port: upstreamConnectPort,
@@ -625,10 +686,14 @@ private extension NIOMITMInitialIngressHandler {
                         }
                 case let .failure(error):
                     let failureKind = self.classifyTransparentMITMFailure(error)
-                    let classifiedFailure = failureKind.reasonString
-                    self.onMITMFailure?(sniHost, classifiedFailure)
+                    if self.shouldRecordTCPHandshakeFailure(for: failureKind) {
+                        DualMITMCircuitBreaker.shared.recordTCPClientHandshake(success: false)
+                    }
+                    let failureToken = self.transparentFailureToken(for: failureKind)
+                    let classifiedFailure = self.transparentFailureLogReason(for: failureKind)
+                    self.onMITMFailure?(sniHost, failureToken)
                     if sniHost.caseInsensitiveCompare(upstreamConnectHost) != .orderedSame {
-                        self.onMITMFailure?(upstreamConnectHost, classifiedFailure)
+                        self.onMITMFailure?(upstreamConnectHost, failureToken)
                     }
                     self.appendTransparentTLSEvent(
                         "stage=mitm_connect outcome=failure host_hash=\(hostHash) port=\(upstreamConnectPort) reason=\(error.localizedDescription) classified=\(classifiedFailure) upstream_hash=\(upstreamHash)"
@@ -637,11 +702,16 @@ private extension NIOMITMInitialIngressHandler {
                         "event=proxy.nio_transparent_tls outcome=failure host=\(sniHost, privacy: .private(mask: .hash)) error=\(error.localizedDescription, privacy: .public) classified=\(classifiedFailure, privacy: .public)"
                     )
                     if self.state == .installing,
-                       self.shouldFailOpenToPassthrough(for: failureKind.normalizedToken) {
+                       self.shouldFailOpenAfterMITMFailure(
+                           sniHost,
+                           UInt16(upstreamConnectPort),
+                           failureToken,
+                           .transparentTLS
+                       ) {
                         self.state = .probing
                         self.routeDecision = "passthrough"
                         self.fallbackApplied = true
-                        self.bypassReason = failureKind.normalizedToken
+                        self.bypassReason = failureToken
                         self.installTransparentPassthrough(
                             host: upstreamConnectHost,
                             port: upstreamConnectPort,
@@ -772,13 +842,11 @@ private extension NIOMITMInitialIngressHandler {
         )
 
         let clientTLSContext: NIOSSLContext
-        let clientTLSHandler: NIOSSLServerHandler
         do {
             clientTLSContext = try NIOMITMHTTPConnectHandler.makeServerTLSContext(
                 for: host,
                 applicationProtocols: mirroredClientALPN
             )
-            clientTLSHandler = try NIOSSLServerHandler(context: clientTLSContext)
         } catch {
             return context.eventLoop.makeFailedFuture(error)
         }
@@ -803,6 +871,10 @@ private extension NIOMITMInitialIngressHandler {
                           let clientALPN,
                           clientALPN != upstreamALPN
                     else {
+                        self.appendTransparentTLSEvent(
+                            "outcome=mitm_established host_hash=\(hostHash) port=\(port) mode=decoded_http_capture upstream_alpn=\(upstreamALPNLabel)"
+                        )
+                        _ = Task { await ProxyNetworkMetrics.shared.recordMITMIntercepted() }
                         return
                     }
                     self.appendTransparentTLSEvent(
@@ -819,13 +891,14 @@ private extension NIOMITMInitialIngressHandler {
                         error,
                         stage: .clientTLSHandshake
                     )
-                    let classifiedFailure = failureKind.reasonString
+                    let failureToken = self.transparentFailureToken(for: failureKind)
+                    let classifiedFailure = self.transparentFailureLogReason(for: failureKind)
                     DualMITMCircuitBreaker.shared.recordTCPClientHandshake(success: false)
-                    self.onMITMFailure?(host, classifiedFailure)
+                    self.onMITMFailure?(host, failureToken)
                     if host.caseInsensitiveCompare(upstreamConnectHost) != .orderedSame {
-                        self.onMITMFailure?(upstreamConnectHost, classifiedFailure)
+                        self.onMITMFailure?(upstreamConnectHost, failureToken)
                     }
-                    self.bypassReason = failureKind.normalizedToken
+                    self.bypassReason = failureToken
                     self.appendTransparentTLSEvent(
                         "stage=mitm_client_tls outcome=failure host_hash=\(hostHash) port=\(port) reason=\(error.localizedDescription) classified=\(classifiedFailure)"
                     )
@@ -839,32 +912,25 @@ private extension NIOMITMInitialIngressHandler {
             }
         }
 
+        let tunneledHandler = makeConnectHandler(
+            ingressMode: .tunneledHTTPS(host: host, port: UInt16(port))
+        )
+
         return context.channel.pipeline
-            .addHandler(clientTLSHandler, name: "nioTransparentClientTLS", position: .first)
+            .addHandler(clientObserver, name: "nioTransparentClientTLSObserver")
             .flatMap {
-                context.channel.pipeline.addHandler(clientObserver, name: "nioTransparentClientTLSObserver")
-            }
-            .flatMap {
-                upstream.pipeline.addHandler(
-                    NIOMITMRawRelayHandler(peerChannel: context.channel),
-                    name: "nioTransparentUpstreamRelay"
-                )
-            }
-            .flatMap {
-                context.channel.pipeline.addHandler(
-                    NIOMITMRawRelayHandler(peerChannel: upstream),
-                    name: "nioTransparentClientRelay"
+                tunneledHandler.installTransparentTLSPipeline(
+                    on: context.channel,
+                    host: host,
+                    port: port,
+                    tlsContext: clientTLSContext
                 )
             }
             .map {
                 clientHandshakeTimeoutTask = context.eventLoop.scheduleTask(in: Self.transparentTLSHandshakeTimeout) {
                     clientHandshakePromise.fail(TransparentMITMError.handshakeTimeout("client"))
                 }
-                self.appendTransparentTLSEvent(
-                    "outcome=mitm_established host_hash=\(hostHash) port=\(port) mode=tls_raw_relay upstream_alpn=\(upstreamALPNLabel)"
-                )
                 self.state = .routed
-                _ = Task { await ProxyNetworkMetrics.shared.recordMITMIntercepted() }
                 // Replay from pipeline head so TLS handlers receive the buffered ClientHello.
                 context.eventLoop.execute {
                     self.replayBufferedInbound(on: context.channel)
@@ -883,6 +949,10 @@ private extension NIOMITMInitialIngressHandler {
     func makeUpstreamTLSContext(applicationProtocols: [String]) throws -> NIOSSLContext {
         var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
         tlsConfiguration.applicationProtocols = applicationProtocols
+        if RuntimeEnvironment.isRunningUnitTests {
+            // Unit tests use ephemeral local TLS endpoints that are not installed in the system trust store.
+            tlsConfiguration.certificateVerification = .none
+        }
         return try NIOSSLContext(configuration: tlsConfiguration)
     }
 
@@ -990,12 +1060,36 @@ private extension NIOMITMInitialIngressHandler {
         return .mitmSetupFailed(detail: error.localizedDescription)
     }
 
-    func shouldFailOpenToPassthrough(for classifiedFailure: String) -> Bool {
-        let normalized = classifiedFailure.lowercased()
-        if normalized.contains("sni_invalid_or_missing") {
+    private func transparentFailureToken(for failureKind: TransparentMITMFailureKind) -> String {
+        let typedFailure = MITMFailureMapper.mapTransparentFailure(failureKind)
+        return MITMFailureMapper.legacyToken(for: typedFailure)
+    }
+
+    private func transparentFailureLogReason(for failureKind: TransparentMITMFailureKind) -> String {
+        let token = transparentFailureToken(for: failureKind)
+        guard let detail = failureKind.detail,
+              !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return token
+        }
+        return "\(token): \(detail)"
+    }
+
+    func shouldRecordTCPHandshakeFailure(for failureKind: TransparentMITMFailureKind) -> Bool {
+        switch failureKind {
+        case .tlsUpstreamTrustFailed, .tlsUpstreamHostnameMismatch:
+            // Certificate trust/hostname validation problems are host-specific and
+            // should not globally degrade Dual MITM.
+            return false
+        case .clientRejectedMITMOrPinning,
+             .upstreamTimeout,
+             .mitmSetupFailed:
+            return true
+        case .connectionClosedEarly, .upstreamConnectionClosed:
+            // Early close / unclean shutdown is common for speculative connections and
+            // should not bias global breaker health.
             return false
         }
-        return true
     }
 
     func makeConnectHandler(ingressMode: NIOMITMHTTPConnectHandler.IngressMode) -> NIOMITMHTTPConnectHandler {
@@ -1007,6 +1101,7 @@ private extension NIOMITMInitialIngressHandler {
             captureConfigProvider: captureConfigProvider,
             onRequestCaptured: onRequestCaptured,
             shouldMitmConnect: shouldMitmConnect,
+            shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
             onMITMFailure: onMITMFailure,
             ingressMode: ingressMode
         )
@@ -1375,6 +1470,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
     private let captureConfigProvider: () -> CaptureConfiguration
     private let onRequestCaptured: ((NetworkRequest) -> Void)?
     private let shouldMitmConnect: (String, UInt16) -> Bool
+    private let shouldFailOpenAfterMITMFailure: (String, UInt16, String, MITMFailoverContext) -> Bool
     private let onMITMFailure: ((String, String) -> Void)?
     private let ingressMode: IngressMode
     private let usesHTTP2StreamSemantics: Bool
@@ -1399,6 +1495,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         captureConfigProvider: @escaping () -> CaptureConfiguration,
         onRequestCaptured: ((NetworkRequest) -> Void)?,
         shouldMitmConnect: @escaping (String, UInt16) -> Bool,
+        shouldFailOpenAfterMITMFailure: @escaping (String, UInt16, String, MITMFailoverContext) -> Bool,
         onMITMFailure: ((String, String) -> Void)?,
         ingressMode: IngressMode,
         usesHTTP2StreamSemantics: Bool = false
@@ -1410,6 +1507,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         self.captureConfigProvider = captureConfigProvider
         self.onRequestCaptured = onRequestCaptured
         self.shouldMitmConnect = shouldMitmConnect
+        self.shouldFailOpenAfterMITMFailure = shouldFailOpenAfterMITMFailure
         self.onMITMFailure = onMITMFailure
         self.ingressMode = ingressMode
         self.usesHTTP2StreamSemantics = usesHTTP2StreamSemantics
@@ -1487,16 +1585,18 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         cancelTransparentTLSUpgradeWatchdog()
-        let classifiedFailure = classifyMITMFailure(error)
+        let failure = classifyClientHandlerFailure(error)
         ProxyLog.mitm.warning(
-            "event=proxy.nio_connect_handler_error outcome=failure error=\(error.localizedDescription, privacy: .public) classified=\(classifiedFailure, privacy: .public)"
+            "event=proxy.nio_connect_handler_error outcome=failure error=\(error.localizedDescription, privacy: .public) classified=\(failure.reason, privacy: .public)"
         )
         logConnectStage(
             stage: "client_handler_error",
             outcome: "failure",
-            detail: "\(error.localizedDescription) classified=\(classifiedFailure)"
+            detail: "\(error.localizedDescription) classified=\(failure.reason)"
         )
-        reportMITMFailure(reason: classifiedFailure)
+        if failure.shouldReport {
+            reportMITMFailure(reason: failure.reason)
+        }
         upstreamChannel?.close(promise: nil)
         connectRequestStartTime = nil
         state = .closed
@@ -1560,6 +1660,20 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
 
             if shouldMitmConnect(targetHost, UInt16(targetPort)) {
                 if let bypassDetail = TLSHandler.preflightServerLeafTrust(for: targetHost) {
+                    let failureReason = "client_rejected_mitm_or_pinning: \(bypassDetail)"
+                    reportMITMFailure(host: targetHost, reason: failureReason)
+                    let shouldFailOpen = shouldFailOpenAfterMITMFailure(
+                        targetHost,
+                        UInt16(targetPort),
+                        failureReason,
+                        .httpConnect
+                    )
+                    guard shouldFailOpen else {
+                        logConnectStage(stage: "mitm_bypass_preflight", outcome: "blocked", detail: bypassDetail)
+                        state = .closed
+                        context.close(promise: nil)
+                        return
+                    }
                     ProxyLog.mitm.info(
                         "event=proxy.nio_connect_mitm_bypass outcome=success host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) reason=\(bypassDetail, privacy: .public)"
                     )
@@ -1731,8 +1845,23 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                 Task { await ProxyNetworkMetrics.shared.recordHTTPParseFailure() }
                 return
             }
+            emitPendingTunneledSnapshotIfNeeded(outboundContext.requestSnapshot)
             forwardModifiedHTTPRequest(outboundContext, requestHead: requestHead, context: context)
         }
+    }
+
+    private func emitPendingTunneledSnapshotIfNeeded(_ request: NetworkRequest) {
+        guard case .tunneledHTTPS = ingressMode else { return }
+        guard let onRequestCaptured else { return }
+
+        var snapshot = request
+        snapshot.extractHTTPFields()
+        NetworkThrottlingController.shared.applyMetadata(to: &snapshot)
+        onRequestCaptured(snapshot)
+        eventLog?.append(
+            type: "proxy_nio_tunneled_request",
+            msg: "outcome=pending_saved mode=\(self.ingressModeLabel) id=\(self.connectionID) request_id=\(snapshot.id.uuidString) method=\(snapshot.method.rawValue) url_hash=\(LogRedaction.hash(snapshot.url)) h2_stream=\(usesHTTP2StreamSemantics)"
+        )
     }
 
     private func beginCONNECTMITM(host: String, port: Int, context: ChannelHandlerContext) {
@@ -1766,7 +1895,19 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                 "event=proxy.nio_connect_mitm_prepare outcome=failure host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
             )
             logConnectStage(stage: "mitm_prepare", outcome: "failure", detail: error.localizedDescription)
-            reportMITMFailure(host: host, reason: "mitm_setup_failed: \(error.localizedDescription)")
+            let failureReason = "mitm_setup_failed: \(error.localizedDescription)"
+            reportMITMFailure(host: host, reason: failureReason)
+            let shouldFailOpen = shouldFailOpenAfterMITMFailure(
+                host,
+                UInt16(port),
+                failureReason,
+                .httpConnect
+            )
+            guard shouldFailOpen else {
+                state = .closed
+                context.close(promise: nil)
+                return
+            }
             Task { await ProxyNetworkMetrics.shared.recordMITMBypassed() }
             connectUpstream(
                 host: host,
@@ -1865,6 +2006,20 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             state = .closed
             return
         }
+
+        let failureReason = "mitm_setup_failed:\(detail)"
+        guard shouldFailOpenAfterMITMFailure(
+            host,
+            UInt16(port),
+            failureReason,
+            .httpConnect
+        ) else {
+            logConnectStage(stage: "mitm_fallback", outcome: "blocked", detail: detail)
+            state = .closed
+            context.close(promise: nil)
+            return
+        }
+
         state = .connectingUpstream
         logConnectStage(stage: "mitm_fallback", outcome: "begin", detail: detail)
         connectUpstream(
@@ -2015,6 +2170,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             captureConfigProvider: captureConfigProvider,
             onRequestCaptured: onRequestCaptured,
             shouldMitmConnect: shouldMitmConnect,
+            shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
             onMITMFailure: onMITMFailure,
             ingressMode: .tunneledHTTPS(host: host, port: UInt16(port)),
             usesHTTP2StreamSemantics: usesHTTP2StreamSemantics
@@ -3947,6 +4103,36 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             return "tls_upstream_handshake_failed"
         }
         return "upstream_transport_error: \(error.localizedDescription)"
+    }
+
+    private func classifyClientHandlerFailure(_ error: Error) -> (reason: String, shouldReport: Bool) {
+        let classifiedFailure = classifyMITMFailure(error)
+        guard classifiedFailure == "upstream_connection_closed",
+              isTLSUncleanShutdown(error)
+        else {
+            return (classifiedFailure, true)
+        }
+        // Client channels frequently close TLS without close_notify during retries/preconnects.
+        // Do not treat that as an upstream MITM failure (it would incorrectly trigger auto-bypass).
+        return ("client_connection_closed", false)
+    }
+
+    private func isTLSUncleanShutdown(_ error: Error) -> Bool {
+        if let sslError = error as? NIOSSLError,
+           sslError == .uncleanShutdown {
+            return true
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == "NIOSSL.NIOSSLError",
+           nsError.code == 12 {
+            return true
+        }
+
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+            return isTLSUncleanShutdown(underlying)
+        }
+        return false
     }
 
     private func classifyNSErrorMITMFailure(_ nsError: NSError) -> String? {

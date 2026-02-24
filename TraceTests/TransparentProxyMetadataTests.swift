@@ -72,4 +72,58 @@ final class TransparentProxyMetadataTests: XCTestCase {
         }
         XCTAssertEqual(reason, "unsupported_version_2")
     }
+
+    func testEncodeDecodeRoundTripV2_WithFlowIDAndPolicyMode() {
+        guard let bytes = TransparentProxyMetadata.encodeUpstreamHintV2(
+            host: "api.example.com",
+            port: 443,
+            addressTypeRaw: 0x03,
+            flowID: 42,
+            policyModeRaw: 1
+        ) else {
+            XCTFail("Expected encoded metadata bytes")
+            return
+        }
+
+        var buffer = ByteBufferAllocator().buffer(capacity: bytes.count)
+        buffer.writeBytes(bytes)
+
+        let result = TransparentProxyMetadata.decodeUpstreamHintPrefix(from: buffer)
+        guard case let .value(hint, consumedBytes) = result else {
+            XCTFail("Expected decode value, got \(result)")
+            return
+        }
+
+        XCTAssertEqual(consumedBytes, bytes.count)
+        XCTAssertEqual(hint.version, .v2)
+        XCTAssertEqual(hint.host, "api.example.com")
+        XCTAssertEqual(hint.port, 443)
+        XCTAssertEqual(hint.addressTypeRaw, 0x03)
+        XCTAssertEqual(hint.flowID, 42)
+        XCTAssertEqual(hint.policyModeRaw, 1)
+    }
+
+    func testDecodeV1HintHasNoFlowID() {
+        guard let bytes = TransparentProxyMetadata.encodeUpstreamHint(
+            host: "example.com",
+            port: 443,
+            addressTypeRaw: 0x03
+        ) else {
+            XCTFail("Expected encoded metadata bytes")
+            return
+        }
+
+        var buffer = ByteBufferAllocator().buffer(capacity: bytes.count)
+        buffer.writeBytes(bytes)
+
+        let result = TransparentProxyMetadata.decodeUpstreamHintPrefix(from: buffer)
+        guard case let .value(hint, _) = result else {
+            XCTFail("Expected decode value, got \(result)")
+            return
+        }
+
+        XCTAssertEqual(hint.version, .v1)
+        XCTAssertNil(hint.flowID)
+        XCTAssertNil(hint.policyModeRaw)
+    }
 }
