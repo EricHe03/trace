@@ -90,6 +90,8 @@ public struct UDPFlowMetadata: Identifiable, Codable, Sendable {
     public var endTime: Date?
     public var termination: UDPFlowTermination
     public var detectedProtocol: UDPFlowProtocol
+    public var quicInspectionOutcome: QUICInspectionOutcome?
+    public var quicFlowMetadata: QUICFlowMetadata?
     public var recentDatagrams: [UDPDatagramSample]
 
     public init(
@@ -107,6 +109,8 @@ public struct UDPFlowMetadata: Identifiable, Codable, Sendable {
         endTime: Date? = nil,
         termination: UDPFlowTermination = .active,
         detectedProtocol: UDPFlowProtocol = .unknown,
+        quicInspectionOutcome: QUICInspectionOutcome? = nil,
+        quicFlowMetadata: QUICFlowMetadata? = nil,
         recentDatagrams: [UDPDatagramSample] = []
     ) {
         self.id = id
@@ -123,6 +127,8 @@ public struct UDPFlowMetadata: Identifiable, Codable, Sendable {
         self.endTime = endTime
         self.termination = termination
         self.detectedProtocol = detectedProtocol
+        self.quicInspectionOutcome = quicInspectionOutcome
+        self.quicFlowMetadata = quicFlowMetadata
         self.recentDatagrams = recentDatagrams
     }
 }
@@ -157,6 +163,10 @@ public extension UDPFlowMetadata {
 
     var isBidirectional: Bool {
         datagramsFromSource > 0 && datagramsToSource > 0
+    }
+
+    var hasQUICDiagnostics: Bool {
+        quicInspectionOutcome != nil || quicFlowMetadata != nil
     }
 
     var wellKnownPortDescription: String? {

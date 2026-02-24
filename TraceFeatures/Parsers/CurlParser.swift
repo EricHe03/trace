@@ -533,7 +533,7 @@ public class CurlParser {
         case "--http2", "--http2-prior-knowledge":
             transfers[transfers.count - 1].protocolVersion = .http2
 
-        case "--http3":
+        case "--http3", "--http3-only":
             transfers[transfers.count - 1].protocolVersion = .http3
 
         default:

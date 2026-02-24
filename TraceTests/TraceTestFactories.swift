@@ -241,8 +241,8 @@ func makeChunkedBody(chunks: [String]) -> Data {
 
 /// Creates HTTP/2 frame data for testing
 func makeHTTP2Frame(
-    type: HTTP2FrameType = .data,
-    flags: HTTP2FrameFlags = [],
+    type: UInt8 = 0x0,
+    flags: UInt8 = 0,
     streamId: UInt32 = 1,
     payload: Data = Data()
 ) -> Data {
@@ -256,10 +256,10 @@ func makeHTTP2Frame(
     frame[2] = UInt8(length & 0xFF)
 
     // Type (8 bits / 1 byte)
-    frame[3] = type.rawValue
+    frame[3] = type
 
     // Flags (8 bits / 1 byte)
-    frame[4] = flags.rawValue
+    frame[4] = flags
 
     // Stream ID (31 bits / 4 bytes, first bit reserved)
     frame[5] = UInt8((streamId >> 24) & 0x7F)

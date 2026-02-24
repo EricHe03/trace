@@ -131,19 +131,31 @@ enum RequestDetailBodyAnalyzer {
     static func binarySummaryText(
         kind: BinaryKind,
         fileName: String?,
-        totalSize: Int,
+        receivedSize: Int?,
+        capturedSize: Int,
         previewSize: Int?,
-        isPreview: Bool
+        isPreview: Bool,
+        isTruncated: Bool
     ) -> String {
         var lines: [String] = []
-        lines.append("\(kind.rawValue) body (\(formattedBytes(totalSize)))")
+        lines.append("\(kind.rawValue) body")
+
+        if let receivedSize, receivedSize > 0 {
+            lines.append("Received: \(formattedBytes(receivedSize))")
+        }
+
+        lines.append("Captured: \(formattedBytes(capturedSize))")
 
         if let fileName, !fileName.isEmpty {
             lines.append("Filename: \(fileName)")
         }
 
+        if isTruncated {
+            lines.append("Truncated at capture limit.")
+        }
+
         if let previewSize, previewSize > 0, isPreview {
-            lines.append("Showing preview: \(formattedBytes(previewSize))")
+            lines.append("Loaded in viewer: \(formattedBytes(previewSize))")
             lines.append("Use Hex view to inspect bytes.")
         }
 

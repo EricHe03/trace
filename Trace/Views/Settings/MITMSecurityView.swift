@@ -14,7 +14,7 @@ import TraceUI
 /// Dedicated page for HTTPS interception allowlist + QUIC blocking.
 struct MITMSecurityView: View {
     @State private var mitmAllowlist: [String] = ["*"]
-    @State private var blockQUICEnabled = true
+    @State private var quicHandlingMode: QUICHandlingMode = .intercept
 
     @State private var isLoading = true
     @State private var toastMessage: String?
@@ -34,11 +34,15 @@ struct MITMSecurityView: View {
             )
 
             Section {
-                Toggle("Block QUIC", isOn: $blockQUICEnabled)
+                Picker("Handling Mode", selection: $quicHandlingMode) {
+                    ForEach(QUICHandlingMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
             } header: {
                 Text("QUIC Protocol")
             } footer: {
-                Text("Blocks QUIC/HTTP3 connections to force HTTP/2. Useful for capturing traffic from apps that prefer QUIC.")
+                Text("`Intercept` attempts QUIC/HTTP3 interception, `Pass Through` keeps connectivity and marks flow state, and `Block` drops QUIC (UDP/443).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -74,7 +78,7 @@ struct MITMSecurityView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadSettings() }
         .onChangeCompat(of: mitmAllowlist) { persistHardeningConfig() }
-        .onChangeCompat(of: blockQUICEnabled) { persistHardeningConfig() }
+        .onChangeCompat(of: quicHandlingMode) { persistHardeningConfig() }
         .toast(message: $toastMessage)
     }
 
@@ -88,7 +92,7 @@ struct MITMSecurityView: View {
     private func loadSettings() async {
         let hardening = HardeningConfig.shared
         mitmAllowlist = await hardening.mitmAllowlist
-        blockQUICEnabled = await hardening.blockQUIC
+        quicHandlingMode = await hardening.quicHandlingMode
         isLoading = false
     }
 
@@ -106,7 +110,7 @@ struct MITMSecurityView: View {
         Task {
             let hardening = HardeningConfig.shared
             await hardening.setMitmAllowlist(appliedAllowlist)
-            await hardening.setBlockQUIC(blockQUICEnabled)
+            await hardening.setQUICHandlingMode(quicHandlingMode)
             do {
                 try AppGroupStorage.shared.saveMITMAllowlist(appliedAllowlist)
             } catch {
@@ -121,7 +125,9 @@ struct MITMSecurityView: View {
                         "command": "updateHardeningConfig",
                         "hardeningConfig": [
                             "mitmAllowlist": appliedAllowlist,
-                            "blockQUIC": blockQUICEnabled
+                            "quicHandlingMode": quicHandlingMode.rawValue,
+                            // Legacy key for backwards compatibility.
+                            "blockQUIC": quicHandlingMode.blocksQUIC
                         ]
                     ])
                 } catch {
@@ -136,7 +142,7 @@ struct MITMSecurityView: View {
     private func resetToDefaults() {
         isLoading = true
         mitmAllowlist = ["*"]
-        blockQUICEnabled = true
+        quicHandlingMode = .intercept
         isLoading = false
         persistHardeningConfig()
         toastMessage = "Reset to defaults"

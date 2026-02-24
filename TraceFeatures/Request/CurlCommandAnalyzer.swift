@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(TraceCurlRuntime)
-import TraceCurlRuntime
-#endif
 
 public final class CurlCommandAnalyzer {
     private struct TokenStream {
@@ -188,7 +185,6 @@ public final class CurlCommandAnalyzer {
 
         validateCapabilities(for: plans, diagnostics: &diagnostics)
         validateRuntimeFeatureSupport(for: plans, diagnostics: &diagnostics)
-        validateRuntimePreflight(for: plans, diagnostics: &diagnostics)
 
         return CurlCommandPlan(
             originalCommand: original,
@@ -335,59 +331,6 @@ public final class CurlCommandAnalyzer {
         }
     }
 
-    private func validateRuntimePreflight(
-        for transfers: [CurlCommandTransferPlan],
-        diagnostics: inout [CurlDiagnostic]
-    ) {
-        #if canImport(TraceCurlRuntime)
-        guard shouldRunRuntimePreflight else { return }
-
-        var emittedMessages: Set<String> = []
-
-        for transfer in transfers {
-            do {
-                let preflight = try CurlRuntimeBridge.preflightTransferCommand(argv: transfer.argv)
-                if preflight.hasBlockingError {
-                    let stderr = preflight.standardError
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    let details = stderr.isEmpty
-                        ? "parameter error code \(preflight.parameterErrorCode)"
-                        : stderr
-                    let message = "Runtime parser rejected transfer #\(transfer.index + 1): \(details)"
-                    if emittedMessages.insert(message).inserted {
-                        diagnostics.append(
-                            CurlDiagnostic(
-                                severity: .error,
-                                message: message
-                            )
-                        )
-                    }
-                }
-            } catch {
-                let message = "Runtime preflight failed for transfer #\(transfer.index + 1): \(error.localizedDescription)"
-                if emittedMessages.insert(message).inserted {
-                    diagnostics.append(
-                        CurlDiagnostic(
-                            severity: .error,
-                            message: message
-                        )
-                    )
-                }
-            }
-        }
-        #else
-        _ = transfers
-        #endif
-    }
-
-    private var shouldRunRuntimePreflight: Bool {
-        #if canImport(TraceCurlRuntime)
-        capabilities.backendName.contains("CCurlShim")
-        #else
-        false
-        #endif
-    }
-
     private func validateRuntimeFeatureSupport(
         for transfers: [CurlCommandTransferPlan],
         diagnostics: inout [CurlDiagnostic]
@@ -408,6 +351,8 @@ public final class CurlCommandAnalyzer {
 
         for transfer in transfers {
             let options = transfer.effectiveOptions
+            let requestsHTTP3Only = optionEnabled("--http3-only", in: options)
+            let requestsHTTP3 = requestsHTTP3Only || optionEnabled("--http3", in: options)
 
             if optionEnabled("--http2", in: options) || optionEnabled("--http2-prior-knowledge", in: options),
                !capabilities.supportsHTTP2 {
@@ -416,6 +361,39 @@ public final class CurlCommandAnalyzer {
                     option: "--http2",
                     message: "HTTP/2 is not supported by the \(capabilities.backendName) backend"
                 )
+            }
+
+            if requestsHTTP3, !capabilities.supportsHTTP3 {
+                let option = requestsHTTP3Only ? "--http3-only" : "--http3"
+                emit(
+                    severity: .error,
+                    option: option,
+                    message: "HTTP/3 is not supported by the \(capabilities.backendName) backend"
+                )
+            }
+
+            if requestsHTTP3 {
+                let option = requestsHTTP3Only ? "--http3-only" : "--http3"
+                for url in transfer.urls where scheme(from: url) != "https" {
+                    emit(
+                        severity: .error,
+                        option: option,
+                        message: "\(option) requires an https:// URL"
+                    )
+                }
+            }
+
+            if requestsHTTP3Only {
+                if optionEnabled("--http1.0", in: options)
+                    || optionEnabled("--http1.1", in: options)
+                    || optionEnabled("--http2", in: options)
+                    || optionEnabled("--http2-prior-knowledge", in: options) {
+                    emit(
+                        severity: .error,
+                        option: "--http3-only",
+                        message: "--http3-only cannot be combined with other explicit HTTP version flags"
+                    )
+                }
             }
 
             if optionEnabled("--compressed", in: options), !capabilities.supportsContentDecoding {

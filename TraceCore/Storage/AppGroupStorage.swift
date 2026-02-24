@@ -672,7 +672,8 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Saves capture configuration (filters, settings, etc.)
     public func saveConfiguration(_ config: CaptureConfiguration) throws {
-        let data = try makeEncoder().encode(config)
+        let normalized = config.normalized()
+        let data = try makeEncoder().encode(normalized)
         sharedUserDefaults.set(data, forKey: DefaultsKey.captureConfiguration)
     }
 
@@ -680,17 +681,22 @@ public class AppGroupStorage: @unchecked Sendable {
     public func loadConfiguration() -> CaptureConfiguration {
         if let data = sharedUserDefaults.data(forKey: DefaultsKey.captureConfiguration),
            let config = try? makeDecoder().decode(CaptureConfiguration.self, from: data) {
-            return config
+            return config.normalized()
         }
 
         // Legacy migration: JSON file in App Group container.
         if let legacyData = try? loadData(from: configurationFileName),
            let legacyConfig = try? makeDecoder().decode(CaptureConfiguration.self, from: legacyData) {
-            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.captureConfiguration)
-            return legacyConfig
+            let normalized = legacyConfig.normalized()
+            if let normalizedData = try? makeEncoder().encode(normalized) {
+                sharedUserDefaults.set(normalizedData, forKey: DefaultsKey.captureConfiguration)
+            } else {
+                sharedUserDefaults.set(legacyData, forKey: DefaultsKey.captureConfiguration)
+            }
+            return normalized
         }
 
-        return CaptureConfiguration.default
+        return CaptureConfiguration.default.normalized()
     }
 
     // MARK: - Capture Options
@@ -1456,6 +1462,33 @@ public enum AppGroupConfiguration {
 public enum CaptureMode: String, Codable, Sendable {
     case proxyOnly
     case fullTunnel
+    case fullTunnelDualMITM
+
+    public var usesPacketTunnelRouting: Bool {
+        switch self {
+        case .proxyOnly:
+            false
+        case .fullTunnel, .fullTunnelDualMITM:
+            true
+        }
+    }
+
+    public var usesSystemHTTPProxy: Bool {
+        switch self {
+        case .proxyOnly, .fullTunnel:
+            true
+        case .fullTunnelDualMITM:
+            false
+        }
+    }
+
+    public var supportsCustomSocksServer: Bool {
+        self == .fullTunnel
+    }
+
+    public var enablesTCPTransparentMITM: Bool {
+        self == .fullTunnelDualMITM
+    }
 }
 
 public enum UDPForwardingMode: String, Codable, Sendable {
@@ -1464,7 +1497,14 @@ public enum UDPForwardingMode: String, Codable, Sendable {
     case split
 }
 
+public enum DualMITMPolicy: String, Codable, Sendable {
+    case adaptiveFailOpen
+    case strictMITM
+}
+
 public struct CaptureConfiguration: Codable, Sendable {
+    public static let defaultFullTunnelDNSServers = ["1.1.1.1", "8.8.8.8"]
+
     public var isEnabled: Bool
     public var filterMode: FilterMode
     public var domainFilters: [String] // Domains to include/exclude based on filterMode
@@ -1478,6 +1518,16 @@ public struct CaptureConfiguration: Codable, Sendable {
     public var fullTunnelSocks5Host: String
     public var fullTunnelSocks5Port: UInt16
     public var fullTunnelUDPForwardingMode: UDPForwardingMode
+    public var dualMITMPolicy: DualMITMPolicy
+    public var tcpBypassTTLSeconds: Int
+    public var quicHostFailOpenSeconds: Int
+    public var dualMITMCircuitBreakerEnabled: Bool
+    public var quicNoProgressGraceMs: Int
+    public var quicNoProgressIdleMs: Int
+    public var quicNoProgressAbsoluteMs: Int
+    public var quicNoProgressMinClientDatagrams: Int
+    public var quicAuthorityRetryAttempts: Int
+    public var quicCertMaterialCacheTTLSeconds: Int
 
     public static let `default` = {
         let captureDefaults = CaptureOptions.default
@@ -1495,7 +1545,17 @@ public struct CaptureConfiguration: Codable, Sendable {
             fullTunnelIPv6Enabled: true,
             fullTunnelSocks5Host: "",
             fullTunnelSocks5Port: 0,
-            fullTunnelUDPForwardingMode: .hevOnly
+            fullTunnelUDPForwardingMode: .hevOnly,
+            dualMITMPolicy: .adaptiveFailOpen,
+            tcpBypassTTLSeconds: 180,
+            quicHostFailOpenSeconds: 1800,
+            dualMITMCircuitBreakerEnabled: true,
+            quicNoProgressGraceMs: 6000,
+            quicNoProgressIdleMs: 6000,
+            quicNoProgressAbsoluteMs: 20000,
+            quicNoProgressMinClientDatagrams: 6,
+            quicAuthorityRetryAttempts: 1,
+            quicCertMaterialCacheTTLSeconds: 1800
         )
     }()
 
@@ -1513,6 +1573,16 @@ public struct CaptureConfiguration: Codable, Sendable {
         case fullTunnelSocks5Host
         case fullTunnelSocks5Port
         case fullTunnelUDPForwardingMode
+        case dualMITMPolicy
+        case tcpBypassTTLSeconds
+        case quicHostFailOpenSeconds
+        case dualMITMCircuitBreakerEnabled
+        case quicNoProgressGraceMs
+        case quicNoProgressIdleMs
+        case quicNoProgressAbsoluteMs
+        case quicNoProgressMinClientDatagrams
+        case quicAuthorityRetryAttempts
+        case quicCertMaterialCacheTTLSeconds
     }
 
     public init(
@@ -1528,7 +1598,17 @@ public struct CaptureConfiguration: Codable, Sendable {
         fullTunnelIPv6Enabled: Bool,
         fullTunnelSocks5Host: String,
         fullTunnelSocks5Port: UInt16,
-        fullTunnelUDPForwardingMode: UDPForwardingMode
+        fullTunnelUDPForwardingMode: UDPForwardingMode,
+        dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
+        tcpBypassTTLSeconds: Int = 180,
+        quicHostFailOpenSeconds: Int = 1800,
+        dualMITMCircuitBreakerEnabled: Bool = true,
+        quicNoProgressGraceMs: Int = 6000,
+        quicNoProgressIdleMs: Int = 6000,
+        quicNoProgressAbsoluteMs: Int = 20000,
+        quicNoProgressMinClientDatagrams: Int = 6,
+        quicAuthorityRetryAttempts: Int = 1,
+        quicCertMaterialCacheTTLSeconds: Int = 1800
     ) {
         self.isEnabled = isEnabled
         self.filterMode = filterMode
@@ -1543,6 +1623,16 @@ public struct CaptureConfiguration: Codable, Sendable {
         self.fullTunnelSocks5Host = fullTunnelSocks5Host
         self.fullTunnelSocks5Port = fullTunnelSocks5Port
         self.fullTunnelUDPForwardingMode = fullTunnelUDPForwardingMode
+        self.dualMITMPolicy = dualMITMPolicy
+        self.tcpBypassTTLSeconds = tcpBypassTTLSeconds
+        self.quicHostFailOpenSeconds = quicHostFailOpenSeconds
+        self.dualMITMCircuitBreakerEnabled = dualMITMCircuitBreakerEnabled
+        self.quicNoProgressGraceMs = quicNoProgressGraceMs
+        self.quicNoProgressIdleMs = quicNoProgressIdleMs
+        self.quicNoProgressAbsoluteMs = quicNoProgressAbsoluteMs
+        self.quicNoProgressMinClientDatagrams = quicNoProgressMinClientDatagrams
+        self.quicAuthorityRetryAttempts = quicAuthorityRetryAttempts
+        self.quicCertMaterialCacheTTLSeconds = quicCertMaterialCacheTTLSeconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -1568,23 +1658,96 @@ public struct CaptureConfiguration: Codable, Sendable {
             ?? defaults.fullTunnelSocks5Port
         fullTunnelUDPForwardingMode = try container.decodeIfPresent(UDPForwardingMode.self, forKey: .fullTunnelUDPForwardingMode)
             ?? defaults.fullTunnelUDPForwardingMode
+        dualMITMPolicy = try container.decodeIfPresent(DualMITMPolicy.self, forKey: .dualMITMPolicy)
+            ?? defaults.dualMITMPolicy
+        tcpBypassTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .tcpBypassTTLSeconds)
+            ?? defaults.tcpBypassTTLSeconds
+        quicHostFailOpenSeconds = try container.decodeIfPresent(Int.self, forKey: .quicHostFailOpenSeconds)
+            ?? defaults.quicHostFailOpenSeconds
+        dualMITMCircuitBreakerEnabled = try container.decodeIfPresent(Bool.self, forKey: .dualMITMCircuitBreakerEnabled)
+            ?? defaults.dualMITMCircuitBreakerEnabled
+        quicNoProgressGraceMs = try container.decodeIfPresent(Int.self, forKey: .quicNoProgressGraceMs)
+            ?? defaults.quicNoProgressGraceMs
+        quicNoProgressIdleMs = try container.decodeIfPresent(Int.self, forKey: .quicNoProgressIdleMs)
+            ?? defaults.quicNoProgressIdleMs
+        quicNoProgressAbsoluteMs = try container.decodeIfPresent(Int.self, forKey: .quicNoProgressAbsoluteMs)
+            ?? defaults.quicNoProgressAbsoluteMs
+        quicNoProgressMinClientDatagrams = try container.decodeIfPresent(Int.self, forKey: .quicNoProgressMinClientDatagrams)
+            ?? defaults.quicNoProgressMinClientDatagrams
+        quicAuthorityRetryAttempts = try container.decodeIfPresent(Int.self, forKey: .quicAuthorityRetryAttempts)
+            ?? defaults.quicAuthorityRetryAttempts
+        quicCertMaterialCacheTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .quicCertMaterialCacheTTLSeconds)
+            ?? defaults.quicCertMaterialCacheTTLSeconds
+        self = normalized()
     }
 
     public func encode(to encoder: Encoder) throws {
+        let normalized = normalized()
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(isEnabled, forKey: .isEnabled)
-        try container.encode(filterMode, forKey: .filterMode)
-        try container.encode(domainFilters, forKey: .domainFilters)
-        try container.encode(captureHeaders, forKey: .captureHeaders)
-        try container.encode(captureBody, forKey: .captureBody)
-        try container.encode(maxBodySize, forKey: .maxBodySize)
-        try container.encode(captureMode, forKey: .captureMode)
-        try container.encode(fullTunnelDNSServers, forKey: .fullTunnelDNSServers)
-        try container.encode(fullTunnelSearchDomains, forKey: .fullTunnelSearchDomains)
-        try container.encode(fullTunnelIPv6Enabled, forKey: .fullTunnelIPv6Enabled)
-        try container.encode(fullTunnelSocks5Host, forKey: .fullTunnelSocks5Host)
-        try container.encode(fullTunnelSocks5Port, forKey: .fullTunnelSocks5Port)
-        try container.encode(fullTunnelUDPForwardingMode, forKey: .fullTunnelUDPForwardingMode)
+        try container.encode(normalized.isEnabled, forKey: .isEnabled)
+        try container.encode(normalized.filterMode, forKey: .filterMode)
+        try container.encode(normalized.domainFilters, forKey: .domainFilters)
+        try container.encode(normalized.captureHeaders, forKey: .captureHeaders)
+        try container.encode(normalized.captureBody, forKey: .captureBody)
+        try container.encode(normalized.maxBodySize, forKey: .maxBodySize)
+        try container.encode(normalized.captureMode, forKey: .captureMode)
+        try container.encode(normalized.fullTunnelDNSServers, forKey: .fullTunnelDNSServers)
+        try container.encode(normalized.fullTunnelSearchDomains, forKey: .fullTunnelSearchDomains)
+        try container.encode(normalized.fullTunnelIPv6Enabled, forKey: .fullTunnelIPv6Enabled)
+        try container.encode(normalized.fullTunnelSocks5Host, forKey: .fullTunnelSocks5Host)
+        try container.encode(normalized.fullTunnelSocks5Port, forKey: .fullTunnelSocks5Port)
+        try container.encode(normalized.fullTunnelUDPForwardingMode, forKey: .fullTunnelUDPForwardingMode)
+        try container.encode(normalized.dualMITMPolicy, forKey: .dualMITMPolicy)
+        try container.encode(normalized.tcpBypassTTLSeconds, forKey: .tcpBypassTTLSeconds)
+        try container.encode(normalized.quicHostFailOpenSeconds, forKey: .quicHostFailOpenSeconds)
+        try container.encode(normalized.dualMITMCircuitBreakerEnabled, forKey: .dualMITMCircuitBreakerEnabled)
+        try container.encode(normalized.quicNoProgressGraceMs, forKey: .quicNoProgressGraceMs)
+        try container.encode(normalized.quicNoProgressIdleMs, forKey: .quicNoProgressIdleMs)
+        try container.encode(normalized.quicNoProgressAbsoluteMs, forKey: .quicNoProgressAbsoluteMs)
+        try container.encode(normalized.quicNoProgressMinClientDatagrams, forKey: .quicNoProgressMinClientDatagrams)
+        try container.encode(normalized.quicAuthorityRetryAttempts, forKey: .quicAuthorityRetryAttempts)
+        try container.encode(normalized.quicCertMaterialCacheTTLSeconds, forKey: .quicCertMaterialCacheTTLSeconds)
+    }
+
+    public func normalized() -> CaptureConfiguration {
+        var normalizedConfig = self
+        normalizedConfig.normalizeInPlace()
+        return normalizedConfig
+    }
+
+    private mutating func normalizeInPlace() {
+        fullTunnelSocks5Host = fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if fullTunnelSocks5Host.isEmpty {
+            fullTunnelSocks5Port = 0
+        }
+
+        fullTunnelDNSServers = Self.normalizedStringList(fullTunnelDNSServers)
+        fullTunnelSearchDomains = Self.normalizedStringList(fullTunnelSearchDomains)
+        tcpBypassTTLSeconds = max(30, min(86400, tcpBypassTTLSeconds))
+        quicHostFailOpenSeconds = max(60, min(86400, quicHostFailOpenSeconds))
+        quicNoProgressGraceMs = max(3000, min(20000, quicNoProgressGraceMs))
+        quicNoProgressIdleMs = max(3000, min(20000, quicNoProgressIdleMs))
+        quicNoProgressAbsoluteMs = max(8000, min(30000, quicNoProgressAbsoluteMs))
+        quicNoProgressMinClientDatagrams = max(1, min(8, quicNoProgressMinClientDatagrams))
+        quicAuthorityRetryAttempts = max(0, min(2, quicAuthorityRetryAttempts))
+        quicCertMaterialCacheTTLSeconds = max(60, min(86400, quicCertMaterialCacheTTLSeconds))
+
+        if captureMode.usesPacketTunnelRouting, fullTunnelDNSServers.isEmpty {
+            fullTunnelDNSServers = Self.defaultFullTunnelDNSServers
+        }
+    }
+
+    private static func normalizedStringList(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var normalized: [String] = []
+        for value in values {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if seen.insert(trimmed).inserted {
+                normalized.append(trimmed)
+            }
+        }
+        return normalized
     }
 }
 

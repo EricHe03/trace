@@ -1,0 +1,47 @@
+//
+//  DualMITMPolicySnapshotBuilderTests.swift
+//  TraceTests
+//
+//  Created by Codex on 2026/02/24.
+//
+
+import XCTest
+@testable import TraceCore
+
+final class DualMITMPolicySnapshotBuilderTests: XCTestCase {
+    func testBuildUsesNormalizedCaptureConfigValues() {
+        var config = CaptureConfiguration.default
+        config.dualMITMPolicy = .strictMITM
+        config.tcpBypassTTLSeconds = 1
+        config.quicHostFailOpenSeconds = 10
+        config.quicNoProgressGraceMs = 1_000
+        config.quicNoProgressIdleMs = 1_000
+        config.quicNoProgressAbsoluteMs = 1_000
+        config.quicNoProgressMinClientDatagrams = 0
+        config.quicAuthorityRetryAttempts = 9
+        config.quicCertMaterialCacheTTLSeconds = 10
+
+        let snapshot = DualMITMPolicySnapshotBuilder.build(
+            inputs: .init(
+                captureConfiguration: config,
+                mitmAllowlist: [" example.com "],
+                mitmEnabled: true,
+                quicHandlingMode: .intercept,
+                featureFlags: .defaults
+            ),
+            tcpTransparentMITMEnabled: true,
+            tcpInterceptPorts: [80, 443],
+            mitmProxyHost: "127.0.0.1",
+            mitmProxyPort: 8888
+        )
+
+        XCTAssertEqual(snapshot.policyMode, .strictMITM)
+        XCTAssertGreaterThanOrEqual(snapshot.tcpBypassTTLSeconds, 30)
+        XCTAssertGreaterThanOrEqual(snapshot.quicHostFailOpenSeconds, 60)
+        XCTAssertGreaterThanOrEqual(snapshot.quicNoProgress.graceMs, 3_000)
+        XCTAssertGreaterThanOrEqual(snapshot.quicNoProgress.minimumClientDatagrams, 1)
+        XCTAssertLessThanOrEqual(snapshot.quicAuthorityRetryAttempts, 2)
+        XCTAssertGreaterThanOrEqual(snapshot.quicCertMaterialCacheTTLSeconds, 60)
+        XCTAssertEqual(snapshot.allowlist, ["example.com"])
+    }
+}

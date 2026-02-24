@@ -17,8 +17,18 @@ public struct HardeningConfigSnapshot: Sendable {
     public let enableRawCapture: Bool
     public let maxRawCaptureSize: UInt64
     public let mitmAllowlist: [String]
+    public let quicHandlingMode: String
     public let blockQUIC: Bool
+    public let enableNIOMITM: Bool
+    /// Legacy key kept for compatibility with older app payloads.
     public let enableNetworkFrameworkMITM: Bool
+    public let dualMITMPolicyEngineShadow: Bool
+    public let dualMITMPolicyEngineEnforcedTCP: Bool
+    public let dualMITMPolicyEngineEnforcedProxy: Bool
+    public let dualMITMPolicyEngineEnforcedQUIC: Bool
+    public let dualMITMMITMEngineV2: Bool
+    public let dualMITMHttp2MITMEnabled: Bool
+    public let dualMITMStrictEnforcementHardFail: Bool
 
     public func toDictionary() -> [String: Any] {
         [
@@ -29,8 +39,17 @@ public struct HardeningConfigSnapshot: Sendable {
             "enableRawCapture": enableRawCapture,
             "maxRawCaptureSize": maxRawCaptureSize,
             "mitmAllowlist": mitmAllowlist,
+            "quicHandlingMode": quicHandlingMode,
             "blockQUIC": blockQUIC,
-            "enableNetworkFrameworkMITM": enableNetworkFrameworkMITM
+            "enableNIOMITM": enableNIOMITM,
+            "enableNetworkFrameworkMITM": enableNetworkFrameworkMITM,
+            "dualMitmPolicyEngineShadow": dualMITMPolicyEngineShadow,
+            "dualMitmPolicyEngineEnforcedTCP": dualMITMPolicyEngineEnforcedTCP,
+            "dualMitmPolicyEngineEnforcedProxy": dualMITMPolicyEngineEnforcedProxy,
+            "dualMitmPolicyEngineEnforcedQUIC": dualMITMPolicyEngineEnforcedQUIC,
+            "dualMitmMITMEngineV2": dualMITMMITMEngineV2,
+            "dualMitmHttp2MITMEnabled": dualMITMHttp2MITMEnabled,
+            "dualMitmStrictEnforcementHardFail": dualMITMStrictEnforcementHardFail
         ]
     }
 }
@@ -52,8 +71,18 @@ public actor HardeningConfig {
         case enableRawCapture = "hardening.enableRawCapture"
         case maxRawCaptureSize = "hardening.maxRawCaptureSize"
         case mitmAllowlist = "hardening.mitmAllowlist"
+        case quicHandlingMode = "hardening.quicHandlingMode"
         case blockQUIC = "hardening.blockQUIC"
+        case enableNIOMITM = "hardening.enableNIOMITM"
+        /// Legacy persisted key kept for backward compatibility.
         case enableNetworkFrameworkMITM = "hardening.enableNetworkFrameworkMITM"
+        case dualMITMPolicyEngineShadow = "hardening.dualMitmPolicyEngineShadow"
+        case dualMITMPolicyEngineEnforcedTCP = "hardening.dualMitmPolicyEngineEnforcedTCP"
+        case dualMITMPolicyEngineEnforcedProxy = "hardening.dualMitmPolicyEngineEnforcedProxy"
+        case dualMITMPolicyEngineEnforcedQUIC = "hardening.dualMitmPolicyEngineEnforcedQUIC"
+        case dualMITMMITMEngineV2 = "hardening.dualMitmMITMEngineV2"
+        case dualMITMHttp2MITMEnabled = "hardening.dualMitmHttp2MITMEnabled"
+        case dualMITMStrictEnforcementHardFail = "hardening.dualMitmStrictEnforcementHardFail"
     }
 
     // MARK: - Rollout Stages
@@ -78,8 +107,16 @@ public actor HardeningConfig {
     private var _enableRawCapture: Bool
     private var _maxRawCaptureSize: UInt64
     private var _mitmAllowlist: [String]
+    private var _quicHandlingMode: QUICHandlingMode
     private var _blockQUIC: Bool
-    private var _enableNetworkFrameworkMITM: Bool
+    private var _enableNIOMITM: Bool
+    private var _dualMITMPolicyEngineShadow: Bool
+    private var _dualMITMPolicyEngineEnforcedTCP: Bool
+    private var _dualMITMPolicyEngineEnforcedProxy: Bool
+    private var _dualMITMPolicyEngineEnforcedQUIC: Bool
+    private var _dualMITMMITMEngineV2: Bool
+    private var _dualMITMHttp2MITMEnabled: Bool
+    private var _dualMITMStrictEnforcementHardFail: Bool
 
     // MARK: - Initialization
 
@@ -126,8 +163,34 @@ public actor HardeningConfig {
             _mitmAllowlist = ["*"]
         }
 
-        _blockQUIC = boolValue(.blockQUIC, default: true)
-        _enableNetworkFrameworkMITM = boolValue(.enableNetworkFrameworkMITM, default: true)
+        if let modeRaw = defaults?.string(forKey: ConfigKey.quicHandlingMode.rawValue),
+           let mode = QUICHandlingMode(rawValue: modeRaw) {
+            _quicHandlingMode = mode
+        } else if let storedBlockQUIC = defaults?.object(forKey: ConfigKey.blockQUIC.rawValue) as? Bool {
+            _quicHandlingMode = storedBlockQUIC ? .block : .passThrough
+        } else {
+            // Default to intercept mode for the new QUIC/H3 path.
+            _quicHandlingMode = .intercept
+        }
+        _blockQUIC = _quicHandlingMode.blocksQUIC
+        if let stored = defaults?.object(forKey: ConfigKey.enableNIOMITM.rawValue) as? Bool {
+            _enableNIOMITM = stored
+        } else {
+            _enableNIOMITM = boolValue(.enableNetworkFrameworkMITM, default: true)
+        }
+
+        #if DEBUG
+        let defaultPolicyEngineShadow = true
+        #else
+        let defaultPolicyEngineShadow = false
+        #endif
+        _dualMITMPolicyEngineShadow = boolValue(.dualMITMPolicyEngineShadow, default: defaultPolicyEngineShadow)
+        _dualMITMPolicyEngineEnforcedTCP = boolValue(.dualMITMPolicyEngineEnforcedTCP, default: false)
+        _dualMITMPolicyEngineEnforcedProxy = boolValue(.dualMITMPolicyEngineEnforcedProxy, default: false)
+        _dualMITMPolicyEngineEnforcedQUIC = boolValue(.dualMITMPolicyEngineEnforcedQUIC, default: false)
+        _dualMITMMITMEngineV2 = boolValue(.dualMITMMITMEngineV2, default: false)
+        _dualMITMHttp2MITMEnabled = boolValue(.dualMITMHttp2MITMEnabled, default: false)
+        _dualMITMStrictEnforcementHardFail = boolValue(.dualMITMStrictEnforcementHardFail, default: true)
 
         // Rationale: Apply rollout stage restrictions inline to avoid actor isolation in init.
         switch _rolloutStage {
@@ -196,14 +259,59 @@ public actor HardeningConfig {
         _mitmAllowlist
     }
 
-    /// Returns whether QUIC (UDP/443) is blocked.
-    public var blockQUIC: Bool {
-        _blockQUIC
+    /// Returns the active QUIC handling mode.
+    public var quicHandlingMode: QUICHandlingMode {
+        _quicHandlingMode
     }
 
-    /// Returns whether Network.framework MITM is enabled.
+    /// Returns whether QUIC (UDP/443) is blocked.
+    public var blockQUIC: Bool {
+        _quicHandlingMode.blocksQUIC
+    }
+
+    /// Returns whether NIO MITM is enabled.
+    public var enableNIOMITM: Bool {
+        _enableNIOMITM
+    }
+
+    /// Returns whether MITM is enabled (legacy key name).
     public var enableNetworkFrameworkMITM: Bool {
-        _enableNetworkFrameworkMITM
+        _enableNIOMITM
+    }
+
+    /// Returns whether policy-engine shadow comparisons are enabled.
+    public var dualMITMPolicyEngineShadow: Bool {
+        _dualMITMPolicyEngineShadow
+    }
+
+    /// Returns whether policy-engine routing is enforced for TCP transparent flow starts.
+    public var dualMITMPolicyEngineEnforcedTCP: Bool {
+        _dualMITMPolicyEngineEnforcedTCP
+    }
+
+    /// Returns whether policy-engine routing is enforced for proxy MITM failover/gating.
+    public var dualMITMPolicyEngineEnforcedProxy: Bool {
+        _dualMITMPolicyEngineEnforcedProxy
+    }
+
+    /// Returns whether policy-engine routing is enforced for QUIC intercept failover.
+    public var dualMITMPolicyEngineEnforcedQUIC: Bool {
+        _dualMITMPolicyEngineEnforcedQUIC
+    }
+
+    /// Returns whether MITM engine v2 scaffolding path is enabled.
+    public var dualMITMMITMEngineV2: Bool {
+        _dualMITMMITMEngineV2
+    }
+
+    /// Returns whether HTTP/2 MITM is enabled for dual MITM mode.
+    public var dualMITMHttp2MITMEnabled: Bool {
+        _dualMITMHttp2MITMEnabled
+    }
+
+    /// Returns whether strict enforcement hard-fail behavior is enabled.
+    public var dualMITMStrictEnforcementHardFail: Bool {
+        _dualMITMStrictEnforcementHardFail
     }
 
     // MARK: - Configuration Updates
@@ -280,16 +388,75 @@ public actor HardeningConfig {
 
     /// Updates QUIC blocking.
     public func setBlockQUIC(_ enabled: Bool) {
-        _blockQUIC = enabled
-        defaults?.set(enabled, forKey: ConfigKey.blockQUIC.rawValue)
-        ProxyLog.mitm.info("event=config.block_quic_toggle outcome=success enabled=\(enabled)")
+        setQUICHandlingMode(enabled ? .block : .passThrough)
     }
 
-    /// Updates Network.framework MITM enablement.
-    public func setEnableNetworkFrameworkMITM(_ enabled: Bool) {
-        _enableNetworkFrameworkMITM = enabled
+    /// Updates QUIC handling mode.
+    public func setQUICHandlingMode(_ mode: QUICHandlingMode) {
+        _quicHandlingMode = mode
+        _blockQUIC = mode.blocksQUIC
+        defaults?.set(mode.rawValue, forKey: ConfigKey.quicHandlingMode.rawValue)
+        // Keep legacy key in sync for compatibility with older app payloads.
+        defaults?.set(_blockQUIC, forKey: ConfigKey.blockQUIC.rawValue)
+        ProxyLog.mitm.info(
+            "event=config.quic_mode_set outcome=success mode=\(mode.rawValue, privacy: .public) block_quic=\(self._blockQUIC)"
+        )
+    }
+
+    /// Updates MITM enablement for the NIO proxy engine.
+    public func setEnableNIOMITM(_ enabled: Bool) {
+        _enableNIOMITM = enabled
+        defaults?.set(enabled, forKey: ConfigKey.enableNIOMITM.rawValue)
+        // Maintain compatibility for older consumers still reading the legacy key.
         defaults?.set(enabled, forKey: ConfigKey.enableNetworkFrameworkMITM.rawValue)
-        ProxyLog.mitm.info("event=config.nw_mitm_toggle outcome=success enabled=\(enabled)")
+        ProxyLog.mitm.info("event=config.nio_mitm_toggle outcome=success enabled=\(enabled)")
+    }
+
+    /// Updates MITM enablement using the legacy key name.
+    public func setEnableNetworkFrameworkMITM(_ enabled: Bool) {
+        setEnableNIOMITM(enabled)
+    }
+
+    public func setDualMITMPolicyEngineShadow(_ enabled: Bool) {
+        _dualMITMPolicyEngineShadow = enabled
+        defaults?.set(enabled, forKey: ConfigKey.dualMITMPolicyEngineShadow.rawValue)
+        ProxyLog.mitm.info("event=config.dual_mitm_policy_shadow outcome=success enabled=\(enabled)")
+    }
+
+    public func setDualMITMPolicyEngineEnforcedTCP(_ enabled: Bool) {
+        _dualMITMPolicyEngineEnforcedTCP = enabled
+        defaults?.set(enabled, forKey: ConfigKey.dualMITMPolicyEngineEnforcedTCP.rawValue)
+        ProxyLog.mitm.info("event=config.dual_mitm_policy_tcp_enforced outcome=success enabled=\(enabled)")
+    }
+
+    public func setDualMITMPolicyEngineEnforcedProxy(_ enabled: Bool) {
+        _dualMITMPolicyEngineEnforcedProxy = enabled
+        defaults?.set(enabled, forKey: ConfigKey.dualMITMPolicyEngineEnforcedProxy.rawValue)
+        ProxyLog.mitm.info("event=config.dual_mitm_policy_proxy_enforced outcome=success enabled=\(enabled)")
+    }
+
+    public func setDualMITMPolicyEngineEnforcedQUIC(_ enabled: Bool) {
+        _dualMITMPolicyEngineEnforcedQUIC = enabled
+        defaults?.set(enabled, forKey: ConfigKey.dualMITMPolicyEngineEnforcedQUIC.rawValue)
+        ProxyLog.mitm.info("event=config.dual_mitm_policy_quic_enforced outcome=success enabled=\(enabled)")
+    }
+
+    public func setDualMITMMITMEngineV2(_ enabled: Bool) {
+        _dualMITMMITMEngineV2 = enabled
+        defaults?.set(enabled, forKey: ConfigKey.dualMITMMITMEngineV2.rawValue)
+        ProxyLog.mitm.info("event=config.dual_mitm_engine_v2 outcome=success enabled=\(enabled)")
+    }
+
+    public func setDualMITMHttp2MITMEnabled(_ enabled: Bool) {
+        _dualMITMHttp2MITMEnabled = enabled
+        defaults?.set(enabled, forKey: ConfigKey.dualMITMHttp2MITMEnabled.rawValue)
+        ProxyLog.mitm.info("event=config.dual_mitm_http2_mitm outcome=success enabled=\(enabled)")
+    }
+
+    public func setDualMITMStrictEnforcementHardFail(_ enabled: Bool) {
+        _dualMITMStrictEnforcementHardFail = enabled
+        defaults?.set(enabled, forKey: ConfigKey.dualMITMStrictEnforcementHardFail.rawValue)
+        ProxyLog.mitm.info("event=config.dual_mitm_strict_hard_fail outcome=success enabled=\(enabled)")
     }
 
     /// Applies rollout stage restrictions.
@@ -345,8 +512,20 @@ public actor HardeningConfig {
         applyRolloutStage()
 
         _mitmAllowlist = ["*"]
-        _blockQUIC = true
-        _enableNetworkFrameworkMITM = true
+        _quicHandlingMode = .intercept
+        _blockQUIC = _quicHandlingMode.blocksQUIC
+        _enableNIOMITM = true
+        #if DEBUG
+        _dualMITMPolicyEngineShadow = true
+        #else
+        _dualMITMPolicyEngineShadow = false
+        #endif
+        _dualMITMPolicyEngineEnforcedTCP = false
+        _dualMITMPolicyEngineEnforcedProxy = false
+        _dualMITMPolicyEngineEnforcedQUIC = false
+        _dualMITMMITMEngineV2 = false
+        _dualMITMHttp2MITMEnabled = false
+        _dualMITMStrictEnforcementHardFail = true
         _enableRawCapture = false
         _maxRawCaptureSize = 10_485_760
 
@@ -357,8 +536,17 @@ public actor HardeningConfig {
         if let data = try? JSONEncoder().encode(_mitmAllowlist) {
             defaults?.set(data, forKey: ConfigKey.mitmAllowlist.rawValue)
         }
+        defaults?.set(_quicHandlingMode.rawValue, forKey: ConfigKey.quicHandlingMode.rawValue)
         defaults?.set(_blockQUIC, forKey: ConfigKey.blockQUIC.rawValue)
-        defaults?.set(_enableNetworkFrameworkMITM, forKey: ConfigKey.enableNetworkFrameworkMITM.rawValue)
+        defaults?.set(_enableNIOMITM, forKey: ConfigKey.enableNIOMITM.rawValue)
+        defaults?.set(_enableNIOMITM, forKey: ConfigKey.enableNetworkFrameworkMITM.rawValue)
+        defaults?.set(_dualMITMPolicyEngineShadow, forKey: ConfigKey.dualMITMPolicyEngineShadow.rawValue)
+        defaults?.set(_dualMITMPolicyEngineEnforcedTCP, forKey: ConfigKey.dualMITMPolicyEngineEnforcedTCP.rawValue)
+        defaults?.set(_dualMITMPolicyEngineEnforcedProxy, forKey: ConfigKey.dualMITMPolicyEngineEnforcedProxy.rawValue)
+        defaults?.set(_dualMITMPolicyEngineEnforcedQUIC, forKey: ConfigKey.dualMITMPolicyEngineEnforcedQUIC.rawValue)
+        defaults?.set(_dualMITMMITMEngineV2, forKey: ConfigKey.dualMITMMITMEngineV2.rawValue)
+        defaults?.set(_dualMITMHttp2MITMEnabled, forKey: ConfigKey.dualMITMHttp2MITMEnabled.rawValue)
+        defaults?.set(_dualMITMStrictEnforcementHardFail, forKey: ConfigKey.dualMITMStrictEnforcementHardFail.rawValue)
         defaults?.set(_enableRawCapture, forKey: ConfigKey.enableRawCapture.rawValue)
         defaults?.set(_maxRawCaptureSize, forKey: ConfigKey.maxRawCaptureSize.rawValue)
 
@@ -375,13 +563,24 @@ public actor HardeningConfig {
             enableRawCapture: _enableRawCapture,
             maxRawCaptureSize: _maxRawCaptureSize,
             mitmAllowlist: _mitmAllowlist,
-            blockQUIC: _blockQUIC,
-            enableNetworkFrameworkMITM: _enableNetworkFrameworkMITM
+            quicHandlingMode: _quicHandlingMode.rawValue,
+            blockQUIC: _quicHandlingMode.blocksQUIC,
+            enableNIOMITM: _enableNIOMITM,
+            enableNetworkFrameworkMITM: _enableNIOMITM,
+            dualMITMPolicyEngineShadow: _dualMITMPolicyEngineShadow,
+            dualMITMPolicyEngineEnforcedTCP: _dualMITMPolicyEngineEnforcedTCP,
+            dualMITMPolicyEngineEnforcedProxy: _dualMITMPolicyEngineEnforcedProxy,
+            dualMITMPolicyEngineEnforcedQUIC: _dualMITMPolicyEngineEnforcedQUIC,
+            dualMITMMITMEngineV2: _dualMITMMITMEngineV2,
+            dualMITMHttp2MITMEnabled: _dualMITMHttp2MITMEnabled,
+            dualMITMStrictEnforcementHardFail: _dualMITMStrictEnforcementHardFail
         )
     }
 
     /// Logs the current configuration.
     public func logCurrentConfig() {
-        ProxyLog.mitm.info("event=config.current stage=\(self._rolloutStage.rawValue, privacy: .public) reassembly=\(self._enableRobustReassembly) metrics=\(self._enableMetrics) debug=\(self._enableDebugLogging) raw_capture=\(self._enableRawCapture) max_size=\(self._maxRawCaptureSize) allowlist_count=\(self._mitmAllowlist.count) block_quic=\(self._blockQUIC) nw_mitm=\(self._enableNetworkFrameworkMITM)")
+        ProxyLog.mitm.info(
+            "event=config.current stage=\(self._rolloutStage.rawValue, privacy: .public) reassembly=\(self._enableRobustReassembly) metrics=\(self._enableMetrics) debug=\(self._enableDebugLogging) raw_capture=\(self._enableRawCapture) max_size=\(self._maxRawCaptureSize) allowlist_count=\(self._mitmAllowlist.count) quic_mode=\(self._quicHandlingMode.rawValue, privacy: .public) block_quic=\(self._quicHandlingMode.blocksQUIC) nio_mitm=\(self._enableNIOMITM) dual_mitm_policy_shadow=\(self._dualMITMPolicyEngineShadow) dual_mitm_policy_tcp_enforced=\(self._dualMITMPolicyEngineEnforcedTCP) dual_mitm_policy_proxy_enforced=\(self._dualMITMPolicyEngineEnforcedProxy) dual_mitm_policy_quic_enforced=\(self._dualMITMPolicyEngineEnforcedQUIC) dual_mitm_engine_v2=\(self._dualMITMMITMEngineV2) dual_mitm_http2_mitm=\(self._dualMITMHttp2MITMEnabled) dual_mitm_strict_hard_fail=\(self._dualMITMStrictEnforcementHardFail)"
+        )
     }
 }

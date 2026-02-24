@@ -51,6 +51,36 @@ struct UDPFlowDetailView: View {
                 Text("Flow Details")
             }
 
+            if flow.detectedProtocol == .quic || flow.hasQUICDiagnostics {
+                Section {
+                    LabeledContent("Inspection Outcome", value: flow.quicInspectionOutcome?.displayName ?? "Not Evaluated")
+                    if let handshake = flow.quicFlowMetadata?.handshakeOutcome {
+                        LabeledContent("Handshake", value: handshake.displayName)
+                    }
+                    if let version = flow.quicFlowMetadata?.version {
+                        LabeledContent("Version", value: version)
+                    }
+                    if let alpn = flow.quicFlowMetadata?.alpn {
+                        LabeledContent("ALPN", value: alpn)
+                    }
+                    if let dcidLength = flow.quicFlowMetadata?.destinationConnectionIDLength {
+                        LabeledContent("Destination CID Length", value: "\(dcidLength) bytes")
+                    }
+                    if let scidLength = flow.quicFlowMetadata?.sourceConnectionIDLength {
+                        LabeledContent("Source CID Length", value: "\(scidLength) bytes")
+                    }
+                    if let reason = flow.quicFlowMetadata?.failureReason {
+                        LabeledContent("Fallback Reason", value: reason)
+                    }
+                    if let sniHash = flow.quicFlowMetadata?.sniHash {
+                        LabeledContent("SNI Hash", value: sniHash)
+                            .font(.system(.body, design: .monospaced))
+                    }
+                } header: {
+                    Text("QUIC Inspection")
+                }
+            }
+
             Section {
                 LabeledContent("Start") {
                     Text(flow.startTime.formatted(date: .abbreviated, time: .standard))
@@ -176,6 +206,28 @@ struct UDPFlowDetailView: View {
     }
 
     private func exportText() {
+        let quicDetails: String = {
+            guard flow.detectedProtocol == .quic || flow.hasQUICDiagnostics else { return "" }
+            let inspection = flow.quicInspectionOutcome?.displayName ?? "Not Evaluated"
+            let handshake = flow.quicFlowMetadata?.handshakeOutcome.displayName ?? "-"
+            let version = flow.quicFlowMetadata?.version ?? "-"
+            let alpn = flow.quicFlowMetadata?.alpn ?? "-"
+            let dcidLength = flow.quicFlowMetadata?.destinationConnectionIDLength.map { "\($0)" } ?? "-"
+            let scidLength = flow.quicFlowMetadata?.sourceConnectionIDLength.map { "\($0)" } ?? "-"
+            let failure = flow.quicFlowMetadata?.failureReason ?? "-"
+            return """
+
+            QUIC Inspection:
+              Outcome: \(inspection)
+              Handshake: \(handshake)
+              Version: \(version)
+              ALPN: \(alpn)
+              Destination CID Length: \(dcidLength)
+              Source CID Length: \(scidLength)
+              Fallback Reason: \(failure)
+            """
+        }()
+
         let text = """
         UDP Flow \(flow.id.uuidString)
 
@@ -200,6 +252,7 @@ struct UDPFlowDetailView: View {
           Total Datagrams: \(flow.totalDatagrams)
           Throughput: \(viewModel.formatThroughput(flow.throughputBytesPerSecond))
           Avg Datagram: \(String(format: "%.1f", flow.averageDatagramSize)) B
+        \(quicDetails)
         """
 
         do {

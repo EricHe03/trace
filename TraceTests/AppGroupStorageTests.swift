@@ -166,7 +166,17 @@ final class AppGroupStorageTests: XCTestCase {
             fullTunnelIPv6Enabled: false,
             fullTunnelSocks5Host: "127.0.0.1",
             fullTunnelSocks5Port: 1080,
-            fullTunnelUDPForwardingMode: .split
+            fullTunnelUDPForwardingMode: .split,
+            dualMITMPolicy: .strictMITM,
+            tcpBypassTTLSeconds: 900,
+            quicHostFailOpenSeconds: 2400,
+            dualMITMCircuitBreakerEnabled: false,
+            quicNoProgressGraceMs: 2600,
+            quicNoProgressIdleMs: 2700,
+            quicNoProgressAbsoluteMs: 7000,
+            quicNoProgressMinClientDatagrams: 4,
+            quicAuthorityRetryAttempts: 2,
+            quicCertMaterialCacheTTLSeconds: 2400
         )
 
         try storage.saveConfiguration(config)
@@ -186,6 +196,16 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(loaded.fullTunnelSocks5Host, config.fullTunnelSocks5Host)
         XCTAssertEqual(loaded.fullTunnelSocks5Port, config.fullTunnelSocks5Port)
         XCTAssertEqual(loaded.fullTunnelUDPForwardingMode, config.fullTunnelUDPForwardingMode)
+        XCTAssertEqual(loaded.dualMITMPolicy, config.dualMITMPolicy)
+        XCTAssertEqual(loaded.tcpBypassTTLSeconds, config.tcpBypassTTLSeconds)
+        XCTAssertEqual(loaded.quicHostFailOpenSeconds, config.quicHostFailOpenSeconds)
+        XCTAssertEqual(loaded.dualMITMCircuitBreakerEnabled, config.dualMITMCircuitBreakerEnabled)
+        XCTAssertEqual(loaded.quicNoProgressGraceMs, config.quicNoProgressGraceMs)
+        XCTAssertEqual(loaded.quicNoProgressIdleMs, config.quicNoProgressIdleMs)
+        XCTAssertEqual(loaded.quicNoProgressAbsoluteMs, config.quicNoProgressAbsoluteMs)
+        XCTAssertEqual(loaded.quicNoProgressMinClientDatagrams, config.quicNoProgressMinClientDatagrams)
+        XCTAssertEqual(loaded.quicAuthorityRetryAttempts, config.quicAuthorityRetryAttempts)
+        XCTAssertEqual(loaded.quicCertMaterialCacheTTLSeconds, config.quicCertMaterialCacheTTLSeconds)
     }
 
     func testLoadConfigurationWithNoFile() {
@@ -316,10 +336,138 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(config.maxBodySize, 10 * 1024 * 1024)
     }
 
+    func testCaptureConfigurationDefaultDualMITMSettings() {
+        let config = CaptureConfiguration.default
+
+        XCTAssertEqual(config.dualMITMPolicy, .adaptiveFailOpen)
+        XCTAssertEqual(config.tcpBypassTTLSeconds, 180)
+        XCTAssertEqual(config.quicHostFailOpenSeconds, 1800)
+        XCTAssertTrue(config.dualMITMCircuitBreakerEnabled)
+        XCTAssertEqual(config.quicNoProgressGraceMs, 6000)
+        XCTAssertEqual(config.quicNoProgressIdleMs, 6000)
+        XCTAssertEqual(config.quicNoProgressAbsoluteMs, 20000)
+        XCTAssertEqual(config.quicNoProgressMinClientDatagrams, 6)
+        XCTAssertEqual(config.quicAuthorityRetryAttempts, 1)
+        XCTAssertEqual(config.quicCertMaterialCacheTTLSeconds, 1800)
+    }
+
+    func testCaptureConfigurationNormalizedAddsDefaultDNSForFullTunnel() {
+        var config = CaptureConfiguration.default
+        config.captureMode = .fullTunnel
+        config.fullTunnelDNSServers = []
+
+        let normalized = config.normalized()
+
+        XCTAssertEqual(normalized.fullTunnelDNSServers, CaptureConfiguration.defaultFullTunnelDNSServers)
+    }
+
+    func testCaptureConfigurationNormalizedAddsDefaultDNSForFullTunnelDualMITM() {
+        var config = CaptureConfiguration.default
+        config.captureMode = .fullTunnelDualMITM
+        config.fullTunnelDNSServers = []
+
+        let normalized = config.normalized()
+
+        XCTAssertEqual(normalized.fullTunnelDNSServers, CaptureConfiguration.defaultFullTunnelDNSServers)
+    }
+
+    func testCaptureConfigurationNormalizedKeepsEmptyDNSForProxyOnly() {
+        var config = CaptureConfiguration.default
+        config.captureMode = .proxyOnly
+        config.fullTunnelDNSServers = []
+
+        let normalized = config.normalized()
+
+        XCTAssertTrue(normalized.fullTunnelDNSServers.isEmpty)
+    }
+
+    func testCaptureConfigurationNormalizedTrimsAndDeduplicatesDNS() {
+        var config = CaptureConfiguration.default
+        config.captureMode = .fullTunnel
+        config.fullTunnelDNSServers = [" 1.1.1.1 ", "", "8.8.8.8", "1.1.1.1"]
+
+        let normalized = config.normalized()
+
+        XCTAssertEqual(normalized.fullTunnelDNSServers, ["1.1.1.1", "8.8.8.8"])
+    }
+
+    func testCaptureConfigurationNormalizedClampsDualMITMTTLs() {
+        var config = CaptureConfiguration.default
+        config.tcpBypassTTLSeconds = 5
+        config.quicHostFailOpenSeconds = 100_000
+        config.quicNoProgressGraceMs = 100
+        config.quicNoProgressIdleMs = 11_000
+        config.quicNoProgressAbsoluteMs = 100
+        config.quicNoProgressMinClientDatagrams = 16
+        config.quicAuthorityRetryAttempts = -1
+        config.quicCertMaterialCacheTTLSeconds = 30
+
+        let normalized = config.normalized()
+
+        XCTAssertEqual(normalized.tcpBypassTTLSeconds, 30)
+        XCTAssertEqual(normalized.quicHostFailOpenSeconds, 86_400)
+        XCTAssertEqual(normalized.quicNoProgressGraceMs, 3_000)
+        XCTAssertEqual(normalized.quicNoProgressIdleMs, 11_000)
+        XCTAssertEqual(normalized.quicNoProgressAbsoluteMs, 8_000)
+        XCTAssertEqual(normalized.quicNoProgressMinClientDatagrams, 8)
+        XCTAssertEqual(normalized.quicAuthorityRetryAttempts, 0)
+        XCTAssertEqual(normalized.quicCertMaterialCacheTTLSeconds, 60)
+    }
+
+    func testCaptureConfigurationDecodeWithoutNewQUICFieldsUsesDefaults() throws {
+        let json = """
+        {
+          "isEnabled": true,
+          "filterMode": "all",
+          "domainFilters": [],
+          "captureHeaders": true,
+          "captureBody": true,
+          "maxBodySize": 4096,
+          "captureMode": "fullTunnelDualMITM",
+          "fullTunnelDNSServers": ["1.1.1.1"],
+          "fullTunnelSearchDomains": [],
+          "fullTunnelIPv6Enabled": true,
+          "fullTunnelSocks5Host": "127.0.0.1",
+          "fullTunnelSocks5Port": 1080,
+          "fullTunnelUDPForwardingMode": "split",
+          "dualMITMPolicy": "adaptiveFailOpen",
+          "tcpBypassTTLSeconds": 180,
+          "quicHostFailOpenSeconds": 1800,
+          "dualMITMCircuitBreakerEnabled": true
+        }
+        """
+
+        let config = try JSONDecoder().decode(CaptureConfiguration.self, from: Data(json.utf8))
+
+        XCTAssertEqual(config.quicNoProgressGraceMs, 6000)
+        XCTAssertEqual(config.quicNoProgressIdleMs, 6000)
+        XCTAssertEqual(config.quicNoProgressAbsoluteMs, 20000)
+        XCTAssertEqual(config.quicNoProgressMinClientDatagrams, 6)
+        XCTAssertEqual(config.quicAuthorityRetryAttempts, 1)
+        XCTAssertEqual(config.quicCertMaterialCacheTTLSeconds, 1800)
+    }
+
     func testFilterModeEnum() {
         XCTAssertEqual(FilterMode.all.rawValue, "all")
         XCTAssertEqual(FilterMode.whitelist.rawValue, "whitelist")
         XCTAssertEqual(FilterMode.blacklist.rawValue, "blacklist")
+    }
+
+    func testCaptureModeBehaviorHelpers() {
+        XCTAssertFalse(CaptureMode.proxyOnly.usesPacketTunnelRouting)
+        XCTAssertTrue(CaptureMode.fullTunnel.usesPacketTunnelRouting)
+        XCTAssertTrue(CaptureMode.fullTunnelDualMITM.usesPacketTunnelRouting)
+
+        XCTAssertTrue(CaptureMode.proxyOnly.usesSystemHTTPProxy)
+        XCTAssertTrue(CaptureMode.fullTunnel.usesSystemHTTPProxy)
+        XCTAssertFalse(CaptureMode.fullTunnelDualMITM.usesSystemHTTPProxy)
+
+        XCTAssertTrue(CaptureMode.fullTunnel.supportsCustomSocksServer)
+        XCTAssertFalse(CaptureMode.fullTunnelDualMITM.supportsCustomSocksServer)
+
+        XCTAssertFalse(CaptureMode.proxyOnly.enablesTCPTransparentMITM)
+        XCTAssertFalse(CaptureMode.fullTunnel.enablesTCPTransparentMITM)
+        XCTAssertTrue(CaptureMode.fullTunnelDualMITM.enablesTCPTransparentMITM)
     }
 
     // MARK: - StorageError Tests

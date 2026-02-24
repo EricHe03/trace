@@ -16,7 +16,7 @@ public enum InterceptionResult: Sendable {
     case blocked
 
     /// Request should fail with a simulated network error.
-    case failed(InterceptionFailure)
+    case failed(RequestInterceptionFailure)
 
     /// Return a mock response (the returned `NetworkRequest` includes response fields).
     case mocked(NetworkRequest)
@@ -25,7 +25,7 @@ public enum InterceptionResult: Sendable {
     case modified(NetworkRequest)
 }
 
-public enum InterceptionFailure: String, Sendable {
+public enum RequestInterceptionFailure: String, Sendable {
     case timeout
     case connectionReset
     case dropConnection

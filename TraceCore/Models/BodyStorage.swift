@@ -42,8 +42,11 @@ public enum BodyStorage: Codable, Equatable {
     /// Large bodies stored in file (>1MB)
     case file(URL, charset: String? = nil, compressionInfo: CompressionInfo? = nil)
 
-    /// Very large bodies truncated with preview (<10MB shown)
+    /// Truncated bodies stored inline (used when captured bytes are small)
     case truncated(Data, totalSize: Int, charset: String? = nil, compressionInfo: CompressionInfo? = nil)
+
+    /// Truncated bodies stored in file (used when captured bytes are large)
+    case truncatedFile(URL, totalSize: Int, charset: String? = nil, compressionInfo: CompressionInfo? = nil)
 
     /// Empty or no body
     case empty
@@ -76,6 +79,7 @@ public enum BodyStorage: Codable, Equatable {
         case inline
         case file
         case truncated
+        case truncatedFile
         case empty
     }
 
@@ -96,6 +100,10 @@ public enum BodyStorage: Codable, Equatable {
             let data = try container.decode(Data.self, forKey: .data)
             let totalSize = try container.decode(Int.self, forKey: .totalSize)
             self = .truncated(data, totalSize: totalSize, charset: charset, compressionInfo: compressionInfo)
+        case .truncatedFile:
+            let url = try container.decode(URL.self, forKey: .url)
+            let totalSize = try container.decode(Int.self, forKey: .totalSize)
+            self = .truncatedFile(url, totalSize: totalSize, charset: charset, compressionInfo: compressionInfo)
         case .empty:
             self = .empty
         }
@@ -121,6 +129,12 @@ public enum BodyStorage: Codable, Equatable {
             try container.encode(totalSize, forKey: .totalSize)
             try container.encodeIfPresent(charset, forKey: .charset)
             try container.encodeIfPresent(compressionInfo, forKey: .compressionInfo)
+        case let .truncatedFile(url, totalSize, charset, compressionInfo):
+            try container.encode(StorageType.truncatedFile, forKey: .type)
+            try container.encode(url, forKey: .url)
+            try container.encode(totalSize, forKey: .totalSize)
+            try container.encodeIfPresent(charset, forKey: .charset)
+            try container.encodeIfPresent(compressionInfo, forKey: .compressionInfo)
         case .empty:
             try container.encode(StorageType.empty, forKey: .type)
         }
@@ -134,8 +148,15 @@ public enum BodyStorage: Codable, Equatable {
     ///   - charset: Optional character encoding
     ///   - maxSize: Optional maximum size before truncation
     ///   - contentEncoding: Optional Content-Encoding header value (e.g., "gzip", "br", "deflate")
-    /// - Returns: BodyStorage instance with decompressed data
-    public static func from(data: Data, charset: String? = nil, maxSize: Int? = nil, contentEncoding: String? = nil) -> BodyStorage {
+    ///   - decodeCompressedContent: Whether to decode compressed payloads before storing.
+    /// - Returns: BodyStorage instance with decoded data when enabled, otherwise raw bytes.
+    public static func from(
+        data: Data,
+        charset: String? = nil,
+        maxSize: Int? = nil,
+        contentEncoding: String? = nil,
+        decodeCompressedContent: Bool = true
+    ) -> BodyStorage {
         let effectiveMaxSize = maxSize ?? truncationThreshold
         // Safety: Prevent decompression amplification (zip bombs) by bounding output.
         // We only need to know whether the decoded body exceeds the capture max.
@@ -149,62 +170,80 @@ public enum BodyStorage: Codable, Equatable {
         let processedData: Data
         let compressionInfo: CompressionInfo?
 
-        if let encoding = contentEncoding, !encoding.isEmpty, encoding.lowercased() != "identity" {
-            let startTime = Date()
-            // Check for multiple encodings (e.g., "gzip, br" or "deflate, gzip")
-            let decompressed: Data? = if encoding.contains(",") {
-                decompressChained(
-                    data,
-                    encodings: encoding.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) },
-                    maxOutputBytes: decompressionOutputLimit
-                )
-            } else {
-                decompressIfNeeded(data, encoding: encoding, maxOutputBytes: decompressionOutputLimit)
-            }
+        if decodeCompressedContent {
+            if let encoding = contentEncoding, !encoding.isEmpty, encoding.lowercased() != "identity" {
+                let startTime = Date()
+                // Check for multiple encodings (e.g., "gzip, br" or "deflate, gzip")
+                let decompressed: Data? = if encoding.contains(",") {
+                    decompressChained(
+                        data,
+                        encodings: encoding.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) },
+                        maxOutputBytes: decompressionOutputLimit
+                    )
+                } else {
+                    decompressIfNeeded(data, encoding: encoding, maxOutputBytes: decompressionOutputLimit)
+                }
 
-            let decompressionTime = Date().timeIntervalSince(startTime)
+                let decompressionTime = Date().timeIntervalSince(startTime)
 
-            if let decompressed {
-                processedData = decompressed
-                compressionInfo = CompressionInfo(
-                    algorithm: encoding,
-                    compressedSize: data.count,
-                    decompressedSize: decompressed.count,
-                    decompressionSuccess: true,
-                    decompressionTime: decompressionTime
-                )
+                if let decompressed {
+                    processedData = decompressed
+                    compressionInfo = CompressionInfo(
+                        algorithm: encoding,
+                        compressedSize: data.count,
+                        decompressedSize: decompressed.count,
+                        decompressionSuccess: true,
+                        decompressionTime: decompressionTime
+                    )
+                } else {
+                    // Decompression failed or no change
+                    processedData = data
+                    compressionInfo = CompressionInfo(
+                        algorithm: encoding,
+                        compressedSize: data.count,
+                        decompressedSize: data.count,
+                        decompressionSuccess: false,
+                        decompressionTime: decompressionTime
+                    )
+                }
             } else {
-                // Decompression failed or no change
-                processedData = data
-                compressionInfo = CompressionInfo(
-                    algorithm: encoding,
-                    compressedSize: data.count,
-                    decompressedSize: data.count,
-                    decompressionSuccess: false,
-                    decompressionTime: decompressionTime
-                )
+                // Auto-detect compression by magic bytes (bounded).
+                if let detected = autoDetectAndDecompress(data, maxOutputBytes: decompressionOutputLimit) {
+                    processedData = detected.data
+                    compressionInfo = CompressionInfo(
+                        algorithm: detected.algorithm,
+                        compressedSize: data.count,
+                        decompressedSize: detected.data.count,
+                        decompressionSuccess: true,
+                        decompressionTime: nil
+                    )
+                } else {
+                    processedData = data
+                    compressionInfo = nil // No compression
+                }
             }
         } else {
-            // Auto-detect compression by magic bytes (bounded).
-            if let detected = autoDetectAndDecompress(data, maxOutputBytes: decompressionOutputLimit) {
-                processedData = detected.data
-                compressionInfo = CompressionInfo(
-                    algorithm: detected.algorithm,
-                    compressedSize: data.count,
-                    decompressedSize: detected.data.count,
-                    decompressionSuccess: true,
-                    decompressionTime: nil
-                )
-            } else {
-                processedData = data
-                compressionInfo = nil // No compression
-            }
+            processedData = data
+            compressionInfo = nil
         }
 
         if processedData.count > effectiveMaxSize {
-            // Truncate very large bodies
-            let preview = processedData.prefix(previewSize)
-            return .truncated(preview, totalSize: processedData.count, charset: charset, compressionInfo: compressionInfo)
+            let capturedBytes = Data(processedData.prefix(effectiveMaxSize))
+            if capturedBytes.count > inlineThreshold,
+               let fileURL = saveToFile(data: capturedBytes) {
+                return .truncatedFile(
+                    fileURL,
+                    totalSize: processedData.count,
+                    charset: charset,
+                    compressionInfo: compressionInfo
+                )
+            }
+            return .truncated(
+                capturedBytes,
+                totalSize: processedData.count,
+                charset: charset,
+                compressionInfo: compressionInfo
+            )
         }
 
         if processedData.count > inlineThreshold {
@@ -237,8 +276,10 @@ public enum BodyStorage: Codable, Equatable {
             data
         case let .file(url, _, _):
             try? Data(contentsOf: url)
+        case let .truncatedFile(url, _, _, _):
+            try? Data(contentsOf: url)
         case let .truncated(preview, _, _, _):
-            preview // Returns preview only
+            preview
         case .empty:
             nil
         }
@@ -509,6 +550,8 @@ public enum BodyStorage: Codable, Equatable {
             charset
         case let .file(_, charset, _):
             charset
+        case let .truncatedFile(_, _, charset, _):
+            charset
         case let .truncated(_, _, charset, _):
             charset
         case .empty:
@@ -522,6 +565,8 @@ public enum BodyStorage: Codable, Equatable {
         case let .inline(_, _, compressionInfo):
             compressionInfo
         case let .file(_, _, compressionInfo):
+            compressionInfo
+        case let .truncatedFile(_, _, _, compressionInfo):
             compressionInfo
         case let .truncated(_, _, _, compressionInfo):
             compressionInfo
@@ -617,6 +662,11 @@ public enum BodyStorage: Codable, Equatable {
             defer { try? handle.close() }
             guard let data = try? handle.read(upToCount: maxBytes) else { return nil }
             return data
+        case let .truncatedFile(url, _, _, _):
+            guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+            defer { try? handle.close() }
+            guard let data = try? handle.read(upToCount: maxBytes) else { return nil }
+            return data
         case let .truncated(preview, _, _, _):
             return preview.prefix(maxBytes)
         case .empty:
@@ -631,6 +681,8 @@ public enum BodyStorage: Codable, Equatable {
             data.count
         case let .file(url, _, _):
             (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        case let .truncatedFile(_, totalSize, _, _):
+            totalSize
         case let .truncated(_, totalSize, _, _):
             totalSize
         case .empty:
@@ -638,20 +690,40 @@ public enum BodyStorage: Codable, Equatable {
         }
     }
 
+    /// Get bytes physically retained in storage (what can be loaded/shared).
+    public var capturedSize: Int {
+        switch self {
+        case let .inline(data, _, _):
+            data.count
+        case let .file(url, _, _):
+            (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        case let .truncated(preview, _, _, _):
+            preview.count
+        case let .truncatedFile(url, _, _, _):
+            (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        case .empty:
+            0
+        }
+    }
+
     /// Check if body is truncated
     public var isTruncated: Bool {
-        if case .truncated = self {
-            return true
+        switch self {
+        case .truncated, .truncatedFile:
+            true
+        default:
+            false
         }
-        return false
     }
 
     /// Check if body is stored in file
     public var isFile: Bool {
-        if case .file = self {
-            return true
+        switch self {
+        case .file, .truncatedFile:
+            true
+        default:
+            false
         }
-        return false
     }
 
     /// Check if body is empty
@@ -689,8 +761,13 @@ public enum BodyStorage: Codable, Equatable {
 
     /// Delete file if stored as file
     public func deleteFile() {
-        if case let .file(url, _, _) = self {
+        switch self {
+        case let .file(url, _, _):
             try? FileManager.default.removeItem(at: url)
+        case let .truncatedFile(url, _, _, _):
+            try? FileManager.default.removeItem(at: url)
+        default:
+            break
         }
     }
 

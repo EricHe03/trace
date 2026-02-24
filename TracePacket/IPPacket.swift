@@ -17,11 +17,18 @@ public struct IPPacket: Sendable {
     public let headerLength: Int
     public let totalLength: Int
     public let protocolNumber: UInt8
+    public let hopLimit: UInt8
+    public let fragmentOffset: Int
+    public let moreFragments: Bool
     public let source: IPAddress
     public let destination: IPAddress
     public let payload: Data
 
     public var transport: TransportProtocol? {
         TransportProtocol(rawValue: protocolNumber)
+    }
+
+    public var isFragmented: Bool {
+        fragmentOffset > 0 || moreFragments
     }
 }

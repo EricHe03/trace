@@ -85,6 +85,20 @@ final class CurlParserTests: XCTestCase {
         XCTAssertEqual(request.method, .head)
     }
 
+    func testParseHTTP3OptionSetsProtocolVersion() throws {
+        let curl = "curl --http3 https://example.com"
+        let request = try CurlParser.parse(curl)
+
+        XCTAssertEqual(request.protocolVersion, .http3)
+    }
+
+    func testParseHTTP3OnlyOptionSetsProtocolVersion() throws {
+        let curl = "curl --http3-only https://example.com"
+        let request = try CurlParser.parse(curl)
+
+        XCTAssertEqual(request.protocolVersion, .http3)
+    }
+
     // MARK: - Header Tests
 
     func testParseSingleHeader() throws {

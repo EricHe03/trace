@@ -8,8 +8,9 @@
 import Darwin
 import Foundation
 import HevSocks5Tunnel
-import Network
 import NetworkExtension
+import NIOCore
+import NIOTransportServices
 import OSLog
 import TraceCore
 
@@ -32,7 +33,7 @@ extension Socks5UDPSupport {
     }
 }
 
-final class HevSocks5TunnelForwarder: PacketForwardingEngine {
+final class HevSocks5TunnelForwarder: PacketForwardingEngine, @unchecked Sendable {
     private let packetFlow: NEPacketTunnelFlow
     private let tunnelQueue = DispatchQueue(label: "com.trace.vpn.socks5_tunnel", qos: .userInitiated)
     private let ioQueue = DispatchQueue(label: "com.trace.vpn.socks5_tunnel.io", qos: .userInitiated)
@@ -42,6 +43,8 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
     private let socks5Port: UInt16
     private let maxInputPending: Int
     private let ipv6Enabled: Bool
+    private let outputPacketObserver: (@Sendable ([Data]) -> Void)?
+    private let outputPacketInterceptor: (@Sendable (Data) -> Bool)?
     private let eventLogHandler: (@Sendable (String, String) -> Void)?
     private let udpAssociateProbeHandler: (@Sendable (Socks5UDPSupport) -> Void)?
     private var inputPending = 0
@@ -57,6 +60,8 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         mtu: Int,
         ipv6Enabled: Bool,
         maxInputPending: Int = 8192,
+        outputPacketObserver: (@Sendable ([Data]) -> Void)? = nil,
+        outputPacketInterceptor: (@Sendable (Data) -> Bool)? = nil,
         eventLogHandler: (@Sendable (String, String) -> Void)? = nil,
         udpAssociateProbeHandler: (@Sendable (Socks5UDPSupport) -> Void)? = nil
     ) {
@@ -66,6 +71,8 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         self.mtu = max(576, mtu)
         self.ipv6Enabled = ipv6Enabled
         self.maxInputPending = max(1, maxInputPending)
+        self.outputPacketObserver = outputPacketObserver
+        self.outputPacketInterceptor = outputPacketInterceptor
         self.eventLogHandler = eventLogHandler
         self.udpAssociateProbeHandler = udpAssociateProbeHandler
     }
@@ -107,11 +114,12 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         }
 
         let config = buildConfig()
+        let tunnelFD = tunFD
         tunnelQueue.async { [weak self] in
             guard let self else { return }
             let result = config.withUnsafeBytes { bytes -> Int32 in
                 guard let base = bytes.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return -1 }
-                return hev_socks5_tunnel_main_from_str(base, UInt32(bytes.count), Int32(tunFD))
+                return hev_socks5_tunnel_main_from_str(base, UInt32(bytes.count), Int32(tunnelFD))
             }
             if result == 0 {
                 VPNLog.tunnel.info("event=vpn.socks5_tunnel_exit outcome=success")
@@ -248,7 +256,29 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
             break
         }
         if !pendingPackets.isEmpty {
-            packetFlow.writePackets(pendingPackets, withProtocols: pendingProtocols)
+            outputPacketObserver?(pendingPackets)
+            if let outputPacketInterceptor {
+                var forwardPackets: [Data] = []
+                var forwardProtocols: [NSNumber] = []
+                forwardPackets.reserveCapacity(pendingPackets.count)
+                forwardProtocols.reserveCapacity(pendingProtocols.count)
+
+                for (index, packet) in pendingPackets.enumerated() {
+                    if outputPacketInterceptor(packet) {
+                        continue
+                    }
+                    forwardPackets.append(packet)
+                    if pendingProtocols.indices.contains(index) {
+                        forwardProtocols.append(pendingProtocols[index])
+                    }
+                }
+
+                if !forwardPackets.isEmpty {
+                    packetFlow.writePackets(forwardPackets, withProtocols: forwardProtocols)
+                }
+            } else {
+                packetFlow.writePackets(pendingPackets, withProtocols: pendingProtocols)
+            }
         }
     }
 
@@ -284,10 +314,10 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
           udp: 'udp'
 
         misc:
-          task-stack-size: 24576
-          tcp-buffer-size: 4096
+          task-stack-size: 36864
+          tcp-buffer-size: 16384
           udp-recv-buffer-size: 524288
-          udp-copy-buffer-nums: 10
+          udp-copy-buffer-nums: 20
           max-session-count: 1200
           tcp-read-write-timeout: 300
           udp-read-write-timeout: 300
@@ -302,9 +332,26 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         case ipv6 = 0x04
     }
 
-    // swiftlint:disable:next cyclomatic_complexity
+    private enum Socks5ProbeError: Error {
+        case timeout
+        case eventLoopUnavailable
+    }
+
+    private final class ProbeCompletionGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var completed = false
+
+        func markCompleted() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !completed else { return false }
+            completed = true
+            return true
+        }
+    }
+
     private func probeSocks5UDPAssociate(completion: @Sendable @escaping (Socks5UDPSupport) -> Void) {
-        guard let port = NWEndpoint.Port(rawValue: socks5Port) else {
+        guard socks5Port > 0 else {
             eventLogHandler?("socks5_udp_probe", "outcome=failure reason=invalid_port")
             completion(.unsupported)
             return
@@ -319,159 +366,142 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
             "outcome=begin host_hash=\(hostHash) host_len=\(self.socks5Host.count) port=\(self.socks5Port) ipv6_enabled=\(self.ipv6Enabled)"
         )
 
-        let host = NWEndpoint.Host(socks5Host)
-        let parameters = NWParameters.tcp
-        let connection = NWConnection(host: host, port: port, using: parameters)
-        // Important: Use a separate queue from `tunnelQueue`.
-        // `tunnelQueue` runs `hev_socks5_tunnel_main_from_str` which is a long-running blocking call,
-        // so using it here would prevent state updates and timeouts from firing.
+        let completionGate = ProbeCompletionGate()
         let queue = DispatchQueue(label: "com.trace.vpn.socks5_udp_probe", qos: .utility)
-        let timeout = DispatchSource.makeTimerSource(queue: queue)
-        var completed = false
-        let finish: @Sendable (Socks5UDPSupport) -> Void = { supported in
-            queue.async {
-                guard !completed else { return }
-                completed = true
-                timeout.cancel()
-                VPNLog.tunnel.info(
-                    "event=vpn.socks5_udp_probe_done support=\(supported.rawValue, privacy: .public)"
-                )
-                self.eventLogHandler?("socks5_udp_probe", "outcome=done support=\(supported.rawValue)")
-                completion(supported)
-                connection.cancel()
-            }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 6) { [weak self] in
+            guard completionGate.markCompleted() else { return }
+            VPNLog.tunnel.warning("event=vpn.socks5_udp_probe_guard outcome=triggered fallback=unsupported")
+            self?.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=probe_guard_timeout")
+            completion(.unsupported)
         }
-        timeout.schedule(deadline: .now() + 5)
-        timeout.setEventHandler {
-            VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=timeout")
-            self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=timeout")
-            finish(.unsupported)
+        queue.async { [weak self] in
+            guard let self else { return }
+            let support = self.runSocks5UDPAssociateProbe()
+            guard completionGate.markCompleted() else { return }
+            VPNLog.tunnel.info("event=vpn.socks5_udp_probe_done support=\(support.rawValue, privacy: .public)")
+            self.eventLogHandler?("socks5_udp_probe", "outcome=done support=\(support.rawValue)")
+            completion(support)
         }
-        timeout.resume()
+    }
 
-        let parseReply: (Data?) -> Socks5UDPSupport = { reply in
-            guard let reply, reply.count >= 4 else { return .unsupported }
-            guard reply[0] == 0x05, reply[1] == 0x00 else { return .unsupported }
-            switch reply[3] {
-            case Socks5AddressType.ipv6.rawValue:
-                return .ipv6
-            case Socks5AddressType.ipv4.rawValue, Socks5AddressType.domain.rawValue:
-                return .ipv4Only
-            default:
+    private func runSocks5UDPAssociateProbe() -> Socks5UDPSupport {
+        let resources = NIORuntime.shared.acquire(for: .networkExtension)
+        defer { try? NIORuntime.shared.release(for: .networkExtension) }
+
+        guard let group = resources.eventLoopGroup as? NIOTSEventLoopGroup else {
+            eventLogHandler?("socks5_udp_probe", "outcome=failure reason=event_loop_unavailable")
+            return .unsupported
+        }
+
+        let ioHandler = Socks5ProbeIOHandler()
+        let bootstrap = NIOTSConnectionBootstrap(group: group)
+            .connectTimeout(.seconds(5))
+            .channelInitializer { channel in
+                channel.pipeline.addHandler(ioHandler)
+            }
+
+        do {
+            let channel = try waitFor(bootstrap.connect(host: socks5Host, port: Int(socks5Port)), timeout: 5)
+            defer { _ = try? waitFor(channel.close(), timeout: 1) }
+
+            ioHandler.bindFallbackEventLoop(channel.eventLoop)
+            try waitFor(ioHandler.waitUntilReady(on: channel.eventLoop), timeout: 1)
+
+            try waitFor(ioHandler.send([0x05, 0x01, 0x00]), timeout: 5)
+            let greetingReply = try waitFor(ioHandler.readExact(2), timeout: 5)
+            guard greetingReply == [0x05, 0x00] else {
+                eventLogHandler?("socks5_udp_probe", "outcome=failure reason=greeting_reply_invalid")
                 return .unsupported
             }
-        }
+            eventLogHandler?("socks5_udp_probe", "greeting_reply_ok")
 
-        let sendAssociate: (Socks5AddressType, @escaping (Socks5UDPSupport) -> Void) -> Void = { addressType, handler in
-            var request = Data([0x05, 0x03, 0x00, addressType.rawValue])
-            self.eventLogHandler?("socks5_udp_probe", "associate_send addr_type=\(addressType.rawValue)")
-            switch addressType {
-            case .ipv4:
-                request.append(contentsOf: [0, 0, 0, 0])
-            case .ipv6:
-                request.append(contentsOf: Array(repeating: 0, count: 16))
-            case .domain:
-                request.append(0)
-            }
-            request.append(contentsOf: [0, 0])
-
-            connection.send(content: request, completion: .contentProcessed { error in
-                if error != nil {
-                    VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=associate_send_failed")
-                    self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=associate_send_failed")
-                    handler(.unsupported)
-                    return
+            if ipv6Enabled {
+                let ipv6Support = try sendAssociateProbe(addressType: .ipv6, ioHandler: ioHandler)
+                if ipv6Support != .unsupported {
+                    eventLogHandler?("socks5_udp_probe", "outcome=success support=\(ipv6Support.rawValue)")
+                    return ipv6Support
                 }
-                connection.receive(minimumIncompleteLength: 4, maximumLength: 64) { reply, _, _, _ in
-                    if let reply {
-                        VPNLog.tunnel.debug("event=vpn.socks5_udp_probe associate_reply_bytes=\(reply.count)")
-                        self.eventLogHandler?("socks5_udp_probe", "associate_reply_bytes=\(reply.count)")
-                    }
-                    handler(parseReply(reply))
-                }
-            })
+                eventLogHandler?("socks5_udp_probe", "outcome=partial reason=ipv6_unavailable")
+            }
+
+            let ipv4Support = try sendAssociateProbe(addressType: .ipv4, ioHandler: ioHandler)
+            if ipv4Support == .unsupported {
+                eventLogHandler?("socks5_udp_probe", "outcome=failure reason=associate_reply_invalid")
+            } else {
+                eventLogHandler?("socks5_udp_probe", "outcome=success support=\(ipv4Support.rawValue)")
+            }
+            return ipv4Support
+        } catch Socks5ProbeError.timeout {
+            eventLogHandler?("socks5_udp_probe", "outcome=failure reason=timeout")
+            return .unsupported
+        } catch {
+            eventLogHandler?("socks5_udp_probe", "outcome=failure reason=connection_failed")
+            return .unsupported
+        }
+    }
+
+    private func sendAssociateProbe(
+        addressType: Socks5AddressType,
+        ioHandler: Socks5ProbeIOHandler
+    ) throws -> Socks5UDPSupport {
+        var request: [UInt8] = [0x05, 0x03, 0x00, addressType.rawValue]
+        eventLogHandler?("socks5_udp_probe", "associate_send addr_type=\(addressType.rawValue)")
+        switch addressType {
+        case .ipv4:
+            request += [0, 0, 0, 0]
+        case .ipv6:
+            request += Array(repeating: 0, count: 16)
+        case .domain:
+            request += [0]
+        }
+        request += [0, 0]
+
+        try waitFor(ioHandler.send(request), timeout: 5)
+        let header = try waitFor(ioHandler.readExact(4), timeout: 5)
+        guard header.count == 4, header[0] == 0x05, header[1] == 0x00 else {
+            return .unsupported
         }
 
-        connection.stateUpdateHandler = { state in
-            let stateLabel = switch state {
-            case .setup:
-                "setup"
-            case .waiting:
-                "waiting"
-            case .preparing:
-                "preparing"
-            case .ready:
-                "ready"
-            case .failed:
-                "failed"
-            case .cancelled:
-                "cancelled"
-            @unknown default:
-                "unknown"
-            }
-            VPNLog.tunnel.debug("event=vpn.socks5_udp_probe_state state=\(stateLabel, privacy: .public)")
-            self.eventLogHandler?("socks5_udp_probe", "state=\(stateLabel)")
-            switch state {
-            case .ready:
-                let greeting = Data([0x05, 0x01, 0x00])
-                connection.send(content: greeting, completion: .contentProcessed { error in
-                    if error != nil {
-                        VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=greeting_send_failed")
-                        self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=greeting_send_failed")
-                        finish(.unsupported)
-                        return
-                    }
-                    connection.receive(minimumIncompleteLength: 2, maximumLength: 2) { data, _, _, _ in
-                        guard let data, data.count == 2, data[0] == 0x05, data[1] == 0x00 else {
-                            VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=greeting_reply_invalid")
-                            self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=greeting_reply_invalid")
-                            finish(.unsupported)
-                            return
-                        }
-                        VPNLog.tunnel.debug("event=vpn.socks5_udp_probe greeting_reply_ok")
-                        self.eventLogHandler?("socks5_udp_probe", "greeting_reply_ok")
-                        if self.ipv6Enabled {
-                            sendAssociate(.ipv6) { support in
-                                if support == .unsupported {
-                                    VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=partial reason=ipv6_unavailable")
-                                    self.eventLogHandler?("socks5_udp_probe", "outcome=partial reason=ipv6_unavailable")
-                                    sendAssociate(.ipv4) { fallback in
-                                        if fallback == .unsupported {
-                                            VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=associate_reply_invalid")
-                                            self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=associate_reply_invalid")
-                                        }
-                                        finish(fallback)
-                                    }
-                                } else {
-                                    VPNLog.tunnel.info("event=vpn.socks5_udp_probe outcome=success support=\(support.rawValue)")
-                                    self.eventLogHandler?("socks5_udp_probe", "outcome=success support=\(support.rawValue)")
-                                    finish(support)
-                                }
-                            }
-                        } else {
-                            sendAssociate(.ipv4) { support in
-                                if support == .unsupported {
-                                    VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=associate_reply_invalid")
-                                    self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=associate_reply_invalid")
-                                } else {
-                                    VPNLog.tunnel.info("event=vpn.socks5_udp_probe outcome=success support=\(support.rawValue)")
-                                    self.eventLogHandler?("socks5_udp_probe", "outcome=success support=\(support.rawValue)")
-                                }
-                                finish(support)
-                            }
-                        }
-                    }
-                })
-            case .failed, .cancelled:
-                VPNLog.tunnel.warning("event=vpn.socks5_udp_probe outcome=failure reason=connection_failed")
-                self.eventLogHandler?("socks5_udp_probe", "outcome=failure reason=connection_failed")
-                finish(.unsupported)
-            default:
-                break
-            }
+        let replyTypeRaw = header[3]
+        switch replyTypeRaw {
+        case Socks5AddressType.ipv4.rawValue:
+            _ = try waitFor(ioHandler.readExact(4 + 2), timeout: 5)
+            return .ipv4Only
+        case Socks5AddressType.ipv6.rawValue:
+            _ = try waitFor(ioHandler.readExact(16 + 2), timeout: 5)
+            return .ipv6
+        case Socks5AddressType.domain.rawValue:
+            let lengthBytes = try waitFor(ioHandler.readExact(1), timeout: 5)
+            guard let length = lengthBytes.first else { return .unsupported }
+            _ = try waitFor(ioHandler.readExact(Int(length) + 2), timeout: 5)
+            return .ipv4Only
+        default:
+            return .unsupported
+        }
+    }
+
+    private func waitFor<T>(_ future: EventLoopFuture<T>, timeout: TimeInterval) throws -> T {
+        let semaphore = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var result: Result<T, Error>?
+
+        future.whenComplete { completion in
+            lock.lock()
+            result = completion
+            lock.unlock()
+            semaphore.signal()
         }
 
-        connection.start(queue: queue)
+        guard semaphore.wait(timeout: .now() + timeout) != .timedOut else {
+            throw Socks5ProbeError.timeout
+        }
+
+        lock.lock()
+        defer { lock.unlock() }
+        guard let resolved = result else {
+            throw Socks5ProbeError.timeout
+        }
+        return try resolved.get()
     }
 
     private func setNonBlocking(fd: Int32) -> Bool {
@@ -484,6 +514,173 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine {
         var size = 4 * 1024 * 1024
         _ = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, socklen_t(MemoryLayout<Int>.size))
         _ = setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &size, socklen_t(MemoryLayout<Int>.size))
+    }
+}
+
+private enum Socks5ProbeIOError: Error {
+    case contextUnavailable
+    case channelClosed
+}
+
+private final class Socks5ProbeIOHandler: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+    private static let fallbackEventLoopGroup = NIOTSEventLoopGroup()
+
+    private struct PendingRead {
+        let count: Int
+        let promise: EventLoopPromise<[UInt8]>
+    }
+
+    private let stateLock = NSLock()
+    private var context: ChannelHandlerContext?
+    private var fallbackEventLoop: EventLoop?
+    private var pendingReadyPromises: [EventLoopPromise<Void>] = []
+    private var readBuffer = ByteBuffer()
+    private var pendingReads: [PendingRead] = []
+
+    func bindFallbackEventLoop(_ eventLoop: EventLoop) {
+        stateLock.lock()
+        fallbackEventLoop = eventLoop
+        stateLock.unlock()
+    }
+
+    func waitUntilReady(on eventLoop: EventLoop) -> EventLoopFuture<Void> {
+        stateLock.lock()
+        if context != nil {
+            stateLock.unlock()
+            return eventLoop.makeSucceededFuture(())
+        }
+        let promise = eventLoop.makePromise(of: Void.self)
+        pendingReadyPromises.append(promise)
+        stateLock.unlock()
+        return promise.futureResult
+    }
+
+    func handlerAdded(context: ChannelHandlerContext) {
+        stateLock.lock()
+        self.context = context
+        fallbackEventLoop = context.eventLoop
+        let readyPromises = pendingReadyPromises
+        pendingReadyPromises.removeAll(keepingCapacity: false)
+        stateLock.unlock()
+
+        for promise in readyPromises {
+            promise.succeed(())
+        }
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var inbound = unwrapInboundIn(data)
+        readBuffer.writeBuffer(&inbound)
+        fulfillPendingReads()
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        failPendingReads(error: Socks5ProbeIOError.channelClosed)
+        failPendingReadyPromises(error: Socks5ProbeIOError.channelClosed)
+        context.fireChannelInactive()
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        failPendingReads(error: error)
+        failPendingReadyPromises(error: error)
+        context.close(promise: nil)
+    }
+
+    func send(_ bytes: [UInt8]) -> EventLoopFuture<Void> {
+        guard let context = currentContext() else {
+            return makeContextUnavailableFuture()
+        }
+
+        let promise = context.eventLoop.makePromise(of: Void.self)
+        let writeBlock = { [weak context] in
+            guard let context else {
+                promise.fail(Socks5ProbeIOError.contextUnavailable)
+                return
+            }
+            var buffer = context.channel.allocator.buffer(capacity: bytes.count)
+            buffer.writeBytes(bytes)
+            context.writeAndFlush(NIOAny(buffer), promise: promise)
+        }
+
+        if context.eventLoop.inEventLoop {
+            writeBlock()
+        } else {
+            context.eventLoop.execute(writeBlock)
+        }
+        return promise.futureResult
+    }
+
+    func readExact(_ count: Int) -> EventLoopFuture<[UInt8]> {
+        guard let context = currentContext() else {
+            return makeContextUnavailableFuture()
+        }
+
+        let promise = context.eventLoop.makePromise(of: [UInt8].self)
+        let scheduleRead = {
+            if self.readBuffer.readableBytes >= count, let bytes = self.readBuffer.readBytes(length: count) {
+                promise.succeed(bytes)
+            } else {
+                self.pendingReads.append(PendingRead(count: count, promise: promise))
+            }
+        }
+
+        if context.eventLoop.inEventLoop {
+            scheduleRead()
+        } else {
+            context.eventLoop.execute(scheduleRead)
+        }
+        return promise.futureResult
+    }
+
+    private func currentContext() -> ChannelHandlerContext? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return context
+    }
+
+    private func makeContextUnavailableFuture<T>() -> EventLoopFuture<T> {
+        stateLock.lock()
+        let eventLoop = context?.eventLoop ?? fallbackEventLoop
+        stateLock.unlock()
+
+        if let eventLoop {
+            return eventLoop.makeFailedFuture(Socks5ProbeIOError.contextUnavailable)
+        }
+
+        if let eventLoop = NIORuntime.shared.currentResources()?.eventLoopGroup.next() {
+            return eventLoop.makeFailedFuture(Socks5ProbeIOError.contextUnavailable)
+        }
+
+        return Self.fallbackEventLoopGroup.next().makeFailedFuture(Socks5ProbeIOError.contextUnavailable)
+    }
+
+    private func fulfillPendingReads() {
+        while let next = pendingReads.first {
+            guard readBuffer.readableBytes >= next.count else { break }
+            guard let bytes = readBuffer.readBytes(length: next.count) else { break }
+            pendingReads.removeFirst()
+            next.promise.succeed(bytes)
+        }
+    }
+
+    private func failPendingReads(error: Error) {
+        let pending = pendingReads
+        pendingReads.removeAll(keepingCapacity: false)
+        for pendingRead in pending {
+            pendingRead.promise.fail(error)
+        }
+    }
+
+    private func failPendingReadyPromises(error: Error) {
+        stateLock.lock()
+        let promises = pendingReadyPromises
+        pendingReadyPromises.removeAll(keepingCapacity: false)
+        stateLock.unlock()
+
+        for promise in promises {
+            promise.fail(error)
+        }
     }
 }
 

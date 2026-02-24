@@ -187,14 +187,18 @@ final class UDPFlowsViewModel: ObservableObject {
 
     func exportCSV() throws -> URL {
         let formatter = ISO8601DateFormatter()
-        var csv = "ID,Source IP,Source Port,Destination IP,Destination Port,Protocol,Bytes From Source,Bytes To Source,Datagrams From Source,Datagrams To Source,Start Time,Last Activity,End Time,Duration (s),Termination\n"
+        var csv = "ID,Source IP,Source Port,Destination IP,Destination Port,Protocol,Bytes From Source,Bytes To Source,Datagrams From Source,Datagrams To Source,Start Time,Last Activity,End Time,Duration (s),Termination,QUIC Inspection Outcome,QUIC Handshake Outcome,QUIC Failure Reason,QUIC Version\n"
 
         for flow in filteredFlows {
             let start = formatter.string(from: flow.startTime)
             let last = formatter.string(from: flow.lastActivity)
             let end = flow.endTime.map { formatter.string(from: $0) } ?? ""
             let duration = String(format: "%.3f", flow.duration)
-            csv += "\"\(flow.id.uuidString)\",\"\(flow.sourceIP)\",\"\(flow.sourcePort)\",\"\(flow.destinationIP)\",\"\(flow.destinationPort)\",\"\(flow.detectedProtocol.displayName)\",\"\(flow.bytesFromSource)\",\"\(flow.bytesToSource)\",\"\(flow.datagramsFromSource)\",\"\(flow.datagramsToSource)\",\"\(start)\",\"\(last)\",\"\(end)\",\"\(duration)\",\"\(flow.termination.displayName)\"\n"
+            let quicOutcome = flow.quicInspectionOutcome?.displayName ?? ""
+            let quicHandshake = flow.quicFlowMetadata?.handshakeOutcome.displayName ?? ""
+            let quicFailure = flow.quicFlowMetadata?.failureReason ?? ""
+            let quicVersion = flow.quicFlowMetadata?.version ?? ""
+            csv += "\"\(flow.id.uuidString)\",\"\(flow.sourceIP)\",\"\(flow.sourcePort)\",\"\(flow.destinationIP)\",\"\(flow.destinationPort)\",\"\(flow.detectedProtocol.displayName)\",\"\(flow.bytesFromSource)\",\"\(flow.bytesToSource)\",\"\(flow.datagramsFromSource)\",\"\(flow.datagramsToSource)\",\"\(start)\",\"\(last)\",\"\(end)\",\"\(duration)\",\"\(flow.termination.displayName)\",\"\(quicOutcome)\",\"\(quicHandshake)\",\"\(quicFailure)\",\"\(quicVersion)\"\n"
         }
 
         return try writeExport(data: Data(csv.utf8), fileName: "udp_flows.csv")

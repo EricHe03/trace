@@ -76,10 +76,10 @@ public enum X509CertificateBuilder {
             publicKey: subjectKey.publicKey,
             notValidBefore: notBefore,
             notValidAfter: notAfter,
-            issuer: try makeDistinguishedName(issuer),
-            subject: try makeDistinguishedName(subject),
+            issuer: makeDistinguishedName(issuer),
+            subject: makeDistinguishedName(subject),
             signatureAlgorithm: .sha256WithRSAEncryption,
-            extensions: try makeExtensions(
+            extensions: makeExtensions(
                 isCA: isCA,
                 subject: subject,
                 subjectPublicKey: subjectKey.publicKey,
@@ -118,7 +118,7 @@ public enum X509CertificateBuilder {
         var attributes: [RelativeDistinguishedName.Attribute] = []
 
         if let country = name.country, !country.isEmpty {
-            attributes.append(try .init(type: .RDNAttributeType.countryName, printableString: country))
+            try attributes.append(.init(type: .RDNAttributeType.countryName, printableString: country))
         }
 
         if let organization = name.organization, !organization.isEmpty {
@@ -143,25 +143,25 @@ public enum X509CertificateBuilder {
         var extensions: [Certificate.Extension] = []
 
         if isCA {
-            extensions.append(try .init(.isCertificateAuthority(maxPathLength: nil), critical: true))
+            try extensions.append(.init(.isCertificateAuthority(maxPathLength: nil), critical: true))
         }
 
         let keyUsage = isCA
             ? KeyUsage(digitalSignature: true, keyCertSign: true, cRLSign: true)
             : KeyUsage(digitalSignature: true, keyEncipherment: true)
-        extensions.append(try .init(keyUsage, critical: true))
+        try extensions.append(.init(keyUsage, critical: true))
 
         let subjectKeyIdentifier = SubjectKeyIdentifier(hash: subjectPublicKey)
-        extensions.append(try .init(subjectKeyIdentifier, critical: false))
+        try extensions.append(.init(subjectKeyIdentifier, critical: false))
 
         let authorityKeyIdentifier = AuthorityKeyIdentifier(
             keyIdentifier: SubjectKeyIdentifier(hash: authorityPublicKey).keyIdentifier
         )
-        extensions.append(try .init(authorityKeyIdentifier, critical: false))
+        try extensions.append(.init(authorityKeyIdentifier, critical: false))
 
         if !isCA {
-            extensions.append(try .init(ExtendedKeyUsage([.serverAuth, .clientAuth]), critical: false))
-            extensions.append(try .init(makeSubjectAlternativeNames(for: subject.commonName), critical: false))
+            try extensions.append(.init(ExtendedKeyUsage([.serverAuth, .clientAuth]), critical: false))
+            try extensions.append(.init(makeSubjectAlternativeNames(for: subject.commonName), critical: false))
         }
 
         return try Certificate.Extensions(extensions)

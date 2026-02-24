@@ -6,81 +6,69 @@
 //
 
 import XCTest
+import NIOHTTP1
 @testable import Trace
 @testable import TraceCore
 @testable import TraceFeatures
 
-// MARK: - Mock URLProtocol for Testing
+private final class MockRequestExecutorTransport: RequestExecutorTransport {
+    var requestHandler: ((RequestExecutorTransportRequest) throws -> RequestExecutorTransportResponse)?
+    var error: Error?
+    private(set) var receivedRequests: [RequestExecutorTransportRequest] = []
 
-class MockURLProtocol: URLProtocol {
-    static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data?))?
-    static var error: Error?
+    func execute(_ request: RequestExecutorTransportRequest) async throws -> RequestExecutorTransportResponse {
+        receivedRequests.append(request)
 
-    override class func canInit(with request: URLRequest) -> Bool {
-        return true
-    }
-
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
-        return request
-    }
-
-    override func startLoading() {
-        // Check for error first
-        if let error = MockURLProtocol.error {
-            client?.urlProtocol(self, didFailWithError: error)
-            return
+        if let error {
+            throw error
         }
 
-        // Use request handler
-        guard let handler = MockURLProtocol.requestHandler else {
-            client?.urlProtocol(self, didFailWithError: URLError(.unknown))
-            return
+        guard let requestHandler else {
+            throw URLError(.unknown)
         }
 
-        do {
-            let (response, data) = try handler(request)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            if let data = data {
-                client?.urlProtocol(self, didLoad: data)
-            }
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
-        }
-    }
-
-    override func stopLoading() {
-        // No-op
+        return try requestHandler(request)
     }
 }
 
 @MainActor
 final class RequestExecutorTests: XCTestCase {
 
-    var executor: RequestExecutor!
-    var mockSession: URLSession!
+    private var executor: RequestExecutor!
+    private var mockTransport: MockRequestExecutorTransport!
+    private var mockHTTP3Transport: MockRequestExecutorTransport!
 
     override func setUp() {
         super.setUp()
-
-        // Configure mock URLSession
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [MockURLProtocol.self]
-        mockSession = URLSession(configuration: configuration)
-
-        executor = RequestExecutor()
-
-        // Reset mock state
-        MockURLProtocol.requestHandler = nil
-        MockURLProtocol.error = nil
+        mockTransport = MockRequestExecutorTransport()
+        mockHTTP3Transport = MockRequestExecutorTransport()
+        executor = RequestExecutor(transport: mockTransport, http3Transport: mockHTTP3Transport)
     }
 
     override func tearDown() {
         executor = nil
-        mockSession = nil
-        MockURLProtocol.requestHandler = nil
-        MockURLProtocol.error = nil
+        mockTransport = nil
+        mockHTTP3Transport = nil
         super.tearDown()
+    }
+
+    private func makeTransportResponse(
+        url: URL,
+        statusCode: Int,
+        headers: [String: String] = [:],
+        body: Data = Data(),
+        redirects: [RedirectInfo] = []
+    ) throws -> RequestExecutorTransportResponse {
+        RequestExecutorTransportResponse(
+            finalURL: url,
+            statusCode: statusCode,
+            statusMessage: HTTPURLResponse.localizedString(forStatusCode: statusCode),
+            protocolVersion: .http11,
+            responseHeaders: headers.map { TraceHTTPHeader(key: $0.key, value: $0.value) },
+            body: body,
+            redirects: redirects,
+            responseCookies: []
+        )
     }
 
     // MARK: - Initial State Tests
@@ -88,6 +76,20 @@ final class RequestExecutorTests: XCTestCase {
     func testInitialState() {
         XCTAssertFalse(executor.isLoading)
         XCTAssertNil(executor.lastResponse)
+    }
+
+    func testShouldFollowRedirectStatus_AllowsRedirectCodes() {
+        XCTAssertTrue(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.movedPermanently))
+        XCTAssertTrue(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.found))
+        XCTAssertTrue(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.seeOther))
+        XCTAssertTrue(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.temporaryRedirect))
+        XCTAssertTrue(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.permanentRedirect))
+    }
+
+    func testShouldFollowRedirectStatus_RejectsNonRedirectCodes() {
+        XCTAssertFalse(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.ok))
+        XCTAssertFalse(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.notModified))
+        XCTAssertFalse(AsyncHTTPClientRequestTransport.shouldFollowRedirectStatus(.useProxy))
     }
 
     // MARK: - RequestBuilder Tests
@@ -190,16 +192,13 @@ final class RequestExecutorTests: XCTestCase {
     }
 
     func testExecuteSuccessfulRequest() async throws {
-        // Setup mock response
-        MockURLProtocol.requestHandler = { request in
-            let response = HTTPURLResponse(
-                url: request.url!,
+        mockTransport.requestHandler = { request in
+            try self.makeTransportResponse(
+                url: request.url,
                 statusCode: 200,
-                httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": "application/json"]
-            )!
-            let data = "{\"success\": true}".data(using: .utf8)
-            return (response, data)
+                headers: ["Content-Type": "application/json"],
+                body: Data("{\"success\": true}".utf8)
+            )
         }
 
         let builder = RequestBuilder(
@@ -209,10 +208,7 @@ final class RequestExecutorTests: XCTestCase {
             body: nil
         )
 
-        // Create request executor with mock session
-        let mockExecutor = RequestExecutor(session: mockSession)
-
-        let response = try await mockExecutor.execute(builder)
+        let response = try await executor.execute(builder)
 
         XCTAssertEqual(response.statusCode, 200)
         let contentTypeHeader = response.responseHeaders.first { $0.key.lowercased() == "content-type" }
@@ -220,18 +216,44 @@ final class RequestExecutorTests: XCTestCase {
         XCTAssertNotNil(response.responseBody.getString())
     }
 
-    func testExecuteWithPostBody() async throws {
-        var receivedRequest: URLRequest?
+    func testExecuteStoresLargeManualResponseBodyAsFileForSharing() async throws {
+        let largeBody = Data(repeating: 0x5A, count: (2 * 1024 * 1024) + (128 * 1024))
 
-        MockURLProtocol.requestHandler = { request in
+        mockTransport.requestHandler = { request in
+            try self.makeTransportResponse(
+                url: request.url,
+                statusCode: 200,
+                headers: ["Content-Type": "application/octet-stream"],
+                body: largeBody
+            )
+        }
+
+        let builder = RequestBuilder(
+            url: "https://example.com/large.bin",
+            method: .get,
+            headers: [:],
+            body: nil
+        )
+
+        let response = try await executor.execute(builder)
+        defer { response.responseBody.deleteFile() }
+
+        XCTAssertTrue(response.responseBody.isFile)
+        XCTAssertFalse(response.responseBody.isTruncated)
+        XCTAssertEqual(response.responseBody.totalSize, largeBody.count)
+        XCTAssertEqual(response.responseBody.getData()?.count, largeBody.count)
+    }
+
+    func testExecuteWithPostBody() async throws {
+        var receivedRequest: RequestExecutorTransportRequest?
+
+        mockTransport.requestHandler = { request in
             receivedRequest = request
-            let response = HTTPURLResponse(
-                url: request.url!,
+            return try self.makeTransportResponse(
+                url: request.url,
                 statusCode: 201,
-                httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": "application/json"]
-            )!
-            return (response, nil)
+                headers: ["Content-Type": "application/json"]
+            )
         }
 
         let builder = RequestBuilder(
@@ -241,16 +263,80 @@ final class RequestExecutorTests: XCTestCase {
             body: "{\"name\": \"Test\"}"
         )
 
-        let mockExecutor = RequestExecutor(session: mockSession)
-        let response = try await mockExecutor.execute(builder)
+        let response = try await executor.execute(builder)
 
         XCTAssertEqual(response.statusCode, 201)
-        XCTAssertEqual(receivedRequest?.httpMethod, "POST")
-        XCTAssertTrue(receivedRequest?.httpBody != nil || receivedRequest?.httpBodyStream != nil)
+        XCTAssertEqual(receivedRequest?.methodRaw, "POST")
+        XCTAssertNotNil(receivedRequest?.body)
+    }
+
+    func testExecuteRoutesHTTP3HintToHTTP3Transport() async throws {
+        mockTransport.requestHandler = { _ in
+            XCTFail("HTTP/1.1+ transport should not be used for HTTP/3 requests")
+            throw URLError(.badServerResponse)
+        }
+
+        mockHTTP3Transport.requestHandler = { request in
+            XCTAssertEqual(request.requestedProtocolVersion, .http3)
+            XCTAssertFalse(request.enforceRequestedProtocolVersion)
+            return RequestExecutorTransportResponse(
+                finalURL: request.url,
+                statusCode: 200,
+                statusMessage: "OK",
+                protocolVersion: .http3,
+                responseHeaders: [],
+                body: Data(),
+                redirects: [],
+                responseCookies: []
+            )
+        }
+
+        var builder = RequestBuilder(
+            url: "https://api.example.com/h3",
+            method: .get,
+            headers: [:],
+            body: nil
+        )
+        builder.protocolVersion = .http3
+
+        _ = try await executor.execute(builder)
+
+        XCTAssertTrue(mockTransport.receivedRequests.isEmpty)
+        XCTAssertEqual(mockHTTP3Transport.receivedRequests.count, 1)
+    }
+
+    func testExecutePropagatesHTTP3OnlyConstraint() async throws {
+        mockHTTP3Transport.requestHandler = { request in
+            XCTAssertEqual(request.requestedProtocolVersion, .http3)
+            XCTAssertTrue(request.enforceRequestedProtocolVersion)
+            return RequestExecutorTransportResponse(
+                finalURL: request.url,
+                statusCode: 200,
+                statusMessage: "OK",
+                protocolVersion: .http3,
+                responseHeaders: [],
+                body: Data(),
+                redirects: [],
+                responseCookies: []
+            )
+        }
+
+        var builder = RequestBuilder(
+            url: "https://api.example.com/h3-only",
+            method: .get,
+            headers: [:],
+            body: nil
+        )
+        builder.protocolVersion = .http3
+        builder.enforceProtocolVersion = true
+
+        _ = try await executor.execute(builder)
+
+        XCTAssertEqual(mockHTTP3Transport.receivedRequests.count, 1)
     }
 
     func testExecuteHandlesNetworkError() async {
-        MockURLProtocol.error = URLError(.notConnectedToInternet)
+        mockTransport.error = URLError(.notConnectedToInternet)
 
         let builder = RequestBuilder(
             url: "https://api.example.com/test",
@@ -259,10 +345,8 @@ final class RequestExecutorTests: XCTestCase {
             body: nil
         )
 
-        let mockExecutor = RequestExecutor(session: mockSession)
-
         do {
-            _ = try await mockExecutor.execute(builder)
+            _ = try await executor.execute(builder)
             XCTFail("Should have thrown an error")
         } catch {
             // Expected error
@@ -272,19 +356,13 @@ final class RequestExecutorTests: XCTestCase {
 
     func testExecuteRetriesOnceForLocalNetworkPermissionLikeError() async throws {
         var attempts = 0
-        MockURLProtocol.requestHandler = { request in
+
+        mockTransport.requestHandler = { request in
             attempts += 1
             if attempts == 1 {
                 throw URLError(.notConnectedToInternet)
             }
-
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: 200,
-                httpVersion: "HTTP/1.1",
-                headerFields: [:]
-            )!
-            return (response, Data())
+            return try self.makeTransportResponse(url: request.url, statusCode: 200, body: Data())
         }
 
         let builder = RequestBuilder(
@@ -294,8 +372,7 @@ final class RequestExecutorTests: XCTestCase {
             body: nil
         )
 
-        let mockExecutor = RequestExecutor(session: mockSession)
-        let response = try await mockExecutor.execute(builder)
+        let response = try await executor.execute(builder)
 
         XCTAssertEqual(response.statusCode, 200)
         XCTAssertEqual(attempts, 2)
@@ -303,8 +380,9 @@ final class RequestExecutorTests: XCTestCase {
 
     func testExecuteDoesNotRetryForPublicHostOfflineError() async {
         var attempts = 0
-        MockURLProtocol.requestHandler = { _ in
+        mockTransport.requestHandler = { request in
             attempts += 1
+            _ = request
             throw URLError(.notConnectedToInternet)
         }
 
@@ -315,10 +393,8 @@ final class RequestExecutorTests: XCTestCase {
             body: nil
         )
 
-        let mockExecutor = RequestExecutor(session: mockSession)
-
         do {
-            _ = try await mockExecutor.execute(builder)
+            _ = try await executor.execute(builder)
             XCTFail("Should have thrown an error")
         } catch {
             XCTAssertEqual(attempts, 1)
@@ -327,8 +403,9 @@ final class RequestExecutorTests: XCTestCase {
 
     func testExecuteDoesNotRetryForPublicHostPermissionDeniedLikeError() async {
         var attempts = 0
-        MockURLProtocol.requestHandler = { _ in
+        mockTransport.requestHandler = { request in
             attempts += 1
+            _ = request
             throw NSError(
                 domain: NSPOSIXErrorDomain,
                 code: 13,
@@ -343,10 +420,8 @@ final class RequestExecutorTests: XCTestCase {
             body: nil
         )
 
-        let mockExecutor = RequestExecutor(session: mockSession)
-
         do {
-            _ = try await mockExecutor.execute(builder)
+            _ = try await executor.execute(builder)
             XCTFail("Should have thrown an error")
         } catch {
             XCTAssertEqual(attempts, 1)
@@ -357,8 +432,9 @@ final class RequestExecutorTests: XCTestCase {
         var attempts = 0
         let firstAttemptExpectation = expectation(description: "First attempt executed")
 
-        MockURLProtocol.requestHandler = { _ in
+        mockTransport.requestHandler = { request in
             attempts += 1
+            _ = request
             if attempts == 1 {
                 firstAttemptExpectation.fulfill()
             }
@@ -372,9 +448,8 @@ final class RequestExecutorTests: XCTestCase {
             body: nil
         )
 
-        let mockExecutor = RequestExecutor(session: mockSession)
         let task = Task {
-            try await mockExecutor.execute(builder)
+            try await executor.execute(builder)
         }
 
         await fulfillment(of: [firstAttemptExpectation], timeout: 1.0)
@@ -400,15 +475,12 @@ final class RequestExecutorTests: XCTestCase {
     }
 
     func testExecuteHandles404() async throws {
-        MockURLProtocol.requestHandler = { request in
-            let response = HTTPURLResponse(
-                url: request.url!,
+        mockTransport.requestHandler = { request in
+            try self.makeTransportResponse(
+                url: request.url,
                 statusCode: 404,
-                httpVersion: "HTTP/1.1",
-                headerFields: [:]
-            )!
-            let data = "Not Found".data(using: .utf8)
-            return (response, data)
+                body: Data("Not Found".utf8)
+            )
         }
 
         let builder = RequestBuilder(
@@ -418,8 +490,7 @@ final class RequestExecutorTests: XCTestCase {
             body: nil
         )
 
-        let mockExecutor = RequestExecutor(session: mockSession)
-        let response = try await mockExecutor.execute(builder)
+        let response = try await executor.execute(builder)
 
         XCTAssertEqual(response.statusCode, 404)
     }

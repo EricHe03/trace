@@ -13,7 +13,9 @@ import TraceUI
 struct ConnectionSettingsView: View {
     @State private var connectionRecords: [PacketFlowRecord] = []
     @StateObject private var udpFlowsViewModel = UDPFlowsViewModel()
+    @State private var requestCount = 0
 
+    @State private var pendingAction: ConnectionPageAction?
     @State private var toastMessage: String?
 
     var body: some View {
@@ -34,8 +36,86 @@ struct ConnectionSettingsView: View {
         }
         .navigationTitle("Connections")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Menu {
+                    Button {
+                        Task { await loadSettings() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+
+                    Divider()
+
+                    Button(role: .destructive) {
+                        pendingAction = .clearConnections
+                    } label: {
+                        Label("Clear Connections", systemImage: "trash")
+                    }
+                    .disabled(connectionRecords.isEmpty)
+
+                    Button(role: .destructive) {
+                        pendingAction = .clearUDPFlows
+                    } label: {
+                        Label("Clear UDP Flows", systemImage: "trash")
+                    }
+                    .disabled(udpFlowsViewModel.flows.isEmpty)
+
+                    Button(role: .destructive) {
+                        pendingAction = .deleteAllRequests
+                    } label: {
+                        Label("Delete All Requests", systemImage: "trash")
+                    }
+                    .disabled(requestCount == 0)
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
+                }
+                .accessibilityLabel("More options")
+                .accessibilityHint("Double tap to refresh or clear captured connection data")
+            }
+        }
+        .alert(item: $pendingAction) { action in
+            Alert(
+                title: Text(action.title),
+                message: Text(confirmationMessage(for: action)),
+                primaryButton: .destructive(Text(action.confirmButtonTitle)) {
+                    perform(action)
+                },
+                secondaryButton: .cancel()
+            )
+        }
         .task { await loadSettings() }
         .toast(message: $toastMessage)
+    }
+
+    private enum ConnectionPageAction: String, Identifiable {
+        case clearConnections
+        case clearUDPFlows
+        case deleteAllRequests
+
+        var id: String {
+            rawValue
+        }
+
+        var title: String {
+            switch self {
+            case .clearConnections:
+                "Clear Connections"
+            case .clearUDPFlows:
+                "Clear UDP Flows"
+            case .deleteAllRequests:
+                "Delete All Requests"
+            }
+        }
+
+        var confirmButtonTitle: String {
+            switch self {
+            case .clearConnections, .clearUDPFlows:
+                "Clear"
+            case .deleteAllRequests:
+                "Delete"
+            }
+        }
     }
 
     @ViewBuilder
@@ -75,8 +155,54 @@ struct ConnectionSettingsView: View {
             toastMessage = "Failed to load connections: \(error.localizedDescription)"
         }
 
+        do {
+            requestCount = try AppGroupStorage.shared.loadAllRequests().count
+        } catch {
+            toastMessage = "Failed to load requests: \(error.localizedDescription)"
+        }
+
         udpFlowsViewModel.startObserving()
         await udpFlowsViewModel.loadFlows()
+    }
+
+    private func confirmationMessage(for action: ConnectionPageAction) -> String {
+        switch action {
+        case .clearConnections:
+            "Remove all \(connectionRecords.count) connection summaries? This action cannot be undone."
+        case .clearUDPFlows:
+            "Remove all \(udpFlowsViewModel.flows.count) UDP flows? This action cannot be undone."
+        case .deleteAllRequests:
+            "Delete all \(requestCount) captured requests? This action cannot be undone."
+        }
+    }
+
+    private func perform(_ action: ConnectionPageAction) {
+        switch action {
+        case .clearConnections:
+            do {
+                try AppGroupStorage.shared.clearAllPacketFlowRecords()
+                connectionRecords.removeAll()
+                toastMessage = "Connection summaries cleared"
+            } catch {
+                toastMessage = "Failed to clear connections: \(error.localizedDescription)"
+            }
+        case .clearUDPFlows:
+            udpFlowsViewModel.lastError = nil
+            udpFlowsViewModel.clearAll()
+            if let error = udpFlowsViewModel.lastError {
+                toastMessage = "Failed to clear UDP flows: \(error)"
+            } else {
+                toastMessage = "UDP flows cleared"
+            }
+        case .deleteAllRequests:
+            do {
+                try AppGroupStorage.shared.clearAllRequests()
+                requestCount = 0
+                toastMessage = "All requests deleted"
+            } catch {
+                toastMessage = "Failed to delete requests: \(error.localizedDescription)"
+            }
+        }
     }
 }
 

@@ -493,7 +493,15 @@ actor DataCleanupManager {
     }
 
     private func deleteBodyFile(_ storage: BodyStorage) -> Int64 {
-        guard case let .file(url, _, _) = storage else { return 0 }
+        let url: URL
+        switch storage {
+        case let .file(fileURL, _, _):
+            url = fileURL
+        case let .truncatedFile(fileURL, _, _, _):
+            url = fileURL
+        default:
+            return 0
+        }
         let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         try? FileManager.default.removeItem(at: url)
         return Int64(fileSize)

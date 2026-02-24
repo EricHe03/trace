@@ -19,7 +19,7 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public var statusCode: Int?
     public var statusMessage: String?
     public let timestamp: Date
-    public let duration: TimeInterval
+    public var duration: TimeInterval
     public var requestHeaders: [TraceHTTPHeader]
     public var responseHeaders: [TraceHTTPHeader]
     public var requestBody: BodyStorage
@@ -673,7 +673,7 @@ public struct TLSAlertMessage: Codable, Equatable, Identifiable {
 }
 
 /// HTTP Protocol Version
-public enum HTTPProtocolVersion: String, Codable {
+public enum HTTPProtocolVersion: String, Codable, Sendable {
     case http10 = "HTTP/1.0"
     case http11 = "HTTP/1.1"
     case http2 = "HTTP/2"

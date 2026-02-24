@@ -69,6 +69,7 @@ final class PacketFlowRecorder {
         var lastFlush: Date
         var lastSeen: Date
         var didParseTLS: Bool
+        var tlsProbeBuffer: Data
         var didParseHTTP: Bool
         var endpointTrackers: [EndpointKey: EndpointTracker]
         var windowScaleByEndpoint: [EndpointKey: UInt8]
@@ -77,6 +78,7 @@ final class PacketFlowRecorder {
     }
 
     private let queue = DispatchQueue(label: "com.trace.vpn.packet_flow_recorder", qos: .utility)
+    private let queueKey = DispatchSpecificKey<Void>()
     private var flows: [ConnectionKey: FlowState] = [:]
     private let idleTimeout: TimeInterval
     private let flushInterval: TimeInterval
@@ -87,6 +89,7 @@ final class PacketFlowRecorder {
     private let maxRTTSamples = 120
     private let maxThroughputSamples = 120
     private let maxSequenceSamples = 240
+    private let maxTLSProbeBytes = 32 * 1024
 
     init(
         idleTimeout: TimeInterval = 60,
@@ -96,6 +99,17 @@ final class PacketFlowRecorder {
         self.idleTimeout = idleTimeout
         self.flushInterval = flushInterval
         self.maxFlows = max(1, maxFlows)
+        queue.setSpecific(key: queueKey, value: ())
+    }
+
+    func shutdown() {
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            shutdownOnQueue()
+            return
+        }
+        queue.sync { [weak self] in
+            self?.shutdownOnQueue()
+        }
     }
 
     func process(ipPacket: IPPacket) {
@@ -115,7 +129,6 @@ final class PacketFlowRecorder {
     }
 
     func processReassembled(flow: FlowKey, data: Data, isFinal: Bool) {
-        guard !data.isEmpty else { return }
         queue.async { [weak self] in
             guard let self else { return }
             let key = ConnectionKey(
@@ -127,26 +140,38 @@ final class PacketFlowRecorder {
             )
             guard var state = self.flows[key] else { return }
 
-            if !state.didParseTLS, self.looksLikeTLSClientHello(data) {
-                let sni = TLSHandler.extractSNI(from: data)
-                let alpn = TLSHandler.extractALPN(from: data)
-                if sni != nil || alpn != nil {
-                    state.record.tlsSNI = sni ?? state.record.tlsSNI
-                    state.record.alpn = alpn ?? state.record.alpn
-                    state.record.protocolHints = self.mergeHint(.tls, into: state.record.protocolHints)
-                    state.didParseTLS = true
+            if !data.isEmpty {
+                if !state.didParseTLS {
+                    self.appendTLSProbeData(data, to: &state)
+                    if let clientHello = self.tlsClientHelloCandidate(in: state.tlsProbeBuffer) {
+                        let sni = TLSHandler.extractSNI(from: clientHello)
+                        let alpn = TLSHandler.extractALPN(from: clientHello)
+                        if sni != nil || alpn != nil {
+                            state.record.tlsSNI = sni ?? state.record.tlsSNI
+                            state.record.alpn = alpn ?? state.record.alpn
+                            state.record.protocolHints = self.mergeHint(.tls, into: state.record.protocolHints)
+                            state.didParseTLS = true
+                            state.tlsProbeBuffer.removeAll(keepingCapacity: false)
+                            self.flushIfNeeded(state: &state, force: true)
+                        } else if state.tlsProbeBuffer.count >= self.maxTLSProbeBytes {
+                            state.didParseTLS = true
+                            state.tlsProbeBuffer.removeAll(keepingCapacity: false)
+                        }
+                    } else if state.tlsProbeBuffer.count >= self.maxTLSProbeBytes {
+                        state.didParseTLS = true
+                        state.tlsProbeBuffer.removeAll(keepingCapacity: false)
+                    }
+                }
+
+                if !state.didParseHTTP, self.looksLikeHTTP(data) {
+                    state.record.protocolHints = self.mergeHint(.http, into: state.record.protocolHints)
+                    state.didParseHTTP = true
                     self.flushIfNeeded(state: &state, force: true)
                 }
             }
 
-            if !state.didParseHTTP, self.looksLikeHTTP(data) {
-                state.record.protocolHints = self.mergeHint(.http, into: state.record.protocolHints)
-                state.didParseHTTP = true
-                self.flushIfNeeded(state: &state, force: true)
-            }
-
             if isFinal {
-                state.record.isClosed = true
+                self.markStateClosedForFinalization(state: &state)
                 self.flush(state: &state)
                 self.flows.removeValue(forKey: key)
                 return
@@ -257,10 +282,13 @@ final class PacketFlowRecorder {
     ) -> FlowState {
         if flows.count >= maxFlows {
             evictExpired(now: Date())
+            if flows.count >= maxFlows {
+                evictOldestFlow()
+            }
         }
 
         let source = EndpointKey(ip: ipPacket.source, port: sourcePort)
-        let protocolHints: [FlowProtocolHint] = destinationPort == 443 || sourcePort == 443 ? [.tls] : []
+        let protocolHints: [FlowProtocolHint] = transport == .tcp && (destinationPort == 443 || sourcePort == 443) ? [.tls] : []
 
         let record = PacketFlowRecord(
             sourceIP: ipPacket.source.description,
@@ -280,6 +308,7 @@ final class PacketFlowRecorder {
             lastFlush: Date(),
             lastSeen: Date(),
             didParseTLS: false,
+            tlsProbeBuffer: Data(),
             didParseHTTP: false,
             endpointTrackers: [:],
             windowScaleByEndpoint: [:],
@@ -306,6 +335,16 @@ final class PacketFlowRecorder {
         }
     }
 
+    private func shutdownOnQueue() {
+        guard !flows.isEmpty else { return }
+        for key in Array(flows.keys) {
+            guard var state = flows[key] else { continue }
+            markStateClosedForFinalization(state: &state)
+            flush(state: &state)
+        }
+        flows.removeAll(keepingCapacity: false)
+    }
+
     private func evictExpired(now: Date) {
         guard !flows.isEmpty else { return }
         let cutoff = now.addingTimeInterval(-idleTimeout)
@@ -315,16 +354,19 @@ final class PacketFlowRecorder {
         }
         for key in expiredKeys {
             if var state = flows[key] {
-                state.record.isClosed = true
-                if state.record.connectionState == .unknown || state.record.connectionState == .connecting {
-                    state.record.connectionState = .halfOpen
-                } else if state.record.connectionState == .established {
-                    state.record.connectionState = .timedOut
-                }
+                markStateClosedForTimeout(state: &state)
                 flush(state: &state)
             }
             flows.removeValue(forKey: key)
         }
+    }
+
+    private func evictOldestFlow() {
+        guard let oldest = flows.min(by: { $0.value.lastSeen < $1.value.lastSeen }) else { return }
+        guard var state = flows[oldest.key] else { return }
+        markStateClosedForTimeout(state: &state)
+        flush(state: &state)
+        flows.removeValue(forKey: oldest.key)
     }
 
     private func mergeHint(_ hint: FlowProtocolHint, into list: [FlowProtocolHint]) -> [FlowProtocolHint] {
@@ -332,6 +374,52 @@ final class PacketFlowRecorder {
             return list
         }
         return list + [hint]
+    }
+
+    private func markStateClosedForFinalization(state: inout FlowState) {
+        state.record.isClosed = true
+        guard state.record.transport == .tcp else { return }
+        if state.record.connectionState == .unknown || state.record.connectionState == .connecting {
+            state.record.connectionState = .halfOpen
+        } else if state.record.connectionState == .established {
+            state.record.connectionState = .closed
+        }
+    }
+
+    private func markStateClosedForTimeout(state: inout FlowState) {
+        state.record.isClosed = true
+        guard state.record.transport == .tcp else { return }
+        if state.record.connectionState == .unknown || state.record.connectionState == .connecting {
+            state.record.connectionState = .halfOpen
+        } else if state.record.connectionState == .established {
+            state.record.connectionState = .timedOut
+        }
+    }
+
+    private func appendTLSProbeData(_ data: Data, to state: inout FlowState) {
+        guard !data.isEmpty else { return }
+        let remaining = max(0, maxTLSProbeBytes - state.tlsProbeBuffer.count)
+        guard remaining > 0 else { return }
+        state.tlsProbeBuffer.append(data.prefix(remaining))
+    }
+
+    private func tlsClientHelloCandidate(in data: Data) -> Data? {
+        guard data.count >= 6 else { return nil }
+        if looksLikeTLSClientHello(data) {
+            return data
+        }
+
+        let maxOffset = data.count - 6
+        if maxOffset <= 0 {
+            return nil
+        }
+        for offset in 1 ... maxOffset {
+            let candidate = Data(data.dropFirst(offset))
+            if looksLikeTLSClientHello(candidate) {
+                return candidate
+            }
+        }
+        return nil
     }
 
     private func looksLikeTLSClientHello(_ data: Data) -> Bool {
@@ -730,5 +818,12 @@ final class PacketFlowRecorder {
             sackPermitted: options.sackPermitted,
             timestampsPermitted: options.timestamps != nil
         )
+    }
+
+    func activeFlowCountForTesting() -> Int {
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            return flows.count
+        }
+        return queue.sync { flows.count }
     }
 }
