@@ -132,7 +132,7 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
         pruneQUICSamplesLocked(now: now)
 
         let tcpAttempts = tcpClientHandshakeOutcomes.count
-        let tcpFailures = tcpClientHandshakeOutcomes.filter { !$0 }.count
+        let tcpFailures = tcpClientHandshakeOutcomes.count(where: { !$0 })
         let tcpFailureRate = tcpAttempts > 0 ? Double(tcpFailures) / Double(tcpAttempts) : 0
 
         let quicAttempts = quicSamples.count
@@ -169,7 +169,7 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
         }
 
         let tcpAttempts = tcpClientHandshakeOutcomes.count
-        let tcpFailures = tcpClientHandshakeOutcomes.filter { !$0 }.count
+        let tcpFailures = tcpClientHandshakeOutcomes.count(where: { !$0 })
         let tcpFailureRate = tcpAttempts > 0 ? Double(tcpFailures) / Double(tcpAttempts) : 0
 
         let quicAttempts = quicSamples.count

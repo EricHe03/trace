@@ -244,7 +244,7 @@ public final class VPNManager: ObservableObject, VPNManaging {
     private func desiredRoutingDefaults(for mode: CaptureMode) -> ProtocolRoutingDefaults {
         switch mode {
         case .proxyOnly:
-            return ProtocolRoutingDefaults(
+            ProtocolRoutingDefaults(
                 includeAllNetworks: false,
                 excludeLocalNetworks: false,
                 excludeCellularServices: false,
@@ -254,7 +254,7 @@ public final class VPNManager: ObservableObject, VPNManaging {
         case .fullTunnel, .fullTunnelDualMITM:
             // Full-tunnel routing is controlled by NEPacketTunnelNetworkSettings default routes.
             // Keep protocol-level includeAllNetworks disabled to avoid cellular path denials and stale preference side effects.
-            return ProtocolRoutingDefaults(
+            ProtocolRoutingDefaults(
                 includeAllNetworks: false,
                 excludeLocalNetworks: false,
                 excludeCellularServices: false,

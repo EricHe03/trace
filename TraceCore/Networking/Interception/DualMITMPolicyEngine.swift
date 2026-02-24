@@ -156,15 +156,14 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
             destination: HostPort(host: destinationHost, port: Int(destinationPort))
         )
 
-        let decision: DualMITMTCPRouteDecision
-        switch flowPlan.action {
+        let decision: DualMITMTCPRouteDecision = switch flowPlan.action {
         case .mitm:
-            decision = .mitm
+            .mitm
         case let .direct(reason):
-            decision = .direct(reason: reason)
+            .direct(reason: reason)
         case let .passThrough(reason), let .block(reason):
             // Local SOCKS only supports MITM vs DIRECT routing.
-            decision = .direct(reason: reason)
+            .direct(reason: reason)
         }
 
         return DualMITMTCPFlowStartPlan(
@@ -191,14 +190,13 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
             metadata: DualMITMFlowMetadata()
         )
 
-        let decision: DualMITMProxyRouteDecision
-        switch flowPlan.action {
+        let decision: DualMITMProxyRouteDecision = switch flowPlan.action {
         case .mitm:
-            decision = .mitm
+            .mitm
         case let .passThrough(reason), let .direct(reason):
-            decision = .passThrough(reason: reason)
+            .passThrough(reason: reason)
         case let .block(reason):
-            decision = .block(reason: reason)
+            .block(reason: reason)
         }
 
         return DualMITMProxyFlowStartPlan(
@@ -230,16 +228,15 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
             .internalError(code: .legacyUnknownToken, context: failureReason)
         let failurePlan = handleFailure(profile: startPlan.profile, failure: failure)
 
-        let action: DualMITMProxyFailureAction
-        switch failurePlan.action {
+        let action: DualMITMProxyFailureAction = switch failurePlan.action {
         case let .failOpenPassThrough(reason), let .failOpenDirect(reason):
-            action = .failOpenPassThrough(reason: reason)
+            .failOpenPassThrough(reason: reason)
         case let .failClosedBlock(reason):
-            action = .failClosedBlock(reason: reason)
+            .failClosedBlock(reason: reason)
         case let .retry(reason):
-            action = .failOpenPassThrough(reason: reason)
+            .failOpenPassThrough(reason: reason)
         case .noop:
-            action = .failOpenPassThrough(reason: Self.sanitizedFailureReasonToken(failureReason))
+            .failOpenPassThrough(reason: Self.sanitizedFailureReasonToken(failureReason))
         }
 
         return DualMITMProxyFailurePlan(
@@ -264,14 +261,13 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
             metadata: DualMITMFlowMetadata()
         )
 
-        let decision: DualMITMQUICRouteDecision
-        switch flowPlan.action {
+        let decision: DualMITMQUICRouteDecision = switch flowPlan.action {
         case .mitm:
-            decision = .mitm
+            .mitm
         case let .passThrough(reason), let .direct(reason):
-            decision = .passThrough(reason: reason)
+            .passThrough(reason: reason)
         case let .block(reason):
-            decision = .block(reason: reason)
+            .block(reason: reason)
         }
 
         return DualMITMQUICFlowStartPlan(
@@ -301,14 +297,13 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
             .internalError(code: .legacyUnknownToken, context: failureReason)
         let failurePlan = handleFailure(profile: startPlan.profile, failure: failure)
 
-        let action: DualMITMQUICFailureAction
-        switch failurePlan.action {
+        let action: DualMITMQUICFailureAction = switch failurePlan.action {
         case let .failClosedBlock(reason):
-            action = .block(reason: reason)
+            .block(reason: reason)
         case let .failOpenPassThrough(reason), let .failOpenDirect(reason), let .retry(reason):
-            action = .passThrough(reason: reason)
+            .passThrough(reason: reason)
         case .noop:
-            action = .passThrough(reason: Self.sanitizedFailureReasonToken(failureReason))
+            .passThrough(reason: Self.sanitizedFailureReasonToken(failureReason))
         }
 
         return DualMITMQUICFailurePlan(
@@ -503,11 +498,11 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         case .clientRejectedMITMOrPinning:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .certificatePinning
-            bypassTTL = isQUIC ? quicTTL : 86_400
+            bypassTTL = isQUIC ? quicTTL : 86400
         case .sniInvalidOrMissing:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .sniInvalid
-            bypassTTL = isQUIC ? quicTTL : 3_600
+            bypassTTL = isQUIC ? quicTTL : 3600
         case .connectionClosedEarly:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .transientUpstreamFailure
@@ -526,14 +521,14 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         case .upstreamTLSTrustFailed, .upstreamTLSHostnameMismatch:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .upstreamTLSIssue
-            bypassTTL = isQUIC ? quicTTL : 3_600
+            bypassTTL = isQUIC ? quicTTL : 3600
         case .mitmSetupFailed:
             action = .failOpenPassThrough(reason: reasonToken)
             recordBreakerFailure = true
         case .nonHTTPProtocol, .protocolMismatch:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .protocolMismatch
-            bypassTTL = isQUIC ? quicTTL : 3_600
+            bypassTTL = isQUIC ? quicTTL : 3600
         case .quicHandshakeFailed, .quicAuthorityRetryFailed, .quicClosedBeforeHTTP3, .quicNoProgress:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .mitmSetupInstability
@@ -625,7 +620,7 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         eventSink.emit(
             InterceptionEvent(
                 type: .failoverDecision,
-                timestampMs: Int64(eventTime.timeIntervalSince1970 * 1_000),
+                timestampMs: Int64(eventTime.timeIntervalSince1970 * 1000),
                 sessionID: "unknown",
                 tunnelGeneration: 0,
                 flowID: profile.flowID,
@@ -695,11 +690,11 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
     ) -> Bool {
         switch protocolName {
         case .tcpTransparent:
-            return snapshot.featureFlags.enforceTCPRouting
+            snapshot.featureFlags.enforceTCPRouting
         case .httpConnect:
-            return snapshot.featureFlags.enforceProxyRouting
+            snapshot.featureFlags.enforceProxyRouting
         case .quic:
-            return snapshot.featureFlags.enforceQUICRouting
+            snapshot.featureFlags.enforceQUICRouting
         }
     }
 

@@ -170,13 +170,12 @@ public enum HTTP3Bridge {
     private static func upsertHeader(name: String, value: String, into headers: inout [String: String]) {
         if let existingKey = headers.keys.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
             let existingValue = headers[existingKey] ?? ""
-            let mergedValue: String
-            if name.caseInsensitiveCompare("Cookie") == .orderedSame {
-                mergedValue = existingValue.isEmpty ? value : "\(existingValue); \(value)"
+            let mergedValue: String = if name.caseInsensitiveCompare("Cookie") == .orderedSame {
+                existingValue.isEmpty ? value : "\(existingValue); \(value)"
             } else if name.caseInsensitiveCompare("Set-Cookie") == .orderedSame {
-                mergedValue = value
+                value
             } else {
-                mergedValue = existingValue.isEmpty ? value : "\(existingValue), \(value)"
+                existingValue.isEmpty ? value : "\(existingValue), \(value)"
             }
             headers[existingKey] = mergedValue
             return

@@ -275,8 +275,8 @@ final class PacketFlowLoop: @unchecked Sendable {
     private static let quicAuthorityHintMinTTL: TimeInterval = 30
     private static let quicAuthorityHintMaxTTL: TimeInterval = 900
     private static let quicObservedFlowMaxEntries: Int = 8192
-    private static let maxSynthesizedUDPPayloadIPv4 = 65_507
-    private static let maxSynthesizedUDPPayloadIPv6 = 65_527
+    private static let maxSynthesizedUDPPayloadIPv4 = 65507
+    private static let maxSynthesizedUDPPayloadIPv6 = 65527
 
     static func decideUDPForwarding(
         udpForwarderAvailable: Bool,
@@ -436,9 +436,9 @@ final class PacketFlowLoop: @unchecked Sendable {
         QUICFlowRouter(
             interceptor: initialQUICInterceptor,
             hostFailOpenBackoff: TimeInterval(max(180, quicHostFailOpenSeconds)),
-            noProgressGracePeriod: TimeInterval(quicNoProgressGraceMs) / 1_000,
-            noProgressIdleTimeout: TimeInterval(quicNoProgressIdleMs) / 1_000,
-            noProgressAbsoluteTimeout: TimeInterval(quicNoProgressAbsoluteMs) / 1_000,
+            noProgressGracePeriod: TimeInterval(quicNoProgressGraceMs) / 1000,
+            noProgressIdleTimeout: TimeInterval(quicNoProgressIdleMs) / 1000,
+            noProgressAbsoluteTimeout: TimeInterval(quicNoProgressAbsoluteMs) / 1000,
             noProgressMinimumClientDatagrams: quicNoProgressMinClientDatagrams,
             maxAuthorityRetryAttempts: quicAuthorityRetryAttempts,
             certificateMaterialCacheTTL: TimeInterval(quicCertMaterialCacheTTLSeconds),
@@ -1002,7 +1002,7 @@ final class PacketFlowLoop: @unchecked Sendable {
             lhs.value.expiresAt < rhs.value.expiresAt
         }
         let removeCount = quicAuthorityHintsByIP.count - Self.quicAuthorityHintMaxEntries
-        for index in 0..<removeCount {
+        for index in 0 ..< removeCount {
             quicAuthorityHintsByIP.removeValue(forKey: sorted[index].key)
         }
     }

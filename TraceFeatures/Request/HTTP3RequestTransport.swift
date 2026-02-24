@@ -162,7 +162,7 @@ private extension HTTP3RequestTransport {
 
         let convertToGet = if statusCode == 303, transformedMethod != "HEAD" {
             true
-        } else if (statusCode == 301 || statusCode == 302), transformedMethod == "POST" {
+        } else if statusCode == 301 || statusCode == 302, transformedMethod == "POST" {
             true
         } else {
             false

@@ -201,74 +201,74 @@ public enum LegacyReasonCodec {
     public static func encode(_ failure: InterceptionFailure) -> String {
         switch failure {
         case .localProxyUnreachable:
-            return "local_proxy_unreachable"
+            "local_proxy_unreachable"
         case .transparentMetadataInvalid:
-            return "transparent_metadata_invalid"
+            "transparent_metadata_invalid"
         case .resourceExhausted:
-            return "resource_exhausted"
+            "resource_exhausted"
         case .clientRejectedMITMOrPinning:
-            return "client_rejected_mitm_or_pinning"
+            "client_rejected_mitm_or_pinning"
         case .sniInvalidOrMissing:
-            return "sni_invalid_or_missing"
+            "sni_invalid_or_missing"
         case .connectionClosedEarly:
-            return "connection_closed_early"
+            "connection_closed_early"
         case .upstreamTimeout:
-            return "upstream_timeout"
+            "upstream_timeout"
         case .upstreamConnectionClosed:
-            return "upstream_connection_closed"
+            "upstream_connection_closed"
         case .upstreamTLSTrustFailed:
-            return "tls_upstream_trust_failed"
+            "tls_upstream_trust_failed"
         case .upstreamTLSHostnameMismatch:
-            return "tls_upstream_hostname_mismatch"
+            "tls_upstream_hostname_mismatch"
         case .mitmSetupFailed:
-            return "mitm_setup_failed"
+            "mitm_setup_failed"
         case .nonHTTPProtocol:
-            return "mitm_non_http_protocol"
+            "mitm_non_http_protocol"
         case .protocolMismatch:
-            return "protocol_mismatch"
+            "protocol_mismatch"
         case .quicHandshakeFailed:
-            return "quic_handshake_failed"
+            "quic_handshake_failed"
         case .quicCertificatePinning:
-            return "quic_certificate_pinning"
+            "quic_certificate_pinning"
         case .quicAuthorityRetryFailed:
-            return "quic_authority_retry_failed"
+            "quic_authority_retry_failed"
         case .quicClosedBeforeHTTP3:
-            return "quic_closed_before_http3"
+            "quic_closed_before_http3"
         case .quicNoProgress:
-            return "quic_no_progress_fail_open"
+            "quic_no_progress_fail_open"
         case .internalError:
-            return "internal_error"
+            "internal_error"
         }
     }
 
     public static func encode(_ bypassReason: BypassReason) -> String {
         switch bypassReason {
         case .notAllowlisted:
-            return "not_allowlisted"
+            "not_allowlisted"
         case .mitmDisabled:
-            return "mitm_disabled"
+            "mitm_disabled"
         case .quicModePassThrough:
-            return "quic_mode_pass_through"
+            "quic_mode_pass_through"
         case .quicModeBlock:
-            return "quic_mode_block"
+            "quic_mode_block"
         case .certificatePinning:
-            return "certificate_pinning"
+            "certificate_pinning"
         case .clientRejected:
-            return "client_rejected"
+            "client_rejected"
         case .protocolMismatch:
-            return "protocol_mismatch"
+            "protocol_mismatch"
         case .sniInvalid:
-            return "sni_invalid"
+            "sni_invalid"
         case .upstreamTLSIssue:
-            return "upstream_tls_issue"
+            "upstream_tls_issue"
         case .transientUpstreamFailure:
-            return "transient_upstream_failure"
+            "transient_upstream_failure"
         case .mitmSetupInstability:
-            return "mitm_setup_instability"
+            "mitm_setup_instability"
         case .internalError:
-            return "internal_error"
+            "internal_error"
         case let .legacyToken(token):
-            return normalizedToken(token)
+            normalizedToken(token)
         }
     }
 

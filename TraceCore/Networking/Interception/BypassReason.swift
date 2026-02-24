@@ -29,7 +29,7 @@ public enum BypassReason: Sendable, Equatable {
     case mitmSetupInstability
     case internalError
 
-    // One-release compatibility
+    /// One-release compatibility
     case legacyToken(String)
 }
 
@@ -117,7 +117,7 @@ extension BypassReason: Codable {
         case .internalError:
             self = .internalError
         case .legacyToken:
-            self = .legacyToken(try container.decodeIfPresent(String.self, forKey: .token) ?? "")
+            self = try .legacyToken(container.decodeIfPresent(String.self, forKey: .token) ?? "")
         }
     }
 }

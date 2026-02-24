@@ -194,9 +194,9 @@ public enum TransparentProxyMetadata {
     ) -> DecodeResult {
         switch version {
         case .v1:
-            return decodeV1Hint(from: buffer)
+            decodeV1Hint(from: buffer)
         case .v2:
-            return decodeV2Hint(from: buffer)
+            decodeV2Hint(from: buffer)
         }
     }
 

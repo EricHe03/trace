@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct DualMITMPolicySnapshotBuilder {
+public enum DualMITMPolicySnapshotBuilder {
     public struct Inputs: Sendable {
         public var captureConfiguration: CaptureConfiguration
         public var mitmAllowlist: [String]

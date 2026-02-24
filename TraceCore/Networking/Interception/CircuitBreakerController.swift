@@ -46,8 +46,14 @@ public final class DualMITMCircuitBreakerController: CircuitBreakerController, @
 public final class NoopCircuitBreakerController: CircuitBreakerController, @unchecked Sendable {
     public init() {}
 
-    public func shouldForceTCPDirect(port _: UInt16, now _: Date) -> Bool { false }
-    public func shouldForceQUICPassThrough(now _: Date) -> Bool { false }
+    public func shouldForceTCPDirect(port _: UInt16, now _: Date) -> Bool {
+        false
+    }
+
+    public func shouldForceQUICPassThrough(now _: Date) -> Bool {
+        false
+    }
+
     public func recordTCPClientHandshake(failed _: Bool, now _: Date) {}
     public func recordQUICInterceptSample(failed _: Bool, now _: Date) {}
     public func snapshot(now _: Date) -> DualMITMCircuitBreakerSnapshot {

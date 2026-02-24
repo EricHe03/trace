@@ -12,19 +12,19 @@ enum MITMFailureMapper {
     static func mapTransparentFailure(_ kind: TransparentMITMFailureKind) -> InterceptionFailure {
         switch kind {
         case .clientRejectedMITMOrPinning:
-            return .clientRejectedMITMOrPinning
+            .clientRejectedMITMOrPinning
         case .connectionClosedEarly:
-            return .connectionClosedEarly(side: .client)
+            .connectionClosedEarly(side: .client)
         case .upstreamTimeout:
-            return .upstreamTimeout
+            .upstreamTimeout
         case .upstreamConnectionClosed:
-            return .upstreamConnectionClosed
+            .upstreamConnectionClosed
         case .tlsUpstreamTrustFailed:
-            return .upstreamTLSTrustFailed
+            .upstreamTLSTrustFailed
         case .tlsUpstreamHostnameMismatch:
-            return .upstreamTLSHostnameMismatch
+            .upstreamTLSHostnameMismatch
         case .mitmSetupFailed:
-            return .mitmSetupFailed(stage: .pipelineInstall)
+            .mitmSetupFailed(stage: .pipelineInstall)
         }
     }
 

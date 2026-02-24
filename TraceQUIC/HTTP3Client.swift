@@ -171,11 +171,10 @@ public final class URLSessionHTTP3Client: @unchecked Sendable, HTTP3Client {
     private let configuration: URLSessionConfiguration
 
     public init(configuration: URLSessionConfiguration = .ephemeral) {
-        var resolvedConfiguration: URLSessionConfiguration
-        if let copied = configuration.copy() as? URLSessionConfiguration {
-            resolvedConfiguration = copied
+        var resolvedConfiguration: URLSessionConfiguration = if let copied = configuration.copy() as? URLSessionConfiguration {
+            copied
         } else {
-            resolvedConfiguration = .ephemeral
+            .ephemeral
         }
         resolvedConfiguration.httpShouldSetCookies = true
         if resolvedConfiguration.httpCookieStorage == nil {

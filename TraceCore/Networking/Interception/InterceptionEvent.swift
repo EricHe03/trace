@@ -134,7 +134,7 @@ public struct InterceptionEvent: Codable, Sendable {
 
     public init(
         type: InterceptionEventType,
-        timestampMs: Int64 = Int64(Date().timeIntervalSince1970 * 1_000),
+        timestampMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
         sessionID: String,
         tunnelGeneration: Int,
         flowID: UInt64? = nil,

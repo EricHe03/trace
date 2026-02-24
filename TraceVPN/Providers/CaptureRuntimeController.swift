@@ -9,7 +9,7 @@ import Foundation
 import TraceCore
 
 enum CaptureReconfigurationKind: String, Sendable {
-    case disruptive = "disruptive"
+    case disruptive
     case nonDisruptive = "non_disruptive"
 }
 

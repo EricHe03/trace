@@ -123,9 +123,9 @@ final class LocalSocks5Server: @unchecked Sendable {
         private func routeDecision(from decision: DualMITMTCPRouteDecision) -> RouteDecision {
             switch decision {
             case .mitm:
-                return .mitm
+                .mitm
             case let .direct(reason):
-                return .direct(reason: reason)
+                .direct(reason: reason)
             }
         }
 
@@ -499,9 +499,9 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
         var errorDescription: String? {
             switch self {
             case .directBackoffActive:
-                return "Direct endpoint is in failure backoff window"
+                "Direct endpoint is in failure backoff window"
             case .dotBackoffActive:
-                return "DoT endpoint is in failure backoff window"
+                "DoT endpoint is in failure backoff window"
             }
         }
     }
@@ -712,9 +712,9 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
     private func routeDecisionValue(_ decision: LocalSocks5Server.TCPConnectRoutingPolicy.RouteDecision) -> String {
         switch decision {
         case .mitm:
-            return "mitm"
+            "mitm"
         case .direct:
-            return "direct"
+            "direct"
         }
     }
 
@@ -869,12 +869,14 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
         let localizedDetail = error.localizedDescription.lowercased()
         let combinedDetail = "\(detail) \(localizedDetail)"
         if combinedDetail.contains("channelerror") &&
-            (combinedDetail.contains("error 0") ||
-                combinedDetail.contains("error 5") ||
-                combinedDetail.contains("channelerror 0") ||
-                combinedDetail.contains("channelerror 5") ||
-                combinedDetail.contains(": 0") ||
-                combinedDetail.contains(": 5")) {
+            (
+                combinedDetail.contains("error 0") ||
+                    combinedDetail.contains("error 5") ||
+                    combinedDetail.contains("channelerror 0") ||
+                    combinedDetail.contains("channelerror 5") ||
+                    combinedDetail.contains(": 0") ||
+                    combinedDetail.contains(": 5")
+            ) {
             return true
         }
         if combinedDetail.contains("nwerror") && combinedDetail.contains("54") {
@@ -914,7 +916,7 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
     ) {
         guard port == 853 else { return }
         let expiresAt = Self.recordDoTBackoff(host: host, port: port)
-        let backoffMilliseconds = max(0, Int(expiresAt.timeIntervalSinceNow * 1_000))
+        let backoffMilliseconds = max(0, Int(expiresAt.timeIntervalSinceNow * 1000))
         eventLogHandler?(
             "local_socks5_connect_route",
             "session=\(sessionID) destination_hash=\(destinationHash) sni_hash=\(destinationHash) upstream_hash=\(destinationHash) destination_port=\(port) route=direct route_decision=direct fallback_applied=\(fallbackApplied) bypass_reason=\(bypassReason) policy=\(tcpConnectRoutingPolicy.dualMITMPolicy.rawValue) outcome=backoff_set ttl_ms=\(backoffMilliseconds) error=\(error.localizedDescription)"
@@ -932,7 +934,7 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
         guard shouldApplyDirectBackoff(port: port, bypassReason: bypassReason, error: error) else { return }
 
         let expiresAt = Self.recordDirectBackoff(host: host, port: port)
-        let backoffMilliseconds = max(0, Int(expiresAt.timeIntervalSinceNow * 1_000))
+        let backoffMilliseconds = max(0, Int(expiresAt.timeIntervalSinceNow * 1000))
         eventLogHandler?(
             "local_socks5_connect_route",
             "session=\(sessionID) destination_hash=\(destinationHash) sni_hash=\(destinationHash) upstream_hash=\(destinationHash) destination_port=\(port) route=direct route_decision=direct fallback_applied=\(fallbackApplied) bypass_reason=\(bypassReason) policy=\(tcpConnectRoutingPolicy.dualMITMPolicy.rawValue) outcome=backoff_set reason=direct_endpoint_backoff ttl_ms=\(backoffMilliseconds) error=\(error.localizedDescription)"
@@ -1094,12 +1096,11 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
             return
         }
 
-        let fallbackSuffix: String
-        if let fallbackDetail,
-           !fallbackDetail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            fallbackSuffix = " detail=\(fallbackDetail)"
+        let fallbackSuffix = if let fallbackDetail,
+                                !fallbackDetail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            " detail=\(fallbackDetail)"
         } else {
-            fallbackSuffix = ""
+            ""
         }
         eventLogHandler?(
             "local_socks5_connect_route",

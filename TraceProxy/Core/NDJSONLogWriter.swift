@@ -35,12 +35,12 @@ public final class NDJSONLogWriter {
     init(
         logFileURL: URL,
         flushEventThreshold: Int = 64,
-        flushByteThreshold: Int = 64 * 1_024,
+        flushByteThreshold: Int = 64 * 1024,
         flushInterval: TimeInterval = 0.2
     ) throws {
         url = logFileURL
         self.flushEventThreshold = max(1, flushEventThreshold)
-        self.flushByteThreshold = max(1_024, flushByteThreshold)
+        self.flushByteThreshold = max(1024, flushByteThreshold)
         self.flushInterval = max(0.05, flushInterval)
         self.queue.setSpecific(key: queueKey, value: ())
 

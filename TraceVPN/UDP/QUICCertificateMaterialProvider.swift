@@ -18,7 +18,7 @@ actor QUICCertificateMaterialProvider {
 
     private let ttl: TimeInterval
     private let materialGenerator: MaterialGenerator
-    private let maxCacheEntries = 4_096
+    private let maxCacheEntries = 4096
 
     private var cache: [String: CachedEntry] = [:]
     private var inflight: [String: Task<QUICMitmCertificateMaterial?, Never>] = [:]
@@ -81,7 +81,7 @@ actor QUICCertificateMaterialProvider {
             lhs.value.expiresAt < rhs.value.expiresAt
         }
 
-        for index in 0..<removeCount {
+        for index in 0 ..< removeCount {
             cache.removeValue(forKey: oldest[index].key)
         }
     }

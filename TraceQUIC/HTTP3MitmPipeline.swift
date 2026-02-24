@@ -447,7 +447,7 @@ private extension HTTP3MitmPipeline {
             let interval = max(1, Int((1.0 / rate).rounded()))
             return samplingSequence % UInt64(interval) == 0
         case .adaptive:
-            let activeConnections = max(1, await QUICConnectionManager.shared.snapshot().activeConnections)
+            let activeConnections = await max(1, QUICConnectionManager.shared.snapshot().activeConnections)
             let scale = 50.0 / Double(max(50, activeConnections))
             let adjustedRate = min(rate, rate * scale)
             return Double.random(in: 0 ..< 1) < adjustedRate

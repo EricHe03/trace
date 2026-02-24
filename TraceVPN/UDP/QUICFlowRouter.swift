@@ -5,8 +5,8 @@
 //  Created by Codex on 2026/02/18.
 //
 
-import Dispatch
 import Darwin
+import Dispatch
 import Foundation
 import OSLog
 import Security
@@ -140,7 +140,7 @@ final class QUICFlowRouter: @unchecked Sendable {
         let sniHash: String?
         let forwardingDecision: UDPForwardDecision?
         let consumeOriginalDatagram: Bool
-        var flowID: UUID? = nil
+        var flowID: UUID?
     }
 
     private struct NoProgressSnapshot {
@@ -209,7 +209,7 @@ final class QUICFlowRouter: @unchecked Sendable {
     private let noProgressAbsoluteTimeout: TimeInterval
     private let noProgressMinimumClientDatagrams: Int
     private let maxFailOpenReplayDatagrams = 32
-    private let maxFailOpenReplayDatagramBytes = 4_096
+    private let maxFailOpenReplayDatagramBytes = 4096
 
     init(
         interceptor: (any InterceptionProviding)? = nil,
@@ -287,7 +287,7 @@ final class QUICFlowRouter: @unchecked Sendable {
             sniHash: evaluation.sniHash
         )
         let flowIDLabel = evaluation.flowID?.uuidString ?? "unknown"
-        let routeDecision: String = switch evaluation.inspectionOutcome {
+        let routeDecision = switch evaluation.inspectionOutcome {
         case .intercepted:
             "intercept"
         case .passThroughMarked:
@@ -572,11 +572,11 @@ final class QUICFlowRouter: @unchecked Sendable {
     private static func quicRouteDecision(from action: DualMITMRouteAction) -> DualMITMQUICRouteDecision {
         switch action {
         case .mitm:
-            return .mitm
+            .mitm
         case let .passThrough(reason), let .direct(reason):
-            return .passThrough(reason: reason)
+            .passThrough(reason: reason)
         case let .block(reason):
-            return .block(reason: reason)
+            .block(reason: reason)
         }
     }
 
@@ -1597,17 +1597,16 @@ final class QUICFlowRouter: @unchecked Sendable {
                 )
             }
 
-            let shouldCloseSession: Bool
-            if candidateFailOpen {
+            let shouldCloseSession: Bool = if candidateFailOpen {
                 if failureDecision.enabled {
-                    shouldCloseSession = markFlowFailed(
+                    markFlowFailed(
                         flowKey: flowKey,
                         flowID: flowID,
                         reason: failureDecision.effectiveReason,
                         detail: ingestResult.connectionCloseReasonDetail
                     )
                 } else {
-                    shouldCloseSession = markFlowBlocked(
+                    markFlowBlocked(
                         flowKey: flowKey,
                         flowID: flowID,
                         reason: failureDecision.effectiveReason,
@@ -1615,7 +1614,7 @@ final class QUICFlowRouter: @unchecked Sendable {
                     )
                 }
             } else {
-                shouldCloseSession = closeFlowGracefully(
+                closeFlowGracefully(
                     flowKey: flowKey,
                     flowID: flowID,
                     reason: reason
@@ -1679,7 +1678,7 @@ final class QUICFlowRouter: @unchecked Sendable {
                     )
                 if shouldCloseSession {
                     let idleMs = noProgressSnapshot?.lastProgressAt
-                        .map { max(0, Int(now.timeIntervalSince($0) * 1_000)) } ?? -1
+                        .map { max(0, Int(now.timeIntervalSince($0) * 1000)) } ?? -1
                     eventLogHandler?(
                         "quic_mitm_session",
                         "outcome=\(failureDecision.enabled ? "no_progress_fail_open" : "no_progress_blocked") flow_id=\(flowID.uuidString) direction=\(direction) client_datagrams=\(noProgressSnapshot?.clientDatagramsSeen ?? -1) idle_ms=\(idleMs)"
@@ -2117,7 +2116,7 @@ final class QUICFlowRouter: @unchecked Sendable {
             if let hostFailOpenHashes, !hostFailOpenHashes.isEmpty {
                 eventLogHandler?(
                     "quic_mitm_session",
-                    "outcome=host_fail_open_marked flow_id=\(flowID.uuidString) reason=\(reason) failure_detail=\(failureDetail) host_hashes=\(hostFailOpenHashes) ttl_ms=\(Int(hostFailOpenBackoff * 1_000)) policy=\(dualMITMPolicy.rawValue)"
+                    "outcome=host_fail_open_marked flow_id=\(flowID.uuidString) reason=\(reason) failure_detail=\(failureDetail) host_hashes=\(hostFailOpenHashes) ttl_ms=\(Int(hostFailOpenBackoff * 1000)) policy=\(dualMITMPolicy.rawValue)"
                 )
             }
         }
@@ -2127,7 +2126,7 @@ final class QUICFlowRouter: @unchecked Sendable {
     static func mitmAutoBypassReason(forQUICFailure reason: String) -> String? {
         // QUIC fail-open is transport fallback and should not poison shared host
         // bypass used by TCP MITM routing/capture.
-        return nil
+        nil
     }
 
     private func datagramContext(for flowKey: FlowKey, flowID: UUID) -> QUICFlowDatagramContext? {

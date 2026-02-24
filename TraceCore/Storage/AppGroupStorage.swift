@@ -1723,14 +1723,14 @@ public struct CaptureConfiguration: Codable, Sendable {
 
         fullTunnelDNSServers = Self.normalizedStringList(fullTunnelDNSServers)
         fullTunnelSearchDomains = Self.normalizedStringList(fullTunnelSearchDomains)
-        tcpBypassTTLSeconds = max(30, min(86_400, tcpBypassTTLSeconds))
-        quicHostFailOpenSeconds = max(60, min(86_400, quicHostFailOpenSeconds))
-        quicNoProgressGraceMs = max(3_000, min(20_000, quicNoProgressGraceMs))
-        quicNoProgressIdleMs = max(3_000, min(20_000, quicNoProgressIdleMs))
-        quicNoProgressAbsoluteMs = max(8_000, min(30_000, quicNoProgressAbsoluteMs))
+        tcpBypassTTLSeconds = max(30, min(86400, tcpBypassTTLSeconds))
+        quicHostFailOpenSeconds = max(60, min(86400, quicHostFailOpenSeconds))
+        quicNoProgressGraceMs = max(3000, min(20000, quicNoProgressGraceMs))
+        quicNoProgressIdleMs = max(3000, min(20000, quicNoProgressIdleMs))
+        quicNoProgressAbsoluteMs = max(8000, min(30000, quicNoProgressAbsoluteMs))
         quicNoProgressMinClientDatagrams = max(1, min(8, quicNoProgressMinClientDatagrams))
         quicAuthorityRetryAttempts = max(0, min(2, quicAuthorityRetryAttempts))
-        quicCertMaterialCacheTTLSeconds = max(60, min(86_400, quicCertMaterialCacheTTLSeconds))
+        quicCertMaterialCacheTTLSeconds = max(60, min(86400, quicCertMaterialCacheTTLSeconds))
 
         if captureMode.usesPacketTunnelRouting, fullTunnelDNSServers.isEmpty {
             fullTunnelDNSServers = Self.defaultFullTunnelDNSServers

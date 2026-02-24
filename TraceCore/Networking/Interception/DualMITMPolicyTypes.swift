@@ -66,9 +66,9 @@ public struct QUICNoProgressConfig: Sendable, Codable, Equatable {
     public var minimumClientDatagrams: Int
 
     public init(
-        graceMs: Int = 6_000,
-        idleMs: Int = 6_000,
-        absoluteMs: Int = 20_000,
+        graceMs: Int = 6000,
+        idleMs: Int = 6000,
+        absoluteMs: Int = 20000,
         minimumClientDatagrams: Int = 6
     ) {
         self.graceMs = max(0, graceMs)
@@ -103,10 +103,10 @@ public struct DualMITMPolicySnapshot: Sendable, Equatable {
         policyMode: DualMITMPolicy,
         circuitBreakerEnabled: Bool,
         tcpBypassTTLSeconds: Int = 180,
-        quicHostFailOpenSeconds: Int = 1_800,
+        quicHostFailOpenSeconds: Int = 1800,
         quicNoProgress: QUICNoProgressConfig = QUICNoProgressConfig(),
         quicAuthorityRetryAttempts: Int = 1,
-        quicCertMaterialCacheTTLSeconds: Int = 1_800,
+        quicCertMaterialCacheTTLSeconds: Int = 1800,
         allowlist: [String] = ["*"],
         mitmEnabled: Bool = true,
         quicHandlingMode: QUICHandlingMode = .intercept,

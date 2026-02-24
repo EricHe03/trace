@@ -787,10 +787,10 @@ public class MITMProxyServer: @unchecked Sendable {
         transientFailureTrackers.removeValue(forKey: trackerKey)
         eventLog?.append(
             type: "mitm_auto_bypass_runtime",
-            msg: "\(LogRedaction.hash(host)) reason=\(normalizedReason) ttl_ms=\(Int(runtimeBypassTTL * 1_000))"
+            msg: "\(LogRedaction.hash(host)) reason=\(normalizedReason) ttl_ms=\(Int(runtimeBypassTTL * 1000))"
         )
         ProxyLog.mitm.info(
-            "event=proxy.mitm_auto_bypass_runtime outcome=success host=\(host, privacy: .private(mask: .hash)) reason=\(normalizedReason, privacy: .public) ttl_ms=\(Int(self.runtimeBypassTTL * 1_000), privacy: .public)"
+            "event=proxy.mitm_auto_bypass_runtime outcome=success host=\(host, privacy: .private(mask: .hash)) reason=\(normalizedReason, privacy: .public) ttl_ms=\(Int(self.runtimeBypassTTL * 1000), privacy: .public)"
         )
     }
 

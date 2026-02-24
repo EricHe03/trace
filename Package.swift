@@ -71,6 +71,7 @@ let quichePreferredLibraryPath: String = if quicheSDKName.contains("iphonesimula
     // Default to simulator archive when platform context is unavailable (for indexing/resolution).
     quicheSimulatorLibraryPath
 }
+
 let quicheLinkerFlags = [quichePreferredLibraryPath]
 
 let cquicheFFICSettings: [CSetting] = quicheArtifactsAvailable

@@ -129,7 +129,7 @@ public enum InterceptionFailure: Sendable, Equatable {
     case upstreamTLSTrustFailed
     case upstreamTLSHostnameMismatch
 
-    // Engine setup
+    /// Engine setup
     case mitmSetupFailed(stage: MITMSetupStage)
 
     // Protocol mismatch
@@ -143,7 +143,7 @@ public enum InterceptionFailure: Sendable, Equatable {
     case quicClosedBeforeHTTP3(phase: QUICClosePhase)
     case quicNoProgress(detail: QUICNoProgressDetail)
 
-    // Catch-all
+    /// Catch-all
     case internalError(code: InternalErrorCode, context: String?)
 }
 
@@ -248,16 +248,16 @@ extension InterceptionFailure: Codable {
         case .transparentMetadataInvalid:
             self = .transparentMetadataInvalid
         case .resourceExhausted:
-            self = .resourceExhausted(
-                kind: try container.decodeIfPresent(ResourceExhaustedKind.self, forKey: .kind) ?? .unknown
+            self = try .resourceExhausted(
+                kind: container.decodeIfPresent(ResourceExhaustedKind.self, forKey: .kind) ?? .unknown
             )
         case .clientRejectedMITMOrPinning:
             self = .clientRejectedMITMOrPinning
         case .sniInvalidOrMissing:
             self = .sniInvalidOrMissing
         case .connectionClosedEarly:
-            self = .connectionClosedEarly(
-                side: try container.decodeIfPresent(CloseSide.self, forKey: .side) ?? .unknown
+            self = try .connectionClosedEarly(
+                side: container.decodeIfPresent(CloseSide.self, forKey: .side) ?? .unknown
             )
         case .upstreamTimeout:
             self = .upstreamTimeout
@@ -268,34 +268,34 @@ extension InterceptionFailure: Codable {
         case .upstreamTLSHostnameMismatch:
             self = .upstreamTLSHostnameMismatch
         case .mitmSetupFailed:
-            self = .mitmSetupFailed(
-                stage: try container.decodeIfPresent(MITMSetupStage.self, forKey: .stage) ?? .unknown
+            self = try .mitmSetupFailed(
+                stage: container.decodeIfPresent(MITMSetupStage.self, forKey: .stage) ?? .unknown
             )
         case .nonHTTPProtocol:
             self = .nonHTTPProtocol
         case .protocolMismatch:
-            self = .protocolMismatch(
-                expected: try container.decodeIfPresent(ExpectedProtocol.self, forKey: .expected) ?? .unknown,
-                observed: try container.decodeIfPresent(ObservedProtocol.self, forKey: .observed)
+            self = try .protocolMismatch(
+                expected: container.decodeIfPresent(ExpectedProtocol.self, forKey: .expected) ?? .unknown,
+                observed: container.decodeIfPresent(ObservedProtocol.self, forKey: .observed)
             )
         case .quicHandshakeFailed:
-            self = .quicHandshakeFailed(detail: try container.decodeIfPresent(QUICHandshakeDetail.self, forKey: .detail))
+            self = try .quicHandshakeFailed(detail: container.decodeIfPresent(QUICHandshakeDetail.self, forKey: .detail))
         case .quicCertificatePinning:
             self = .quicCertificatePinning
         case .quicAuthorityRetryFailed:
             self = .quicAuthorityRetryFailed
         case .quicClosedBeforeHTTP3:
-            self = .quicClosedBeforeHTTP3(
-                phase: try container.decodeIfPresent(QUICClosePhase.self, forKey: .phase) ?? .unknown
+            self = try .quicClosedBeforeHTTP3(
+                phase: container.decodeIfPresent(QUICClosePhase.self, forKey: .phase) ?? .unknown
             )
         case .quicNoProgress:
-            self = .quicNoProgress(
-                detail: try container.decodeIfPresent(QUICNoProgressDetail.self, forKey: .detail) ?? .unknown
+            self = try .quicNoProgress(
+                detail: container.decodeIfPresent(QUICNoProgressDetail.self, forKey: .detail) ?? .unknown
             )
         case .internalError:
-            self = .internalError(
-                code: try container.decodeIfPresent(InternalErrorCode.self, forKey: .code) ?? .unknown,
-                context: try container.decodeIfPresent(String.self, forKey: .context)
+            self = try .internalError(
+                code: container.decodeIfPresent(InternalErrorCode.self, forKey: .code) ?? .unknown,
+                context: container.decodeIfPresent(String.self, forKey: .context)
             )
         }
     }
@@ -305,43 +305,43 @@ public extension InterceptionFailure {
     var stableToken: String {
         switch self {
         case .localProxyUnreachable:
-            return "local_proxy_unreachable"
+            "local_proxy_unreachable"
         case .transparentMetadataInvalid:
-            return "transparent_metadata_invalid"
+            "transparent_metadata_invalid"
         case .resourceExhausted:
-            return "resource_exhausted"
+            "resource_exhausted"
         case .clientRejectedMITMOrPinning:
-            return "client_rejected_mitm_or_pinning"
+            "client_rejected_mitm_or_pinning"
         case .sniInvalidOrMissing:
-            return "sni_invalid_or_missing"
+            "sni_invalid_or_missing"
         case .connectionClosedEarly:
-            return "connection_closed_early"
+            "connection_closed_early"
         case .upstreamTimeout:
-            return "upstream_timeout"
+            "upstream_timeout"
         case .upstreamConnectionClosed:
-            return "upstream_connection_closed"
+            "upstream_connection_closed"
         case .upstreamTLSTrustFailed:
-            return "tls_upstream_trust_failed"
+            "tls_upstream_trust_failed"
         case .upstreamTLSHostnameMismatch:
-            return "tls_upstream_hostname_mismatch"
+            "tls_upstream_hostname_mismatch"
         case .mitmSetupFailed:
-            return "mitm_setup_failed"
+            "mitm_setup_failed"
         case .nonHTTPProtocol:
-            return "non_http_protocol"
+            "non_http_protocol"
         case .protocolMismatch:
-            return "protocol_mismatch"
+            "protocol_mismatch"
         case .quicHandshakeFailed:
-            return "quic_handshake_failed"
+            "quic_handshake_failed"
         case .quicCertificatePinning:
-            return "quic_certificate_pinning"
+            "quic_certificate_pinning"
         case .quicAuthorityRetryFailed:
-            return "quic_authority_retry_failed"
+            "quic_authority_retry_failed"
         case .quicClosedBeforeHTTP3:
-            return "quic_closed_before_http3"
+            "quic_closed_before_http3"
         case .quicNoProgress:
-            return "quic_no_progress"
+            "quic_no_progress"
         case .internalError:
-            return "internal_error"
+            "internal_error"
         }
     }
 }
