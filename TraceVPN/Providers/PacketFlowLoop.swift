@@ -334,6 +334,7 @@ final class PacketFlowLoop: @unchecked Sendable {
     private let quicNoProgressMinClientDatagrams: Int
     private let quicAuthorityRetryAttempts: Int
     private let quicCertMaterialCacheTTLSeconds: Int
+    private let dualMITMPolicyEngine: DualMITMPolicyEngine?
     private var lastDualMITMDegradedState = false
 
     init(
@@ -346,12 +347,13 @@ final class PacketFlowLoop: @unchecked Sendable {
         dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
         quicHostFailOpenSeconds: Int = 1800,
         dualMITMCircuitBreakerEnabled: Bool = true,
-        quicNoProgressGraceMs: Int = 1200,
-        quicNoProgressIdleMs: Int = 1200,
-        quicNoProgressAbsoluteMs: Int = 4500,
+        quicNoProgressGraceMs: Int = 2500,
+        quicNoProgressIdleMs: Int = 2500,
+        quicNoProgressAbsoluteMs: Int = 9000,
         quicNoProgressMinClientDatagrams: Int = 2,
         quicAuthorityRetryAttempts: Int = 1,
         quicCertMaterialCacheTTLSeconds: Int = 1800,
+        dualMITMPolicyEngine: DualMITMPolicyEngine? = nil,
         quicInterceptor: (any InterceptionProviding)? = nil,
         eventLogHandler: (@Sendable (String, String) -> Void)? = nil
     ) {
@@ -370,6 +372,7 @@ final class PacketFlowLoop: @unchecked Sendable {
         self.quicNoProgressMinClientDatagrams = quicNoProgressMinClientDatagrams
         self.quicAuthorityRetryAttempts = quicAuthorityRetryAttempts
         self.quicCertMaterialCacheTTLSeconds = quicCertMaterialCacheTTLSeconds
+        self.dualMITMPolicyEngine = dualMITMPolicyEngine
         self.initialQUICInterceptor = quicInterceptor
         self.eventLogHandler = eventLogHandler
         queue.setSpecific(key: queueKey, value: ())
@@ -441,6 +444,7 @@ final class PacketFlowLoop: @unchecked Sendable {
             certificateMaterialCacheTTL: TimeInterval(quicCertMaterialCacheTTLSeconds),
             dualMITMPolicy: dualMITMPolicy,
             dualMITMCircuitBreakerEnabled: dualMITMCircuitBreakerEnabled,
+            dualMITMPolicyEngine: dualMITMPolicyEngine,
             eventLogHandler: eventLogHandler,
             downstreamDatagramSink: { [weak self] payload, context in
                 self?.queue.async {

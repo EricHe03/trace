@@ -34,8 +34,8 @@ struct QUICFlowDatagramContext: Sendable {
 
 /// Routes QUIC flows between interception and pass-through paths.
 ///
-/// Current behavior is connectivity-first: when interception is requested but
-/// the QUIC MITM engine is unavailable, we mark and pass-through.
+/// Default behavior is connectivity-first (adaptive fail-open), with optional
+/// policy-engine enforcement to fail-closed for strict-mode eligible flows.
 final class QUICFlowRouter: @unchecked Sendable {
     private struct FlowKey: Hashable {
         let sourceIP: IPAddress
@@ -184,6 +184,7 @@ final class QUICFlowRouter: @unchecked Sendable {
     private let engineStatusProvider: @Sendable () -> QUICEngineStatus
     private let dualMITMPolicy: DualMITMPolicy
     private let dualMITMCircuitBreakerEnabled: Bool
+    private let dualMITMPolicyEngine: DualMITMPolicyEngine?
     private let eventLogHandler: (@Sendable (String, String) -> Void)?
     private let downstreamDatagramSink: (@Sendable (Data, QUICFlowDatagramContext) -> Void)?
     private let upstreamDatagramSink: (@Sendable (Data, QUICFlowDatagramContext) -> Void)?
@@ -207,22 +208,23 @@ final class QUICFlowRouter: @unchecked Sendable {
     private let noProgressIdleTimeout: TimeInterval
     private let noProgressAbsoluteTimeout: TimeInterval
     private let noProgressMinimumClientDatagrams: Int
-    private let maxFailOpenReplayDatagrams = 8
-    private let maxFailOpenReplayDatagramBytes = 2_048
+    private let maxFailOpenReplayDatagrams = 32
+    private let maxFailOpenReplayDatagramBytes = 4_096
 
     init(
         interceptor: (any InterceptionProviding)? = nil,
         http3ClientFactory: @escaping @Sendable () -> any HTTP3Client = { URLSessionHTTP3Client() },
         engineStatusProvider: @escaping @Sendable () -> QUICEngineStatus = { QUICEngineRuntime.currentStatus() },
         hostFailOpenBackoff: TimeInterval = 1800,
-        noProgressGracePeriod: TimeInterval = 3.0,
-        noProgressIdleTimeout: TimeInterval = 3.0,
-        noProgressAbsoluteTimeout: TimeInterval = 12.0,
-        noProgressMinimumClientDatagrams: Int = 2,
+        noProgressGracePeriod: TimeInterval = 6.0,
+        noProgressIdleTimeout: TimeInterval = 6.0,
+        noProgressAbsoluteTimeout: TimeInterval = 20.0,
+        noProgressMinimumClientDatagrams: Int = 6,
         maxAuthorityRetryAttempts: Int = 1,
         certificateMaterialCacheTTL: TimeInterval = 1800,
         dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
         dualMITMCircuitBreakerEnabled: Bool = true,
+        dualMITMPolicyEngine: DualMITMPolicyEngine? = nil,
         eventLogHandler: (@Sendable (String, String) -> Void)? = nil,
         downstreamDatagramSink: (@Sendable (Data, QUICFlowDatagramContext) -> Void)? = nil,
         upstreamDatagramSink: (@Sendable (Data, QUICFlowDatagramContext) -> Void)? = nil
@@ -236,6 +238,7 @@ final class QUICFlowRouter: @unchecked Sendable {
         self.noProgressAbsoluteTimeout = max(2.0, noProgressAbsoluteTimeout)
         self.dualMITMPolicy = dualMITMPolicy
         self.dualMITMCircuitBreakerEnabled = dualMITMCircuitBreakerEnabled
+        self.dualMITMPolicyEngine = dualMITMPolicyEngine
         self.eventLogHandler = eventLogHandler
         self.downstreamDatagramSink = downstreamDatagramSink
         self.upstreamDatagramSink = upstreamDatagramSink
@@ -243,8 +246,11 @@ final class QUICFlowRouter: @unchecked Sendable {
         self.maxAuthorityRetryAttempts = max(0, min(2, maxAuthorityRetryAttempts))
         self.certificateMaterialProvider = QUICCertificateMaterialProvider(
             ttl: max(60, certificateMaterialCacheTTL),
-            materialGenerator: { [weak self] authority in
-                self?.makeCertificateMaterial(for: authority)
+            materialGenerator: { authority in
+                QUICFlowRouter.makeCertificateMaterial(
+                    for: authority,
+                    eventLogHandler: eventLogHandler
+                )
             }
         )
     }
@@ -281,13 +287,22 @@ final class QUICFlowRouter: @unchecked Sendable {
             sniHash: evaluation.sniHash
         )
         let flowIDLabel = evaluation.flowID?.uuidString ?? "unknown"
-        let routeDecision = evaluation.inspectionOutcome == .intercepted ? "intercept" : "pass_through"
+        let routeDecision: String = switch evaluation.inspectionOutcome {
+        case .intercepted:
+            "intercept"
+        case .passThroughMarked:
+            "pass_through"
+        case .blocked:
+            "block"
+        case .tunnelForwarded:
+            "tunnel_forwarded"
+        }
         let fallbackApplied = evaluation.inspectionOutcome == .passThroughMarked
         let bypassReason = evaluation.failureReason ?? "none"
         let upstreamHash = LogRedaction.hash(ipPacket.destination.description)
         let policy = dualMITMPolicy.rawValue
         let forwardingLabel = String(describing: effectiveForwardingDecision)
-        let outcomeLabel = evaluation.inspectionOutcome == .intercepted ? "intercepted" : "pass_through"
+        let outcomeLabel = evaluation.inspectionOutcome.rawValue
         let routeLogSignature = "\(outcomeLabel):\(bypassReason):\(forwardingLabel):\(evaluation.sniHash ?? "unknown"):\(policy)"
 
         if evaluation.inspectionOutcome == .passThroughMarked,
@@ -307,6 +322,11 @@ final class QUICFlowRouter: @unchecked Sendable {
                 eventLogHandler?(
                     "quic_intercept",
                     "flow_id=\(flowIDLabel) outcome=intercepted flow_sni_hash=\(evaluation.sniHash ?? "unknown") upstream_hash=\(upstreamHash) route_decision=\(routeDecision) fallback_applied=\(fallbackApplied) bypass_reason=\(bypassReason) policy=\(policy)"
+                )
+            } else if evaluation.inspectionOutcome == .blocked {
+                eventLogHandler?(
+                    "quic_intercept",
+                    "flow_id=\(flowIDLabel) outcome=blocked reason=\(bypassReason) forward=\(forwardingLabel) sni_hash=\(evaluation.sniHash ?? "unknown") upstream_hash=\(upstreamHash) route_decision=\(routeDecision) fallback_applied=false bypass_reason=none policy=\(policy)"
                 )
             }
         }
@@ -426,6 +446,57 @@ final class QUICFlowRouter: @unchecked Sendable {
         return .forwardDirect
     }
 
+    private func plannedInitialQUICDecision(
+        host: String,
+        port: Int
+    ) -> DualMITMQUICRouteDecision {
+        let legacyDecision: DualMITMQUICRouteDecision = .mitm
+        guard let dualMITMPolicyEngine else {
+            return legacyDecision
+        }
+
+        let plan = dualMITMPolicyEngine.planNewFlow(
+            protocolName: .quic,
+            destination: HostPort(host: host, port: max(0, port))
+        )
+        let policyDecision = Self.quicRouteDecision(from: plan.action)
+
+        if plan.shadowEnabled,
+           policyDecision != legacyDecision,
+           logSampler.shouldLog(event: "vpn.quic_policy_shadow", key: host, first: 5, every: 250) {
+            eventLogHandler?(
+                "dual_mitm_policy_shadow",
+                "scope=quic_start host_hash=\(LogRedaction.hash(host)) port=\(port) legacy_route=\(Self.quicRouteDecisionValue(legacyDecision)) legacy_reason=\(Self.quicRouteDecisionReason(legacyDecision)) policy_route=\(Self.quicRouteDecisionValue(policyDecision)) policy_reason=\(Self.quicRouteDecisionReason(policyDecision)) enforced=\(plan.enforced)"
+            )
+        }
+
+        if plan.enforced {
+            return policyDecision
+        }
+        return legacyDecision
+    }
+
+    private static func quicRouteDecisionValue(_ decision: DualMITMQUICRouteDecision) -> String {
+        switch decision {
+        case .mitm:
+            "mitm"
+        case .passThrough:
+            "pass_through"
+        case .block:
+            "block"
+        }
+    }
+
+    private static func quicRouteDecisionReason(_ decision: DualMITMQUICRouteDecision) -> String {
+        switch decision {
+        case .mitm:
+            return "none"
+        case let .passThrough(reason), let .block(reason):
+            let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "none" : trimmed
+        }
+    }
+
     private func failOpenForwardingDecision(
         current: UDPForwardDecision,
         reason: String?,
@@ -445,6 +516,97 @@ final class QUICFlowRouter: @unchecked Sendable {
             return current
         }
         return Self.prefersDirectFailOpenForwarding(for: reason) ? .forwardDirect : current
+    }
+
+    private func shouldFailOpenForQUICFailure(
+        host: String,
+        port: Int,
+        reason: String
+    ) -> (enabled: Bool, effectiveReason: String) {
+        // Legacy behavior was connectivity-first (fail-open) even in strict policy mode.
+        let legacyDecision = true
+        guard let dualMITMPolicyEngine else {
+            return (legacyDecision, reason)
+        }
+
+        let startPlan = dualMITMPolicyEngine.planNewFlow(
+            protocolName: .quic,
+            destination: HostPort(host: host, port: max(0, port))
+        )
+        let failure = Self.quicFailure(from: reason)
+        let plan = dualMITMPolicyEngine.handleFailure(
+            profile: startPlan.profile,
+            failure: failure
+        )
+        let policyDecision: Bool
+        let policyReason: String
+        switch plan.action {
+        case let .failOpenPassThrough(reason),
+             let .failOpenDirect(reason),
+             let .retry(reason):
+            policyDecision = true
+            policyReason = reason
+        case let .failClosedBlock(reason):
+            policyDecision = false
+            policyReason = reason
+        case .noop:
+            policyDecision = legacyDecision
+            policyReason = reason
+        }
+
+        if plan.shadowEnabled,
+           policyDecision != legacyDecision,
+           logSampler.shouldLog(event: "vpn.quic_policy_shadow", key: reason, first: 5, every: 250) {
+            eventLogHandler?(
+                "dual_mitm_policy_shadow",
+                "scope=quic host_hash=\(LogRedaction.hash(host)) port=\(port) failure_reason=\(reason) legacy_fail_open=\(legacyDecision) policy_fail_open=\(policyDecision) enforced=\(plan.enforced)"
+            )
+        }
+
+        if plan.enforced {
+            return (policyDecision, policyReason)
+        }
+        return (legacyDecision, reason)
+    }
+
+    private static func quicRouteDecision(from action: DualMITMRouteAction) -> DualMITMQUICRouteDecision {
+        switch action {
+        case .mitm:
+            return .mitm
+        case let .passThrough(reason), let .direct(reason):
+            return .passThrough(reason: reason)
+        case let .block(reason):
+            return .block(reason: reason)
+        }
+    }
+
+    private static func quicFailure(from reason: String) -> InterceptionFailure {
+        let decoded = LegacyReasonCodec.decode(reason)
+        if let failure = decoded.failure {
+            return failure
+        }
+        return .internalError(code: .legacyUnknownToken, context: reason)
+    }
+
+    private func failureDecisionForFlow(
+        flowKey: FlowKey,
+        flowID: UUID,
+        reason: String
+    ) -> (enabled: Bool, effectiveReason: String) {
+        let endpoint = stateQueue.sync { () -> (host: String, port: Int)? in
+            guard let state = flowStates[flowKey], state.flowID == flowID else {
+                return nil
+            }
+            return (state.host, state.port)
+        }
+        guard let endpoint else {
+            return (true, reason)
+        }
+        return shouldFailOpenForQUICFailure(
+            host: endpoint.host,
+            port: endpoint.port,
+            reason: reason
+        )
     }
 
     private func parseHeaderMetadata(payload: Data) -> ParsedHeaderMetadata {
@@ -573,6 +735,79 @@ final class QUICFlowRouter: @unchecked Sendable {
             state.lastActivity = now
             state.tunnelPolicyRequired = tunnelPolicyRequired
 
+            let initialRoute = plannedInitialQUICDecision(
+                host: state.host,
+                port: state.port
+            )
+            switch initialRoute {
+            case .mitm:
+                break
+            case let .passThrough(reason):
+                let priorTickTask = state.tickTask
+                priorTickTask?.cancel()
+                sessionToClose = state.session
+                let passThroughForwardingDecision = failOpenForwardingDecision(
+                    current: forwardingDecision,
+                    reason: reason,
+                    udpForwarderAvailable: udpForwarderAvailable,
+                    tunnelUDPSupported: tunnelUDPSupported
+                )
+                state.upstreamForwardingDecision = passThroughForwardingDecision
+                state.lastFailureReason = reason
+                state.lastFailureAt = now
+                state.isEstablishing = false
+                state.isEstablished = false
+                state.queuedIngests = 0
+                state.pendingDatagrams.removeAll(keepingCapacity: false)
+                state.session = nil
+                state.bootstrapToken = nil
+                state.tickTask = nil
+                state.establishedAt = nil
+                state.lastProgressAt = nil
+                state.noProgressBudgetStartAt = nil
+                state.clientDatagramsSeen = 0
+                state.processedStreamCount = 0
+                flowStates[flowKey] = state
+                return RouteEvaluation(
+                    inspectionOutcome: .passThroughMarked,
+                    handshakeOutcome: .passThrough,
+                    failureReason: reason,
+                    alpn: state.negotiatedALPN,
+                    sniHash: state.sniHash,
+                    forwardingDecision: passThroughForwardingDecision,
+                    consumeOriginalDatagram: false
+                )
+            case let .block(reason):
+                let priorTickTask = state.tickTask
+                priorTickTask?.cancel()
+                sessionToClose = state.session
+                state.upstreamForwardingDecision = .dropQUIC
+                state.lastFailureReason = reason
+                state.lastFailureAt = now
+                state.isEstablishing = false
+                state.isEstablished = false
+                state.queuedIngests = 0
+                state.pendingDatagrams.removeAll(keepingCapacity: false)
+                state.session = nil
+                state.bootstrapToken = nil
+                state.tickTask = nil
+                state.establishedAt = nil
+                state.lastProgressAt = nil
+                state.noProgressBudgetStartAt = nil
+                state.clientDatagramsSeen = 0
+                state.processedStreamCount = 0
+                flowStates[flowKey] = state
+                return RouteEvaluation(
+                    inspectionOutcome: .blocked,
+                    handshakeOutcome: .blocked,
+                    failureReason: reason,
+                    alpn: state.negotiatedALPN,
+                    sniHash: state.sniHash,
+                    forwardingDecision: .dropQUIC,
+                    consumeOriginalDatagram: false
+                )
+            }
+
             if dualMITMCircuitBreakerEnabled,
                dualMITMPolicy == .adaptiveFailOpen,
                DualMITMCircuitBreaker.shared.shouldForceQUICPassThrough(now: now) {
@@ -613,11 +848,11 @@ final class QUICFlowRouter: @unchecked Sendable {
                 )
             }
 
-            if !state.isEstablished,
+            if dualMITMPolicy == .adaptiveFailOpen,
+               !state.isEstablished,
                let hostFailOpenReason = activeHostFailOpenReasonLocked(
                    state: state,
                    hostHint: normalizedHostHint,
-                   destinationIP: ipPacket.destination.description,
                    now: now
                ) {
                 let priorTickTask = state.tickTask
@@ -660,14 +895,21 @@ final class QUICFlowRouter: @unchecked Sendable {
                 let priorTickTask = state.tickTask
                 priorTickTask?.cancel()
                 sessionToClose = state.session
-                let fallbackForwardingDecision = failOpenForwardingDecision(
-                    current: forwardingDecision,
-                    reason: "quic_tunnel_required_unavailable",
-                    udpForwarderAvailable: udpForwarderAvailable,
-                    tunnelUDPSupported: tunnelUDPSupported
+                let failureDecision = shouldFailOpenForQUICFailure(
+                    host: state.host,
+                    port: state.port,
+                    reason: "quic_tunnel_required_unavailable"
                 )
+                let fallbackForwardingDecision = failureDecision.enabled
+                    ? failOpenForwardingDecision(
+                        current: forwardingDecision,
+                        reason: failureDecision.effectiveReason,
+                        udpForwarderAvailable: udpForwarderAvailable,
+                        tunnelUDPSupported: tunnelUDPSupported
+                    )
+                    : .dropQUIC
                 state.upstreamForwardingDecision = fallbackForwardingDecision
-                state.lastFailureReason = "quic_tunnel_required_unavailable"
+                state.lastFailureReason = failureDecision.effectiveReason
                 state.lastFailureAt = now
                 state.isEstablishing = false
                 state.isEstablished = false
@@ -683,9 +925,9 @@ final class QUICFlowRouter: @unchecked Sendable {
                 state.processedStreamCount = 0
                 flowStates[flowKey] = state
                 return RouteEvaluation(
-                    inspectionOutcome: .passThroughMarked,
-                    handshakeOutcome: .passThrough,
-                    failureReason: "quic_tunnel_required_unavailable",
+                    inspectionOutcome: failureDecision.enabled ? .passThroughMarked : .blocked,
+                    handshakeOutcome: failureDecision.enabled ? .passThrough : .blocked,
+                    failureReason: failureDecision.effectiveReason,
                     alpn: state.negotiatedALPN,
                     sniHash: state.sniHash,
                     forwardingDecision: fallbackForwardingDecision,
@@ -718,18 +960,25 @@ final class QUICFlowRouter: @unchecked Sendable {
             if let reason = state.lastFailureReason,
                let lastFailureAt = state.lastFailureAt,
                now.timeIntervalSince(lastFailureAt) < retryBackoff {
-                let fallbackForwardingDecision = failOpenForwardingDecision(
-                    current: forwardingDecision,
-                    reason: reason,
-                    udpForwarderAvailable: udpForwarderAvailable,
-                    tunnelUDPSupported: tunnelUDPSupported
+                let failureDecision = shouldFailOpenForQUICFailure(
+                    host: state.host,
+                    port: state.port,
+                    reason: reason
                 )
+                let fallbackForwardingDecision = failureDecision.enabled
+                    ? failOpenForwardingDecision(
+                        current: forwardingDecision,
+                        reason: failureDecision.effectiveReason,
+                        udpForwarderAvailable: udpForwarderAvailable,
+                        tunnelUDPSupported: tunnelUDPSupported
+                    )
+                    : .dropQUIC
                 state.upstreamForwardingDecision = fallbackForwardingDecision
                 flowStates[flowKey] = state
                 return RouteEvaluation(
-                    inspectionOutcome: .passThroughMarked,
-                    handshakeOutcome: .passThrough,
-                    failureReason: reason,
+                    inspectionOutcome: failureDecision.enabled ? .passThroughMarked : .blocked,
+                    handshakeOutcome: failureDecision.enabled ? .passThrough : .blocked,
+                    failureReason: failureDecision.effectiveReason,
                     alpn: state.negotiatedALPN,
                     sniHash: state.sniHash,
                     forwardingDecision: fallbackForwardingDecision,
@@ -759,14 +1008,21 @@ final class QUICFlowRouter: @unchecked Sendable {
             let engineStatus = engineStatusProvider()
             if engineStatus.availability != .available {
                 let reason = QUICMitmFailureReason.engineUnavailable.rawValue
-                let fallbackForwardingDecision = failOpenForwardingDecision(
-                    current: forwardingDecision,
-                    reason: reason,
-                    udpForwarderAvailable: udpForwarderAvailable,
-                    tunnelUDPSupported: tunnelUDPSupported
+                let failureDecision = shouldFailOpenForQUICFailure(
+                    host: state.host,
+                    port: state.port,
+                    reason: reason
                 )
+                let fallbackForwardingDecision = failureDecision.enabled
+                    ? failOpenForwardingDecision(
+                        current: forwardingDecision,
+                        reason: failureDecision.effectiveReason,
+                        udpForwarderAvailable: udpForwarderAvailable,
+                        tunnelUDPSupported: tunnelUDPSupported
+                    )
+                    : .dropQUIC
                 state.upstreamForwardingDecision = fallbackForwardingDecision
-                state.lastFailureReason = reason
+                state.lastFailureReason = failureDecision.effectiveReason
                 state.lastFailureAt = now
                 state.isEstablishing = false
                 state.isEstablished = false
@@ -782,11 +1038,11 @@ final class QUICFlowRouter: @unchecked Sendable {
                 state.processedStreamCount = 0
                 state.sniHash = LogRedaction.hash(state.host)
                 flowStates[flowKey] = state
-                fallbackMetricReason = reason
+                fallbackMetricReason = failureDecision.enabled ? failureDecision.effectiveReason : nil
                 return RouteEvaluation(
-                    inspectionOutcome: .passThroughMarked,
-                    handshakeOutcome: .passThrough,
-                    failureReason: reason,
+                    inspectionOutcome: failureDecision.enabled ? .passThroughMarked : .blocked,
+                    handshakeOutcome: failureDecision.enabled ? .passThrough : .blocked,
+                    failureReason: failureDecision.effectiveReason,
                     alpn: state.negotiatedALPN,
                     sniHash: state.sniHash,
                     forwardingDecision: fallbackForwardingDecision,
@@ -905,16 +1161,29 @@ final class QUICFlowRouter: @unchecked Sendable {
             }
 
             let reason = self.failureReason(from: establishResult.reason)
-            let shouldCloseSession = self.markFlowFailed(
+            let failureDecision = self.failureDecisionForFlow(
                 flowKey: flowKey,
                 flowID: flowID,
                 reason: reason
             )
+            let shouldCloseSession = failureDecision.enabled
+                ? self.markFlowFailed(
+                    flowKey: flowKey,
+                    flowID: flowID,
+                    reason: failureDecision.effectiveReason,
+                    detail: establishResult.reasonDetail
+                )
+                : self.markFlowBlocked(
+                    flowKey: flowKey,
+                    flowID: flowID,
+                    reason: failureDecision.effectiveReason,
+                    detail: establishResult.reasonDetail
+                )
 
             if shouldCloseSession {
-                if self.logSampler.shouldLog(event: "vpn.quic_session_establish_failed", key: reason, first: 5, every: 250) {
+                if self.logSampler.shouldLog(event: "vpn.quic_session_establish_failed", key: failureDecision.effectiveReason, first: 5, every: 250) {
                     VPNLog.tunnel.info(
-                        "event=vpn.quic_session_establish_failed outcome=pass_through reason=\(reason, privacy: .public)"
+                        "event=vpn.quic_session_establish_failed outcome=\(failureDecision.enabled ? "pass_through" : "blocked", privacy: .public) reason=\(failureDecision.effectiveReason, privacy: .public)"
                     )
                 }
                 await session.close()
@@ -1080,23 +1349,38 @@ final class QUICFlowRouter: @unchecked Sendable {
                     "quic_mitm_session",
                     "outcome=ingest_exception flow_id=\(flowID.uuidString) reason=\(reason) direction=\(fromClient ? "client" : "upstream") error=\(errorDescription)"
                 )
-                self.forwardOriginalDatagramIfNeeded(
-                    payload,
-                    fromClient: fromClient,
-                    flowKey: flowKey,
-                    flowID: flowID
-                )
-                let shouldCloseSession = self.markFlowFailed(
+                let failureDecision = self.failureDecisionForFlow(
                     flowKey: flowKey,
                     flowID: flowID,
                     reason: reason
                 )
+                if failureDecision.enabled {
+                    self.forwardOriginalDatagramIfNeeded(
+                        payload,
+                        fromClient: fromClient,
+                        flowKey: flowKey,
+                        flowID: flowID
+                    )
+                }
+                let shouldCloseSession = failureDecision.enabled
+                    ? self.markFlowFailed(
+                        flowKey: flowKey,
+                        flowID: flowID,
+                        reason: failureDecision.effectiveReason
+                    )
+                    : self.markFlowBlocked(
+                        flowKey: flowKey,
+                        flowID: flowID,
+                        reason: failureDecision.effectiveReason
+                    )
 
                 if shouldCloseSession {
-                    await QUICConnectionManager.shared.recordPassThroughFallback(reason: reason)
-                    if self.logSampler.shouldLog(event: "vpn.quic_session_ingest_failed", key: reason, first: 5, every: 250) {
+                    if failureDecision.enabled {
+                        await QUICConnectionManager.shared.recordPassThroughFallback(reason: failureDecision.effectiveReason)
+                    }
+                    if self.logSampler.shouldLog(event: "vpn.quic_session_ingest_failed", key: failureDecision.effectiveReason, first: 5, every: 250) {
                         VPNLog.tunnel.info(
-                            "event=vpn.quic_session_ingest_failed outcome=pass_through reason=\(reason, privacy: .public) direction=\(fromClient ? "client" : "upstream", privacy: .public) error=\(errorDescription, privacy: .public)"
+                            "event=vpn.quic_session_ingest_failed outcome=\(failureDecision.enabled ? "pass_through" : "blocked", privacy: .public) reason=\(failureDecision.effectiveReason, privacy: .public) direction=\(fromClient ? "client" : "upstream", privacy: .public) error=\(errorDescription, privacy: .public)"
                         )
                     }
                     await session.close()
@@ -1150,7 +1434,6 @@ final class QUICFlowRouter: @unchecked Sendable {
             if let hostFailOpenReason = activeHostFailOpenReasonLocked(
                 state: state,
                 hostHint: normalizedAuthority,
-                destinationIP: state.serverIP.description,
                 now: now
             ) {
                 eventLogHandler?(
@@ -1258,19 +1541,34 @@ final class QUICFlowRouter: @unchecked Sendable {
             }
 
             let reason = "quic_retry_with_authority_failed"
-            forwardOriginalDatagramIfNeeded(
-                originalPayload,
-                fromClient: fromClient,
-                flowKey: flowKey,
-                flowID: flowID
-            )
-            let shouldCloseSession = markFlowFailed(
+            let failureDecision = failureDecisionForFlow(
                 flowKey: flowKey,
                 flowID: flowID,
                 reason: reason
             )
+            if failureDecision.enabled {
+                forwardOriginalDatagramIfNeeded(
+                    originalPayload,
+                    fromClient: fromClient,
+                    flowKey: flowKey,
+                    flowID: flowID
+                )
+            }
+            let shouldCloseSession = failureDecision.enabled
+                ? markFlowFailed(
+                    flowKey: flowKey,
+                    flowID: flowID,
+                    reason: failureDecision.effectiveReason
+                )
+                : markFlowBlocked(
+                    flowKey: flowKey,
+                    flowID: flowID,
+                    reason: failureDecision.effectiveReason
+                )
             if shouldCloseSession {
-                await QUICConnectionManager.shared.recordPassThroughFallback(reason: reason)
+                if failureDecision.enabled {
+                    await QUICConnectionManager.shared.recordPassThroughFallback(reason: failureDecision.effectiveReason)
+                }
                 await session.close()
             }
             return
@@ -1278,13 +1576,17 @@ final class QUICFlowRouter: @unchecked Sendable {
 
         if ingestResult.connectionClosed, ingestResult.fallbackReason == nil {
             let reason = ingestResult.connectionCloseReason?.rawValue ?? "none"
-            let shouldFailOpen = ingestResult.processedStreams == 0
-            if shouldFailOpen {
+            let candidateFailOpen = ingestResult.processedStreams == 0
+            let failOpenReason = "quic_closed_before_http3_\(reason)"
+            let failureDecision = candidateFailOpen
+                ? failureDecisionForFlow(flowKey: flowKey, flowID: flowID, reason: failOpenReason)
+                : (enabled: false, effectiveReason: reason)
+            if candidateFailOpen, failureDecision.enabled {
                 if originalPayload == nil {
                     replayRecentClientDatagramsIfNeeded(
                         flowKey: flowKey,
                         flowID: flowID,
-                        reason: "quic_closed_before_http3_\(reason)"
+                        reason: failureDecision.effectiveReason
                     )
                 }
                 forwardOriginalDatagramIfNeeded(
@@ -1295,17 +1597,41 @@ final class QUICFlowRouter: @unchecked Sendable {
                 )
             }
 
-            let effectiveReason = shouldFailOpen ? "quic_closed_before_http3_\(reason)" : reason
-            let shouldCloseSession = shouldFailOpen
-                ? markFlowFailed(flowKey: flowKey, flowID: flowID, reason: effectiveReason)
-                : closeFlowGracefully(flowKey: flowKey, flowID: flowID, reason: effectiveReason)
-            if shouldCloseSession {
-                if shouldFailOpen {
-                    await QUICConnectionManager.shared.recordPassThroughFallback(reason: effectiveReason)
+            let shouldCloseSession: Bool
+            if candidateFailOpen {
+                if failureDecision.enabled {
+                    shouldCloseSession = markFlowFailed(
+                        flowKey: flowKey,
+                        flowID: flowID,
+                        reason: failureDecision.effectiveReason,
+                        detail: ingestResult.connectionCloseReasonDetail
+                    )
+                } else {
+                    shouldCloseSession = markFlowBlocked(
+                        flowKey: flowKey,
+                        flowID: flowID,
+                        reason: failureDecision.effectiveReason,
+                        detail: ingestResult.connectionCloseReasonDetail
+                    )
                 }
+            } else {
+                shouldCloseSession = closeFlowGracefully(
+                    flowKey: flowKey,
+                    flowID: flowID,
+                    reason: reason
+                )
+            }
+            if shouldCloseSession {
+                if candidateFailOpen, failureDecision.enabled {
+                    await QUICConnectionManager.shared.recordPassThroughFallback(reason: failureDecision.effectiveReason)
+                }
+                let outcome = candidateFailOpen
+                    ? (failureDecision.enabled ? "pass_through" : "blocked")
+                    : "success"
+                let effectiveReason = candidateFailOpen ? failureDecision.effectiveReason : reason
                 if logSampler.shouldLog(event: "vpn.quic_session_closed", key: effectiveReason, first: 5, every: 250) {
                     VPNLog.tunnel.debug(
-                        "event=vpn.quic_session_closed outcome=\(shouldFailOpen ? "pass_through" : "success", privacy: .public) reason=\(effectiveReason, privacy: .public) direction=\(direction, privacy: .public)"
+                        "event=vpn.quic_session_closed outcome=\(outcome, privacy: .public) reason=\(effectiveReason, privacy: .public) direction=\(direction, privacy: .public)"
                     )
                 }
                 await session.close()
@@ -1320,35 +1646,50 @@ final class QUICFlowRouter: @unchecked Sendable {
             )
             if shouldFailOpenForNoProgress {
                 let reason = "quic_no_progress_fail_open"
-                if originalPayload == nil {
-                    replayRecentClientDatagramsIfNeeded(
-                        flowKey: flowKey,
-                        flowID: flowID,
-                        reason: reason
-                    )
-                }
-                forwardOriginalDatagramIfNeeded(
-                    originalPayload,
-                    fromClient: fromClient,
-                    flowKey: flowKey,
-                    flowID: flowID
-                )
-                let shouldCloseSession = markFlowFailed(
+                let failureDecision = failureDecisionForFlow(
                     flowKey: flowKey,
                     flowID: flowID,
                     reason: reason
                 )
+                if failureDecision.enabled {
+                    if originalPayload == nil {
+                        replayRecentClientDatagramsIfNeeded(
+                            flowKey: flowKey,
+                            flowID: flowID,
+                            reason: failureDecision.effectiveReason
+                        )
+                    }
+                    forwardOriginalDatagramIfNeeded(
+                        originalPayload,
+                        fromClient: fromClient,
+                        flowKey: flowKey,
+                        flowID: flowID
+                    )
+                }
+                let shouldCloseSession = failureDecision.enabled
+                    ? markFlowFailed(
+                        flowKey: flowKey,
+                        flowID: flowID,
+                        reason: failureDecision.effectiveReason
+                    )
+                    : markFlowBlocked(
+                        flowKey: flowKey,
+                        flowID: flowID,
+                        reason: failureDecision.effectiveReason
+                    )
                 if shouldCloseSession {
                     let idleMs = noProgressSnapshot?.lastProgressAt
                         .map { max(0, Int(now.timeIntervalSince($0) * 1_000)) } ?? -1
                     eventLogHandler?(
                         "quic_mitm_session",
-                        "outcome=no_progress_fail_open flow_id=\(flowID.uuidString) direction=\(direction) client_datagrams=\(noProgressSnapshot?.clientDatagramsSeen ?? -1) idle_ms=\(idleMs)"
+                        "outcome=\(failureDecision.enabled ? "no_progress_fail_open" : "no_progress_blocked") flow_id=\(flowID.uuidString) direction=\(direction) client_datagrams=\(noProgressSnapshot?.clientDatagramsSeen ?? -1) idle_ms=\(idleMs)"
                     )
-                    await QUICConnectionManager.shared.recordPassThroughFallback(reason: reason)
-                    if logSampler.shouldLog(event: "vpn.quic_no_progress_fail_open", key: reason, first: 5, every: 250) {
+                    if failureDecision.enabled {
+                        await QUICConnectionManager.shared.recordPassThroughFallback(reason: failureDecision.effectiveReason)
+                    }
+                    if logSampler.shouldLog(event: "vpn.quic_no_progress_fail_open", key: failureDecision.effectiveReason, first: 5, every: 250) {
                         VPNLog.tunnel.info(
-                            "event=vpn.quic_no_progress_fail_open outcome=pass_through reason=\(reason, privacy: .public) direction=\(direction, privacy: .public)"
+                            "event=vpn.quic_no_progress_fail_open outcome=\(failureDecision.enabled ? "pass_through" : "blocked", privacy: .public) reason=\(failureDecision.effectiveReason, privacy: .public) direction=\(direction, privacy: .public)"
                         )
                     }
                     await session.close()
@@ -1358,30 +1699,47 @@ final class QUICFlowRouter: @unchecked Sendable {
         }
 
         let reason = failureReason(from: fallbackReason)
-        if originalPayload == nil {
-            replayRecentClientDatagramsIfNeeded(
-                flowKey: flowKey,
-                flowID: flowID,
-                reason: reason
-            )
-        }
-        forwardOriginalDatagramIfNeeded(
-            originalPayload,
-            fromClient: fromClient,
-            flowKey: flowKey,
-            flowID: flowID
-        )
-        let shouldCloseSession = markFlowFailed(
+        let failureDecision = failureDecisionForFlow(
             flowKey: flowKey,
             flowID: flowID,
             reason: reason
         )
+        if failureDecision.enabled {
+            if originalPayload == nil {
+                replayRecentClientDatagramsIfNeeded(
+                    flowKey: flowKey,
+                    flowID: flowID,
+                    reason: failureDecision.effectiveReason
+                )
+            }
+            forwardOriginalDatagramIfNeeded(
+                originalPayload,
+                fromClient: fromClient,
+                flowKey: flowKey,
+                flowID: flowID
+            )
+        }
+        let shouldCloseSession = failureDecision.enabled
+            ? markFlowFailed(
+                flowKey: flowKey,
+                flowID: flowID,
+                reason: failureDecision.effectiveReason,
+                detail: ingestResult.fallbackReasonDetail
+            )
+            : markFlowBlocked(
+                flowKey: flowKey,
+                flowID: flowID,
+                reason: failureDecision.effectiveReason,
+                detail: ingestResult.fallbackReasonDetail
+            )
 
         if shouldCloseSession {
-            await QUICConnectionManager.shared.recordPassThroughFallback(reason: reason)
-            if logSampler.shouldLog(event: "vpn.quic_session_ingest_fallback", key: reason, first: 5, every: 250) {
+            if failureDecision.enabled {
+                await QUICConnectionManager.shared.recordPassThroughFallback(reason: failureDecision.effectiveReason)
+            }
+            if logSampler.shouldLog(event: "vpn.quic_session_ingest_fallback", key: failureDecision.effectiveReason, first: 5, every: 250) {
                 VPNLog.tunnel.info(
-                    "event=vpn.quic_session_ingest_fallback outcome=pass_through reason=\(reason, privacy: .public) direction=\(direction, privacy: .public)"
+                    "event=vpn.quic_session_ingest_fallback outcome=\(failureDecision.enabled ? "pass_through" : "blocked", privacy: .public) reason=\(failureDecision.effectiveReason, privacy: .public) direction=\(direction, privacy: .public)"
                 )
             }
             await session.close()
@@ -1568,17 +1926,30 @@ final class QUICFlowRouter: @unchecked Sendable {
                         "quic_mitm_session",
                         "outcome=tick_exception flow_id=\(flowID.uuidString) reason=\(reason) error=\(errorDescription)"
                     )
-                    let shouldCloseSession = self.markFlowFailed(
+                    let failureDecision = self.failureDecisionForFlow(
                         flowKey: flowKey,
                         flowID: flowID,
                         reason: reason
                     )
+                    let shouldCloseSession = failureDecision.enabled
+                        ? self.markFlowFailed(
+                            flowKey: flowKey,
+                            flowID: flowID,
+                            reason: failureDecision.effectiveReason
+                        )
+                        : self.markFlowBlocked(
+                            flowKey: flowKey,
+                            flowID: flowID,
+                            reason: failureDecision.effectiveReason
+                        )
 
                     if shouldCloseSession {
-                        await QUICConnectionManager.shared.recordPassThroughFallback(reason: reason)
-                        if self.logSampler.shouldLog(event: "vpn.quic_session_tick_failed", key: reason, first: 5, every: 250) {
+                        if failureDecision.enabled {
+                            await QUICConnectionManager.shared.recordPassThroughFallback(reason: failureDecision.effectiveReason)
+                        }
+                        if self.logSampler.shouldLog(event: "vpn.quic_session_tick_failed", key: failureDecision.effectiveReason, first: 5, every: 250) {
                             VPNLog.tunnel.info(
-                                "event=vpn.quic_session_tick_failed outcome=pass_through reason=\(reason, privacy: .public) error=\(errorDescription, privacy: .public)"
+                                "event=vpn.quic_session_tick_failed outcome=\(failureDecision.enabled ? "pass_through" : "blocked", privacy: .public) reason=\(failureDecision.effectiveReason, privacy: .public) error=\(errorDescription, privacy: .public)"
                             )
                         }
                         await session.close()
@@ -1644,15 +2015,17 @@ final class QUICFlowRouter: @unchecked Sendable {
         }
     }
 
-    private func markFlowFailed(
+    private func markFlowBlocked(
         flowKey: FlowKey,
         flowID: UUID,
-        reason: String
+        reason: String,
+        detail: String? = nil
     ) -> Bool {
         var tickTask: Task<Void, Never>?
         var hostHash: String?
-        var hostFailOpenHashes: String?
         let failureAt = Date()
+        let normalizedDetail = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let failureDetail = (normalizedDetail?.isEmpty == false ? normalizedDetail : nil) ?? "none"
         let shouldClose = stateQueue.sync { () -> Bool in
             guard var state = flowStates[flowKey], state.flowID == flowID else { return false }
             tickTask = state.tickTask
@@ -1672,11 +2045,57 @@ final class QUICFlowRouter: @unchecked Sendable {
             state.clientDatagramsSeen = 0
             state.processedStreamCount = 0
             state.recentClientDatagrams.removeAll(keepingCapacity: false)
-            let failOpenKeys = markHostFailOpenLocked(
-                state: state,
-                reason: reason,
-                now: failureAt
+            flowStates[flowKey] = state
+            return true
+        }
+        tickTask?.cancel()
+        if shouldClose {
+            eventLogHandler?(
+                "quic_mitm_session",
+                "outcome=blocked flow_id=\(flowID.uuidString) host_hash=\(hostHash ?? "unknown") reason=\(reason) failure_detail=\(failureDetail) route_decision=block fallback_applied=false bypass_reason=none policy=\(dualMITMPolicy.rawValue)"
             )
+        }
+        return shouldClose
+    }
+
+    private func markFlowFailed(
+        flowKey: FlowKey,
+        flowID: UUID,
+        reason: String,
+        detail: String? = nil
+    ) -> Bool {
+        var tickTask: Task<Void, Never>?
+        var hostHash: String?
+        var hostFailOpenHashes: String?
+        let failureAt = Date()
+        let normalizedDetail = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let failureDetail = (normalizedDetail?.isEmpty == false ? normalizedDetail : nil) ?? "none"
+        let shouldClose = stateQueue.sync { () -> Bool in
+            guard var state = flowStates[flowKey], state.flowID == flowID else { return false }
+            tickTask = state.tickTask
+            hostHash = LogRedaction.hash(state.host)
+            state.isEstablishing = false
+            state.isEstablished = false
+            state.queuedIngests = 0
+            state.pendingDatagrams.removeAll(keepingCapacity: false)
+            state.session = nil
+            state.bootstrapToken = nil
+            state.tickTask = nil
+            state.lastFailureReason = reason
+            state.lastFailureAt = failureAt
+            state.establishedAt = nil
+            state.lastProgressAt = nil
+            state.noProgressBudgetStartAt = nil
+            state.clientDatagramsSeen = 0
+            state.processedStreamCount = 0
+            state.recentClientDatagrams.removeAll(keepingCapacity: false)
+            let failOpenKeys = dualMITMPolicy == .adaptiveFailOpen
+                ? markHostFailOpenLocked(
+                    state: state,
+                    reason: reason,
+                    now: failureAt
+                )
+                : []
             if !failOpenKeys.isEmpty {
                 hostFailOpenHashes = failOpenKeys
                     .map { LogRedaction.hash($0) }
@@ -1693,12 +2112,12 @@ final class QUICFlowRouter: @unchecked Sendable {
             }
             eventLogHandler?(
                 "quic_mitm_session",
-                "outcome=failed flow_id=\(flowID.uuidString) host_hash=\(hostHash ?? "unknown") reason=\(reason) route_decision=pass_through fallback_applied=true bypass_reason=\(reason) policy=\(dualMITMPolicy.rawValue)"
+                "outcome=failed flow_id=\(flowID.uuidString) host_hash=\(hostHash ?? "unknown") reason=\(reason) failure_detail=\(failureDetail) route_decision=pass_through fallback_applied=true bypass_reason=\(reason) policy=\(dualMITMPolicy.rawValue)"
             )
             if let hostFailOpenHashes, !hostFailOpenHashes.isEmpty {
                 eventLogHandler?(
                     "quic_mitm_session",
-                    "outcome=host_fail_open_marked flow_id=\(flowID.uuidString) reason=\(reason) host_hashes=\(hostFailOpenHashes) ttl_ms=\(Int(hostFailOpenBackoff * 1_000)) policy=\(dualMITMPolicy.rawValue)"
+                    "outcome=host_fail_open_marked flow_id=\(flowID.uuidString) reason=\(reason) failure_detail=\(failureDetail) host_hashes=\(hostFailOpenHashes) ttl_ms=\(Int(hostFailOpenBackoff * 1_000)) policy=\(dualMITMPolicy.rawValue)"
                 )
             }
         }
@@ -1766,7 +2185,6 @@ final class QUICFlowRouter: @unchecked Sendable {
     private func activeHostFailOpenReasonLocked(
         state: FlowSessionState,
         hostHint: String,
-        destinationIP: String,
         now: Date
     ) -> String? {
         pruneHostFailOpenLocked(now: now)
@@ -1786,11 +2204,6 @@ final class QUICFlowRouter: @unchecked Sendable {
             if !normalizedRetry.isEmpty {
                 candidateKeys.append(normalizedRetry)
             }
-        }
-
-        let normalizedDestinationIP = normalizeAuthority(destinationIP)
-        if !normalizedDestinationIP.isEmpty {
-            candidateKeys.append(normalizedDestinationIP)
         }
 
         for key in candidateKeys {
@@ -1835,17 +2248,13 @@ final class QUICFlowRouter: @unchecked Sendable {
         }
 
         guard !replayDatagrams.isEmpty else { return }
-        var deduplicated: [Data] = []
-        deduplicated.reserveCapacity(replayDatagrams.count)
-        for payload in replayDatagrams where !payload.isEmpty {
-            if deduplicated.last == payload {
-                continue
-            }
-            deduplicated.append(payload)
-        }
-        guard !deduplicated.isEmpty else { return }
+        let replayBudget = maxBufferedDatagramsPerFlow + maxFailOpenReplayDatagrams
+        let trimmedDatagrams = replayDatagrams
+            .suffix(replayBudget)
+            .filter { !$0.isEmpty }
+        guard !trimmedDatagrams.isEmpty else { return }
 
-        for payload in deduplicated {
+        for payload in trimmedDatagrams {
             forwardOriginalDatagramIfNeeded(
                 payload,
                 fromClient: true,
@@ -1853,9 +2262,10 @@ final class QUICFlowRouter: @unchecked Sendable {
                 flowID: flowID
             )
         }
+        let droppedCount = max(0, replayDatagrams.count - trimmedDatagrams.count)
         eventLogHandler?(
             "quic_mitm_session",
-            "outcome=fail_open_replay flow_id=\(flowID.uuidString) reason=\(reason) datagrams=\(deduplicated.count)"
+            "outcome=fail_open_replay flow_id=\(flowID.uuidString) reason=\(reason) datagrams=\(trimmedDatagrams.count) dropped=\(droppedCount)"
         )
     }
 
@@ -1879,11 +2289,6 @@ final class QUICFlowRouter: @unchecked Sendable {
             if !normalizedRetry.isEmpty {
                 keys.insert(normalizedRetry)
             }
-        }
-
-        let normalizedServerIP = normalizeAuthority(state.serverIP.description)
-        if !normalizedServerIP.isEmpty {
-            keys.insert(normalizedServerIP)
         }
 
         guard !keys.isEmpty else { return [] }
@@ -1990,8 +2395,7 @@ final class QUICFlowRouter: @unchecked Sendable {
             .lowercased()
         guard !normalized.isEmpty else { return false }
 
-        if normalized == "quic_no_progress_fail_open" ||
-            normalized == "handshakefailed" ||
+        if normalized == "handshakefailed" ||
             normalized == "certificatepinning" ||
             normalized == "quic_retry_with_authority_failed" {
             return true
@@ -2076,6 +2480,16 @@ final class QUICFlowRouter: @unchecked Sendable {
     }
 
     func makeCertificateMaterial(for authority: String) -> QUICMitmCertificateMaterial? {
+        Self.makeCertificateMaterial(
+            for: authority,
+            eventLogHandler: eventLogHandler
+        )
+    }
+
+    private static func makeCertificateMaterial(
+        for authority: String,
+        eventLogHandler: (@Sendable (String, String) -> Void)?
+    ) -> QUICMitmCertificateMaterial? {
         let normalized = normalizeAuthority(authority)
         guard shouldIssueCertificate(for: normalized) else {
             eventLogHandler?(
@@ -2125,11 +2539,19 @@ final class QUICFlowRouter: @unchecked Sendable {
     }
 
     func shouldIssueCertificate(for authority: String) -> Bool {
+        Self.shouldIssueCertificate(for: authority)
+    }
+
+    private static func shouldIssueCertificate(for authority: String) -> Bool {
         guard !authority.isEmpty else { return false }
         return !authority.contains(where: \.isWhitespace)
     }
 
     func normalizeAuthority(_ authority: String) -> String {
+        Self.normalizeAuthority(authority)
+    }
+
+    private static func normalizeAuthority(_ authority: String) -> String {
         var normalized = authority.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalized.isEmpty else { return "" }
 
@@ -2156,6 +2578,10 @@ final class QUICFlowRouter: @unchecked Sendable {
     }
 
     func splitHostAndPortIfNeeded(_ authority: String) -> String? {
+        Self.splitHostAndPortIfNeeded(authority)
+    }
+
+    private static func splitHostAndPortIfNeeded(_ authority: String) -> String? {
         guard let colonIndex = authority.lastIndex(of: ":") else { return nil }
         let hostCandidate = String(authority[..<colonIndex])
         let portCandidate = String(authority[authority.index(after: colonIndex)...])

@@ -355,6 +355,23 @@ final class LocalSocks5ServerTests: XCTestCase {
         XCTAssertFalse(policy.shouldRouteToMITM(destinationHost: "example.com", destinationPort: 80))
     }
 
+    func testTCPConnectRoutingPolicyRoutesHTTPAndHTTPSWhenConfigured() {
+        let policy = LocalSocks5Server.TCPConnectRoutingPolicy(
+            enabled: true,
+            interceptPorts: [80, 443],
+            mitmProxyHost: "127.0.0.1",
+            mitmProxyPort: 8888,
+            failOpen: true
+        )
+
+        XCTAssertTrue(policy.shouldRouteToMITM(destinationHost: "example.com", destinationPort: 80))
+        XCTAssertTrue(policy.shouldRouteToMITM(destinationHost: "example.com", destinationPort: 443))
+        XCTAssertEqual(
+            policy.routeDecision(destinationHost: "example.com", destinationPort: 8080),
+            .direct(reason: "port_not_intercepted")
+        )
+    }
+
     func testTCPConnectRoutingPolicyAvoidsProxyLoop() {
         let policy = LocalSocks5Server.TCPConnectRoutingPolicy(
             enabled: true,
@@ -460,6 +477,76 @@ final class LocalSocks5ServerTests: XCTestCase {
             policy.routeDecision(destinationHost: "example.com", destinationPort: 443),
             .direct(reason: "dual_mitm_circuit_breaker")
         )
+    }
+
+    func testTCPConnectRoutingPolicyShadowModeKeepsLegacyDecision() {
+        let policyEngine = DualMITMPolicyEngine(
+            snapshot: DualMITMPolicySnapshot(
+                tcpTransparentMITMEnabled: false,
+                tcpInterceptPorts: [443],
+                mitmProxyHost: "127.0.0.1",
+                mitmProxyPort: 8888,
+                policyMode: .adaptiveFailOpen,
+                circuitBreakerEnabled: true,
+                featureFlags: DualMITMPolicyFeatureFlags(
+                    shadowEnabled: true,
+                    enforceTCPRouting: false
+                )
+            )
+        )
+        let policy = LocalSocks5Server.TCPConnectRoutingPolicy(
+            enabled: true,
+            interceptPorts: [443],
+            mitmProxyHost: "127.0.0.1",
+            mitmProxyPort: 8888,
+            failOpen: true,
+            dualMITMPolicy: .adaptiveFailOpen,
+            policyEngine: policyEngine
+        )
+
+        let evaluation = policy.evaluateRouteDecision(destinationHost: "example.com", destinationPort: 443)
+
+        XCTAssertEqual(evaluation.legacyDecision, .mitm)
+        XCTAssertEqual(evaluation.policyDecision, .direct(reason: "policy_disabled"))
+        XCTAssertEqual(evaluation.effectiveDecision, .mitm)
+        XCTAssertTrue(evaluation.shadowEnabled)
+        XCTAssertFalse(evaluation.policyEnforced)
+        XCTAssertTrue(evaluation.hasShadowMismatch)
+    }
+
+    func testTCPConnectRoutingPolicyEnforcedModeUsesPolicyDecision() {
+        let policyEngine = DualMITMPolicyEngine(
+            snapshot: DualMITMPolicySnapshot(
+                tcpTransparentMITMEnabled: false,
+                tcpInterceptPorts: [443],
+                mitmProxyHost: "127.0.0.1",
+                mitmProxyPort: 8888,
+                policyMode: .adaptiveFailOpen,
+                circuitBreakerEnabled: true,
+                featureFlags: DualMITMPolicyFeatureFlags(
+                    shadowEnabled: true,
+                    enforceTCPRouting: true
+                )
+            )
+        )
+        let policy = LocalSocks5Server.TCPConnectRoutingPolicy(
+            enabled: true,
+            interceptPorts: [443],
+            mitmProxyHost: "127.0.0.1",
+            mitmProxyPort: 8888,
+            failOpen: true,
+            dualMITMPolicy: .adaptiveFailOpen,
+            policyEngine: policyEngine
+        )
+
+        let evaluation = policy.evaluateRouteDecision(destinationHost: "example.com", destinationPort: 443)
+
+        XCTAssertEqual(evaluation.legacyDecision, .mitm)
+        XCTAssertEqual(evaluation.policyDecision, .direct(reason: "policy_disabled"))
+        XCTAssertEqual(evaluation.effectiveDecision, .direct(reason: "policy_disabled"))
+        XCTAssertTrue(evaluation.shadowEnabled)
+        XCTAssertTrue(evaluation.policyEnforced)
+        XCTAssertTrue(evaluation.hasShadowMismatch)
     }
 
     func testTCPConnectRoutesPort443ToMITMEndpoint() throws {

@@ -48,6 +48,7 @@ struct cquiche_mitm_session {
     bool ready;
     bool tunnel_policy_required;
     int32_t last_failure_reason;
+    char last_failure_detail[160];
     uint64_t next_stream_id;
     cquiche_action_node_t *action_head;
     cquiche_action_node_t *action_tail;
@@ -274,6 +275,56 @@ static const char *failure_reason_key(int32_t reason)
     }
 }
 
+static void clear_last_failure_detail(cquiche_mitm_session_t *session)
+{
+    if (session == NULL)
+    {
+        return;
+    }
+
+    session->last_failure_detail[0] = '\0';
+}
+
+static void set_last_failure_detail(cquiche_mitm_session_t *session, const char *detail)
+{
+    if (session == NULL)
+    {
+        return;
+    }
+
+    if (detail == NULL || detail[0] == '\0')
+    {
+        clear_last_failure_detail(session);
+        return;
+    }
+
+    int written = snprintf(
+        session->last_failure_detail,
+        sizeof(session->last_failure_detail),
+        "%s",
+        detail
+    );
+    if (written < 0)
+    {
+        clear_last_failure_detail(session);
+    }
+}
+
+static const char *tls_alert_detail_name(uint64_t alert_code)
+{
+    switch (alert_code)
+    {
+    case 42:
+        return "bad_certificate";
+    case 46:
+        return "certificate_unknown";
+    case 48:
+        return "unknown_ca";
+    default:
+        return "other";
+    }
+}
+
 static int emit_fallback(cquiche_mitm_session_t *session, int32_t reason)
 {
     if (session == NULL)
@@ -281,6 +332,7 @@ static int emit_fallback(cquiche_mitm_session_t *session, int32_t reason)
         return CQUICHE_ERROR_INVALID_ARGUMENT;
     }
 
+    clear_last_failure_detail(session);
     session->last_failure_reason = reason;
     session->stats.fallback_events += 1;
     session->ready = false;
@@ -366,6 +418,8 @@ static void update_close_failure_reason(cquiche_mitm_session_t *session)
         return;
     }
 
+    clear_last_failure_detail(session);
+
     bool is_app = false;
     uint64_t error_code = 0;
     const uint8_t *reason = NULL;
@@ -387,23 +441,74 @@ static void update_close_failure_reason(cquiche_mitm_session_t *session)
                 error_code == tls_alert_unknown_ca)
             {
                 session->last_failure_reason = CQUICHE_FAILURE_CERTIFICATE_PINNING;
+                uint64_t alert_code = error_code - tls_alert_base;
+                char detail[160];
+                int written = snprintf(
+                    detail,
+                    sizeof(detail),
+                    "peer_tls_alert=%s,alert=%llu,raw=%llu",
+                    tls_alert_detail_name(alert_code),
+                    (unsigned long long)alert_code,
+                    (unsigned long long)error_code
+                );
+                if (written >= 0)
+                {
+                    set_last_failure_detail(session, detail);
+                }
+                else
+                {
+                    clear_last_failure_detail(session);
+                }
                 return;
             }
         }
 
         session->last_failure_reason = CQUICHE_FAILURE_HANDSHAKE_FAILED;
+        char detail[160];
+        int written = snprintf(
+            detail,
+            sizeof(detail),
+            "peer_error=is_app_%u,code=%llu",
+            is_app ? 1U : 0U,
+            (unsigned long long)error_code
+        );
+        if (written >= 0)
+        {
+            set_last_failure_detail(session, detail);
+        }
+        else
+        {
+            clear_last_failure_detail(session);
+        }
         return;
     }
 
     if (quiche_conn_local_error(session->downstream_conn, &is_app, &error_code, &reason, &reason_len))
     {
         session->last_failure_reason = CQUICHE_FAILURE_HANDSHAKE_FAILED;
+        char detail[160];
+        int written = snprintf(
+            detail,
+            sizeof(detail),
+            "local_error=is_app_%u,code=%llu",
+            is_app ? 1U : 0U,
+            (unsigned long long)error_code
+        );
+        if (written >= 0)
+        {
+            set_last_failure_detail(session, detail);
+        }
+        else
+        {
+            clear_last_failure_detail(session);
+        }
         return;
     }
 
     if (!quiche_conn_is_established(session->downstream_conn))
     {
         session->last_failure_reason = CQUICHE_FAILURE_HANDSHAKE_FAILED;
+        set_last_failure_detail(session, "state=closed_before_established");
     }
 }
 
@@ -1626,6 +1731,7 @@ cquiche_mitm_session_t *cquiche_mitm_session_open_with_config(const cquiche_mitm
     session->tunnel_policy_required = config->tunnel_policy_required;
     session->ready = false;
     session->last_failure_reason = CQUICHE_FAILURE_ENGINE_UNAVAILABLE;
+    clear_last_failure_detail(session);
     session->next_stream_id = 0;
     session->authority_retry_emitted = false;
     memset(&session->stats, 0, sizeof(cquiche_mitm_stats_t));
@@ -1639,6 +1745,7 @@ cquiche_mitm_session_t *cquiche_mitm_session_open_with_config(const cquiche_mitm
 
     session->ready = true;
     session->last_failure_reason = CQUICHE_FAILURE_NONE;
+    clear_last_failure_detail(session);
 #else
     (void)config;
 #endif
@@ -1987,6 +2094,16 @@ int cquiche_mitm_session_last_failure_reason(const cquiche_mitm_session_t *sessi
     }
 
     return session->last_failure_reason;
+}
+
+const char *cquiche_mitm_session_last_failure_detail(const cquiche_mitm_session_t *session)
+{
+    if (session == NULL)
+    {
+        return "";
+    }
+
+    return session->last_failure_detail;
 }
 
 int cquiche_mitm_session_get_stats(

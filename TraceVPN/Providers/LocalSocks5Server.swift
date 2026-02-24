@@ -24,12 +24,26 @@ final class LocalSocks5Server: @unchecked Sendable {
             case direct(reason: String)
         }
 
+        struct RouteDecisionEvaluation: Sendable, Equatable {
+            let effectiveDecision: RouteDecision
+            let legacyDecision: RouteDecision
+            let policyDecision: RouteDecision?
+            let shadowEnabled: Bool
+            let policyEnforced: Bool
+
+            var hasShadowMismatch: Bool {
+                guard shadowEnabled, let policyDecision else { return false }
+                return legacyDecision != policyDecision
+            }
+        }
+
         let enabled: Bool
         let interceptPorts: Set<UInt16>
         let mitmProxyHost: String
         let mitmProxyPort: UInt16
         let failOpen: Bool
         let dualMITMPolicy: DualMITMPolicy
+        let policyEngine: DualMITMPolicyEngine?
         let shouldBypassHost: @Sendable (String) -> Bool
         let bypassReasonForHost: @Sendable (String) -> String?
 
@@ -40,6 +54,7 @@ final class LocalSocks5Server: @unchecked Sendable {
             mitmProxyPort: UInt16,
             failOpen: Bool,
             dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
+            policyEngine: DualMITMPolicyEngine? = nil,
             shouldBypassHost: @escaping @Sendable (String) -> Bool = { _ in false },
             bypassReasonForHost: @escaping @Sendable (String) -> String? = { _ in nil }
         ) {
@@ -49,6 +64,7 @@ final class LocalSocks5Server: @unchecked Sendable {
             self.mitmProxyPort = mitmProxyPort
             self.failOpen = failOpen
             self.dualMITMPolicy = dualMITMPolicy
+            self.policyEngine = policyEngine
             self.shouldBypassHost = shouldBypassHost
             self.bypassReasonForHost = bypassReasonForHost
         }
@@ -60,11 +76,60 @@ final class LocalSocks5Server: @unchecked Sendable {
             mitmProxyPort: 0,
             failOpen: true,
             dualMITMPolicy: .adaptiveFailOpen,
+            policyEngine: nil,
             shouldBypassHost: { _ in false },
             bypassReasonForHost: { _ in nil }
         )
 
         func routeDecision(destinationHost: String, destinationPort: UInt16) -> RouteDecision {
+            evaluateRouteDecision(
+                destinationHost: destinationHost,
+                destinationPort: destinationPort
+            ).effectiveDecision
+        }
+
+        func evaluateRouteDecision(destinationHost: String, destinationPort: UInt16) -> RouteDecisionEvaluation {
+            let legacyDecision = legacyRouteDecision(
+                destinationHost: destinationHost,
+                destinationPort: destinationPort
+            )
+
+            guard let policyEngine else {
+                return RouteDecisionEvaluation(
+                    effectiveDecision: legacyDecision,
+                    legacyDecision: legacyDecision,
+                    policyDecision: nil,
+                    shadowEnabled: false,
+                    policyEnforced: false
+                )
+            }
+
+            let policyPlan = policyEngine.planNewTCPTransparentFlow(
+                destinationHost: destinationHost,
+                destinationPort: destinationPort
+            )
+            let policyDecision = routeDecision(from: policyPlan.decision)
+            let effectiveDecision = policyPlan.enforceTCPRouting ? policyDecision : legacyDecision
+
+            return RouteDecisionEvaluation(
+                effectiveDecision: effectiveDecision,
+                legacyDecision: legacyDecision,
+                policyDecision: policyDecision,
+                shadowEnabled: policyPlan.shadowEnabled,
+                policyEnforced: policyPlan.enforceTCPRouting
+            )
+        }
+
+        private func routeDecision(from decision: DualMITMTCPRouteDecision) -> RouteDecision {
+            switch decision {
+            case .mitm:
+                return .mitm
+            case let .direct(reason):
+                return .direct(reason: reason)
+            }
+        }
+
+        private func legacyRouteDecision(destinationHost: String, destinationPort: UInt16) -> RouteDecision {
             guard enabled, mitmProxyPort > 0 else {
                 return .direct(reason: "policy_disabled")
             }
@@ -417,8 +482,11 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
     private static let directBackoffTTL: TimeInterval = 10
     private static let directBackoffLock = NSLock()
     private nonisolated(unsafe) static var directBackoffByEndpoint: [String: Date] = [:]
+    private static let flowIDLock = NSLock()
+    private nonisolated(unsafe) static var nextFlowID: UInt64 = 1
 
     private let sessionID = UUID().uuidString
+    private let flowID = Socks5SessionHandler.allocateFlowID()
     private var state: State = .greeting
     private var buffer = ByteBuffer()
     private var remoteChannel: Channel?
@@ -545,8 +613,14 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
         let destinationHost = request.address.host
         let destinationPort = request.port
         let destinationHash = LogRedaction.hash(destinationHost)
-        let routeDecision = tcpConnectRoutingPolicy.routeDecision(
+        let routeEvaluation = tcpConnectRoutingPolicy.evaluateRouteDecision(
             destinationHost: destinationHost,
+            destinationPort: destinationPort
+        )
+        let routeDecision = routeEvaluation.effectiveDecision
+        maybeLogPolicyShadowMismatch(
+            evaluation: routeEvaluation,
+            destinationHash: destinationHash,
             destinationPort: destinationPort
         )
 
@@ -612,6 +686,45 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
                     self.completeConnectFailure(context: context)
                 }
             }
+        }
+    }
+
+    private func maybeLogPolicyShadowMismatch(
+        evaluation: LocalSocks5Server.TCPConnectRoutingPolicy.RouteDecisionEvaluation,
+        destinationHash: String,
+        destinationPort: UInt16
+    ) {
+        guard evaluation.hasShadowMismatch else { return }
+        guard let policyDecision = evaluation.policyDecision else { return }
+
+        let legacyRoute = routeDecisionValue(evaluation.legacyDecision)
+        let legacyReason = routeBypassReason(evaluation.legacyDecision)
+        let policyRoute = routeDecisionValue(policyDecision)
+        let policyReason = routeBypassReason(policyDecision)
+        let effectiveRoute = routeDecisionValue(evaluation.effectiveDecision)
+        let effectiveReason = routeBypassReason(evaluation.effectiveDecision)
+        eventLogHandler?(
+            "dual_mitm_policy_shadow",
+            "session=\(sessionID) destination_hash=\(destinationHash) sni_hash=\(destinationHash) upstream_hash=\(destinationHash) destination_port=\(destinationPort) policy=\(tcpConnectRoutingPolicy.dualMITMPolicy.rawValue) legacy_route=\(legacyRoute) legacy_reason=\(legacyReason) policy_route=\(policyRoute) policy_reason=\(policyReason) effective_route=\(effectiveRoute) effective_reason=\(effectiveReason) mismatch=true enforced=\(evaluation.policyEnforced)"
+        )
+    }
+
+    private func routeDecisionValue(_ decision: LocalSocks5Server.TCPConnectRoutingPolicy.RouteDecision) -> String {
+        switch decision {
+        case .mitm:
+            return "mitm"
+        case .direct:
+            return "direct"
+        }
+    }
+
+    private func routeBypassReason(_ decision: LocalSocks5Server.TCPConnectRoutingPolicy.RouteDecision) -> String {
+        switch decision {
+        case .mitm:
+            return "none"
+        case let .direct(reason):
+            let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "none" : trimmed
         }
     }
 
@@ -842,6 +955,17 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
         "\(normalizedEndpointHost(host)):\(port)"
     }
 
+    private static func allocateFlowID() -> UInt64 {
+        flowIDLock.lock()
+        defer { flowIDLock.unlock() }
+        let allocated = nextFlowID
+        nextFlowID &+= 1
+        if nextFlowID == 0 {
+            nextFlowID = 1
+        }
+        return allocated
+    }
+
     private static func isDoTBackoffActive(host: String, port: UInt16, now: Date = Date()) -> Bool {
         guard port == 853 else { return false }
         let key = dotEndpointKey(host: host, port: port)
@@ -907,14 +1031,17 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
         destinationHash: String,
         context: ChannelHandlerContext
     ) {
-        guard let metadataBytes = TransparentProxyMetadata.encodeUpstreamHint(
+        let policyModeRaw: UInt8 = tcpConnectRoutingPolicy.dualMITMPolicy == .strictMITM ? 1 : 0
+        guard let metadataBytes = TransparentProxyMetadata.encodeUpstreamHintV2(
             host: destinationAddress.host,
             port: destinationPort,
-            addressTypeRaw: destinationAddress.type.rawValue
+            addressTypeRaw: destinationAddress.type.rawValue,
+            flowID: flowID,
+            policyModeRaw: policyModeRaw
         ) else {
             eventLogHandler?(
                 "local_socks5_connect_route",
-                "session=\(sessionID) destination_hash=\(destinationHash) sni_hash=\(destinationHash) upstream_hash=\(destinationHash) destination_port=\(destinationPort) route=mitm route_decision=mitm fallback_applied=false bypass_reason=none policy=\(tcpConnectRoutingPolicy.dualMITMPolicy.rawValue) metadata=encode_skipped"
+                "session=\(sessionID) flow_id=\(flowID) destination_hash=\(destinationHash) sni_hash=\(destinationHash) upstream_hash=\(destinationHash) destination_port=\(destinationPort) route=mitm route_decision=mitm fallback_applied=false bypass_reason=none policy=\(tcpConnectRoutingPolicy.dualMITMPolicy.rawValue) metadata=encode_skipped"
             )
             completeConnectSuccess(remoteChannel, context: context)
             return
@@ -933,14 +1060,14 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
                 case .success:
                     self.eventLogHandler?(
                         "local_socks5_connect_route",
-                        "session=\(self.sessionID) destination_hash=\(destinationHash) sni_hash=\(destinationHash) upstream_hash=\(destinationHash) destination_port=\(destinationPort) route=mitm route_decision=mitm fallback_applied=false bypass_reason=none policy=\(self.tcpConnectRoutingPolicy.dualMITMPolicy.rawValue) metadata=sent bytes=\(metadataBytes.count)"
+                        "session=\(self.sessionID) flow_id=\(self.flowID) destination_hash=\(destinationHash) sni_hash=\(destinationHash) upstream_hash=\(destinationHash) destination_port=\(destinationPort) route=mitm route_decision=mitm fallback_applied=false bypass_reason=none policy=\(self.tcpConnectRoutingPolicy.dualMITMPolicy.rawValue) metadata=sent bytes=\(metadataBytes.count) metadata_version=2"
                     )
                     self.completeConnectSuccess(remoteChannel, context: context)
 
                 case let .failure(error):
                     self.eventLogHandler?(
                         "local_socks5_connect_route",
-                        "session=\(self.sessionID) destination_hash=\(destinationHash) sni_hash=\(destinationHash) upstream_hash=\(destinationHash) destination_port=\(destinationPort) route=mitm route_decision=mitm fallback_applied=true bypass_reason=mitm_metadata_send_failed policy=\(self.tcpConnectRoutingPolicy.dualMITMPolicy.rawValue) metadata=send_failed error=\(error.localizedDescription)"
+                        "session=\(self.sessionID) flow_id=\(self.flowID) destination_hash=\(destinationHash) sni_hash=\(destinationHash) upstream_hash=\(destinationHash) destination_port=\(destinationPort) route=mitm route_decision=mitm fallback_applied=true bypass_reason=mitm_metadata_send_failed policy=\(self.tcpConnectRoutingPolicy.dualMITMPolicy.rawValue) metadata=send_failed error=\(error.localizedDescription)"
                     )
                     remoteChannel.close(promise: nil)
                     self.attemptDirectFallback(

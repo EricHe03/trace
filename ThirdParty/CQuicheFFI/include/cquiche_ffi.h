@@ -110,6 +110,7 @@ int cquiche_mitm_session_submit_response(
 
 int cquiche_mitm_session_tick(cquiche_mitm_session_t *session, uint64_t now_nanos);
 int cquiche_mitm_session_last_failure_reason(const cquiche_mitm_session_t *session);
+const char *cquiche_mitm_session_last_failure_detail(const cquiche_mitm_session_t *session);
 int cquiche_mitm_session_get_stats(
     const cquiche_mitm_session_t *session,
     cquiche_mitm_stats_t *stats

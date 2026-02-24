@@ -66,6 +66,96 @@ final class QUICFlowRouterTests: XCTestCase {
         XCTAssertFalse(route.consumeOriginalDatagram)
     }
 
+    func testResolveInterceptRouteBlocksWhenPolicyEngineRejectsInitialFlow() {
+        let policyEngine = DualMITMPolicyEngine(
+            snapshot: DualMITMPolicySnapshot(
+                tcpTransparentMITMEnabled: true,
+                tcpInterceptPorts: [80, 443],
+                mitmProxyHost: "127.0.0.1",
+                mitmProxyPort: 8888,
+                policyMode: .strictMITM,
+                circuitBreakerEnabled: true,
+                featureFlags: .init(
+                    shadowEnabled: true,
+                    enforceTCPRouting: false,
+                    enforceProxyRouting: false,
+                    enforceQUICRouting: true,
+                    mitmEngineV2Enabled: false
+                )
+            )
+        )
+        let router = QUICFlowRouter(
+            engineStatusProvider: {
+                QUICEngineStatus(
+                    availability: .available,
+                    version: "test",
+                    usingQuicheFFI: true
+                )
+            },
+            dualMITMPolicy: .strictMITM,
+            dualMITMPolicyEngine: policyEngine
+        )
+
+        let route = router.resolveInterceptRoute(
+            ipPacket: makeIPPacket(),
+            udpPacket: makeUDPPacket(destinationPort: 0),
+            udpForwarderAvailable: true,
+            tunnelUDPSupported: true,
+            tunnelPolicyRequired: false
+        )
+
+        XCTAssertEqual(route.forwardingDecision, .dropQUIC)
+        XCTAssertEqual(route.inspectionOutcome, .blocked)
+        XCTAssertEqual(route.metadata.handshakeOutcome, .blocked)
+        XCTAssertEqual(route.metadata.failureReason, "invalid_destination")
+        XCTAssertFalse(route.consumeOriginalDatagram)
+    }
+
+    func testResolveInterceptRouteBlocksWhenEngineUnavailableAndPolicyEnforced() {
+        let policyEngine = DualMITMPolicyEngine(
+            snapshot: DualMITMPolicySnapshot(
+                tcpTransparentMITMEnabled: true,
+                tcpInterceptPorts: [80, 443],
+                mitmProxyHost: "127.0.0.1",
+                mitmProxyPort: 8888,
+                policyMode: .strictMITM,
+                circuitBreakerEnabled: true,
+                featureFlags: .init(
+                    shadowEnabled: true,
+                    enforceTCPRouting: false,
+                    enforceProxyRouting: false,
+                    enforceQUICRouting: true,
+                    mitmEngineV2Enabled: false
+                )
+            )
+        )
+        let router = QUICFlowRouter(
+            engineStatusProvider: {
+                QUICEngineStatus(
+                    availability: .unavailable,
+                    version: "ffi-not-linked",
+                    usingQuicheFFI: false
+                )
+            },
+            dualMITMPolicy: .strictMITM,
+            dualMITMPolicyEngine: policyEngine
+        )
+
+        let route = router.resolveInterceptRoute(
+            ipPacket: makeIPPacket(),
+            udpPacket: makeUDPPacket(),
+            udpForwarderAvailable: true,
+            tunnelUDPSupported: true,
+            tunnelPolicyRequired: false
+        )
+
+        XCTAssertEqual(route.forwardingDecision, .dropQUIC)
+        XCTAssertEqual(route.inspectionOutcome, .blocked)
+        XCTAssertEqual(route.metadata.handshakeOutcome, .blocked)
+        XCTAssertEqual(route.metadata.failureReason, QUICMitmFailureReason.engineUnavailable.rawValue)
+        XCTAssertFalse(route.consumeOriginalDatagram)
+    }
+
     func testResolveInterceptRouteSuppressesDuplicatePassThroughLogsForSameFlowReason() {
         final class EventStore: @unchecked Sendable {
             private let lock = NSLock()
@@ -186,7 +276,8 @@ final class QUICFlowRouterTests: XCTestCase {
         DualMITMCircuitBreaker.shared.configure(
             enabled: true,
             cooldownSeconds: 300,
-            quicWindowSeconds: 60
+            quicWindowSeconds: 60,
+            quicMinimumSamples: 5
         )
         DualMITMCircuitBreaker.shared.recordQUICInterceptSample(failed: true)
         DualMITMCircuitBreaker.shared.recordQUICInterceptSample(failed: true)
@@ -333,8 +424,8 @@ final class QUICFlowRouterTests: XCTestCase {
         XCTAssertNil(reason)
     }
 
-    func testShouldEnableHostFailOpenForNoProgressReason() {
-        XCTAssertTrue(QUICFlowRouter.shouldEnableHostFailOpen(for: "quic_no_progress_fail_open"))
+    func testShouldEnableHostFailOpenSkipsNoProgressReason() {
+        XCTAssertFalse(QUICFlowRouter.shouldEnableHostFailOpen(for: "quic_no_progress_fail_open"))
     }
 
     func testShouldEnableHostFailOpenForHandshakeFailedReason() {
@@ -530,7 +621,7 @@ private extension QUICFlowRouterTests {
         )
     }
 
-    func makeUDPPacket() -> UDPPacket {
+    func makeUDPPacket(destinationPort: UInt16 = 443) -> UDPPacket {
         let payload = Data([
             0xC0, // long header
             0x00, 0x00, 0x00, 0x01, // version
@@ -541,7 +632,7 @@ private extension QUICFlowRouterTests {
         ])
         return UDPPacket(
             sourcePort: 50_000,
-            destinationPort: 443,
+            destinationPort: destinationPort,
             length: UInt16(8 + payload.count),
             payload: payload
         )
