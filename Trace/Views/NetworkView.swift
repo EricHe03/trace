@@ -91,7 +91,7 @@ struct NetworkView: View {
                     clearAllData()
                 }
             } message: {
-                Text("Are you sure you want to clear all captured requests, WebSocket connections, and SSE connections? This action cannot be undone.")
+                Text("Are you sure you want to clear all captured requests, transport events, WebSocket connections, and SSE connections? This action cannot be undone.")
             }
     }
 
@@ -261,6 +261,7 @@ struct NetworkView: View {
     private func loadAllData() async {
         FeatureLog.capture.info("event=network_view.load_all_data outcome=start")
         await viewModel.reloadRequests()
+        await viewModel.reloadTransportRequests()
         await webSocketViewModel.loadConnections()
         await sseViewModel.loadConnections()
         FeatureLog.capture.info("event=network_view.load_all_data outcome=complete")
@@ -406,13 +407,16 @@ struct NetworkView: View {
     @MainActor
     private func rebuildEventCaches() async {
         let httpRequests = viewModel.filteredRequests
+        let transportRequests = viewModel.transportRequests
         let webSockets = webSocketViewModel.connections
         let sseConnections = sseViewModel.connections
         let searchText = viewModel.searchText
+        let searchScope = viewModel.searchScope
         let enabledTypes = viewModel.filterNetworkEventTypes
 
         let results = await Task.detached(priority: .userInitiated) {
             let httpEvents: [NetworkEvent] = httpRequests.map { .httpRequest($0) }
+            let transportEvents: [NetworkEvent] = transportRequests.map { .transportRequest($0) }
             let webSocketEvents: [NetworkEvent] = webSockets.map { .webSocket($0) }
             let sseEvents: [NetworkEvent] = sseConnections.map { .sse($0) }
 
@@ -445,7 +449,7 @@ struct NetworkView: View {
                 return merged
             }
 
-            let events = mergeSortedByTimestampDescending([httpEvents, webSocketEvents, sseEvents])
+            let events = mergeSortedByTimestampDescending([httpEvents, transportEvents, webSocketEvents, sseEvents])
 
             var counts: [NetworkEventType: Int] = [:]
             for event in events {
@@ -459,9 +463,33 @@ struct NetworkView: View {
                 case .httpRequest:
                     return true
                 case let .webSocket(connection):
+                    guard searchScope == .all || searchScope == .url else { return false }
                     return connection.url.localizedCaseInsensitiveContains(searchText)
                 case let .sse(connection):
+                    guard searchScope == .all || searchScope == .url else { return false }
                     return connection.url.localizedCaseInsensitiveContains(searchText)
+                case let .transportRequest(request):
+                    let basicSearch = request.endpointSummary.localizedCaseInsensitiveContains(searchText) ||
+                        request.applicationProtocol.displayName.localizedCaseInsensitiveContains(searchText) ||
+                        (request.summary?.localizedCaseInsensitiveContains(searchText) ?? false)
+                    let bodySearch: Bool
+                    if searchScope == .body || searchScope == .all {
+                        bodySearch = request.payload.getString(maxBytes: 32 * 1024)?
+                            .localizedCaseInsensitiveContains(searchText) ?? false
+                    } else {
+                        bodySearch = false
+                    }
+
+                    switch searchScope {
+                    case .all:
+                        return basicSearch || bodySearch
+                    case .url:
+                        return basicSearch
+                    case .headers:
+                        return false
+                    case .body:
+                        return bodySearch
+                    }
                 }
             }
 

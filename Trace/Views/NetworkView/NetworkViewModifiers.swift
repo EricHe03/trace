@@ -53,6 +53,9 @@ struct EventRebuildModifier: ViewModifier {
         let sseConnectionSignatures = sseViewModel.connections.map {
             "\($0.id.uuidString):\($0.status.rawValue):\($0.eventCount):\($0.totalBytesReceived):\($0.isTruncated):\($0.endTime?.timeIntervalSince1970 ?? -1)"
         }
+        let transportSignatures = viewModel.transportRequests.map {
+            "\($0.id.uuidString):\($0.applicationProtocol.rawValue):\($0.transport.rawValue):\($0.payloadBytes):\($0.parserOutcome.rawValue):\($0.timestamp.timeIntervalSince1970)"
+        }
 
         let step1 = content.onChangeCompat(of: requestSignatures) {
             scheduleRebuild()
@@ -66,7 +69,13 @@ struct EventRebuildModifier: ViewModifier {
         let step4 = step3.onChangeCompat(of: viewModel.searchText) {
             scheduleRebuild()
         }
-        return step4.onChangeCompat(of: viewModel.filterNetworkEventTypes) {
+        let step5 = step4.onChangeCompat(of: viewModel.searchScope) {
+            scheduleRebuild()
+        }
+        let step6 = step5.onChangeCompat(of: transportSignatures) {
+            scheduleRebuild()
+        }
+        return step6.onChangeCompat(of: viewModel.filterNetworkEventTypes) {
             scheduleRebuild()
         }
     }

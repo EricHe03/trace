@@ -47,6 +47,11 @@ struct NetworkEventRow<ContextMenu: View>: View {
                     Label("Delete", systemImage: "trash")
                 }
             }
+
+        case let .transportRequest(request):
+            NavigationLink(destination: TransportDetailView(request: request)) {
+                TransportEventRow(request: request)
+            }
         }
     }
 

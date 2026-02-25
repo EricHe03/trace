@@ -21,12 +21,14 @@ final class AppGroupStorageTests: XCTestCase {
 
         // Clean up any existing test data
         try? storage.clearAllRequests()
+        try? storage.clearAllTransportRequests()
         storage.resetStoredSettings()
     }
 
     override func tearDown() {
         // Clean up test data
         try? storage.clearAllRequests()
+        try? storage.clearAllTransportRequests()
         storage.resetStoredSettings()
         super.tearDown()
     }
@@ -148,6 +150,41 @@ final class AppGroupStorageTests: XCTestCase {
         // Verify all were deleted
         loaded = try storage.loadAllRequests()
         XCTAssertEqual(loaded.count, 0)
+    }
+
+    // MARK: - Transport Request Storage Tests
+
+    func testSaveAndLoadTransportRequests() throws {
+        let first = createMockTransportRequest(
+            timestamp: Date(timeIntervalSinceNow: -30),
+            sourcePort: 53001,
+            destinationPort: 53
+        )
+        let second = createMockTransportRequest(
+            timestamp: Date(),
+            sourcePort: 53002,
+            destinationPort: 123
+        )
+
+        try storage.saveTransportRequest(first)
+        try storage.saveTransportRequest(second)
+
+        let loaded = try storage.loadAllTransportRequests()
+        XCTAssertEqual(loaded.count, 2)
+        XCTAssertEqual(loaded.first?.id, second.id)
+        XCTAssertEqual(loaded.last?.id, first.id)
+    }
+
+    func testClearAllTransportRequests() throws {
+        try storage.saveTransportRequest(createMockTransportRequest(destinationPort: 53))
+        try storage.saveTransportRequest(createMockTransportRequest(destinationPort: 161))
+
+        var loaded = try storage.loadAllTransportRequests()
+        XCTAssertEqual(loaded.count, 2)
+
+        try storage.clearAllTransportRequests()
+        loaded = try storage.loadAllTransportRequests()
+        XCTAssertTrue(loaded.isEmpty)
     }
 
     // MARK: - Configuration Tests
@@ -495,6 +532,33 @@ final class AppGroupStorageTests: XCTestCase {
             responseHeaders: [TraceHTTPHeader(key: "Content-Type", value: "application/json")],
             requestBody: .empty,
             responseBody: .empty
+        )
+    }
+
+    private func createMockTransportRequest(
+        timestamp: Date = Date(),
+        sourcePort: UInt16 = 54000,
+        destinationPort: UInt16 = 53
+    ) -> TransportRequest {
+        TransportRequest(
+            timestamp: timestamp,
+            sourceIP: "192.168.1.100",
+            destinationIP: "8.8.8.8",
+            sourcePort: sourcePort,
+            destinationPort: destinationPort,
+            transport: .udp,
+            applicationProtocol: destinationPort == 53 ? .dns : .unknown,
+            parserOutcome: .parsed,
+            payload: .inline(Data([0x12, 0x34, 0x56])),
+            payloadBytes: 3,
+            ipVersion: 4,
+            protocolNumber: 17,
+            hopLimit: 64,
+            ipHeaderLength: 20,
+            totalLength: 48,
+            fragmentOffset: 0,
+            moreFragments: false,
+            flowKey: "udp|192.168.1.100:\(sourcePort)|8.8.8.8:\(destinationPort)"
         )
     }
 }

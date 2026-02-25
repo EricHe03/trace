@@ -1104,44 +1104,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             limit: rawCaptureLimit,
             writer: proxyWriter
         )
-        let packetCaptureWriter = createPacketCaptureWriterIfNeeded(
-            enabled: rawCaptureEnabled && config.captureMode.usesPacketTunnelRouting
-        )
-        let flowConfig = PacketTunnelRuntimeState.PacketFlowConfig(
-            packetFlow: packetFlow,
-            mode: config.captureMode,
-            mtu: fullTunnelMTU,
-            captureEnabled: rawCaptureEnabled,
-            captureLimit: rawCaptureLimit,
-            writer: packetCaptureWriter,
-            socks5Host: config.fullTunnelSocks5Host,
-            socks5Port: config.fullTunnelSocks5Port,
-            localSocks5Host: localSocks5Host,
-            localSocks5Port: localSocks5Port,
-            udpForwardingMode: config.fullTunnelUDPForwardingMode,
-            ipv6Enabled: config.fullTunnelIPv6Enabled,
-            tcpTransparentMITMEnabled: config.captureMode.enablesTCPTransparentMITM,
-            tcpTransparentMITMPorts: transparentMITMPorts,
-            mitmProxyHost: proxyHost,
-            mitmProxyPort: proxyPort,
-            dualMITMPolicy: config.dualMITMPolicy,
-            tcpBypassTTLSeconds: config.tcpBypassTTLSeconds,
-            quicHostFailOpenSeconds: config.quicHostFailOpenSeconds,
-            dualMITMCircuitBreakerEnabled: config.dualMITMCircuitBreakerEnabled,
-            quicNoProgressGraceMs: config.quicNoProgressGraceMs,
-            quicNoProgressIdleMs: config.quicNoProgressIdleMs,
-            quicNoProgressAbsoluteMs: config.quicNoProgressAbsoluteMs,
-            quicNoProgressMinClientDatagrams: config.quicNoProgressMinClientDatagrams,
-            quicAuthorityRetryAttempts: config.quicAuthorityRetryAttempts,
-            quicCertMaterialCacheTTLSeconds: config.quicCertMaterialCacheTTLSeconds,
-            dualMITMPolicyEngineShadowEnabled: dualMITMPolicyEngineShadow,
-            dualMITMPolicyEngineEnforcedTCP: dualMITMPolicyEngineEnforcedTCP,
-            dualMITMPolicyEngineEnforcedProxy: dualMITMPolicyEngineEnforcedProxy,
-            dualMITMPolicyEngineEnforcedQUIC: dualMITMPolicyEngineEnforcedQUIC,
-            dualMITMMITMEngineV2: dualMITMMITMEngineV2,
-            dualMITMHttp2MITMEnabled: dualMITMHttp2MITMEnabled,
-            dualMITMStrictEnforcementHardFail: dualMITMStrictEnforcementHardFail
-        )
         let reconfigEventSink: @Sendable (String, String) -> Void = { [weak self] type, msg in
             guard let self else { return }
             Task {
@@ -1170,6 +1132,44 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 await self.runtimeState.appendEventLog(
                     type: "reconfig_step",
                     msg: "id=\(plan.id) step=packet_flow"
+                )
+                let packetCaptureWriter = self.createPacketCaptureWriterIfNeeded(
+                    enabled: rawCaptureEnabled && config.captureMode.usesPacketTunnelRouting
+                )
+                let flowConfig = PacketTunnelRuntimeState.PacketFlowConfig(
+                    packetFlow: self.packetFlow,
+                    mode: config.captureMode,
+                    mtu: self.fullTunnelMTU,
+                    captureEnabled: rawCaptureEnabled,
+                    captureLimit: rawCaptureLimit,
+                    writer: packetCaptureWriter,
+                    socks5Host: config.fullTunnelSocks5Host,
+                    socks5Port: config.fullTunnelSocks5Port,
+                    localSocks5Host: self.localSocks5Host,
+                    localSocks5Port: self.localSocks5Port,
+                    udpForwardingMode: config.fullTunnelUDPForwardingMode,
+                    ipv6Enabled: config.fullTunnelIPv6Enabled,
+                    tcpTransparentMITMEnabled: config.captureMode.enablesTCPTransparentMITM,
+                    tcpTransparentMITMPorts: self.transparentMITMPorts,
+                    mitmProxyHost: self.proxyHost,
+                    mitmProxyPort: self.proxyPort,
+                    dualMITMPolicy: config.dualMITMPolicy,
+                    tcpBypassTTLSeconds: config.tcpBypassTTLSeconds,
+                    quicHostFailOpenSeconds: config.quicHostFailOpenSeconds,
+                    dualMITMCircuitBreakerEnabled: config.dualMITMCircuitBreakerEnabled,
+                    quicNoProgressGraceMs: config.quicNoProgressGraceMs,
+                    quicNoProgressIdleMs: config.quicNoProgressIdleMs,
+                    quicNoProgressAbsoluteMs: config.quicNoProgressAbsoluteMs,
+                    quicNoProgressMinClientDatagrams: config.quicNoProgressMinClientDatagrams,
+                    quicAuthorityRetryAttempts: config.quicAuthorityRetryAttempts,
+                    quicCertMaterialCacheTTLSeconds: config.quicCertMaterialCacheTTLSeconds,
+                    dualMITMPolicyEngineShadowEnabled: dualMITMPolicyEngineShadow,
+                    dualMITMPolicyEngineEnforcedTCP: dualMITMPolicyEngineEnforcedTCP,
+                    dualMITMPolicyEngineEnforcedProxy: dualMITMPolicyEngineEnforcedProxy,
+                    dualMITMPolicyEngineEnforcedQUIC: dualMITMPolicyEngineEnforcedQUIC,
+                    dualMITMMITMEngineV2: dualMITMMITMEngineV2,
+                    dualMITMHttp2MITMEnabled: dualMITMHttp2MITMEnabled,
+                    dualMITMStrictEnforcementHardFail: dualMITMStrictEnforcementHardFail
                 )
                 await self.runtimeState.configurePacketFlow(flowConfig)
             }
@@ -1540,6 +1540,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private func clearCapturedRequests() async {
         do {
             try AppGroupStorage.shared.clearAllRequests()
+            try AppGroupStorage.shared.clearAllTransportRequests()
             VPNLog.tunnel.info("event=vpn.capture_clear outcome=success")
         } catch {
             VPNLog.tunnel.error(

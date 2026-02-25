@@ -16,7 +16,7 @@ import TraceProxy
 
 // MARK: - Search Scope
 
-enum SearchScope: String, CaseIterable {
+enum SearchScope: String, CaseIterable, Sendable {
     case all = "All"
     case url = "URL"
     case headers = "Headers"
@@ -25,7 +25,7 @@ enum SearchScope: String, CaseIterable {
 
 // MARK: - Response Time Filter
 
-enum ResponseTimeFilter: String, CaseIterable {
+enum ResponseTimeFilter: String, CaseIterable, Sendable {
     case fast = "Fast"
     case normal = "Normal"
     case slow = "Slow"
@@ -57,7 +57,7 @@ enum ResponseTimeFilter: String, CaseIterable {
 
 // MARK: - Content Type Filter
 
-enum ContentTypeFilter: String, CaseIterable {
+enum ContentTypeFilter: String, CaseIterable, Sendable {
     case json = "JSON"
     case html = "HTML"
     case xml = "XML"
@@ -282,6 +282,8 @@ final class CaptureViewModel: ObservableObject {
         }
     }
 
+    @Published var transportRequests: [TransportRequest] = []
+
     @Published var isCapturing: Bool = false
     @Published var searchText: String = "" {
         didSet { debounceBodySearch() }
@@ -438,12 +440,16 @@ final class CaptureViewModel: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private var activeLoadTask: Task<Void, Never>?
     private var lastLoadTime: Date?
+    private var transportLoadTask: Task<Void, Never>?
+    private var activeTransportLoadTask: Task<Void, Never>?
+    private var lastTransportLoadTime: Date?
     private let minLoadInterval: TimeInterval = 0.5 // Minimum 500ms between loads
     private var notifiedRequestIds: Set<UUID> = []
     private let notificationDedupLimit = 200
     private var cancellables = Set<AnyCancellable>()
     private var notificationObservers: [NSObjectProtocol] = []
     private var newRequestsObserverToken: AppGroupStorageObserverToken?
+    private var newTransportRequestsObserverToken: AppGroupStorageObserverToken?
     private var throttlingUpdateTask: Task<Void, Never>?
     private var duplicateDetectionTask: Task<Void, Never>?
     private var isRunningDuplicateDetection = false
@@ -470,6 +476,7 @@ final class CaptureViewModel: ObservableObject {
 
         // Load initial requests from storage
         loadRequests()
+        loadTransportRequests()
         loadSavedPresets()
         loadSessions()
         cleanupOrphanedSessions()
@@ -480,6 +487,12 @@ final class CaptureViewModel: ObservableObject {
         newRequestsObserverToken = storage.observeNewRequests { [weak self] in
             Task { @MainActor [weak self] in
                 self?.debouncedLoadRequests()
+            }
+        }
+
+        newTransportRequestsObserverToken = storage.observeNewTransportRequests { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.debouncedLoadTransportRequests()
             }
         }
 
@@ -516,11 +529,15 @@ final class CaptureViewModel: ObservableObject {
         searchTask?.cancel()
         loadTask?.cancel()
         activeLoadTask?.cancel()
+        transportLoadTask?.cancel()
+        activeTransportLoadTask?.cancel()
         throttlingUpdateTask?.cancel()
         duplicateDetectionTask?.cancel()
 
         newRequestsObserverToken?.cancel()
         newRequestsObserverToken = nil
+        newTransportRequestsObserverToken?.cancel()
+        newTransportRequestsObserverToken = nil
 
         for observer in notificationObservers {
             NotificationCenter.default.removeObserver(observer)
@@ -706,6 +723,23 @@ final class CaptureViewModel: ObservableObject {
         loadRequests(triggeredByNewRequest: true)
     }
 
+    private func debouncedLoadTransportRequests() {
+        transportLoadTask?.cancel()
+
+        if let lastLoad = lastTransportLoadTime, Date().timeIntervalSince(lastLoad) < minLoadInterval {
+            transportLoadTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(500_000_000))
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.loadTransportRequests()
+                }
+            }
+            return
+        }
+
+        loadTransportRequests()
+    }
+
     private func loadRequests(triggeredByNewRequest: Bool = false) {
         lastLoadTime = Date()
         activeLoadTask?.cancel()
@@ -762,6 +796,27 @@ final class CaptureViewModel: ObservableObject {
         }
     }
 
+    private func loadTransportRequests() {
+        lastTransportLoadTime = Date()
+        activeTransportLoadTask?.cancel()
+        activeTransportLoadTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let loaded = try self.storage.loadAllTransportRequests()
+
+                guard !Task.isCancelled else { return }
+                self.transportRequests = loaded
+            } catch {
+                guard !Task.isCancelled else { return }
+                CoreLog.storage.error(
+                    "event=storage.transport_requests_load outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                )
+                self.transportRequests = []
+            }
+        }
+    }
+
     private let redirectChainResolver = RedirectChainResolver()
 
     func reloadRequests() async {
@@ -769,6 +824,13 @@ final class CaptureViewModel: ObservableObject {
             loadRequests()
         }
         await activeLoadTask?.value
+    }
+
+    func reloadTransportRequests() async {
+        await MainActor.run {
+            loadTransportRequests()
+        }
+        await activeTransportLoadTask?.value
     }
 
     /// Check if network event type filter is user-set (not auto-set by grouping)
@@ -1062,6 +1124,21 @@ final class CaptureViewModel: ObservableObject {
         } catch {
             CoreLog.storage.error(
                 "event=storage.requests_clear outcome=failure error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    func clearTransportRequests() {
+        for request in transportRequests {
+            request.payload.deleteFile()
+        }
+
+        do {
+            try storage.clearAllTransportRequests()
+            transportRequests = []
+        } catch {
+            CoreLog.storage.error(
+                "event=storage.transport_requests_clear outcome=failure error=\(error.localizedDescription, privacy: .public)"
             )
         }
     }

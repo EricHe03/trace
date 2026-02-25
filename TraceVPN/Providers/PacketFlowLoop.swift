@@ -23,6 +23,7 @@ final class PacketCapturePipeline: @unchecked Sendable {
     private let logSampler = LogSampler()
     private let reassembler = TCPReassembler()
     private let flowRecorder = PacketFlowRecorder()
+    private let transportRequestRecorder = TransportRequestRecorder()
     private let udpFlowManager = UDPFlowManager()
     private var pendingCount = 0
     private var isStopped = false
@@ -186,6 +187,7 @@ final class PacketCapturePipeline: @unchecked Sendable {
 
     private func processParsedPacket(packet: Data) {
         guard let ipPacket = IPPacketParser.parse(packet) else { return }
+        transportRequestRecorder.process(ipPacket: ipPacket)
         flowRecorder.process(ipPacket: ipPacket)
 
         if ipPacket.transport == .udp, let udpPacket = UDPParser.parse(ipPacket.payload) {
@@ -214,6 +216,7 @@ final class PacketCapturePipeline: @unchecked Sendable {
         pendingLock.unlock()
 
         enabled = false
+        transportRequestRecorder.shutdown()
         flowRecorder.shutdown()
         udpFlowManager.shutdown()
         writer?.close()

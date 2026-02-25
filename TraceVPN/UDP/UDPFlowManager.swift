@@ -206,60 +206,30 @@ final class UDPFlowManager {
         sourceIP: String,
         destinationIP: String
     ) -> UDPFlowProtocol? {
-        if sourcePort == 53 || destinationPort == 53 {
-            if DNSParser.parseSafely(
-                data: payload,
-                sourceIP: sourceIP,
-                sourcePort: sourcePort,
-                destIP: destinationIP,
-                destPort: destinationPort
-            ) != nil {
-                return .dns
-            }
-        }
+        let classification = UDPProtocolClassifier.classify(
+            sourcePort: sourcePort,
+            destinationPort: destinationPort,
+            payload: payload,
+            sourceIP: sourceIP,
+            destinationIP: destinationIP
+        )
 
-        if sourcePort == 5353 || destinationPort == 5353 {
-            if DNSParser.parseSafely(
-                data: payload,
-                sourceIP: sourceIP,
-                sourcePort: sourcePort,
-                destIP: destinationIP,
-                destPort: destinationPort
-            ) != nil {
-                return .mdns
-            }
-        }
-
-        if sourcePort == 443 || destinationPort == 443 {
-            if let first = payload.first, (first & 0x80) == 0x80 {
-                return .quic
-            }
-        }
-
-        if sourcePort == 67 || sourcePort == 68 || destinationPort == 67 || destinationPort == 68 {
-            if payload.count >= 240 {
-                let cookieOffset = 236
-                let cookie = UInt32(payload[cookieOffset]) << 24 |
-                    UInt32(payload[cookieOffset + 1]) << 16 |
-                    UInt32(payload[cookieOffset + 2]) << 8 |
-                    UInt32(payload[cookieOffset + 3])
-                if cookie == 0x6382_5363 {
-                    return .dhcp
-                }
-            }
-        }
-
-        if sourcePort == 123 || destinationPort == 123 {
-            if payload.count == 48 {
-                return .ntp
-            }
-        }
-
-        if sourcePort == 161 || sourcePort == 162 || destinationPort == 161 || destinationPort == 162 {
+        switch classification.applicationProtocol {
+        case .dns:
+            return .dns
+        case .mdns:
+            return .mdns
+        case .ntp:
+            return .ntp
+        case .dhcpv4, .dhcpv6:
+            return .dhcp
+        case .snmp:
             return .snmp
+        case .quic:
+            return .quic
+        case .unknown:
+            return nil
         }
-
-        return nil
     }
 
     private func startTimers() {

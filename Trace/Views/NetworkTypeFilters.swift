@@ -51,6 +51,16 @@ extension NetworkEventType {
         case .http: "HTTP"
         case .webSocket: "WebSocket"
         case .sse: "SSE"
+        case .tcp: "TCP"
+        case .udp: "UDP"
+        case .dns: "DNS"
+        case .mdns: "mDNS"
+        case .ntp: "NTP"
+        case .dhcpv4: "DHCPv4"
+        case .dhcpv6: "DHCPv6"
+        case .snmp: "SNMP"
+        case .quic: "QUIC"
+        case .transport: "Transport"
         }
     }
 }

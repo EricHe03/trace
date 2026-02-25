@@ -214,7 +214,7 @@ struct FiltersView: View {
                 } header: {
                     Text("Network Event Type")
                 } footer: {
-                    Text("Filter by network event type (HTTP, WebSocket, SSE)")
+                    Text("Filter by network event type (HTTP, WebSocket, SSE, TCP/UDP, DNS/mDNS/NTP/DHCP/SNMP/QUIC)")
                 }
 
                 // Response Time Filter

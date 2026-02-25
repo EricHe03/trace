@@ -155,30 +155,90 @@ public struct DNSMessage: Codable, Identifiable {
 }
 
 /// Represents a DNS question.
-public struct DNSQuestion: Codable, Identifiable {
+public struct DNSQuestion: Identifiable, Codable {
     public let id: UUID
     public let name: String
     public let type: DNSRecordType
     public let `class`: DNSClass
+    public let rawTypeValue: UInt16
+    public let rawClassValue: UInt16
 
-    public init(id: UUID = UUID(), name: String, type: DNSRecordType, class: DNSClass = .in) {
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        type: DNSRecordType,
+        class: DNSClass = .in,
+        rawTypeValue: UInt16? = nil,
+        rawClassValue: UInt16? = nil
+    ) {
         self.id = id
         self.name = name
         self.type = type
         self.class = `class`
+        self.rawTypeValue = rawTypeValue ?? type.rawValue
+        self.rawClassValue = rawClassValue ?? `class`.rawValue
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case type
+        case `class`
+        case rawTypeValue
+        case rawClassValue
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decode(String.self, forKey: .name)
+
+        let decodedType = try? container.decode(DNSRecordType.self, forKey: .type)
+        let decodedClass = try? container.decode(DNSClass.self, forKey: .class)
+        rawTypeValue = try container.decodeIfPresent(UInt16.self, forKey: .rawTypeValue) ?? decodedType?.rawValue ?? DNSRecordType.unknown.rawValue
+        rawClassValue = try container.decodeIfPresent(UInt16.self, forKey: .rawClassValue) ?? decodedClass?.rawValue ?? DNSClass.unknown.rawValue
+        type = DNSRecordType(rawValue: rawTypeValue) ?? decodedType ?? .unknown
+        `class` = DNSClass(rawValue: rawClassValue) ?? decodedClass ?? .unknown
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(type, forKey: .type)
+        try container.encode(`class`, forKey: .class)
+        try container.encode(rawTypeValue, forKey: .rawTypeValue)
+        try container.encode(rawClassValue, forKey: .rawClassValue)
+    }
+
+    public var typeDisplayName: String {
+        if type == .unknown {
+            return "TYPE\(rawTypeValue)"
+        }
+        return type.displayName
+    }
+
+    public var classDisplayName: String {
+        if `class` == .unknown {
+            return "CLASS\(rawClassValue)"
+        }
+        return `class`.displayName
     }
 
     public var displayString: String {
-        "\(name) \(type.displayName) \(self.class.displayName)"
+        "\(name) \(typeDisplayName) \(classDisplayName)"
     }
 }
 
 /// Represents a DNS resource record (answer, authority, or additional).
-public struct DNSResourceRecord: Codable, Identifiable {
+public struct DNSResourceRecord: Identifiable, Codable {
     public let id: UUID
     public let name: String
     public let type: DNSRecordType
     public let `class`: DNSClass
+    public let rawTypeValue: UInt16
+    public let rawClassValue: UInt16
     public let ttl: UInt32
     public let dataLength: UInt16
     public let data: Data
@@ -188,6 +248,8 @@ public struct DNSResourceRecord: Codable, Identifiable {
         name: String,
         type: DNSRecordType,
         class: DNSClass = .in,
+        rawTypeValue: UInt16? = nil,
+        rawClassValue: UInt16? = nil,
         ttl: UInt32,
         dataLength: UInt16,
         data: Data
@@ -196,9 +258,66 @@ public struct DNSResourceRecord: Codable, Identifiable {
         self.name = name
         self.type = type
         self.class = `class`
+        self.rawTypeValue = rawTypeValue ?? type.rawValue
+        self.rawClassValue = rawClassValue ?? `class`.rawValue
         self.ttl = ttl
         self.dataLength = dataLength
         self.data = data
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case type
+        case `class`
+        case rawTypeValue
+        case rawClassValue
+        case ttl
+        case dataLength
+        case data
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decode(String.self, forKey: .name)
+        let decodedType = try? container.decode(DNSRecordType.self, forKey: .type)
+        let decodedClass = try? container.decode(DNSClass.self, forKey: .class)
+        rawTypeValue = try container.decodeIfPresent(UInt16.self, forKey: .rawTypeValue) ?? decodedType?.rawValue ?? DNSRecordType.unknown.rawValue
+        rawClassValue = try container.decodeIfPresent(UInt16.self, forKey: .rawClassValue) ?? decodedClass?.rawValue ?? DNSClass.unknown.rawValue
+        type = DNSRecordType(rawValue: rawTypeValue) ?? decodedType ?? .unknown
+        `class` = DNSClass(rawValue: rawClassValue) ?? decodedClass ?? .unknown
+        ttl = try container.decode(UInt32.self, forKey: .ttl)
+        dataLength = try container.decode(UInt16.self, forKey: .dataLength)
+        data = try container.decode(Data.self, forKey: .data)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(type, forKey: .type)
+        try container.encode(`class`, forKey: .class)
+        try container.encode(rawTypeValue, forKey: .rawTypeValue)
+        try container.encode(rawClassValue, forKey: .rawClassValue)
+        try container.encode(ttl, forKey: .ttl)
+        try container.encode(dataLength, forKey: .dataLength)
+        try container.encode(data, forKey: .data)
+    }
+
+    public var typeDisplayName: String {
+        if type == .unknown {
+            return "TYPE\(rawTypeValue)"
+        }
+        return type.displayName
+    }
+
+    public var classDisplayName: String {
+        if `class` == .unknown {
+            return "CLASS\(rawClassValue)"
+        }
+        return `class`.displayName
     }
 
     /// Parsed data as a string (for A, AAAA, CNAME, etc.).
@@ -348,7 +467,7 @@ public struct DNSResourceRecord: Codable, Identifiable {
     }
 
     public var displayString: String {
-        "\(name) \(ttl)s \(self.class.displayName) \(type.displayName) \(dataString)"
+        "\(name) \(ttl)s \(classDisplayName) \(typeDisplayName) \(dataString)"
     }
 }
 

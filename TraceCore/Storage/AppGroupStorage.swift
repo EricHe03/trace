@@ -41,6 +41,7 @@ public class AppGroupStorage: @unchecked Sendable {
     private let webSocketDirectory = "WebSocketConnections"
     private let sseDirectory = "SSEConnections"
     private let sessionsDirectory = "CaptureSessions"
+    private let transportRequestsDirectory = "TransportRequests"
     private let packetFlowsDirectory = "PacketFlows"
     private let udpFlowsDirectory = "UDPFlows"
     private let throttlingConfigFileName = "throttling.json"
@@ -176,6 +177,7 @@ public class AppGroupStorage: @unchecked Sendable {
             container.appendingPathComponent(webSocketDirectory),
             container.appendingPathComponent(sseDirectory),
             container.appendingPathComponent(sessionsDirectory),
+            container.appendingPathComponent(transportRequestsDirectory),
             container.appendingPathComponent(packetFlowsDirectory),
             container.appendingPathComponent(udpFlowsDirectory)
         ]
@@ -342,6 +344,94 @@ public class AppGroupStorage: @unchecked Sendable {
     /// Async wrapper for loading requests (alias for loadAllRequestsAsync)
     public func loadRequests() async throws -> [NetworkRequest] {
         try await loadAllRequestsAsync()
+    }
+
+    // MARK: - Transport Request Storage
+
+    /// Saves a captured transport event to the shared container.
+    public func saveTransportRequest(_ request: TransportRequest) throws {
+        guard let container = containerURL else {
+            throw StorageError.containerNotFound
+        }
+
+        let requestsURL = container.appendingPathComponent(transportRequestsDirectory)
+        let fileName = "\(request.id.uuidString).json"
+        let fileURL = requestsURL.appendingPathComponent(fileName)
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(request)
+
+        do {
+            try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        } catch {
+            CoreLog.storage.warning(
+                LogEvent.storage("save_transport_request")
+                    .failure()
+                    .with("reason", value: "file_protection_retry")
+                    .error(error)
+            )
+            try data.write(to: fileURL, options: [.atomic, .noFileProtection])
+        }
+
+        notifyNewTransportRequest()
+    }
+
+    /// Loads all captured transport events from the shared container.
+    public func loadAllTransportRequests() throws -> [TransportRequest] {
+        guard let container = containerURL else {
+            throw StorageError.containerNotFound
+        }
+
+        let requestsURL = container.appendingPathComponent(transportRequestsDirectory)
+        guard FileManager.default.fileExists(atPath: requestsURL.path) else {
+            return []
+        }
+
+        let fileURLs = try FileManager.default.contentsOfDirectory(
+            at: requestsURL,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        var requests: [TransportRequest] = []
+        for fileURL in fileURLs where fileURL.pathExtension == "json" {
+            do {
+                let data = try Data(contentsOf: fileURL)
+                let request = try decoder.decode(TransportRequest.self, from: data)
+                requests.append(request)
+            } catch {
+                CoreLog.storage.error(
+                    LogEvent.storage("load_transport_request")
+                        .failure()
+                        .with("file", value: fileURL.lastPathComponent)
+                        .error(error)
+                )
+            }
+        }
+
+        return requests.sorted { $0.timestamp > $1.timestamp }
+    }
+
+    /// Deletes all captured transport events.
+    public func clearAllTransportRequests() throws {
+        guard let container = containerURL else {
+            throw StorageError.containerNotFound
+        }
+
+        let requestsURL = container.appendingPathComponent(transportRequestsDirectory)
+        guard FileManager.default.fileExists(atPath: requestsURL.path) else { return }
+        let fileURLs = try FileManager.default.contentsOfDirectory(
+            at: requestsURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+        for fileURL in fileURLs where fileURL.pathExtension == "json" {
+            try? deleteTransportRequestFileAndBody(at: fileURL)
+        }
     }
 
     // MARK: - Packet Flow Storage
@@ -1132,6 +1222,7 @@ public class AppGroupStorage: @unchecked Sendable {
     // Observers for notifications
     private let notificationObserversLock = NSLock()
     private var requestObservers: [UUID: NotificationObserver] = [:]
+    private var transportRequestObservers: [UUID: NotificationObserver] = [:]
     private var webSocketObservers: [UUID: NotificationObserver] = [:]
     private var sseObservers: [UUID: NotificationObserver] = [:]
     private var udpFlowObservers: [UUID: NotificationObserver] = [:]
@@ -1142,6 +1233,13 @@ public class AppGroupStorage: @unchecked Sendable {
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let notificationName = "com.trace.newRequest" as CFString
 
+        CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
+    }
+
+    /// Notifies the main app that a new transport event was captured.
+    private func notifyNewTransportRequest() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let notificationName = "com.trace.newTransportRequest" as CFString
         CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
     }
 
@@ -1192,6 +1290,33 @@ public class AppGroupStorage: @unchecked Sendable {
         notificationObserversLock.lock()
         let observers = Array(requestObservers.values)
         requestObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
+    }
+
+    /// Sets up listener for new transport request notifications (call from main app).
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeNewTransportRequests(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.newTransportRequest", handler: handler)
+        notificationObserversLock.lock()
+        transportRequestObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.transportRequestObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingNewTransportRequests() {
+        notificationObserversLock.lock()
+        let observers = Array(transportRequestObservers.values)
+        transportRequestObservers.removeAll()
         notificationObserversLock.unlock()
         observers.forEach { $0.stop() }
     }
@@ -1316,6 +1441,18 @@ public class AppGroupStorage: @unchecked Sendable {
             if let request = try? decoder.decode(NetworkRequest.self, from: data) {
                 request.requestBody.deleteFile()
                 request.responseBody.deleteFile()
+            }
+        }
+
+        try FileManager.default.removeItem(at: fileURL)
+    }
+
+    private func deleteTransportRequestFileAndBody(at fileURL: URL) throws {
+        if let data = try? Data(contentsOf: fileURL) {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            if let request = try? decoder.decode(TransportRequest.self, from: data) {
+                request.payload.deleteFile()
             }
         }
 
