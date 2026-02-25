@@ -350,18 +350,52 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Saves a captured transport event to the shared container.
     public func saveTransportRequest(_ request: TransportRequest) throws {
+        try saveTransportRequests([request])
+    }
+
+    /// Saves captured transport events to the shared container in a single batch.
+    /// Posts one notification when at least one event is persisted.
+    public func saveTransportRequests(_ requests: [TransportRequest]) throws {
+        guard !requests.isEmpty else { return }
         guard let container = containerURL else {
             throw StorageError.containerNotFound
         }
 
         let requestsURL = container.appendingPathComponent(transportRequestsDirectory)
-        let fileName = "\(request.id.uuidString).json"
-        let fileURL = requestsURL.appendingPathComponent(fileName)
+        let encoder = makeEncoder()
+        var persistedCount = 0
+        var lastError: Error?
 
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(request)
+        for request in requests {
+            let fileName = "\(request.id.uuidString).json"
+            let fileURL = requestsURL.appendingPathComponent(fileName)
 
+            do {
+                let data = try encoder.encode(request)
+                try writeTransportRequestData(data, to: fileURL)
+                persistedCount += 1
+            } catch {
+                lastError = error
+                CoreLog.storage.error(
+                    LogEvent.storage("save_transport_request")
+                        .failure()
+                        .with("request_id", value: request.id.uuidString, privacy: .public)
+                        .error(error)
+                )
+            }
+        }
+
+        if persistedCount > 0 {
+            notifyNewTransportRequest()
+            return
+        }
+
+        if let lastError {
+            throw lastError
+        }
+    }
+
+    private func writeTransportRequestData(_ data: Data, to fileURL: URL) throws {
         do {
             try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         } catch {
@@ -373,8 +407,6 @@ public class AppGroupStorage: @unchecked Sendable {
             )
             try data.write(to: fileURL, options: [.atomic, .noFileProtection])
         }
-
-        notifyNewTransportRequest()
     }
 
     /// Loads all captured transport events from the shared container.

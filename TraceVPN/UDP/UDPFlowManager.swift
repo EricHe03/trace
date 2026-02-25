@@ -227,6 +227,8 @@ final class UDPFlowManager {
             return .snmp
         case .quic:
             return .quic
+        case .http, .tls:
+            return nil
         case .unknown:
             return nil
         }

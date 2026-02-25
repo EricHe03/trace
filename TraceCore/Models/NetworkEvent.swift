@@ -64,6 +64,8 @@ public enum NetworkEvent: Identifiable, @unchecked Sendable {
                 .snmp
             case .quic:
                 .quic
+            case .http, .tls:
+                .tcp
             case .unknown:
                 switch request.transport {
                 case .tcp:
@@ -113,7 +115,12 @@ public enum NetworkEvent: Identifiable, @unchecked Sendable {
             return "SSE • \(connection.eventCount) events"
         case let .transportRequest(request):
             let proto = request.applicationProtocol.displayName
-            let fallback = request.parserOutcome == .parsed ? nil : "fallback"
+            let fallback: String? = switch request.parserOutcome {
+            case .fallbackSignatureOnly:
+                "fallback"
+            case .parsed, .fallbackUnknown:
+                nil
+            }
             let parts = [request.transport.rawValue.uppercased(), proto, fallback].compactMap { $0 }
             return parts.joined(separator: " • ")
         }

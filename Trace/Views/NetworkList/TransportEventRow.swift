@@ -33,7 +33,7 @@ struct TransportEventRow: View {
         case .fallbackSignatureOnly:
             return "Signature Fallback"
         case .fallbackUnknown:
-            return "Unknown Fallback"
+            return nil
         }
     }
 

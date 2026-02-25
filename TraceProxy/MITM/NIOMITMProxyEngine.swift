@@ -1585,17 +1585,30 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         cancelTransparentTLSUpgradeWatchdog()
+        if state == .closed {
+            context.close(promise: nil)
+            return
+        }
         let failure = classifyClientHandlerFailure(error)
-        ProxyLog.mitm.warning(
-            "event=proxy.nio_connect_handler_error outcome=failure error=\(error.localizedDescription, privacy: .public) classified=\(failure.reason, privacy: .public)"
-        )
-        logConnectStage(
-            stage: "client_handler_error",
-            outcome: "failure",
-            detail: "\(error.localizedDescription) classified=\(failure.reason)"
-        )
         if failure.shouldReport {
+            ProxyLog.mitm.warning(
+                "event=proxy.nio_connect_handler_error outcome=failure error=\(error.localizedDescription, privacy: .public) classified=\(failure.reason, privacy: .public)"
+            )
+            logConnectStage(
+                stage: "client_handler_error",
+                outcome: "failure",
+                detail: "\(error.localizedDescription) classified=\(failure.reason)"
+            )
             reportMITMFailure(reason: failure.reason)
+        } else {
+            ProxyLog.mitm.info(
+                "event=proxy.nio_connect_handler_error outcome=ignored error=\(error.localizedDescription, privacy: .public) classified=\(failure.reason, privacy: .public)"
+            )
+            logConnectStage(
+                stage: "client_handler_error",
+                outcome: "ignored",
+                detail: "\(error.localizedDescription) classified=\(failure.reason)"
+            )
         }
         upstreamChannel?.close(promise: nil)
         connectRequestStartTime = nil

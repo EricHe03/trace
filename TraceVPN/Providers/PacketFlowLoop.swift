@@ -587,7 +587,7 @@ final class PacketFlowLoop: @unchecked Sendable {
                                 if !self.tunnelUDPSupported,
                                    self.udpForwardingMode == .hevOnly || (self.udpForwardingMode == .split && decision.isQUIC),
                                    self.logSampler.shouldLog(event: "vpn.udp_forward_fallback", key: "direct", first: 3, every: 200) {
-                                    VPNLog.tunnel.warning(
+                                    VPNLog.tunnel.info(
                                         "event=vpn.udp_forward_fallback outcome=success mode=\(self.udpForwardingMode.rawValue, privacy: .public) action=direct reason=tunnel_udp_unsupported"
                                     )
                                 }

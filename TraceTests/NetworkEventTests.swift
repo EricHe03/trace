@@ -72,6 +72,114 @@ final class NetworkEventTests: XCTestCase {
         XCTAssertTrue(event.subtitle.contains("DNS"))
     }
 
+    func testTransportEventUnknownDoesNotShowFallback() {
+        let request = TransportRequest(
+            timestamp: Date(),
+            sourceIP: "192.168.1.10",
+            destinationIP: "93.184.216.34",
+            sourcePort: 53000,
+            destinationPort: 443,
+            transport: .tcp,
+            applicationProtocol: .unknown,
+            parserOutcome: .fallbackUnknown,
+            payload: .inline(Data([0x16, 0x03, 0x01])),
+            payloadBytes: 3,
+            ipVersion: 4,
+            protocolNumber: 6,
+            hopLimit: 64,
+            ipHeaderLength: 20,
+            totalLength: 60,
+            fragmentOffset: 0,
+            moreFragments: false,
+            flowKey: "tcp|192.168.1.10:53000|93.184.216.34:443"
+        )
+        let event = NetworkEvent.transportRequest(request)
+
+        XCTAssertTrue(event.subtitle.contains("TCP"))
+        XCTAssertTrue(event.subtitle.contains("Unknown"))
+        XCTAssertFalse(event.subtitle.localizedCaseInsensitiveContains("fallback"))
+    }
+
+    func testTransportEventSignatureFallbackShowsFallback() {
+        let request = TransportRequest(
+            timestamp: Date(),
+            sourceIP: "192.168.1.10",
+            destinationIP: "8.8.8.8",
+            sourcePort: 53001,
+            destinationPort: 53,
+            transport: .tcp,
+            applicationProtocol: .unknown,
+            parserOutcome: .fallbackSignatureOnly,
+            payload: .inline(Data([0x00, 0x20])),
+            payloadBytes: 2,
+            ipVersion: 4,
+            protocolNumber: 6,
+            hopLimit: 64,
+            ipHeaderLength: 20,
+            totalLength: 60,
+            fragmentOffset: 0,
+            moreFragments: false,
+            flowKey: "tcp|192.168.1.10:53001|8.8.8.8:53"
+        )
+        let event = NetworkEvent.transportRequest(request)
+
+        XCTAssertTrue(event.subtitle.localizedCaseInsensitiveContains("fallback"))
+    }
+
+    func testTransportEventHTTPProtocolUsesHTTPLabelAndTCPType() {
+        let request = TransportRequest(
+            timestamp: Date(),
+            sourceIP: "192.168.1.10",
+            destinationIP: "93.184.216.34",
+            sourcePort: 53002,
+            destinationPort: 80,
+            transport: .tcp,
+            applicationProtocol: .http,
+            parserOutcome: .parsed,
+            payload: .inline(Data("GET / HTTP/1.1\r\n".utf8)),
+            payloadBytes: 16,
+            ipVersion: 4,
+            protocolNumber: 6,
+            hopLimit: 64,
+            ipHeaderLength: 20,
+            totalLength: 76,
+            fragmentOffset: 0,
+            moreFragments: false,
+            flowKey: "tcp|192.168.1.10:53002|93.184.216.34:80"
+        )
+        let event = NetworkEvent.transportRequest(request)
+
+        XCTAssertEqual(event.type, .tcp)
+        XCTAssertTrue(event.subtitle.contains("HTTP"))
+    }
+
+    func testTransportEventTLSProtocolUsesTLSLabelAndTCPType() {
+        let request = TransportRequest(
+            timestamp: Date(),
+            sourceIP: "192.168.1.10",
+            destinationIP: "93.184.216.34",
+            sourcePort: 53003,
+            destinationPort: 443,
+            transport: .tcp,
+            applicationProtocol: .tls,
+            parserOutcome: .parsed,
+            payload: .inline(Data([0x16, 0x03, 0x03, 0x00, 0x2A])),
+            payloadBytes: 5,
+            ipVersion: 4,
+            protocolNumber: 6,
+            hopLimit: 64,
+            ipHeaderLength: 20,
+            totalLength: 65,
+            fragmentOffset: 0,
+            moreFragments: false,
+            flowKey: "tcp|192.168.1.10:53003|93.184.216.34:443"
+        )
+        let event = NetworkEvent.transportRequest(request)
+
+        XCTAssertEqual(event.type, .tcp)
+        XCTAssertTrue(event.subtitle.contains("TLS"))
+    }
+
     func testDomain() {
         let request = NetworkRequest.sample
         let event = NetworkEvent.httpRequest(request)

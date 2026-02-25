@@ -15,6 +15,8 @@ public enum TransportApplicationProtocol: String, Codable, CaseIterable, Sendabl
     case dhcpv6
     case snmp
     case quic
+    case http
+    case tls
     case unknown
 
     public var displayName: String {
@@ -33,6 +35,10 @@ public enum TransportApplicationProtocol: String, Codable, CaseIterable, Sendabl
             "SNMP"
         case .quic:
             "QUIC"
+        case .http:
+            "HTTP"
+        case .tls:
+            "TLS"
         case .unknown:
             "Unknown"
         }

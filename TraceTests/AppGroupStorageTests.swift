@@ -175,6 +175,31 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(loaded.last?.id, first.id)
     }
 
+    func testBatchSaveTransportRequests() throws {
+        let first = createMockTransportRequest(
+            timestamp: Date(timeIntervalSinceNow: -20),
+            sourcePort: 54001,
+            destinationPort: 53
+        )
+        let second = createMockTransportRequest(
+            timestamp: Date(timeIntervalSinceNow: -10),
+            sourcePort: 54002,
+            destinationPort: 123
+        )
+        let third = createMockTransportRequest(
+            timestamp: Date(),
+            sourcePort: 54003,
+            destinationPort: 161
+        )
+
+        try storage.saveTransportRequests([first, second, third])
+
+        let loaded = try storage.loadAllTransportRequests()
+        XCTAssertEqual(loaded.count, 3)
+        XCTAssertEqual(loaded.first?.id, third.id)
+        XCTAssertEqual(loaded.last?.id, first.id)
+    }
+
     func testClearAllTransportRequests() throws {
         try storage.saveTransportRequest(createMockTransportRequest(destinationPort: 53))
         try storage.saveTransportRequest(createMockTransportRequest(destinationPort: 161))
