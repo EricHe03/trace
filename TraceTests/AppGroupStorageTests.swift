@@ -202,6 +202,40 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(loaded.last?.id, first.id)
     }
 
+    func testBatchSaveTransportRequestsThrowsOnPartialFailure() throws {
+        guard let containerURL = storage.containerURL else {
+            throw StorageError.containerNotFound
+        }
+        let requestsURL = containerURL.appendingPathComponent("TransportRequests")
+
+        let first = createMockTransportRequest(
+            timestamp: Date(timeIntervalSinceNow: -20),
+            sourcePort: 54101,
+            destinationPort: 53
+        )
+        let second = createMockTransportRequest(
+            timestamp: Date(timeIntervalSinceNow: -10),
+            sourcePort: 54102,
+            destinationPort: 123
+        )
+        let third = createMockTransportRequest(
+            timestamp: Date(),
+            sourcePort: 54103,
+            destinationPort: 161
+        )
+
+        let blockedPath = requestsURL.appendingPathComponent("\(second.id.uuidString).json")
+        try FileManager.default.createDirectory(at: blockedPath, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: blockedPath) }
+
+        XCTAssertThrowsError(try storage.saveTransportRequests([first, second, third]))
+
+        let loaded = try storage.loadAllTransportRequests()
+        let loadedIDs = Set(loaded.map(\.id))
+        XCTAssertEqual(loaded.count, 2)
+        XCTAssertEqual(loadedIDs, Set([first.id, third.id]))
+    }
+
     func testSaveAndLoadTransportRequestWithPacketMetadata() throws {
         let payloadFileURL = try makeTransportBodyFile(data: Data([0xAA, 0xBB, 0xCC]))
         let packetFileURL = try makeTransportBodyFile(data: Data([0x45, 0x00, 0x00, 0x3C]))

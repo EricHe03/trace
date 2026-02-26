@@ -1578,6 +1578,9 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             shouldCloseAfterForwardingResponse = true
             guard !didEmitForwardingErrorResponse else { return }
             didEmitForwardingErrorResponse = true
+            if case .head = part {
+                Task { await ProxyNetworkMetrics.shared.recordHTTPParseFailure() }
+            }
             let partToken = switch part {
             case let .head(head):
                 "head(method=\(head.method.rawValue))"
@@ -1589,7 +1592,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             logConnectStage(
                 stage: "request_pipelining",
                 outcome: "unsupported",
-                detail: "action=close_after_response,part=\(partToken)"
+                detail: "action=emit_400_after_response,part=\(partToken)"
             )
         }
     }
@@ -4005,17 +4008,28 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         closeAfterSend: Bool,
         context: ChannelHandlerContext
     ) {
-        let shouldClose = closeAfterSend || shouldCloseAfterForwardingResponse
-        if shouldCloseAfterForwardingResponse, !closeAfterSend {
+        let shouldEmitPipeliningBadRequest = shouldCloseAfterForwardingResponse && !closeAfterSend
+        if shouldEmitPipeliningBadRequest {
             logConnectStage(
                 stage: "request_pipelining",
-                outcome: "close_after_response",
+                outcome: "emit_400_after_response",
                 detail: "reason=unsupported"
             )
         }
         shouldCloseAfterForwardingResponse = false
-        state = shouldClose ? .closed : .waitingForRequest
-        if shouldClose {
+        if shouldEmitPipeliningBadRequest {
+            state = .closed
+            sendResponse(
+                status: .badRequest,
+                body: "HTTP request pipelining is not supported by the NIO engine yet",
+                closeAfterSend: true,
+                context: context
+            )
+            return
+        }
+
+        state = closeAfterSend ? .closed : .waitingForRequest
+        if closeAfterSend {
             context.close(promise: nil)
         }
     }

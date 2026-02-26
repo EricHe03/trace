@@ -368,6 +368,7 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Saves captured transport events to the shared container in a single batch.
     /// Posts one notification when at least one event is persisted.
+    /// Throws when any item in the batch fails, even if some items were persisted.
     public func saveTransportRequests(_ requests: [TransportRequest]) throws {
         guard !requests.isEmpty else { return }
         guard let container = containerURL else {
@@ -409,6 +410,16 @@ public class AppGroupStorage: @unchecked Sendable {
                 )
             }
             notifyNewTransportRequest()
+            if let lastError {
+                CoreLog.storage.warning(
+                    LogEvent.storage("save_transport_request_batch")
+                        .failure()
+                        .with("persisted_count", value: persistedCount)
+                        .with("failed_count", value: max(0, requests.count - persistedCount))
+                        .error(lastError)
+                )
+                throw lastError
+            }
             return
         }
 
