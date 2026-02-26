@@ -722,6 +722,40 @@ final class LocalSocks5ServerTests: XCTestCase {
         XCTAssertTrue(backoffSetLogged)
         XCTAssertTrue(backoffSkipLogged)
     }
+
+    func testSessionFailureLogIsEmittedAtMostOncePerSession() throws {
+        let eventStore = EventLogStore()
+        let endpoint = try startServer(
+            tcpConnectRoutingPolicy: .disabled,
+            eventLogHandler: { type, message in
+                guard type == "local_socks5_session" else { return }
+                eventStore.append(message)
+            }
+        )
+
+        let tcpFD = try connectTCP(host: endpoint.host, port: endpoint.port)
+        try writeAll([0x05, 0x01, 0x00], to: tcpFD)
+        setResetOnClose(for: tcpFD)
+        close(tcpFD)
+
+        Thread.sleep(forTimeInterval: 0.3)
+
+        let failureEvents = eventStore.snapshot().filter { $0.contains("outcome=failure") }
+        if failureEvents.isEmpty {
+            throw XCTSkip("No failure event observed in reset-close scenario; cannot validate duplicate suppression.")
+        }
+
+        var countsBySession: [String: Int] = [:]
+        for event in failureEvents {
+            guard let session = Self.extractValue(for: "session", from: event) else { continue }
+            countsBySession[session, default: 0] += 1
+        }
+
+        XCTAssertFalse(countsBySession.isEmpty)
+        for count in countsBySession.values {
+            XCTAssertLessThanOrEqual(count, 1, "Failure log should be emitted only once per session.")
+        }
+    }
 }
 
 private extension LocalSocks5ServerTests {
@@ -780,6 +814,13 @@ private extension LocalSocks5ServerTests {
         }
 
         return fd
+    }
+
+    func setResetOnClose(for fd: Int32) {
+        var lingerOption = linger(l_onoff: 1, l_linger: 0)
+        _ = withUnsafePointer(to: &lingerOption) {
+            setsockopt(fd, SOL_SOCKET, SO_LINGER, $0, socklen_t(MemoryLayout<linger>.size))
+        }
     }
 
     func createUDPClientSocket() throws -> Int32 {
@@ -1069,5 +1110,16 @@ private extension LocalSocks5ServerTests {
             throw TestError.socketAddressFailed
         }
         return UInt16(bigEndian: localAddress.sin_port)
+    }
+
+    static func extractValue(for key: String, from message: String) -> String? {
+        let token = "\(key)="
+        guard let tokenRange = message.range(of: token) else { return nil }
+        let valueStart = tokenRange.upperBound
+        let suffix = message[valueStart...]
+        if let end = suffix.firstIndex(of: " ") {
+            return String(suffix[..<end])
+        }
+        return String(suffix)
     }
 }

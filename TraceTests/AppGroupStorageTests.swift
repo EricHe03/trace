@@ -22,6 +22,7 @@ final class AppGroupStorageTests: XCTestCase {
         // Clean up any existing test data
         try? storage.clearAllRequests()
         try? storage.clearAllTransportRequests()
+        storage.setTransportStoreBudgetBytesForTesting(nil)
         storage.resetStoredSettings()
     }
 
@@ -29,6 +30,7 @@ final class AppGroupStorageTests: XCTestCase {
         // Clean up test data
         try? storage.clearAllRequests()
         try? storage.clearAllTransportRequests()
+        storage.setTransportStoreBudgetBytesForTesting(nil)
         storage.resetStoredSettings()
         super.tearDown()
     }
@@ -198,6 +200,125 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(loaded.count, 3)
         XCTAssertEqual(loaded.first?.id, third.id)
         XCTAssertEqual(loaded.last?.id, first.id)
+    }
+
+    func testSaveAndLoadTransportRequestWithPacketMetadata() throws {
+        let payloadFileURL = try makeTransportBodyFile(data: Data([0xAA, 0xBB, 0xCC]))
+        let packetFileURL = try makeTransportBodyFile(data: Data([0x45, 0x00, 0x00, 0x3C]))
+        let request = TransportRequest(
+            timestamp: Date(),
+            sourceIP: "10.0.0.5",
+            destinationIP: "1.1.1.1",
+            sourcePort: 52344,
+            destinationPort: 443,
+            transport: .tcp,
+            applicationProtocol: .tls,
+            parserOutcome: .fallbackSignatureOnly,
+            payload: .file(payloadFileURL),
+            payloadBytes: 3,
+            packet: .file(packetFileURL),
+            packetBytes: 60,
+            ipVersion: 4,
+            protocolNumber: 6,
+            hopLimit: 64,
+            ipHeaderLength: 20,
+            totalLength: 60,
+            fragmentOffset: 0,
+            moreFragments: false,
+            tcpSequenceNumber: 123,
+            tcpAcknowledgmentNumber: 456,
+            tcpFlags: 0x12,
+            tcpWindowSize: 8192,
+            tcpDataOffset: 24,
+            tcpOptions: TransportTCPPacketOptions(
+                maximumSegmentSize: 1460,
+                windowScale: 7,
+                sackPermitted: true,
+                timestamps: TransportTCPPacketTimestamp(value: 100, echoReply: 101)
+            ),
+            flowKey: "tcp|10.0.0.5:52344|1.1.1.1:443"
+        )
+
+        try storage.saveTransportRequest(request)
+        let loaded = try storage.loadAllTransportRequests()
+        guard let restored = loaded.first else {
+            XCTFail("Expected stored transport request")
+            return
+        }
+
+        XCTAssertEqual(restored.packetBytes, 60)
+        XCTAssertEqual(restored.tcpSequenceNumber, 123)
+        XCTAssertEqual(restored.tcpAcknowledgmentNumber, 456)
+        XCTAssertEqual(restored.tcpFlags, 0x12)
+        XCTAssertEqual(restored.tcpWindowSize, 8192)
+        XCTAssertEqual(restored.tcpDataOffset, 24)
+        XCTAssertEqual(restored.tcpOptions?.maximumSegmentSize, 1460)
+        XCTAssertEqual(restored.tcpOptions?.windowScale, 7)
+        XCTAssertEqual(restored.tcpOptions?.sackPermitted, true)
+        XCTAssertEqual(restored.tcpOptions?.timestamps?.value, 100)
+        XCTAssertEqual(restored.tcpOptions?.timestamps?.echoReply, 101)
+        XCTAssertEqual(restored.packet?.getData(), Data([0x45, 0x00, 0x00, 0x3C]))
+    }
+
+    func testTransportRingBufferPrunesOldestAndDeletesBodyFiles() throws {
+        storage.setTransportStoreBudgetBytesForTesting(1024)
+        defer { storage.setTransportStoreBudgetBytesForTesting(nil) }
+
+        let oldPayloadURL = try makeTransportBodyFile(data: Data(repeating: 0xAB, count: 2048))
+        let oldPacketURL = try makeTransportBodyFile(data: Data(repeating: 0xCD, count: 2048))
+        let oldRequest = TransportRequest(
+            timestamp: Date(timeIntervalSinceNow: -60),
+            sourceIP: "192.168.1.10",
+            destinationIP: "8.8.8.8",
+            sourcePort: 53000,
+            destinationPort: 443,
+            transport: .tcp,
+            applicationProtocol: .tls,
+            parserOutcome: .fallbackSignatureOnly,
+            payload: .file(oldPayloadURL),
+            payloadBytes: 2048,
+            packet: .file(oldPacketURL),
+            packetBytes: 4096,
+            ipVersion: 4,
+            protocolNumber: 6,
+            hopLimit: 64,
+            ipHeaderLength: 20,
+            totalLength: 4096,
+            fragmentOffset: 0,
+            moreFragments: false,
+            flowKey: "tcp|192.168.1.10:53000|8.8.8.8:443"
+        )
+
+        let recentRequest = TransportRequest(
+            timestamp: Date(),
+            sourceIP: "192.168.1.10",
+            destinationIP: "8.8.8.8",
+            sourcePort: 53001,
+            destinationPort: 80,
+            transport: .tcp,
+            applicationProtocol: .http,
+            parserOutcome: .parsed,
+            payload: .inline(Data([0x47, 0x45, 0x54])),
+            payloadBytes: 3,
+            packet: .inline(Data([0x45, 0x00, 0x00, 0x28])),
+            packetBytes: 40,
+            ipVersion: 4,
+            protocolNumber: 6,
+            hopLimit: 64,
+            ipHeaderLength: 20,
+            totalLength: 40,
+            fragmentOffset: 0,
+            moreFragments: false,
+            flowKey: "tcp|192.168.1.10:53001|8.8.8.8:80"
+        )
+
+        try storage.saveTransportRequests([oldRequest, recentRequest])
+
+        let loaded = try storage.loadAllTransportRequests()
+        XCTAssertEqual(loaded.count, 1)
+        XCTAssertEqual(loaded.first?.id, recentRequest.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldPayloadURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldPacketURL.path))
     }
 
     func testClearAllTransportRequests() throws {
@@ -585,5 +706,16 @@ final class AppGroupStorageTests: XCTestCase {
             moreFragments: false,
             flowKey: "udp|192.168.1.100:\(sourcePort)|8.8.8.8:\(destinationPort)"
         )
+    }
+
+    private func makeTransportBodyFile(data: Data) throws -> URL {
+        guard let containerURL = storage.containerURL else {
+            throw StorageError.containerNotFound
+        }
+        let bodiesURL = containerURL.appendingPathComponent("Bodies")
+        try FileManager.default.createDirectory(at: bodiesURL, withIntermediateDirectories: true)
+        let fileURL = bodiesURL.appendingPathComponent("\(UUID().uuidString).bin")
+        try data.write(to: fileURL, options: .atomic)
+        return fileURL
     }
 }

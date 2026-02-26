@@ -51,6 +51,35 @@ public enum TransportParserOutcome: String, Codable, Sendable {
     case fallbackUnknown
 }
 
+public struct TransportTCPPacketTimestamp: Codable, Sendable {
+    public let value: UInt32
+    public let echoReply: UInt32
+
+    public init(value: UInt32, echoReply: UInt32) {
+        self.value = value
+        self.echoReply = echoReply
+    }
+}
+
+public struct TransportTCPPacketOptions: Codable, Sendable {
+    public let maximumSegmentSize: UInt16?
+    public let windowScale: UInt8?
+    public let sackPermitted: Bool?
+    public let timestamps: TransportTCPPacketTimestamp?
+
+    public init(
+        maximumSegmentSize: UInt16?,
+        windowScale: UInt8?,
+        sackPermitted: Bool?,
+        timestamps: TransportTCPPacketTimestamp?
+    ) {
+        self.maximumSegmentSize = maximumSegmentSize
+        self.windowScale = windowScale
+        self.sackPermitted = sackPermitted
+        self.timestamps = timestamps
+    }
+}
+
 public struct TransportRequest: Identifiable, Codable {
     public let id: UUID
     public let timestamp: Date
@@ -63,6 +92,8 @@ public struct TransportRequest: Identifiable, Codable {
     public let parserOutcome: TransportParserOutcome
     public let payload: BodyStorage
     public let payloadBytes: Int
+    public let packet: BodyStorage?
+    public let packetBytes: Int?
     public let ipVersion: UInt8
     public let protocolNumber: UInt8
     public let hopLimit: UInt8
@@ -70,6 +101,13 @@ public struct TransportRequest: Identifiable, Codable {
     public let totalLength: Int
     public let fragmentOffset: Int
     public let moreFragments: Bool
+    public let tcpSequenceNumber: UInt32?
+    public let tcpAcknowledgmentNumber: UInt32?
+    public let tcpFlags: UInt8?
+    public let tcpWindowSize: UInt16?
+    public let tcpDataOffset: Int?
+    public let tcpOptions: TransportTCPPacketOptions?
+    public let udpDatagramLength: UInt16?
     public let summary: String?
     public let flowKey: String
 
@@ -85,6 +123,8 @@ public struct TransportRequest: Identifiable, Codable {
         parserOutcome: TransportParserOutcome,
         payload: BodyStorage,
         payloadBytes: Int,
+        packet: BodyStorage? = nil,
+        packetBytes: Int? = nil,
         ipVersion: UInt8,
         protocolNumber: UInt8,
         hopLimit: UInt8,
@@ -92,6 +132,13 @@ public struct TransportRequest: Identifiable, Codable {
         totalLength: Int,
         fragmentOffset: Int,
         moreFragments: Bool,
+        tcpSequenceNumber: UInt32? = nil,
+        tcpAcknowledgmentNumber: UInt32? = nil,
+        tcpFlags: UInt8? = nil,
+        tcpWindowSize: UInt16? = nil,
+        tcpDataOffset: Int? = nil,
+        tcpOptions: TransportTCPPacketOptions? = nil,
+        udpDatagramLength: UInt16? = nil,
         summary: String? = nil,
         flowKey: String
     ) {
@@ -106,6 +153,8 @@ public struct TransportRequest: Identifiable, Codable {
         self.parserOutcome = parserOutcome
         self.payload = payload
         self.payloadBytes = payloadBytes
+        self.packet = packet
+        self.packetBytes = packetBytes
         self.ipVersion = ipVersion
         self.protocolNumber = protocolNumber
         self.hopLimit = hopLimit
@@ -113,6 +162,13 @@ public struct TransportRequest: Identifiable, Codable {
         self.totalLength = totalLength
         self.fragmentOffset = fragmentOffset
         self.moreFragments = moreFragments
+        self.tcpSequenceNumber = tcpSequenceNumber
+        self.tcpAcknowledgmentNumber = tcpAcknowledgmentNumber
+        self.tcpFlags = tcpFlags
+        self.tcpWindowSize = tcpWindowSize
+        self.tcpDataOffset = tcpDataOffset
+        self.tcpOptions = tcpOptions
+        self.udpDatagramLength = udpDatagramLength
         self.summary = summary
         self.flowKey = flowKey
     }
@@ -123,6 +179,18 @@ public struct TransportRequest: Identifiable, Codable {
 
     public var totalPayloadBytes: Int {
         payload.totalSize
+    }
+
+    public var capturedPacketBytes: Int? {
+        packet?.capturedSize
+    }
+
+    public var totalPacketBytes: Int? {
+        packet?.totalSize
+    }
+
+    public var isPacketTruncated: Bool {
+        packet?.isTruncated ?? false
     }
 
     public var isPayloadTruncated: Bool {

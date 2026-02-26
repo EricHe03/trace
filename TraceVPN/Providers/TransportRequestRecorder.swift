@@ -15,10 +15,8 @@ import TraceSecurity
 final class TransportRequestRecorder {
     private struct TCPFlowState {
         var lastSeen: Date
-        var recordedCount: Int
-        var lastPersistedProtocol: TransportApplicationProtocol?
-        var lastPersistedOutcome: TransportParserOutcome?
-        var lastPersistedSummary: String?
+        var stickyApplicationProtocol: TransportApplicationProtocol?
+        var stickySummary: String?
         var probeBuffer: Data
     }
 
@@ -34,7 +32,6 @@ final class TransportRequestRecorder {
     private let tcpFlowCleanupInterval: TimeInterval = 30
     private let tcpFlowLimit = 4096
     private let maxTCPProbeBytes = 32 * 1024
-    private let maxTCPRecordsPerFlow = 2
     private var tcpFlows: [String: TCPFlowState] = [:]
     private var lastTCPFlowCleanup: Date = .distantPast
 
@@ -59,7 +56,7 @@ final class TransportRequestRecorder {
         }
     }
 
-    func process(ipPacket: IPPacket) {
+    func process(ipPacket: IPPacket, rawPacket: Data) {
         queue.async { [weak self] in
             guard let self else { return }
             let now = Date()
@@ -69,10 +66,10 @@ final class TransportRequestRecorder {
             switch ipPacket.transport {
             case .tcp:
                 guard let tcpPacket = TCPParser.parse(ipPacket.payload) else { return }
-                self.recordTCP(ipPacket: ipPacket, tcpPacket: tcpPacket, timestamp: now)
+                self.recordTCP(ipPacket: ipPacket, tcpPacket: tcpPacket, rawPacket: rawPacket, timestamp: now)
             case .udp:
                 guard let udpPacket = UDPParser.parse(ipPacket.payload) else { return }
-                self.recordUDP(ipPacket: ipPacket, udpPacket: udpPacket, timestamp: now)
+                self.recordUDP(ipPacket: ipPacket, udpPacket: udpPacket, rawPacket: rawPacket, timestamp: now)
             case .none:
                 return
             }
@@ -86,10 +83,7 @@ final class TransportRequestRecorder {
         tcpFlows.removeAll(keepingCapacity: false)
     }
 
-    private func recordTCP(ipPacket: IPPacket, tcpPacket: TCPPacket, timestamp: Date) {
-        // Keep the Network list signal-focused; ACK-only/empty payload packets stay in Connection analytics.
-        guard !tcpPacket.payload.isEmpty else { return }
-
+    private func recordTCP(ipPacket: IPPacket, tcpPacket: TCPPacket, rawPacket: Data, timestamp: Date) {
         let sourceIP = ipPacket.source.description
         let destinationIP = ipPacket.destination.description
         let sourcePort = tcpPacket.sourcePort
@@ -105,16 +99,14 @@ final class TransportRequestRecorder {
 
         var flowState = tcpFlows[key] ?? TCPFlowState(
             lastSeen: timestamp,
-            recordedCount: 0,
-            lastPersistedProtocol: nil,
-            lastPersistedOutcome: nil,
-            lastPersistedSummary: nil,
+            stickyApplicationProtocol: nil,
+            stickySummary: nil,
             probeBuffer: Data()
         )
         flowState.lastSeen = timestamp
         appendTCPProbe(payload, to: &flowState)
 
-        let classification = classifyTCPPayload(
+        let probeClassification = classifyTCPPayload(
             payload: flowState.probeBuffer,
             sourceIP: sourceIP,
             sourcePort: sourcePort,
@@ -122,40 +114,56 @@ final class TransportRequestRecorder {
             destinationPort: destinationPort
         )
 
-        if shouldPersistTCPRecord(state: flowState, classification: classification) {
-            let request = TransportRequest(
-                timestamp: timestamp,
-                sourceIP: sourceIP,
-                destinationIP: destinationIP,
-                sourcePort: sourcePort,
-                destinationPort: destinationPort,
-                transport: .tcp,
-                applicationProtocol: classification.applicationProtocol,
-                parserOutcome: classification.parserOutcome,
-                payload: storedPayload(from: payload),
-                payloadBytes: payload.count,
-                ipVersion: ipPacket.version,
-                protocolNumber: ipPacket.protocolNumber,
-                hopLimit: ipPacket.hopLimit,
-                ipHeaderLength: ipPacket.headerLength,
-                totalLength: ipPacket.totalLength,
-                fragmentOffset: ipPacket.fragmentOffset,
-                moreFragments: ipPacket.moreFragments,
-                summary: classification.summary,
-                flowKey: key
-            )
-            persist(request)
+        let classification = applyTCPFallbackHeuristics(
+            classification: probeClassification,
+            flowState: flowState,
+            sourcePort: sourcePort,
+            destinationPort: destinationPort,
+            hasPayload: !payload.isEmpty
+        )
 
-            flowState.recordedCount += 1
-            flowState.lastPersistedProtocol = classification.applicationProtocol
-            flowState.lastPersistedOutcome = classification.parserOutcome
-            flowState.lastPersistedSummary = classification.summary
+        let request = TransportRequest(
+            timestamp: timestamp,
+            sourceIP: sourceIP,
+            destinationIP: destinationIP,
+            sourcePort: sourcePort,
+            destinationPort: destinationPort,
+            transport: .tcp,
+            applicationProtocol: classification.applicationProtocol,
+            parserOutcome: classification.parserOutcome,
+            payload: storedPayload(from: payload),
+            payloadBytes: payload.count,
+            packet: storedPacket(from: rawPacket),
+            packetBytes: rawPacket.count,
+            ipVersion: ipPacket.version,
+            protocolNumber: ipPacket.protocolNumber,
+            hopLimit: ipPacket.hopLimit,
+            ipHeaderLength: ipPacket.headerLength,
+            totalLength: ipPacket.totalLength,
+            fragmentOffset: ipPacket.fragmentOffset,
+            moreFragments: ipPacket.moreFragments,
+            tcpSequenceNumber: tcpPacket.sequenceNumber,
+            tcpAcknowledgmentNumber: tcpPacket.acknowledgmentNumber,
+            tcpFlags: tcpPacket.flags.rawValue,
+            tcpWindowSize: tcpPacket.windowSize,
+            tcpDataOffset: tcpPacket.dataOffset,
+            tcpOptions: tcpOptionsMetadata(from: tcpPacket.options),
+            summary: classification.summary,
+            flowKey: key
+        )
+        persist(request)
+
+        if classification.applicationProtocol != .unknown {
+            flowState.stickyApplicationProtocol = classification.applicationProtocol
+            if let summary = classification.summary, !summary.isEmpty {
+                flowState.stickySummary = summary
+            }
         }
 
         tcpFlows[key] = flowState
     }
 
-    private func recordUDP(ipPacket: IPPacket, udpPacket: UDPPacket, timestamp: Date) {
+    private func recordUDP(ipPacket: IPPacket, udpPacket: UDPPacket, rawPacket: Data, timestamp: Date) {
         let sourceIP = ipPacket.source.description
         let destinationIP = ipPacket.destination.description
         let sourcePort = udpPacket.sourcePort
@@ -181,6 +189,8 @@ final class TransportRequestRecorder {
             parserOutcome: classification.parserOutcome,
             payload: storedPayload(from: payload),
             payloadBytes: payload.count,
+            packet: storedPacket(from: rawPacket),
+            packetBytes: rawPacket.count,
             ipVersion: ipPacket.version,
             protocolNumber: ipPacket.protocolNumber,
             hopLimit: ipPacket.hopLimit,
@@ -188,6 +198,7 @@ final class TransportRequestRecorder {
             totalLength: ipPacket.totalLength,
             fragmentOffset: ipPacket.fragmentOffset,
             moreFragments: ipPacket.moreFragments,
+            udpDatagramLength: udpPacket.length,
             summary: classification.summary,
             flowKey: flowKey(
                 transport: .udp,
@@ -198,28 +209,6 @@ final class TransportRequestRecorder {
             )
         )
         persist(request)
-    }
-
-    private func shouldPersistTCPRecord(
-        state: TCPFlowState,
-        classification: UDPProtocolClassifier.Classification
-    ) -> Bool {
-        guard state.recordedCount < maxTCPRecordsPerFlow else { return false }
-        if state.recordedCount == 0 {
-            return true
-        }
-
-        if state.lastPersistedProtocol != classification.applicationProtocol {
-            return true
-        }
-        if state.lastPersistedOutcome != classification.parserOutcome {
-            return true
-        }
-        if state.lastPersistedSummary != classification.summary {
-            return true
-        }
-
-        return false
     }
 
     private func appendTCPProbe(_ payload: Data, to state: inout TCPFlowState) {
@@ -285,6 +274,89 @@ final class TransportRequestRecorder {
             parserOutcome: .fallbackUnknown,
             summary: nil
         )
+    }
+
+    private func applyTCPFallbackHeuristics(
+        classification: UDPProtocolClassifier.Classification,
+        flowState: TCPFlowState,
+        sourcePort: UInt16,
+        destinationPort: UInt16,
+        hasPayload: Bool
+    ) -> UDPProtocolClassifier.Classification {
+        guard classification.applicationProtocol == .unknown else {
+            return classification
+        }
+
+        if let stickyProtocol = flowState.stickyApplicationProtocol {
+            let stickySummary = flowState.stickySummary.map { "sticky:\($0)" }
+            return UDPProtocolClassifier.Classification(
+                applicationProtocol: stickyProtocol,
+                parserOutcome: .fallbackSignatureOnly,
+                summary: stickySummary
+            )
+        }
+
+        if sourcePort == 53 || destinationPort == 53 {
+            return UDPProtocolClassifier.Classification(
+                applicationProtocol: .dns,
+                parserOutcome: .fallbackSignatureOnly,
+                summary: "tcp/53 signature_fallback"
+            )
+        }
+
+        if isLikelyTLSPort(sourcePort) || isLikelyTLSPort(destinationPort) {
+            return UDPProtocolClassifier.Classification(
+                applicationProtocol: .tls,
+                parserOutcome: .fallbackSignatureOnly,
+                summary: "tcp/\(signaturePortHint(sourcePort: sourcePort, destinationPort: destinationPort)) signature_tls"
+            )
+        }
+
+        if isLikelyHTTPPort(sourcePort) || isLikelyHTTPPort(destinationPort) {
+            return UDPProtocolClassifier.Classification(
+                applicationProtocol: .http,
+                parserOutcome: .fallbackSignatureOnly,
+                summary: "tcp/\(signaturePortHint(sourcePort: sourcePort, destinationPort: destinationPort)) signature_http"
+            )
+        }
+
+        if !hasPayload, (sourcePort == 443 || destinationPort == 443) {
+            return UDPProtocolClassifier.Classification(
+                applicationProtocol: .tls,
+                parserOutcome: .fallbackSignatureOnly,
+                summary: "tcp/443 ack_or_control"
+            )
+        }
+
+        return classification
+    }
+
+    private func isLikelyTLSPort(_ port: UInt16) -> Bool {
+        switch port {
+        case 443, 465, 853, 993, 995, 8443, 9443:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func isLikelyHTTPPort(_ port: UInt16) -> Bool {
+        switch port {
+        case 80, 81, 3000, 3128, 8000, 8080, 8081, 8888:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func signaturePortHint(sourcePort: UInt16, destinationPort: UInt16) -> UInt16 {
+        if sourcePort <= 1024 {
+            return sourcePort
+        }
+        if destinationPort <= 1024 {
+            return destinationPort
+        }
+        return destinationPort
     }
 
     private func parseDNSOverTCP(
@@ -385,10 +457,37 @@ final class TransportRequestRecorder {
         return true
     }
 
+    private func tcpOptionsMetadata(from options: TCPPacket.Options) -> TransportTCPPacketOptions? {
+        let sackPermitted: Bool? = options.sackPermitted ? true : nil
+        let timestamp = options.timestamps.map {
+            TransportTCPPacketTimestamp(value: $0.value, echoReply: $0.echo)
+        }
+        guard options.mss != nil || options.windowScale != nil || sackPermitted != nil || timestamp != nil else {
+            return nil
+        }
+        return TransportTCPPacketOptions(
+            maximumSegmentSize: options.mss,
+            windowScale: options.windowScale,
+            sackPermitted: sackPermitted,
+            timestamps: timestamp
+        )
+    }
+
     private func storedPayload(from payload: Data) -> BodyStorage {
         guard captureBody, maxBodySize > 0, !payload.isEmpty else { return .empty }
         return BodyStorage.from(
             data: payload,
+            charset: nil,
+            maxSize: maxBodySize,
+            contentEncoding: nil,
+            decodeCompressedContent: false
+        )
+    }
+
+    private func storedPacket(from packet: Data) -> BodyStorage? {
+        guard captureBody, maxBodySize > 0, !packet.isEmpty else { return nil }
+        return BodyStorage.from(
+            data: packet,
             charset: nil,
             maxSize: maxBodySize,
             contentEncoding: nil,

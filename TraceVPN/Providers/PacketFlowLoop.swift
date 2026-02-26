@@ -187,7 +187,7 @@ final class PacketCapturePipeline: @unchecked Sendable {
 
     private func processParsedPacket(packet: Data) {
         guard let ipPacket = IPPacketParser.parse(packet) else { return }
-        transportRequestRecorder.process(ipPacket: ipPacket)
+        transportRequestRecorder.process(ipPacket: ipPacket, rawPacket: packet)
         flowRecorder.process(ipPacket: ipPacket)
 
         if ipPacket.transport == .udp, let udpPacket = UDPParser.parse(ipPacket.payload) {

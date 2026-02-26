@@ -50,6 +50,7 @@ public class AppGroupStorage: @unchecked Sendable {
     private let samplingConfigFileName = "sampling.json"
     private let configurationFileName = "configuration.json"
     private let mitmAllowlistFileName = "mitm_allowlist.json"
+    private static let defaultTransportStoreBudgetBytes = 512 * 1024 * 1024
 
     private enum DefaultsKey {
         static let captureConfiguration = "trace.settings.captureConfiguration"
@@ -78,6 +79,8 @@ public class AppGroupStorage: @unchecked Sendable {
     /// Cached container URL to prevent repeated app group lookups
     private var _cachedContainerURL: URL?
     private let containerURLLock = NSLock()
+    private let transportStoreBudgetLock = NSLock()
+    private var transportStoreBudgetBytes = AppGroupStorage.defaultTransportStoreBudgetBytes
     private var didLogMisconfiguration = false
 
     public var containerURL: URL? {
@@ -346,6 +349,16 @@ public class AppGroupStorage: @unchecked Sendable {
         try await loadAllRequestsAsync()
     }
 
+    func setTransportStoreBudgetBytesForTesting(_ bytes: Int?) {
+        transportStoreBudgetLock.lock()
+        if let bytes {
+            transportStoreBudgetBytes = max(0, bytes)
+        } else {
+            transportStoreBudgetBytes = AppGroupStorage.defaultTransportStoreBudgetBytes
+        }
+        transportStoreBudgetLock.unlock()
+    }
+
     // MARK: - Transport Request Storage
 
     /// Saves a captured transport event to the shared container.
@@ -386,6 +399,15 @@ public class AppGroupStorage: @unchecked Sendable {
         }
 
         if persistedCount > 0 {
+            do {
+                try pruneTransportRequestsIfNeeded()
+            } catch {
+                CoreLog.storage.warning(
+                    LogEvent.storage("prune_transport_request")
+                        .failure()
+                        .error(error)
+                )
+            }
             notifyNewTransportRequest()
             return
         }
@@ -463,6 +485,124 @@ public class AppGroupStorage: @unchecked Sendable {
         )
         for fileURL in fileURLs where fileURL.pathExtension == "json" {
             try? deleteTransportRequestFileAndBody(at: fileURL)
+        }
+    }
+
+    private struct TransportStorageEntry {
+        let fileURL: URL
+        let timestamp: Date
+        let totalBytes: Int
+    }
+
+    private func currentTransportStoreBudgetBytes() -> Int {
+        transportStoreBudgetLock.lock()
+        defer { transportStoreBudgetLock.unlock() }
+        return transportStoreBudgetBytes
+    }
+
+    private func pruneTransportRequestsIfNeeded() throws {
+        guard let container = containerURL else {
+            throw StorageError.containerNotFound
+        }
+
+        let requestsURL = container.appendingPathComponent(transportRequestsDirectory)
+        guard FileManager.default.fileExists(atPath: requestsURL.path) else { return }
+
+        let budgetBytes = currentTransportStoreBudgetBytes()
+        guard budgetBytes > 0 else {
+            try clearAllTransportRequests()
+            return
+        }
+
+        let fileURLs = try FileManager.default.contentsOfDirectory(
+            at: requestsURL,
+            includingPropertiesForKeys: [.fileSizeKey, .creationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        var totalBytes = 0
+        var entries: [TransportStorageEntry] = []
+        let decoder = makeDecoder()
+
+        for fileURL in fileURLs where fileURL.pathExtension == "json" {
+            let fileValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .creationDateKey])
+            let jsonBytes = fileValues?.fileSize ?? 0
+            var entryBytes = jsonBytes
+            var timestamp = fileValues?.creationDate ?? .distantPast
+
+            if let data = try? Data(contentsOf: fileURL),
+               let request = try? decoder.decode(TransportRequest.self, from: data) {
+                timestamp = request.timestamp
+
+                var filePaths: Set<String> = []
+                if let payloadURL = bodyFileURL(for: request.payload),
+                   filePaths.insert(payloadURL.path).inserted {
+                    entryBytes += fileSize(at: payloadURL)
+                }
+                if let packetURL = bodyFileURL(for: request.packet),
+                   filePaths.insert(packetURL.path).inserted {
+                    entryBytes += fileSize(at: packetURL)
+                }
+            }
+
+            totalBytes += entryBytes
+            entries.append(TransportStorageEntry(fileURL: fileURL, timestamp: timestamp, totalBytes: entryBytes))
+        }
+
+        guard totalBytes > budgetBytes else { return }
+
+        let sortedByOldest = entries.sorted { lhs, rhs in
+            if lhs.timestamp == rhs.timestamp {
+                return lhs.fileURL.lastPathComponent < rhs.fileURL.lastPathComponent
+            }
+            return lhs.timestamp < rhs.timestamp
+        }
+
+        var remainingEntries = sortedByOldest.count
+        var remainingBytes = totalBytes
+        var prunedCount = 0
+
+        for entry in sortedByOldest where remainingBytes > budgetBytes {
+            // Keep at least the newest event, even if oversized.
+            guard remainingEntries > 1 else { break }
+
+            do {
+                try deleteTransportRequestFileAndBody(at: entry.fileURL)
+            } catch {
+                CoreLog.storage.warning(
+                    LogEvent.storage("prune_transport_request")
+                        .failure()
+                        .with("file", value: entry.fileURL.lastPathComponent)
+                        .error(error)
+                )
+                continue
+            }
+
+            remainingEntries -= 1
+            remainingBytes = max(0, remainingBytes - entry.totalBytes)
+            prunedCount += 1
+        }
+
+        if prunedCount > 0 {
+            CoreLog.storage.info(
+                "event=storage.transport_prune outcome=success pruned=\(prunedCount) total_bytes_before=\(totalBytes) total_bytes_after=\(remainingBytes) budget_bytes=\(budgetBytes)"
+            )
+        }
+    }
+
+    private func fileSize(at url: URL) -> Int {
+        (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+    }
+
+    private func bodyFileURL(for body: BodyStorage?) -> URL? {
+        guard let body else { return nil }
+        switch body {
+        case let .file(url, _, _):
+            return url
+        case let .truncatedFile(url, _, _, _):
+            return url
+        default:
+            return nil
         }
     }
 
@@ -1485,6 +1625,7 @@ public class AppGroupStorage: @unchecked Sendable {
             decoder.dateDecodingStrategy = .iso8601
             if let request = try? decoder.decode(TransportRequest.self, from: data) {
                 request.payload.deleteFile()
+                request.packet?.deleteFile()
             }
         }
 
@@ -1687,6 +1828,7 @@ public struct CaptureConfiguration: Codable, Sendable {
     public var fullTunnelSocks5Host: String
     public var fullTunnelSocks5Port: UInt16
     public var fullTunnelUDPForwardingMode: UDPForwardingMode
+    public var fullTunnelHybridTCPMITMEnabled: Bool
     public var dualMITMPolicy: DualMITMPolicy
     public var tcpBypassTTLSeconds: Int
     public var quicHostFailOpenSeconds: Int
@@ -1715,6 +1857,7 @@ public struct CaptureConfiguration: Codable, Sendable {
             fullTunnelSocks5Host: "",
             fullTunnelSocks5Port: 0,
             fullTunnelUDPForwardingMode: .hevOnly,
+            fullTunnelHybridTCPMITMEnabled: false,
             dualMITMPolicy: .adaptiveFailOpen,
             tcpBypassTTLSeconds: 180,
             quicHostFailOpenSeconds: 1800,
@@ -1742,6 +1885,7 @@ public struct CaptureConfiguration: Codable, Sendable {
         case fullTunnelSocks5Host
         case fullTunnelSocks5Port
         case fullTunnelUDPForwardingMode
+        case fullTunnelHybridTCPMITMEnabled
         case dualMITMPolicy
         case tcpBypassTTLSeconds
         case quicHostFailOpenSeconds
@@ -1768,6 +1912,7 @@ public struct CaptureConfiguration: Codable, Sendable {
         fullTunnelSocks5Host: String,
         fullTunnelSocks5Port: UInt16,
         fullTunnelUDPForwardingMode: UDPForwardingMode,
+        fullTunnelHybridTCPMITMEnabled: Bool = false,
         dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
         tcpBypassTTLSeconds: Int = 180,
         quicHostFailOpenSeconds: Int = 1800,
@@ -1792,6 +1937,7 @@ public struct CaptureConfiguration: Codable, Sendable {
         self.fullTunnelSocks5Host = fullTunnelSocks5Host
         self.fullTunnelSocks5Port = fullTunnelSocks5Port
         self.fullTunnelUDPForwardingMode = fullTunnelUDPForwardingMode
+        self.fullTunnelHybridTCPMITMEnabled = fullTunnelHybridTCPMITMEnabled
         self.dualMITMPolicy = dualMITMPolicy
         self.tcpBypassTTLSeconds = tcpBypassTTLSeconds
         self.quicHostFailOpenSeconds = quicHostFailOpenSeconds
@@ -1827,6 +1973,8 @@ public struct CaptureConfiguration: Codable, Sendable {
             ?? defaults.fullTunnelSocks5Port
         fullTunnelUDPForwardingMode = try container.decodeIfPresent(UDPForwardingMode.self, forKey: .fullTunnelUDPForwardingMode)
             ?? defaults.fullTunnelUDPForwardingMode
+        fullTunnelHybridTCPMITMEnabled = try container.decodeIfPresent(Bool.self, forKey: .fullTunnelHybridTCPMITMEnabled)
+            ?? defaults.fullTunnelHybridTCPMITMEnabled
         dualMITMPolicy = try container.decodeIfPresent(DualMITMPolicy.self, forKey: .dualMITMPolicy)
             ?? defaults.dualMITMPolicy
         tcpBypassTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .tcpBypassTTLSeconds)
@@ -1866,6 +2014,7 @@ public struct CaptureConfiguration: Codable, Sendable {
         try container.encode(normalized.fullTunnelSocks5Host, forKey: .fullTunnelSocks5Host)
         try container.encode(normalized.fullTunnelSocks5Port, forKey: .fullTunnelSocks5Port)
         try container.encode(normalized.fullTunnelUDPForwardingMode, forKey: .fullTunnelUDPForwardingMode)
+        try container.encode(normalized.fullTunnelHybridTCPMITMEnabled, forKey: .fullTunnelHybridTCPMITMEnabled)
         try container.encode(normalized.dualMITMPolicy, forKey: .dualMITMPolicy)
         try container.encode(normalized.tcpBypassTTLSeconds, forKey: .tcpBypassTTLSeconds)
         try container.encode(normalized.quicHostFailOpenSeconds, forKey: .quicHostFailOpenSeconds)

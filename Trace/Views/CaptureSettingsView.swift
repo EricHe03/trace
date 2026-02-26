@@ -64,6 +64,17 @@ struct CaptureSettingsView: View {
                     }
                 }
 
+                if config.captureMode == .fullTunnel {
+                    Section("HTTPS Decryption") {
+                        Toggle("Enable Hybrid TCP MITM", isOn: $config.fullTunnelHybridTCPMITMEnabled)
+                            .accessibilityLabel("Enable hybrid TCP MITM")
+
+                        Text("Keeps Full Tunnel proxy routing enabled and also enables transparent TCP MITM for intercepted ports.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 DomainListEditor(
                     title: "DNS Servers",
                     items: $config.fullTunnelDNSServers,
@@ -109,6 +120,7 @@ struct CaptureSettingsView: View {
         .onChangeCompat(of: config.fullTunnelDNSServers) { scheduleSave(showErrors: false) }
         .onChangeCompat(of: config.fullTunnelIPv6Enabled) { scheduleSave(showErrors: false) }
         .onChangeCompat(of: config.fullTunnelUDPForwardingMode) { scheduleSave(showErrors: false) }
+        .onChangeCompat(of: config.fullTunnelHybridTCPMITMEnabled) { scheduleSave(showErrors: false) }
         .onDisappear {
             saveTask?.cancel()
             saveTask = nil

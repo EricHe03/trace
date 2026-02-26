@@ -249,7 +249,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         do {
             VPNLog.proxy.info("event=vpn.proxy_start_begin port=\(self.proxyPort)")
             try await startProxyServer()
-            await applyProxyIngressMode(for: captureConfig.captureMode)
+            await applyProxyIngressMode(for: captureConfig)
             VPNLog.proxy.info("event=vpn.proxy_start outcome=success port=\(self.proxyPort)")
         } catch {
             VPNLog.proxy.error(
@@ -296,7 +296,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             localSocks5Port: localSocks5Port,
             udpForwardingMode: captureConfig.fullTunnelUDPForwardingMode,
             ipv6Enabled: captureConfig.fullTunnelIPv6Enabled,
-            tcpTransparentMITMEnabled: captureConfig.captureMode.enablesTCPTransparentMITM,
+            tcpTransparentMITMEnabled: effectiveTransparentTCPMITMEnabled(for: captureConfig),
             tcpTransparentMITMPorts: transparentMITMPorts,
             mitmProxyHost: proxyHost,
             mitmProxyPort: proxyPort,
@@ -1080,12 +1080,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let previousCaptureMode = currentCaptureMode
         let trimmedHost = config.fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
         let socksHostHash = LogRedaction.hash(trimmedHost)
+        let transparentTCPMITMEnabled = effectiveTransparentTCPMITMEnabled(for: config)
         VPNLog.tunnel.info(
-            "event=vpn.capture_config mode=\(config.captureMode.rawValue, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue, privacy: .public) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count) dual_mitm_policy=\(config.dualMITMPolicy.rawValue, privacy: .public) tcp_bypass_ttl=\(config.tcpBypassTTLSeconds) quic_fail_open_ttl=\(config.quicHostFailOpenSeconds) dual_mitm_breaker=\(config.dualMITMCircuitBreakerEnabled) quic_no_progress_grace_ms=\(config.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.quicCertMaterialCacheTTLSeconds)"
+            "event=vpn.capture_config mode=\(config.captureMode.rawValue, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue, privacy: .public) hybrid_tcp_mitm=\(config.fullTunnelHybridTCPMITMEnabled) tcp_transparent_mitm=\(transparentTCPMITMEnabled) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count) dual_mitm_policy=\(config.dualMITMPolicy.rawValue, privacy: .public) tcp_bypass_ttl=\(config.tcpBypassTTLSeconds) quic_fail_open_ttl=\(config.quicHostFailOpenSeconds) dual_mitm_breaker=\(config.dualMITMCircuitBreakerEnabled) quic_no_progress_grace_ms=\(config.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.quicCertMaterialCacheTTLSeconds)"
         )
         await runtimeState.appendEventLog(
             type: "capture_config",
-            msg: "mode=\(config.captureMode.rawValue) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count) dual_mitm_policy=\(config.dualMITMPolicy.rawValue) tcp_bypass_ttl=\(config.tcpBypassTTLSeconds) quic_fail_open_ttl=\(config.quicHostFailOpenSeconds) dual_mitm_breaker=\(config.dualMITMCircuitBreakerEnabled) quic_no_progress_grace_ms=\(config.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.quicCertMaterialCacheTTLSeconds)"
+            msg: "mode=\(config.captureMode.rawValue) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue) hybrid_tcp_mitm=\(config.fullTunnelHybridTCPMITMEnabled) tcp_transparent_mitm=\(transparentTCPMITMEnabled) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count) dual_mitm_policy=\(config.dualMITMPolicy.rawValue) tcp_bypass_ttl=\(config.tcpBypassTTLSeconds) quic_fail_open_ttl=\(config.quicHostFailOpenSeconds) dual_mitm_breaker=\(config.dualMITMCircuitBreakerEnabled) quic_no_progress_grace_ms=\(config.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.quicCertMaterialCacheTTLSeconds)"
         )
 
         let rawCaptureEnabled = await HardeningConfig.shared.enableRawCapture
@@ -1128,7 +1129,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     type: "reconfig_step",
                     msg: "id=\(plan.id) step=proxy_ingress_mode"
                 )
-                await self.applyProxyIngressMode(for: config.captureMode)
+                await self.applyProxyIngressMode(for: config)
                 await self.runtimeState.appendEventLog(
                     type: "reconfig_step",
                     msg: "id=\(plan.id) step=packet_flow"
@@ -1149,7 +1150,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     localSocks5Port: self.localSocks5Port,
                     udpForwardingMode: config.fullTunnelUDPForwardingMode,
                     ipv6Enabled: config.fullTunnelIPv6Enabled,
-                    tcpTransparentMITMEnabled: config.captureMode.enablesTCPTransparentMITM,
+                    tcpTransparentMITMEnabled: self.effectiveTransparentTCPMITMEnabled(for: config),
                     tcpTransparentMITMPorts: self.transparentMITMPorts,
                     mitmProxyHost: self.proxyHost,
                     mitmProxyPort: self.proxyPort,
@@ -1369,7 +1370,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         let shouldRunCaptureRefresh = shouldRefreshCaptureFlow && currentCaptureMode.usesPacketTunnelRouting
         if shouldRefreshProxyIngress, !shouldRunCaptureRefresh {
-            await applyProxyIngressMode(for: currentCaptureMode)
+            let captureConfig = AppGroupStorage.shared.loadConfiguration()
+            await applyProxyIngressMode(for: captureConfig)
         }
         if shouldRunCaptureRefresh {
             await refreshCaptureConfiguration()
@@ -1409,8 +1411,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         await runtimeState.setQUICHandlingMode(quicHandlingMode)
     }
 
-    private func applyProxyIngressMode(for mode: CaptureMode) async {
-        let transparentTLSModeEnabled = mode.enablesTCPTransparentMITM
+    private func applyProxyIngressMode(for config: CaptureConfiguration) async {
+        let transparentTLSModeEnabled = effectiveTransparentTCPMITMEnabled(for: config)
         let enforcedProxy = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedProxy
         let mitmEngineV2Enabled = await HardeningConfig.shared.dualMITMMITMEngineV2
         let http2MITMEnabled = await HardeningConfig.shared.dualMITMHttp2MITMEnabled
@@ -1427,8 +1429,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         await runtimeState.updateProxyConfiguration(payload)
         await runtimeState.appendEventLog(
             type: "proxy_ingress_mode",
-            msg: "mode=\(mode.rawValue) transparent_tls=\(transparentTLSModeEnabled) policy_enforced_proxy=\(enforcedProxy) mitm_engine_v2=\(mitmEngineV2Enabled) http2_mitm=\(http2MITMEnabled) strict_hard_fail=\(strictHardFail)"
+            msg: "mode=\(config.captureMode.rawValue) transparent_tls=\(transparentTLSModeEnabled) hybrid_tcp_mitm=\(config.fullTunnelHybridTCPMITMEnabled) policy_enforced_proxy=\(enforcedProxy) mitm_engine_v2=\(mitmEngineV2Enabled) http2_mitm=\(http2MITMEnabled) strict_hard_fail=\(strictHardFail)"
         )
+    }
+
+    private func effectiveTransparentTCPMITMEnabled(for config: CaptureConfiguration) -> Bool {
+        config.captureMode.enablesTCPTransparentMITM ||
+            (config.captureMode == .fullTunnel && config.fullTunnelHybridTCPMITMEnabled)
     }
 
     private func shouldEnableProxyPCAP(rawCaptureEnabled: Bool, mode: CaptureMode) -> Bool {

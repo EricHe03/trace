@@ -369,11 +369,22 @@ public class MITMProxyServer: @unchecked Sendable {
     }
 
     private func handleCapturedRequest(_ request: NetworkRequest) {
+        let pendingTunneledSnapshot = isPendingTunneledSnapshot(request)
         if logSampler.shouldLog(key: "proxy.request_captured", first: 10, every: 200) {
             let protocolVersion = request.protocolVersion?.rawValue ?? "unknown"
+            let outcome = pendingTunneledSnapshot ? "pending" : "success"
             ProxyLog.mitm.debug(
-                "event=proxy.request_captured outcome=success method=\(request.method.rawValue, privacy: .public) protocol=\(protocolVersion, privacy: .public) duration_ms=\(Int(request.duration * 1000), privacy: .public) url=\(request.url, privacy: .private(mask: .hash)) request_id=\(request.id.uuidString, privacy: .public)"
+                "event=proxy.request_captured outcome=\(outcome, privacy: .public) method=\(request.method.rawValue, privacy: .public) protocol=\(protocolVersion, privacy: .public) duration_ms=\(Int(request.duration * 1000), privacy: .public) url=\(request.url, privacy: .private(mask: .hash)) request_id=\(request.id.uuidString, privacy: .public)"
             )
+        }
+
+        if pendingTunneledSnapshot {
+            appendProxyCaptureEvent(
+                request,
+                outcome: "pending",
+                reason: "awaiting_response"
+            )
+            return
         }
 
         appendProxyCaptureEvent(
@@ -415,6 +426,7 @@ public class MITMProxyServer: @unchecked Sendable {
                 type: "tcp_plaintext_capture",
                 msg: "outcome=decrypted request_id=\(request.id.uuidString) host_hash=\(hostHash) protocol=\(protocolVersion)"
             )
+            appendBodyStorageSummaryEvent(request, hostHash: hostHash, protocolVersion: protocolVersion)
             if logSampler.shouldLog(key: "proxy.request_saved", first: 10, every: 200) {
                 let protocolVersion = request.protocolVersion?.rawValue ?? "unknown"
                 ProxyLog.mitm.debug(
@@ -463,6 +475,181 @@ public class MITMProxyServer: @unchecked Sendable {
             type: "proxy_request_saved",
             msg: fields.joined(separator: " ")
         )
+    }
+
+    private func appendBodyStorageSummaryEvent(
+        _ request: NetworkRequest,
+        hostHash: String,
+        protocolVersion: String
+    ) {
+        let statusToken = request.statusCode.map(String.init) ?? "nil"
+        let requestContentType = headerValue(name: "content-type", in: request.requestHeaders)
+        let requestContentEncoding = headerValue(name: "content-encoding", in: request.requestHeaders)
+        let responseContentType = headerValue(name: "content-type", in: request.responseHeaders)
+        let responseContentEncoding = headerValue(name: "content-encoding", in: request.responseHeaders)
+        let requestCompressionInfo = request.requestBody.getCompressionInfo()
+        let responseCompressionInfo = request.responseBody.getCompressionInfo()
+        let responsePreviewHint = previewHint(
+            contentType: responseContentType,
+            contentEncoding: responseContentEncoding,
+            compressionInfo: responseCompressionInfo
+        )
+
+        let requestDecompressionState: String = if let requestCompressionInfo {
+            requestCompressionInfo.decompressionSuccess ? "success" : "failed"
+        } else {
+            "none"
+        }
+        let responseDecompressionState: String = if let responseCompressionInfo {
+            responseCompressionInfo.decompressionSuccess ? "success" : "failed"
+        } else {
+            "none"
+        }
+
+        let message = [
+            "outcome=stored",
+            "request_id=\(request.id.uuidString)",
+            "host_hash=\(hostHash)",
+            "method=\(request.method.rawValue)",
+            "protocol=\(protocolVersion)",
+            "status=\(statusToken)",
+            "req_storage=\(bodyStorageKindToken(request.requestBody))",
+            "req_total_bytes=\(request.requestBody.totalSize)",
+            "req_captured_bytes=\(request.requestBody.capturedSize)",
+            "req_truncated=\(request.requestBody.isTruncated)",
+            "req_file=\(request.requestBody.isFile)",
+            "req_charset=\(normalizedToken(request.requestBody.getCharset()))",
+            "req_content_type=\(normalizedContentTypeToken(requestContentType))",
+            "req_content_encoding=\(normalizedHeaderListToken(requestContentEncoding))",
+            "req_compression_algorithm=\(normalizedHeaderListToken(requestCompressionInfo?.algorithm))",
+            "req_decompression=\(requestDecompressionState)",
+            "resp_storage=\(bodyStorageKindToken(request.responseBody))",
+            "resp_total_bytes=\(request.responseBody.totalSize)",
+            "resp_captured_bytes=\(request.responseBody.capturedSize)",
+            "resp_truncated=\(request.responseBody.isTruncated)",
+            "resp_file=\(request.responseBody.isFile)",
+            "resp_charset=\(normalizedToken(request.responseBody.getCharset()))",
+            "resp_content_type=\(normalizedContentTypeToken(responseContentType))",
+            "resp_content_encoding=\(normalizedHeaderListToken(responseContentEncoding))",
+            "resp_compression_algorithm=\(normalizedHeaderListToken(responseCompressionInfo?.algorithm))",
+            "resp_decompression=\(responseDecompressionState)",
+            "resp_preview_hint=\(responsePreviewHint)",
+            "resp_ui_render_hint=\(responseUIRenderHint(previewHint: responsePreviewHint))"
+        ].joined(separator: " ")
+
+        eventLog?.append(
+            type: "proxy_body_storage_summary",
+            msg: message
+        )
+        if logSampler.shouldLog(key: "proxy.body_storage_summary", first: 20, every: 400) {
+            ProxyLog.mitm.debug("event=proxy.body_storage_summary \(message, privacy: .public)")
+        }
+    }
+
+    private func bodyStorageKindToken(_ storage: BodyStorage) -> String {
+        switch storage {
+        case .inline:
+            return "inline"
+        case .file:
+            return "file"
+        case .truncated:
+            return "truncated"
+        case .truncatedFile:
+            return "truncated_file"
+        case .empty:
+            return "empty"
+        }
+    }
+
+    private func headerValue(name: String, in headers: [TraceHTTPHeader]) -> String? {
+        headers.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value
+    }
+
+    private func normalizedToken(_ value: String?) -> String {
+        guard let value else { return "none" }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "none" }
+        return trimmed.lowercased()
+            .replacingOccurrences(of: "\t", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+    }
+
+    private func normalizedHeaderListToken(_ value: String?) -> String {
+        guard let value else { return "none" }
+        let tokens = value
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+        guard !tokens.isEmpty else { return "none" }
+        return tokens.joined(separator: "+")
+    }
+
+    private func normalizedContentTypeToken(_ value: String?) -> String {
+        guard let value else { return "none" }
+        let mimeType = value
+            .split(separator: ";", maxSplits: 1)
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalizedToken(mimeType.map { String($0) })
+    }
+
+    private func previewHint(
+        contentType: String?,
+        contentEncoding: String?,
+        compressionInfo: CompressionInfo?
+    ) -> String {
+        if let compressionInfo {
+            return compressionInfo.decompressionSuccess ? "decoded_payload" : "decompression_failed"
+        }
+        let normalizedEncoding = normalizedHeaderListToken(contentEncoding)
+        if normalizedEncoding != "none", normalizedEncoding != "identity" {
+            return "compressed_raw_payload"
+        }
+        let contentTypeToken = normalizedContentTypeToken(contentType)
+        if isLikelyTextContentType(contentTypeToken) {
+            return "text_candidate"
+        }
+        if contentTypeToken == "none" {
+            return "unknown_mime"
+        }
+        return "binary_candidate"
+    }
+
+    private func responseUIRenderHint(previewHint: String) -> String {
+        switch previewHint {
+        case "text_candidate":
+            return "text"
+        case "decompression_failed":
+            return "hex_fallback"
+        case "compressed_raw_payload", "binary_candidate", "unknown_mime":
+            return "hex"
+        default:
+            return "auto"
+        }
+    }
+
+    private func isPendingTunneledSnapshot(_ request: NetworkRequest) -> Bool {
+        guard request.statusCode == nil else { return false }
+        guard request.responseBody.isEmpty else { return false }
+        guard request.responseHeaders.isEmpty else { return false }
+        return true
+    }
+
+    private func isLikelyTextContentType(_ contentTypeToken: String) -> Bool {
+        if contentTypeToken.hasPrefix("text/") {
+            return true
+        }
+        let textMarkers = [
+            "json",
+            "xml",
+            "javascript",
+            "x-www-form-urlencoded",
+            "graphql",
+            "yaml",
+            "toml",
+            "csv"
+        ]
+        return textMarkers.contains { contentTypeToken.contains($0) }
     }
 
     private func shouldPersist(_ request: NetworkRequest, using config: CaptureConfiguration) -> Bool {

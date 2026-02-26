@@ -690,6 +690,107 @@ final class NIOMITMProxyEngineTests: XCTestCase {
         XCTAssertNil(captured?.statusCode)
         XCTAssertEqual(captured?.url, "https://\(targetHost)\(path)")
     }
+
+    func testForwardingState400EmissionIsOneShotForPipelinedRequests() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("niomitm-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+        let logURL = tempDirectory.appendingPathComponent("proxy-events.ndjson")
+        let writer = try NDJSONLogWriter(logFileURL: logURL)
+        defer { writer.close() }
+
+        let upstreamServer = try SingleConnectionTCPServer()
+        upstreamServer.start(handler: Self.handleHTTPDelayedResponseConnection)
+        defer {
+            upstreamServer.closeSocket()
+            upstreamServer.waitForCompletion()
+        }
+
+        let engine = NIOMITMProxyEngine(port: 0, eventLog: writer)
+        let endpoint = try engine.start()
+        defer { engine.stop() }
+
+        let clientFD = try Self.connectTCP(host: endpoint.host, port: endpoint.port)
+        defer { close(clientFD) }
+
+        let pipelinedRequests = """
+        GET http://127.0.0.1:\(upstreamServer.port)/first HTTP/1.1\r
+        Host: 127.0.0.1:\(upstreamServer.port)\r
+        Connection: keep-alive\r
+        \r
+        GET http://127.0.0.1:\(upstreamServer.port)/second HTTP/1.1\r
+        Host: 127.0.0.1:\(upstreamServer.port)\r
+        Connection: close\r
+        \r
+        """
+        try Self.writeAll(Data(pipelinedRequests.utf8), to: clientFD)
+
+        Thread.sleep(forTimeInterval: 0.4)
+        engine.stop()
+        writer.close()
+
+        let events = try Self.readNDJSONEvents(from: logURL)
+        let badRequestEvents = events.filter { event in
+            event.type == "proxy_nio_error_response" &&
+                event.msg.contains("status=400")
+        }
+
+        XCTAssertEqual(
+            badRequestEvents.count,
+            1,
+            "Expected a single 400 emission for forwarding-state pipelined request rejection."
+        )
+    }
+
+    func testUpstreamCancellationIsNotLoggedAsFailure() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("niomitm-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+        let logURL = tempDirectory.appendingPathComponent("proxy-events.ndjson")
+        let writer = try NDJSONLogWriter(logFileURL: logURL)
+        defer { writer.close() }
+
+        let upstreamServer = try SingleConnectionTCPServer()
+        upstreamServer.start(handler: Self.handleHTTPSlowResponseConnection)
+        defer {
+            upstreamServer.closeSocket()
+            upstreamServer.waitForCompletion()
+        }
+
+        let engine = NIOMITMProxyEngine(port: 0, eventLog: writer)
+        let endpoint = try engine.start()
+        defer { engine.stop() }
+
+        let clientFD = try Self.connectTCP(host: endpoint.host, port: endpoint.port)
+        let request = """
+        GET http://127.0.0.1:\(upstreamServer.port)/cancel HTTP/1.1\r
+        Host: 127.0.0.1:\(upstreamServer.port)\r
+        Connection: close\r
+        \r
+        """
+        try Self.writeAll(Data(request.utf8), to: clientFD)
+        shutdown(clientFD, SHUT_RDWR)
+        close(clientFD)
+
+        Thread.sleep(forTimeInterval: 0.6)
+        engine.stop()
+        writer.close()
+
+        let events = try Self.readNDJSONEvents(from: logURL)
+        let cancelledFailures = events.filter { event in
+            event.type == "proxy_nio_http_upstream_failure" &&
+                event.msg.contains("classified=upstream_cancelled")
+        }
+        let cancelledIgnored = events.filter { event in
+            event.type == "proxy_nio_http_upstream_ignored" &&
+                event.msg.contains("classified=upstream_cancelled")
+        }
+
+        XCTAssertTrue(cancelledFailures.isEmpty, "Cancellation should not be emitted as failure telemetry.")
+        XCTAssertFalse(cancelledIgnored.isEmpty, "Cancellation should be emitted as ignored/info telemetry.")
+    }
 }
 
 private extension NIOMITMProxyEngineTests {
@@ -1009,6 +1110,25 @@ private extension NIOMITMProxyEngineTests {
         }
     }
 
+    static func handleHTTPSlowResponseConnection(_ clientFD: Int32) {
+        do {
+            var pendingBytes = Data()
+            _ = try readHTTPRequestHead(from: clientFD, pendingBytes: &pendingBytes)
+            usleep(1_500_000)
+            let body = "late"
+            let response = """
+            HTTP/1.1 200 OK\r
+            Content-Length: \(body.utf8.count)\r
+            Connection: close\r
+            \r
+            \(body)
+            """
+            try writeAll(Data(response.utf8), to: clientFD)
+        } catch {
+            return
+        }
+    }
+
     static func handleHTTPDelayedBodyAfterHeadersConnection(_ clientFD: Int32) {
         do {
             var pendingBytes = Data()
@@ -1052,5 +1172,28 @@ private extension NIOMITMProxyEngineTests {
                 totalSent += sent
             }
         }
+    }
+
+    static func readNDJSONEvents(from fileURL: URL) throws -> [NDJSONLogEvent] {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return []
+        }
+
+        let data = try Data(contentsOf: fileURL)
+        guard let content = String(data: data, encoding: .utf8) else {
+            return []
+        }
+
+        let decoder = JSONDecoder()
+        var events: [NDJSONLogEvent] = []
+        for line in content.split(separator: "\n").map(String.init) where !line.isEmpty {
+            guard let lineData = line.data(using: .utf8),
+                  let event = try? decoder.decode(NDJSONLogEvent.self, from: lineData)
+            else {
+                continue
+            }
+            events.append(event)
+        }
+        return events
     }
 }
