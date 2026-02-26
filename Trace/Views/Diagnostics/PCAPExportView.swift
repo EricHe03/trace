@@ -626,9 +626,11 @@ struct FullTunnelSelfCheckView: View {
                     detail: report.fullTunnelConfigured ? "Detected mode=fullTunnel or fullTunnelDualMITM." : "No fullTunnel/fullTunnelDualMITM startup or capture_config marker found."
                 )
                 checkRow(
-                    title: "Hybrid TCP MITM is enabled",
-                    status: report.hybridMITMEnabled ? .pass : .fail,
-                    detail: report.hybridMITMEnabled ? "transparent_tls=true and hybrid_tcp_mitm=true." : "Missing transparent TLS + hybrid MITM enable markers."
+                    title: "Transparent TCP MITM ingress is enabled",
+                    status: report.transparentMITMIngressEnabled ? .pass : .fail,
+                    detail: report.transparentMITMIngressEnabled
+                        ? "Detected transparent_tls=true with hybrid_tcp_mitm=true, or mode=fullTunnelDualMITM."
+                        : "Expected transparent_tls=true with hybrid_tcp_mitm=true, or mode=fullTunnelDualMITM."
                 )
                 checkRow(
                     title: "Bypass-proxy route reached MITM",
@@ -769,7 +771,7 @@ struct FullTunnelSelfCheckView: View {
         var totalEvents = 0
         var parseErrorCount = 0
         var fullTunnelConfigured = false
-        var hybridMITMEnabled = false
+        var transparentMITMIngressEnabled = false
         var routeMITMCount = 0
         var tunneledParsedCount = 0
         var tunneledResponseCaptureCount = 0
@@ -804,7 +806,7 @@ struct FullTunnelSelfCheckView: View {
                     totalEvents: &totalEvents,
                     parseErrorCount: &parseErrorCount,
                     fullTunnelConfigured: &fullTunnelConfigured,
-                    hybridMITMEnabled: &hybridMITMEnabled,
+                    transparentMITMIngressEnabled: &transparentMITMIngressEnabled,
                     routeMITMCount: &routeMITMCount,
                     tunneledParsedCount: &tunneledParsedCount,
                     pendingSavedRequestIDs: &pendingSavedRequestIDs,
@@ -825,7 +827,7 @@ struct FullTunnelSelfCheckView: View {
                 totalEvents: &totalEvents,
                 parseErrorCount: &parseErrorCount,
                 fullTunnelConfigured: &fullTunnelConfigured,
-                hybridMITMEnabled: &hybridMITMEnabled,
+                transparentMITMIngressEnabled: &transparentMITMIngressEnabled,
                 routeMITMCount: &routeMITMCount,
                 tunneledParsedCount: &tunneledParsedCount,
                 pendingSavedRequestIDs: &pendingSavedRequestIDs,
@@ -849,7 +851,7 @@ struct FullTunnelSelfCheckView: View {
             totalEvents: totalEvents,
             parseErrorCount: parseErrorCount,
             fullTunnelConfigured: fullTunnelConfigured,
-            hybridMITMEnabled: hybridMITMEnabled,
+            transparentMITMIngressEnabled: transparentMITMIngressEnabled,
             routeMITMCount: routeMITMCount,
             tunneledParsedCount: tunneledParsedCount,
             pendingSavedCount: pendingSavedRequestIDs.count,
@@ -871,7 +873,7 @@ struct FullTunnelSelfCheckView: View {
         totalEvents: inout Int,
         parseErrorCount: inout Int,
         fullTunnelConfigured: inout Bool,
-        hybridMITMEnabled: inout Bool,
+        transparentMITMIngressEnabled: inout Bool,
         routeMITMCount: inout Int,
         tunneledParsedCount: inout Int,
         pendingSavedRequestIDs: inout Set<String>,
@@ -905,8 +907,11 @@ struct FullTunnelSelfCheckView: View {
                 fullTunnelConfigured = true
             }
         case "proxy_ingress_mode":
-            if fields["transparent_tls"] == "true", fields["hybrid_tcp_mitm"] == "true" {
-                hybridMITMEnabled = true
+            let transparentTLS = fields["transparent_tls"] == "true"
+            let hybridTCPMITM = fields["hybrid_tcp_mitm"] == "true"
+            let dualMITMMode = fields["mode"] == CaptureMode.fullTunnelDualMITM.rawValue
+            if transparentTLS, hybridTCPMITM || dualMITMMode {
+                transparentMITMIngressEnabled = true
             }
         case "local_socks5_connect_route":
             if fields["route"] == "mitm" {
@@ -1012,7 +1017,7 @@ private struct SelfCheckReport {
     let totalEvents: Int
     let parseErrorCount: Int
     let fullTunnelConfigured: Bool
-    let hybridMITMEnabled: Bool
+    let transparentMITMIngressEnabled: Bool
     let routeMITMCount: Int
     let tunneledParsedCount: Int
     let pendingSavedCount: Int
@@ -1031,7 +1036,7 @@ private struct SelfCheckReport {
         totalEvents: 0,
         parseErrorCount: 0,
         fullTunnelConfigured: false,
-        hybridMITMEnabled: false,
+        transparentMITMIngressEnabled: false,
         routeMITMCount: 0,
         tunneledParsedCount: 0,
         pendingSavedCount: 0,
@@ -1052,7 +1057,7 @@ private struct SelfCheckReport {
             totalEvents: totalEvents,
             parseErrorCount: parseErrorCount,
             fullTunnelConfigured: fullTunnelConfigured,
-            hybridMITMEnabled: hybridMITMEnabled,
+            transparentMITMIngressEnabled: transparentMITMIngressEnabled,
             routeMITMCount: routeMITMCount,
             tunneledParsedCount: tunneledParsedCount,
             pendingSavedCount: pendingSavedCount,
@@ -1101,7 +1106,7 @@ private struct SelfCheckReport {
     }
 
     var overallStatus: CheckStatus {
-        guard fullTunnelConfigured, hybridMITMEnabled else {
+        guard fullTunnelConfigured, transparentMITMIngressEnabled else {
             return .fail
         }
         guard bypassRouteStatus != .fail else {
