@@ -36,6 +36,14 @@ public struct RequestListRow: View {
                     accessibilityLabel: "Status: \(request.statusCodeText)"
                 )
 
+                if let captureMarker {
+                    badge(
+                        text: captureMarker.text,
+                        background: captureMarker.color,
+                        accessibilityLabel: captureMarker.accessibilityLabel
+                    )
+                }
+
                 if request.duplicateCount > 1 {
                     DuplicateCounterView(count: request.duplicateCount)
                 }
@@ -103,6 +111,25 @@ public struct RequestListRow: View {
 
     private var statusColor: Color {
         DesignSystem.Colors.statusColor(for: request.statusColor)
+    }
+
+    private var captureMarker: (text: String, color: Color, accessibilityLabel: String)? {
+        guard let markerLabel = request.capturePath.markerLabel else { return nil }
+        let color: Color = switch request.capturePath {
+        case .proxyWithUpstreamHint:
+            .teal
+        case .tunneledHTTPS:
+            .indigo
+        case .tunneledHTTPSWithUpstreamHint:
+            .green
+        case .unknown, .proxy:
+            .secondary
+        }
+        return (
+            text: markerLabel,
+            color: color,
+            accessibilityLabel: "Capture path: \(request.capturePath.displayName)"
+        )
     }
 
     private func badge(text: String, background: Color, accessibilityLabel: String) -> some View {

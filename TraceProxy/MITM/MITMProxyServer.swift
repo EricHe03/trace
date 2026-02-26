@@ -463,8 +463,18 @@ public class MITMProxyServer: @unchecked Sendable {
             "host_hash=\(hostHash)",
             "method=\(request.method.rawValue)",
             "protocol=\(protocolVersion)",
-            "status=\(statusCode)"
+            "status=\(statusCode)",
+            "capture_path=\(request.capturePath.rawValue)"
         ]
+        if let flowID = request.captureFlowID {
+            fields.append("capture_flow_id=\(flowID)")
+        }
+        if let policyModeRaw = request.capturePolicyModeRaw {
+            fields.append("capture_policy_mode=\(policyModeRaw)")
+        }
+        if let metadataVersion = request.captureMetadataVersion {
+            fields.append("capture_metadata_version=\(metadataVersion)")
+        }
         if let reason, !reason.isEmpty {
             fields.append("reason=\(reason)")
         }
@@ -549,15 +559,15 @@ public class MITMProxyServer: @unchecked Sendable {
     private func bodyStorageKindToken(_ storage: BodyStorage) -> String {
         switch storage {
         case .inline:
-            return "inline"
+            "inline"
         case .file:
-            return "file"
+            "file"
         case .truncated:
-            return "truncated"
+            "truncated"
         case .truncatedFile:
-            return "truncated_file"
+            "truncated_file"
         case .empty:
-            return "empty"
+            "empty"
         }
     }
 
@@ -618,13 +628,13 @@ public class MITMProxyServer: @unchecked Sendable {
     private func responseUIRenderHint(previewHint: String) -> String {
         switch previewHint {
         case "text_candidate":
-            return "text"
+            "text"
         case "decompression_failed":
-            return "hex_fallback"
+            "hex_fallback"
         case "compressed_raw_payload", "binary_candidate", "unknown_mime":
-            return "hex"
+            "hex"
         default:
-            return "auto"
+            "auto"
         }
     }
 

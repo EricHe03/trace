@@ -2114,6 +2114,7 @@ extension NetworkRequest: Codable {
     enum CodingKeys: String, CodingKey {
         case id, url, method, requestMethodRaw, statusCode, statusMessage, timestamp, duration
         case requestHeaders, responseHeaders, requestBody, responseBody, protocolVersion, sessionId
+        case capturePath, captureFlowID, capturePolicyModeRaw, captureMetadataVersion
         case timingPhases, tlsInfo
         case wasThrottled, throttlingProfile
         case isDuplicate, duplicateOfRequestId
@@ -2168,6 +2169,15 @@ extension NetworkRequest: Codable {
         }
 
         self.protocolVersion = try container.decodeIfPresent(HTTPProtocolVersion.self, forKey: .protocolVersion)
+        if let capturePathRaw = (try? container.decodeIfPresent(String.self, forKey: .capturePath)) ?? nil,
+           let parsedCapturePath = NetworkCapturePath(rawValue: capturePathRaw) {
+            self.capturePath = parsedCapturePath
+        } else {
+            self.capturePath = .unknown
+        }
+        self.captureFlowID = Self.decodeLossyUInt64(from: container, forKey: .captureFlowID)
+        self.capturePolicyModeRaw = Self.decodeLossyUInt8(from: container, forKey: .capturePolicyModeRaw)
+        self.captureMetadataVersion = Self.decodeLossyUInt8(from: container, forKey: .captureMetadataVersion)
         self.sessionId = try container.decodeIfPresent(UUID.self, forKey: .sessionId)
 
         self.timingPhases = try container.decodeIfPresent(NetworkTimingPhases.self, forKey: .timingPhases)
@@ -2221,6 +2231,34 @@ extension NetworkRequest: Codable {
         }
     }
 
+    private static func decodeLossyUInt64(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> UInt64? {
+        if let value = (try? container.decodeIfPresent(UInt64.self, forKey: key)) ?? nil {
+            return value
+        }
+        if let value = (try? container.decodeIfPresent(Int.self, forKey: key)) ?? nil,
+           value >= 0 {
+            return UInt64(value)
+        }
+        return nil
+    }
+
+    private static func decodeLossyUInt8(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> UInt8? {
+        if let value = (try? container.decodeIfPresent(UInt8.self, forKey: key)) ?? nil {
+            return value
+        }
+        if let value = (try? container.decodeIfPresent(Int.self, forKey: key)) ?? nil,
+           (0 ... 255).contains(value) {
+            return UInt8(value)
+        }
+        return nil
+    }
+
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
 
@@ -2237,6 +2275,10 @@ extension NetworkRequest: Codable {
         try container.encode(requestBody, forKey: .requestBody)
         try container.encode(responseBody, forKey: .responseBody)
         try container.encodeIfPresent(protocolVersion, forKey: .protocolVersion)
+        try container.encode(capturePath.rawValue, forKey: .capturePath)
+        try container.encodeIfPresent(captureFlowID, forKey: .captureFlowID)
+        try container.encodeIfPresent(capturePolicyModeRaw, forKey: .capturePolicyModeRaw)
+        try container.encodeIfPresent(captureMetadataVersion, forKey: .captureMetadataVersion)
         try container.encodeIfPresent(sessionId, forKey: .sessionId)
         try container.encodeIfPresent(timingPhases, forKey: .timingPhases)
         try container.encodeIfPresent(tlsInfo, forKey: .tlsInfo)

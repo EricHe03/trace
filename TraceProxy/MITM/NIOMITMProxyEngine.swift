@@ -412,7 +412,10 @@ private extension NIOMITMInitialIngressHandler {
         guard state == .probing else { return }
         state = .installing
 
-        let connectHandler = makeConnectHandler(ingressMode: .proxy)
+        let connectHandler = makeConnectHandler(
+            ingressMode: .proxy,
+            upstreamHint: upstreamHint
+        )
         context.channel.pipeline
             .addHandler(
                 ByteToMessageHandler(
@@ -913,7 +916,8 @@ private extension NIOMITMInitialIngressHandler {
         }
 
         let tunneledHandler = makeConnectHandler(
-            ingressMode: .tunneledHTTPS(host: host, port: UInt16(port))
+            ingressMode: .tunneledHTTPS(host: host, port: UInt16(port)),
+            upstreamHint: upstreamHint
         )
 
         return context.channel.pipeline
@@ -1092,7 +1096,10 @@ private extension NIOMITMInitialIngressHandler {
         }
     }
 
-    func makeConnectHandler(ingressMode: NIOMITMHTTPConnectHandler.IngressMode) -> NIOMITMHTTPConnectHandler {
+    func makeConnectHandler(
+        ingressMode: NIOMITMHTTPConnectHandler.IngressMode,
+        upstreamHint: TransparentProxyMetadata.UpstreamHint?
+    ) -> NIOMITMHTTPConnectHandler {
         NIOMITMHTTPConnectHandler(
             group: group,
             eventLog: eventLog,
@@ -1103,7 +1110,8 @@ private extension NIOMITMInitialIngressHandler {
             shouldMitmConnect: shouldMitmConnect,
             shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
             onMITMFailure: onMITMFailure,
-            ingressMode: ingressMode
+            ingressMode: ingressMode,
+            upstreamHint: upstreamHint
         )
     }
 
@@ -1473,6 +1481,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
     private let shouldFailOpenAfterMITMFailure: (String, UInt16, String, MITMFailoverContext) -> Bool
     private let onMITMFailure: ((String, String) -> Void)?
     private let ingressMode: IngressMode
+    private let upstreamHint: TransparentProxyMetadata.UpstreamHint?
     private let usesHTTP2StreamSemantics: Bool
 
     private let connectionID = UUID().uuidString
@@ -1500,6 +1509,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         shouldFailOpenAfterMITMFailure: @escaping (String, UInt16, String, MITMFailoverContext) -> Bool,
         onMITMFailure: ((String, String) -> Void)?,
         ingressMode: IngressMode,
+        upstreamHint: TransparentProxyMetadata.UpstreamHint?,
         usesHTTP2StreamSemantics: Bool = false
     ) {
         self.group = group
@@ -1512,6 +1522,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         self.shouldFailOpenAfterMITMFailure = shouldFailOpenAfterMITMFailure
         self.onMITMFailure = onMITMFailure
         self.ingressMode = ingressMode
+        self.upstreamHint = upstreamHint
         self.usesHTTP2StreamSemantics = usesHTTP2StreamSemantics
         if case let .tunneledHTTPS(host, port) = ingressMode {
             connectTargetHost = host
@@ -1567,7 +1578,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             shouldCloseAfterForwardingResponse = true
             guard !didEmitForwardingErrorResponse else { return }
             didEmitForwardingErrorResponse = true
-            let partToken: String = switch part {
+            let partToken = switch part {
             case let .head(head):
                 "head(method=\(head.method.rawValue))"
             case .body:
@@ -1828,6 +1839,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                 ? [TraceHTTPHeader(key: "X-Trace-Note", value: "Blocked by rule")]
                 : []
             blocked.responseBody = .empty
+            annotateCaptureMetadata(&blocked)
             blocked.extractHTTPFields()
             NetworkThrottlingController.shared.applyMetadata(to: &blocked)
             finalizeCapturedDuration(for: &blocked)
@@ -1879,12 +1891,29 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         guard let onRequestCaptured else { return }
 
         var snapshot = request
+        annotateCaptureMetadata(&snapshot)
         snapshot.extractHTTPFields()
         NetworkThrottlingController.shared.applyMetadata(to: &snapshot)
         onRequestCaptured(snapshot)
+        var fields = [
+            "outcome=pending_saved",
+            "mode=\(self.ingressModeLabel)",
+            "id=\(self.connectionID)",
+            "request_id=\(snapshot.id.uuidString)",
+            "method=\(snapshot.method.rawValue)",
+            "url_hash=\(LogRedaction.hash(snapshot.url))",
+            "h2_stream=\(usesHTTP2StreamSemantics)",
+            "capture_path=\(snapshot.capturePath.rawValue)"
+        ]
+        if let captureFlowID = snapshot.captureFlowID {
+            fields.append("capture_flow_id=\(captureFlowID)")
+        }
+        if let metadataVersion = snapshot.captureMetadataVersion {
+            fields.append("capture_metadata_version=\(metadataVersion)")
+        }
         eventLog?.append(
             type: "proxy_nio_tunneled_request",
-            msg: "outcome=pending_saved mode=\(self.ingressModeLabel) id=\(self.connectionID) request_id=\(snapshot.id.uuidString) method=\(snapshot.method.rawValue) url_hash=\(LogRedaction.hash(snapshot.url)) h2_stream=\(usesHTTP2StreamSemantics)"
+            msg: fields.joined(separator: " ")
         )
     }
 
@@ -2197,6 +2226,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
             onMITMFailure: onMITMFailure,
             ingressMode: .tunneledHTTPS(host: host, port: UInt16(port)),
+            upstreamHint: upstreamHint,
             usesHTTP2StreamSemantics: usesHTTP2StreamSemantics
         )
     }
@@ -2786,6 +2816,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                                     decodeCompressedContent: true,
                                     storageContentEncoding: responseContentEncoding
                                 )
+                                self.annotateCaptureMetadata(&captured)
                                 captured.extractHTTPFields()
                                 NetworkThrottlingController.shared.applyMetadata(to: &captured)
                                 self.finalizeCapturedDuration(for: &captured)
@@ -3102,6 +3133,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             ) { [weak self] in
                 guard let self else { return }
                 var finalized = request
+                self.annotateCaptureMetadata(&finalized)
                 self.finalizeCapturedDuration(for: &finalized)
                 self.onRequestCaptured?(finalized)
                 if metricsAsParsedResponse {
@@ -3143,6 +3175,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             ) { [weak self] in
                 guard let self else { return }
                 var finalized = capturedRequest
+                self.annotateCaptureMetadata(&finalized)
                 self.finalizeCapturedDuration(for: &finalized)
                 self.onRequestCaptured?(finalized)
                 if metricsAsParsedResponse {
@@ -3338,6 +3371,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
                 let endPromise = context.eventLoop.makePromise(of: Void.self)
                 endPromise.futureResult.whenComplete { _ in
                     var finalized = capturedRequest
+                    self.annotateCaptureMetadata(&finalized)
                     self.finalizeCapturedDuration(for: &finalized)
                     self.onRequestCaptured?(finalized)
                     if metricsAsParsedResponse {
@@ -3859,8 +3893,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             contentEncoding: requestContentEncoding,
             captureConfig: captureConfig
         )
-
-        return NetworkRequest(
+        var request = NetworkRequest(
             id: flowID,
             url: requestURL,
             method: mappedMethod,
@@ -3875,6 +3908,8 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             responseBody: .empty,
             protocolVersion: usesHTTP2StreamSemantics ? .http2 : nil
         )
+        annotateCaptureMetadata(&request)
+        return request
     }
 
     private func bodyStorage(
@@ -4005,11 +4040,10 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
         let headerContentEncoding = responseHeaderValue(name: "content-encoding", in: responseHeaders)
         let transferEncoding = responseHeaderValue(name: "transfer-encoding", in: responseHeaders)
         let compressionInfo = bodyStorage.getCompressionInfo()
-        let decompressionState: String
-        if let compressionInfo {
-            decompressionState = compressionInfo.decompressionSuccess ? "success" : "failed"
+        let decompressionState = if let compressionInfo {
+            compressionInfo.decompressionSuccess ? "success" : "failed"
         } else {
-            decompressionState = "none"
+            "none"
         }
         let previewHint = responsePreviewHint(
             contentType: contentType,
@@ -4018,11 +4052,12 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             compressionInfo: compressionInfo
         )
         let responseUIRenderHint = responseUIRenderHint(previewHint: previewHint)
-        let message = [
+        var messageParts = [
             "mode=\(ingressModeLabel)",
             "id=\(connectionID)",
             "host_hash=\(hostHash)",
             "request_id=\(requestID.uuidString)",
+            "capture_path=\(capturePathForCurrentContext().rawValue)",
             "pipeline=\(pipeline)",
             "status=\(statusToken)",
             "capture_body=\(captureBodyEnabled)",
@@ -4044,7 +4079,14 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             "decompression=\(decompressionState)",
             "preview_hint=\(previewHint)",
             "ui_render_hint=\(responseUIRenderHint)"
-        ].joined(separator: " ")
+        ]
+        if let flowID = upstreamHint?.flowID {
+            messageParts.append("capture_flow_id=\(flowID)")
+        }
+        if let metadataVersion = upstreamHint?.version.rawValue {
+            messageParts.append("capture_metadata_version=\(metadataVersion)")
+        }
+        let message = messageParts.joined(separator: " ")
 
         ProxyLog.mitm.debug("event=proxy.nio_response_capture \(message, privacy: .public)")
         eventLog?.append(type: "proxy_nio_response_capture", msg: message)
@@ -4057,15 +4099,15 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
     private func bodyStorageKindToken(_ storage: BodyStorage) -> String {
         switch storage {
         case .inline:
-            return "inline"
+            "inline"
         case .file:
-            return "file"
+            "file"
         case .truncated:
-            return "truncated"
+            "truncated"
         case .truncatedFile:
-            return "truncated_file"
+            "truncated_file"
         case .empty:
-            return "empty"
+            "empty"
         }
     }
 
@@ -4125,13 +4167,13 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
     private func responseUIRenderHint(previewHint: String) -> String {
         switch previewHint {
         case "text_candidate":
-            return "text"
+            "text"
         case "decompression_failed":
-            return "hex_fallback"
+            "hex_fallback"
         case "compressed_raw_passthrough", "binary_candidate", "unknown_mime":
-            return "hex"
+            "hex"
         default:
-            return "auto"
+            "auto"
         }
     }
 
@@ -4150,6 +4192,22 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             "csv"
         ]
         return textMarkers.contains { contentTypeToken.contains($0) }
+    }
+
+    private func annotateCaptureMetadata(_ request: inout NetworkRequest) {
+        request.capturePath = capturePathForCurrentContext()
+        request.captureFlowID = upstreamHint?.flowID
+        request.capturePolicyModeRaw = upstreamHint?.policyModeRaw
+        request.captureMetadataVersion = upstreamHint?.version.rawValue
+    }
+
+    private func capturePathForCurrentContext() -> NetworkCapturePath {
+        switch ingressMode {
+        case .proxy:
+            upstreamHint == nil ? .proxy : .proxyWithUpstreamHint
+        case .tunneledHTTPS:
+            upstreamHint == nil ? .tunneledHTTPS : .tunneledHTTPSWithUpstreamHint
+        }
     }
 
     private func finalizeCapturedDuration(for request: inout NetworkRequest) {
@@ -4504,6 +4562,7 @@ private final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked
             requestBody: .empty,
             responseBody: .empty
         )
+        annotateCaptureMetadata(&marker)
         marker.extractHTTPFields()
         NetworkThrottlingController.shared.applyMetadata(to: &marker)
         onRequestCaptured(marker)
