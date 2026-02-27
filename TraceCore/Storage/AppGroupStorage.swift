@@ -51,6 +51,8 @@ public class AppGroupStorage: @unchecked Sendable {
     private let configurationFileName = "configuration.json"
     private let mitmAllowlistFileName = "mitm_allowlist.json"
     private static let defaultTransportStoreBudgetBytes = 512 * 1024 * 1024
+    private static let transportPruneMinInterval: TimeInterval = 5
+    private static let transportPruneWriteThresholdBytes = 8 * 1024 * 1024
 
     private enum DefaultsKey {
         static let captureConfiguration = "trace.settings.captureConfiguration"
@@ -80,7 +82,10 @@ public class AppGroupStorage: @unchecked Sendable {
     private var _cachedContainerURL: URL?
     private let containerURLLock = NSLock()
     private let transportStoreBudgetLock = NSLock()
+    private let transportPruneStateLock = NSLock()
     private var transportStoreBudgetBytes = AppGroupStorage.defaultTransportStoreBudgetBytes
+    private var lastTransportPruneAt: Date = .distantPast
+    private var transportBytesWrittenSinceLastPrune = 0
     private var didLogMisconfiguration = false
 
     public var containerURL: URL? {
@@ -357,6 +362,11 @@ public class AppGroupStorage: @unchecked Sendable {
             transportStoreBudgetBytes = AppGroupStorage.defaultTransportStoreBudgetBytes
         }
         transportStoreBudgetLock.unlock()
+
+        transportPruneStateLock.lock()
+        lastTransportPruneAt = .distantPast
+        transportBytesWrittenSinceLastPrune = 0
+        transportPruneStateLock.unlock()
     }
 
     // MARK: - Transport Request Storage
@@ -378,6 +388,7 @@ public class AppGroupStorage: @unchecked Sendable {
         let requestsURL = container.appendingPathComponent(transportRequestsDirectory)
         let encoder = makeEncoder()
         var persistedCount = 0
+        var estimatedPersistedBytes = 0
         var lastError: Error?
 
         for request in requests {
@@ -388,6 +399,7 @@ public class AppGroupStorage: @unchecked Sendable {
                 let data = try encoder.encode(request)
                 try writeTransportRequestData(data, to: fileURL)
                 persistedCount += 1
+                estimatedPersistedBytes += estimatedTransportStoredBytes(for: request, metadataBytes: data.count)
             } catch {
                 lastError = error
                 CoreLog.storage.error(
@@ -400,14 +412,21 @@ public class AppGroupStorage: @unchecked Sendable {
         }
 
         if persistedCount > 0 {
-            do {
-                try pruneTransportRequestsIfNeeded()
-            } catch {
-                CoreLog.storage.warning(
-                    LogEvent.storage("prune_transport_request")
-                        .failure()
-                        .error(error)
-                )
+            let budgetBytes = currentTransportStoreBudgetBytes()
+            if shouldPruneTransportRequests(
+                afterPersistingBytes: estimatedPersistedBytes,
+                budgetBytes: budgetBytes
+            ) {
+                do {
+                    try pruneTransportRequestsIfNeeded()
+                    markTransportPruneCompleted()
+                } catch {
+                    CoreLog.storage.warning(
+                        LogEvent.storage("prune_transport_request")
+                            .failure()
+                            .error(error)
+                    )
+                }
             }
             notifyNewTransportRequest()
             if let lastError {
@@ -459,26 +478,100 @@ public class AppGroupStorage: @unchecked Sendable {
             options: [.skipsHiddenFiles]
         )
 
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = makeDecoder()
 
         var requests: [TransportRequest] = []
         for fileURL in fileURLs where fileURL.pathExtension == "json" {
-            do {
-                let data = try Data(contentsOf: fileURL)
-                let request = try decoder.decode(TransportRequest.self, from: data)
+            if let request = decodeTransportRequest(from: fileURL, decoder: decoder) {
                 requests.append(request)
-            } catch {
-                CoreLog.storage.error(
-                    LogEvent.storage("load_transport_request")
-                        .failure()
-                        .with("file", value: fileURL.lastPathComponent)
-                        .error(error)
-                )
             }
         }
 
         return requests.sorted { $0.timestamp > $1.timestamp }
+    }
+
+    /// Loads captured transport events newer than the provided timestamp.
+    /// Optimized for incremental UI updates where most stored files are already known.
+    public func loadTransportRequests(
+        newerThan timestamp: Date,
+        excludingIDs: Set<UUID> = [],
+        limit: Int? = nil
+    ) throws -> [TransportRequest] {
+        guard let container = containerURL else {
+            throw StorageError.containerNotFound
+        }
+
+        let requestsURL = container.appendingPathComponent(transportRequestsDirectory)
+        guard FileManager.default.fileExists(atPath: requestsURL.path) else {
+            return []
+        }
+
+        let fileURLs = try FileManager.default.contentsOfDirectory(
+            at: requestsURL,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        let decoder = makeDecoder()
+        var requests: [TransportRequest] = []
+        requests.reserveCapacity(32)
+
+        for fileURL in fileURLs where fileURL.pathExtension == "json" {
+            if let requestID = transportRequestID(from: fileURL),
+               excludingIDs.contains(requestID) {
+                continue
+            }
+
+            if let createdAt = try? fileURL.resourceValues(forKeys: [.creationDateKey]).creationDate,
+               createdAt < timestamp {
+                continue
+            }
+
+            guard let request = decodeTransportRequest(from: fileURL, decoder: decoder),
+                  request.timestamp >= timestamp else {
+                continue
+            }
+
+            requests.append(request)
+        }
+
+        let sorted = requests.sorted { $0.timestamp > $1.timestamp }
+        guard let limit else { return sorted }
+        return Array(sorted.prefix(max(0, limit)))
+    }
+
+    /// Loads all captured transport events from the shared container on a background queue.
+    public func loadAllTransportRequestsAsync() async throws -> [TransportRequest] {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try continuation.resume(returning: self.loadAllTransportRequests())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Loads captured transport events newer than the given timestamp on a background queue.
+    public func loadTransportRequestsAsync(
+        newerThan timestamp: Date,
+        excludingIDs: Set<UUID> = [],
+        limit: Int? = nil
+    ) async throws -> [TransportRequest] {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try continuation.resume(returning: self.loadTransportRequests(
+                        newerThan: timestamp,
+                        excludingIDs: excludingIDs,
+                        limit: limit
+                    ))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     /// Deletes all captured transport events.
@@ -497,6 +590,11 @@ public class AppGroupStorage: @unchecked Sendable {
         for fileURL in fileURLs where fileURL.pathExtension == "json" {
             try? deleteTransportRequestFileAndBody(at: fileURL)
         }
+
+        transportPruneStateLock.lock()
+        lastTransportPruneAt = Date()
+        transportBytesWrittenSinceLastPrune = 0
+        transportPruneStateLock.unlock()
     }
 
     private struct TransportStorageEntry {
@@ -509,6 +607,32 @@ public class AppGroupStorage: @unchecked Sendable {
         transportStoreBudgetLock.lock()
         defer { transportStoreBudgetLock.unlock() }
         return transportStoreBudgetBytes
+    }
+
+    private func estimatedTransportStoredBytes(for request: TransportRequest, metadataBytes: Int) -> Int {
+        max(0, metadataBytes + request.payloadBytes + (request.packetBytes ?? 0))
+    }
+
+    private func shouldPruneTransportRequests(afterPersistingBytes bytes: Int, budgetBytes: Int) -> Bool {
+        transportPruneStateLock.lock()
+        transportBytesWrittenSinceLastPrune += max(0, bytes)
+
+        // Oversized batches should prune immediately to keep budget bounded.
+        let shouldPrune =
+            budgetBytes <= 0 ||
+            bytes >= budgetBytes ||
+            transportBytesWrittenSinceLastPrune >= AppGroupStorage.transportPruneWriteThresholdBytes ||
+            Date().timeIntervalSince(lastTransportPruneAt) >= AppGroupStorage.transportPruneMinInterval
+
+        transportPruneStateLock.unlock()
+        return shouldPrune
+    }
+
+    private func markTransportPruneCompleted() {
+        transportPruneStateLock.lock()
+        lastTransportPruneAt = Date()
+        transportBytesWrittenSinceLastPrune = 0
+        transportPruneStateLock.unlock()
     }
 
     private func pruneTransportRequestsIfNeeded() throws {
@@ -603,6 +727,25 @@ public class AppGroupStorage: @unchecked Sendable {
 
     private func fileSize(at url: URL) -> Int {
         (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+    }
+
+    private func decodeTransportRequest(from fileURL: URL, decoder: JSONDecoder) -> TransportRequest? {
+        do {
+            let data = try Data(contentsOf: fileURL)
+            return try decoder.decode(TransportRequest.self, from: data)
+        } catch {
+            CoreLog.storage.error(
+                LogEvent.storage("load_transport_request")
+                    .failure()
+                    .with("file", value: fileURL.lastPathComponent)
+                    .error(error)
+            )
+            return nil
+        }
+    }
+
+    private func transportRequestID(from fileURL: URL) -> UUID? {
+        UUID(uuidString: fileURL.deletingPathExtension().lastPathComponent)
     }
 
     private func bodyFileURL(for body: BodyStorage?) -> URL? {

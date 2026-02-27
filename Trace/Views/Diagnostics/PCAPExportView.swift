@@ -791,8 +791,7 @@ struct FullTunnelSelfCheckView: View {
         let maxLineBytes = 512 * 1024
         var buffer = Data()
 
-        while let maybeChunk = try? handle.read(upToCount: chunkSize),
-              let chunk = maybeChunk,
+        while let chunk = try? handle.read(upToCount: chunkSize),
               !chunk.isEmpty {
             buffer.append(chunk)
 

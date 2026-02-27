@@ -443,7 +443,12 @@ final class CaptureViewModel: ObservableObject {
     private var transportLoadTask: Task<Void, Never>?
     private var activeTransportLoadTask: Task<Void, Never>?
     private var lastTransportLoadTime: Date?
+    private var lastTransportFullReloadTime: Date?
+    private var transportIncrementalLoadsSinceFullReload = 0
+    private var transportRequestIDSet: Set<UUID> = []
     private let minLoadInterval: TimeInterval = 0.5 // Minimum 500ms between loads
+    private let transportFullReloadInterval: TimeInterval = 30
+    private let maxIncrementalTransportLoadsBetweenFullReloads = 60
     private var notifiedRequestIds: Set<UUID> = []
     private let notificationDedupLimit = 200
     private var cancellables = Set<AnyCancellable>()
@@ -476,7 +481,7 @@ final class CaptureViewModel: ObservableObject {
 
         // Load initial requests from storage
         loadRequests()
-        loadTransportRequests()
+        loadTransportRequests(forceFullReload: true)
         loadSavedPresets()
         loadSessions()
         cleanupOrphanedSessions()
@@ -731,13 +736,13 @@ final class CaptureViewModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: UInt64(500_000_000))
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    self?.loadTransportRequests()
+                    self?.loadTransportRequests(triggeredByNewRequest: true)
                 }
             }
             return
         }
 
-        loadTransportRequests()
+        loadTransportRequests(triggeredByNewRequest: true)
     }
 
     private func loadRequests(triggeredByNewRequest: Bool = false) {
@@ -796,25 +801,85 @@ final class CaptureViewModel: ObservableObject {
         }
     }
 
-    private func loadTransportRequests() {
+    private func loadTransportRequests(triggeredByNewRequest: Bool = false, forceFullReload: Bool = false) {
         lastTransportLoadTime = Date()
         activeTransportLoadTask?.cancel()
         activeTransportLoadTask = Task { [weak self] in
             guard let self else { return }
 
+            let shouldRunFullReload = self.shouldPerformFullTransportReload(
+                triggeredByNewRequest: triggeredByNewRequest,
+                forceFullReload: forceFullReload
+            )
+
             do {
-                let loaded = try self.storage.loadAllTransportRequests()
+                if shouldRunFullReload {
+                    let loaded = try await self.storage.loadAllTransportRequestsAsync()
+
+                    guard !Task.isCancelled else { return }
+                    self.transportRequests = loaded
+                    self.transportRequestIDSet = Set(loaded.map(\.id))
+                    self.lastTransportFullReloadTime = Date()
+                    self.transportIncrementalLoadsSinceFullReload = 0
+                    return
+                }
+
+                guard let newestKnownTimestamp = self.transportRequests.first?.timestamp else {
+                    let loaded = try await self.storage.loadAllTransportRequestsAsync()
+                    guard !Task.isCancelled else { return }
+                    self.transportRequests = loaded
+                    self.transportRequestIDSet = Set(loaded.map(\.id))
+                    self.lastTransportFullReloadTime = Date()
+                    self.transportIncrementalLoadsSinceFullReload = 0
+                    return
+                }
+
+                let loaded = try await self.storage.loadTransportRequestsAsync(
+                    newerThan: newestKnownTimestamp,
+                    excludingIDs: self.transportRequestIDSet
+                )
 
                 guard !Task.isCancelled else { return }
-                self.transportRequests = loaded
+                self.mergeTransportRequests(loaded)
+                self.transportIncrementalLoadsSinceFullReload += 1
             } catch {
                 guard !Task.isCancelled else { return }
                 CoreLog.storage.error(
                     "event=storage.transport_requests_load outcome=failure error=\(error.localizedDescription, privacy: .public)"
                 )
-                self.transportRequests = []
+                if shouldRunFullReload {
+                    self.transportRequests = []
+                    self.transportRequestIDSet = []
+                    self.lastTransportFullReloadTime = nil
+                    self.transportIncrementalLoadsSinceFullReload = 0
+                }
             }
         }
+    }
+
+    private func shouldPerformFullTransportReload(triggeredByNewRequest: Bool, forceFullReload: Bool) -> Bool {
+        if forceFullReload { return true }
+        guard triggeredByNewRequest else { return true }
+        guard !transportRequests.isEmpty else { return true }
+        guard transportIncrementalLoadsSinceFullReload < maxIncrementalTransportLoadsBetweenFullReloads else {
+            return true
+        }
+        guard let lastFullReloadTime = lastTransportFullReloadTime else { return true }
+        return Date().timeIntervalSince(lastFullReloadTime) >= transportFullReloadInterval
+    }
+
+    private func mergeTransportRequests(_ loaded: [TransportRequest]) {
+        guard !loaded.isEmpty else { return }
+
+        var newRequests: [TransportRequest] = []
+        newRequests.reserveCapacity(loaded.count)
+
+        for request in loaded where transportRequestIDSet.insert(request.id).inserted {
+            newRequests.append(request)
+        }
+
+        guard !newRequests.isEmpty else { return }
+        transportRequests.insert(contentsOf: newRequests, at: 0)
     }
 
     private let redirectChainResolver = RedirectChainResolver()
@@ -828,7 +893,7 @@ final class CaptureViewModel: ObservableObject {
 
     func reloadTransportRequests() async {
         await MainActor.run {
-            loadTransportRequests()
+            loadTransportRequests(forceFullReload: true)
         }
         await activeTransportLoadTask?.value
     }
@@ -1136,6 +1201,9 @@ final class CaptureViewModel: ObservableObject {
         do {
             try storage.clearAllTransportRequests()
             transportRequests = []
+            transportRequestIDSet = []
+            lastTransportFullReloadTime = nil
+            transportIncrementalLoadsSinceFullReload = 0
         } catch {
             CoreLog.storage.error(
                 "event=storage.transport_requests_clear outcome=failure error=\(error.localizedDescription, privacy: .public)"

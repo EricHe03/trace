@@ -355,6 +355,67 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: oldPacketURL.path))
     }
 
+    func testLoadTransportRequestsNewerThanSupportsSameTimestampWithExclusions() throws {
+        let sharedTimestamp = Date()
+        let first = createMockTransportRequest(
+            timestamp: sharedTimestamp,
+            sourcePort: 55001,
+            destinationPort: 53
+        )
+        let second = createMockTransportRequest(
+            timestamp: sharedTimestamp,
+            sourcePort: 55002,
+            destinationPort: 123
+        )
+
+        try storage.saveTransportRequests([first, second])
+
+        let known = try storage.loadAllTransportRequests()
+        let knownIDs = Set(known.map(\.id))
+
+        let third = createMockTransportRequest(
+            timestamp: sharedTimestamp,
+            sourcePort: 55003,
+            destinationPort: 161
+        )
+        try storage.saveTransportRequest(third)
+
+        let incremental = try storage.loadTransportRequests(
+            newerThan: sharedTimestamp,
+            excludingIDs: knownIDs
+        )
+
+        XCTAssertEqual(incremental.count, 1)
+        XCTAssertEqual(incremental.first?.id, third.id)
+    }
+
+    func testLoadTransportRequestsNewerThanHonorsLimit() throws {
+        let anchor = Date(timeIntervalSinceNow: -120)
+        let first = createMockTransportRequest(
+            timestamp: Date(timeIntervalSinceNow: -20),
+            sourcePort: 55101,
+            destinationPort: 53
+        )
+        let second = createMockTransportRequest(
+            timestamp: Date(timeIntervalSinceNow: -10),
+            sourcePort: 55102,
+            destinationPort: 123
+        )
+        let third = createMockTransportRequest(
+            timestamp: Date(),
+            sourcePort: 55103,
+            destinationPort: 161
+        )
+
+        try storage.saveTransportRequests([first, second, third])
+
+        let incremental = try storage.loadTransportRequests(newerThan: anchor, limit: 2)
+
+        XCTAssertEqual(incremental.count, 2)
+        XCTAssertEqual(incremental.first?.id, third.id)
+        XCTAssertEqual(incremental.last?.id, second.id)
+    }
+
     func testClearAllTransportRequests() throws {
         try storage.saveTransportRequest(createMockTransportRequest(destinationPort: 53))
         try storage.saveTransportRequest(createMockTransportRequest(destinationPort: 161))
