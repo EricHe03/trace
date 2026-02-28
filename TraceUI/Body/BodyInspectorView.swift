@@ -228,7 +228,7 @@ public struct BodyInspectorView: View {
 
         case .binary:
             ScrollView([.horizontal, .vertical]) {
-                textView
+                hexView
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, DesignSystem.Spacing.xs)
             }

@@ -33,6 +33,19 @@ struct OverviewSection: View {
                     InfoRow(label: "Protocol", value: protocolVersion.displayName)
                 }
 
+                Divider()
+                InfoRow(label: "Capture Path", value: request.capturePath.displayName)
+
+                if let flowID = request.captureFlowID {
+                    Divider()
+                    InfoRow(label: "Capture Flow ID", value: "\(flowID)")
+                }
+
+                if let metadataVersion = request.captureMetadataVersion {
+                    Divider()
+                    InfoRow(label: "Capture Metadata Version", value: "v\(metadataVersion)")
+                }
+
                 if request.isSSE {
                     Divider()
                     HStack {

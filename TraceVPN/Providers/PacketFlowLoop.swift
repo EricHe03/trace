@@ -23,6 +23,7 @@ final class PacketCapturePipeline: @unchecked Sendable {
     private let logSampler = LogSampler()
     private let reassembler = TCPReassembler()
     private let flowRecorder = PacketFlowRecorder()
+    private let transportRequestRecorder = TransportRequestRecorder()
     private let udpFlowManager = UDPFlowManager()
     private var pendingCount = 0
     private var isStopped = false
@@ -186,6 +187,7 @@ final class PacketCapturePipeline: @unchecked Sendable {
 
     private func processParsedPacket(packet: Data) {
         guard let ipPacket = IPPacketParser.parse(packet) else { return }
+        transportRequestRecorder.process(ipPacket: ipPacket, rawPacket: packet)
         flowRecorder.process(ipPacket: ipPacket)
 
         if ipPacket.transport == .udp, let udpPacket = UDPParser.parse(ipPacket.payload) {
@@ -214,6 +216,7 @@ final class PacketCapturePipeline: @unchecked Sendable {
         pendingLock.unlock()
 
         enabled = false
+        transportRequestRecorder.shutdown()
         flowRecorder.shutdown()
         udpFlowManager.shutdown()
         writer?.close()
@@ -584,7 +587,7 @@ final class PacketFlowLoop: @unchecked Sendable {
                                 if !self.tunnelUDPSupported,
                                    self.udpForwardingMode == .hevOnly || (self.udpForwardingMode == .split && decision.isQUIC),
                                    self.logSampler.shouldLog(event: "vpn.udp_forward_fallback", key: "direct", first: 3, every: 200) {
-                                    VPNLog.tunnel.warning(
+                                    VPNLog.tunnel.info(
                                         "event=vpn.udp_forward_fallback outcome=success mode=\(self.udpForwardingMode.rawValue, privacy: .public) action=direct reason=tunnel_udp_unsupported"
                                     )
                                 }

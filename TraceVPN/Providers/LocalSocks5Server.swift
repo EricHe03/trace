@@ -458,6 +458,25 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
         case relaying
         case udpAssociated
         case closing
+
+        var logToken: String {
+            switch self {
+            case .greeting:
+                return "greeting"
+            case .request:
+                return "request"
+            case .connecting:
+                return "connecting"
+            case .udpAssociating:
+                return "udp_associating"
+            case .relaying:
+                return "relaying"
+            case .udpAssociated:
+                return "udp_associated"
+            case .closing:
+                return "closing"
+            }
+        }
     }
 
     private enum UDPAssociateSetupResult {
@@ -488,6 +507,7 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
     private let sessionID = UUID().uuidString
     private let flowID = Socks5SessionHandler.allocateFlowID()
     private var state: State = .greeting
+    private var didLogFailure = false
     private var buffer = ByteBuffer()
     private var remoteChannel: Channel?
     private var udpRelay: Socks5UDPRelay?
@@ -550,11 +570,52 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
+        logSessionFailureIfNeeded(error)
+        closeConnection(context: context)
+    }
+
+    private func logSessionFailureIfNeeded(_ error: Error) {
+        guard !didLogFailure else { return }
+        guard state != .closing else { return }
+        didLogFailure = true
+        let expectedClosure = isExpectedSessionClosure(error)
+        let outcome = expectedClosure ? "closed" : "failure"
+        let classification = expectedClosure ? "channel_closed" : "unexpected_error"
         eventLogHandler?(
             "local_socks5_session",
-            "outcome=failure session=\(sessionID) error=\(error.localizedDescription)"
+            "outcome=\(outcome) session=\(sessionID) state=\(state.logToken) classification=\(classification) error=\(error.localizedDescription)"
         )
-        closeConnection(context: context)
+    }
+
+    private func isExpectedSessionClosure(_ error: Error) -> Bool {
+        if let channelError = error as? ChannelError {
+            switch channelError {
+            case .alreadyClosed, .ioOnClosedChannel:
+                return true
+            default:
+                break
+            }
+
+            let detail = String(describing: channelError).lowercased()
+            if detail.contains("channelerror 0") || detail.contains("channelerror 5") {
+                return true
+            }
+        }
+
+        let nsError = error as NSError
+        let nsDomain = nsError.domain.lowercased()
+        if nsDomain.contains("niocore.channelerror"),
+           nsError.code == 0 || nsError.code == 5 {
+            return true
+        }
+
+        let detail = "\(String(describing: error).lowercased()) \(error.localizedDescription.lowercased())"
+        if detail.contains("channelerror"),
+           detail.contains("error 0") || detail.contains("error 5") {
+            return true
+        }
+
+        return false
     }
 
     private func processBufferedData(context: ChannelHandlerContext) {

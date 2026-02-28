@@ -190,16 +190,19 @@ public class DNSParser {
         }
 
         let typeValue = UInt16(data[nameEndOffset]) << 8 | UInt16(data[nameEndOffset + 1])
-        let type = DNSRecordType(rawValue: typeValue) ?? .a
+        let type = DNSRecordType(rawValue: typeValue) ?? .unknown
 
         let classValue = UInt16(data[nameEndOffset + 2]) << 8 | UInt16(data[nameEndOffset + 3])
         // Rule: Mask off the mDNS cache-flush bit if present while preserving the class.
-        let dnsClass = DNSClass(rawValue: classValue & 0x7FFF) ?? .in
+        let normalizedClassValue = classValue & 0x7FFF
+        let dnsClass = DNSClass(rawValue: normalizedClassValue) ?? .unknown
 
         let question = DNSQuestion(
             name: name,
             type: type,
-            class: dnsClass
+            class: dnsClass,
+            rawTypeValue: typeValue,
+            rawClassValue: normalizedClassValue
         )
 
         return (question, nameEndOffset + 4)
@@ -215,11 +218,12 @@ public class DNSParser {
         }
 
         let typeValue = UInt16(data[nameEndOffset]) << 8 | UInt16(data[nameEndOffset + 1])
-        let type = DNSRecordType(rawValue: typeValue) ?? .a
+        let type = DNSRecordType(rawValue: typeValue) ?? .unknown
 
         let classValue = UInt16(data[nameEndOffset + 2]) << 8 | UInt16(data[nameEndOffset + 3])
         // Rule: Mask off the mDNS cache-flush bit if present while preserving the class.
-        let dnsClass = DNSClass(rawValue: classValue & 0x7FFF) ?? .in
+        let normalizedClassValue = classValue & 0x7FFF
+        let dnsClass = DNSClass(rawValue: normalizedClassValue) ?? .unknown
 
         let ttl = UInt32(data[nameEndOffset + 4]) << 24 |
             UInt32(data[nameEndOffset + 5]) << 16 |
@@ -240,6 +244,8 @@ public class DNSParser {
             name: name,
             type: type,
             class: dnsClass,
+            rawTypeValue: typeValue,
+            rawClassValue: normalizedClassValue,
             ttl: ttl,
             dataLength: dataLength,
             data: finalData

@@ -224,6 +224,7 @@ struct NetworkViewActions {
     ) {
         DesignSystem.Haptics.warning()
         viewModel.clearRequests()
+        viewModel.clearTransportRequests()
         webSocketViewModel.clearAllConnections()
         sseViewModel.clearAllConnections()
 

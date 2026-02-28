@@ -215,6 +215,51 @@ final class DNSParserTests: XCTestCase {
         XCTAssertEqual(message.answers[0].type, .aaaa)
         XCTAssertEqual(message.answers[0].dataString, "2606:2800:220:1:248:1893:25c8:1946")
     }
+
+    func testParsePreservesUnknownTypeAndClassValues() throws {
+        var data = Data()
+
+        // Header
+        data.append(contentsOf: [0x12, 0x34])
+        data.append(contentsOf: [0x81, 0x80]) // Response
+        data.append(contentsOf: [0x00, 0x01]) // Questions
+        data.append(contentsOf: [0x00, 0x01]) // Answers
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+
+        // Question: example.com TYPE65400 CLASS65000
+        data.append(contentsOf: [0x07])
+        data.append("example".data(using: .utf8)!)
+        data.append(contentsOf: [0x03])
+        data.append("com".data(using: .utf8)!)
+        data.append(contentsOf: [0x00])
+        data.append(contentsOf: [0xFF, 0x78]) // 65400
+        data.append(contentsOf: [0xFD, 0xE8]) // 65000
+
+        // Answer: same unknown type/class
+        data.append(contentsOf: [0xC0, 0x0C])
+        data.append(contentsOf: [0xFF, 0x78]) // 65400
+        data.append(contentsOf: [0xFD, 0xE8]) // 65000
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x3C]) // TTL: 60
+        data.append(contentsOf: [0x00, 0x01]) // Data length
+        data.append(contentsOf: [0xAA])
+
+        let message = try DNSParser.parse(
+            data: data,
+            sourceIP: "8.8.8.8",
+            sourcePort: 53,
+            destIP: "192.168.1.100",
+            destPort: 54321
+        )
+
+        XCTAssertEqual(message.questions[0].type, .unknown)
+        XCTAssertEqual(message.questions[0].rawTypeValue, 65400)
+        XCTAssertEqual(message.questions[0].class, .unknown)
+        XCTAssertEqual(message.questions[0].rawClassValue, 65000)
+        XCTAssertEqual(message.answers[0].type, .unknown)
+        XCTAssertEqual(message.answers[0].rawTypeValue, 65400)
+        XCTAssertEqual(message.answers[0].class, .unknown)
+        XCTAssertEqual(message.answers[0].rawClassValue, 65000)
+    }
     
     // MARK: - Error Response Tests
     

@@ -41,6 +41,7 @@ public class AppGroupStorage: @unchecked Sendable {
     private let webSocketDirectory = "WebSocketConnections"
     private let sseDirectory = "SSEConnections"
     private let sessionsDirectory = "CaptureSessions"
+    private let transportRequestsDirectory = "TransportRequests"
     private let packetFlowsDirectory = "PacketFlows"
     private let udpFlowsDirectory = "UDPFlows"
     private let throttlingConfigFileName = "throttling.json"
@@ -49,6 +50,9 @@ public class AppGroupStorage: @unchecked Sendable {
     private let samplingConfigFileName = "sampling.json"
     private let configurationFileName = "configuration.json"
     private let mitmAllowlistFileName = "mitm_allowlist.json"
+    private static let defaultTransportStoreBudgetBytes = 512 * 1024 * 1024
+    private static let transportPruneMinInterval: TimeInterval = 5
+    private static let transportPruneWriteThresholdBytes = 8 * 1024 * 1024
 
     private enum DefaultsKey {
         static let captureConfiguration = "trace.settings.captureConfiguration"
@@ -77,6 +81,11 @@ public class AppGroupStorage: @unchecked Sendable {
     /// Cached container URL to prevent repeated app group lookups
     private var _cachedContainerURL: URL?
     private let containerURLLock = NSLock()
+    private let transportStoreBudgetLock = NSLock()
+    private let transportPruneStateLock = NSLock()
+    private var transportStoreBudgetBytes = AppGroupStorage.defaultTransportStoreBudgetBytes
+    private var lastTransportPruneAt: Date = .distantPast
+    private var transportBytesWrittenSinceLastPrune = 0
     private var didLogMisconfiguration = false
 
     public var containerURL: URL? {
@@ -176,6 +185,7 @@ public class AppGroupStorage: @unchecked Sendable {
             container.appendingPathComponent(webSocketDirectory),
             container.appendingPathComponent(sseDirectory),
             container.appendingPathComponent(sessionsDirectory),
+            container.appendingPathComponent(transportRequestsDirectory),
             container.appendingPathComponent(packetFlowsDirectory),
             container.appendingPathComponent(udpFlowsDirectory)
         ]
@@ -342,6 +352,412 @@ public class AppGroupStorage: @unchecked Sendable {
     /// Async wrapper for loading requests (alias for loadAllRequestsAsync)
     public func loadRequests() async throws -> [NetworkRequest] {
         try await loadAllRequestsAsync()
+    }
+
+    func setTransportStoreBudgetBytesForTesting(_ bytes: Int?) {
+        transportStoreBudgetLock.lock()
+        if let bytes {
+            transportStoreBudgetBytes = max(0, bytes)
+        } else {
+            transportStoreBudgetBytes = AppGroupStorage.defaultTransportStoreBudgetBytes
+        }
+        transportStoreBudgetLock.unlock()
+
+        transportPruneStateLock.lock()
+        lastTransportPruneAt = .distantPast
+        transportBytesWrittenSinceLastPrune = 0
+        transportPruneStateLock.unlock()
+    }
+
+    // MARK: - Transport Request Storage
+
+    /// Saves a captured transport event to the shared container.
+    public func saveTransportRequest(_ request: TransportRequest) throws {
+        try saveTransportRequests([request])
+    }
+
+    /// Saves captured transport events to the shared container in a single batch.
+    /// Posts one notification when at least one event is persisted.
+    /// Throws when any item in the batch fails, even if some items were persisted.
+    public func saveTransportRequests(_ requests: [TransportRequest]) throws {
+        guard !requests.isEmpty else { return }
+        guard let container = containerURL else {
+            throw StorageError.containerNotFound
+        }
+
+        let requestsURL = container.appendingPathComponent(transportRequestsDirectory)
+        let encoder = makeEncoder()
+        var persistedCount = 0
+        var estimatedPersistedBytes = 0
+        var lastError: Error?
+
+        for request in requests {
+            let fileName = "\(request.id.uuidString).json"
+            let fileURL = requestsURL.appendingPathComponent(fileName)
+
+            do {
+                let data = try encoder.encode(request)
+                try writeTransportRequestData(data, to: fileURL)
+                persistedCount += 1
+                estimatedPersistedBytes += estimatedTransportStoredBytes(for: request, metadataBytes: data.count)
+            } catch {
+                lastError = error
+                CoreLog.storage.error(
+                    LogEvent.storage("save_transport_request")
+                        .failure()
+                        .with("request_id", value: request.id.uuidString, privacy: .public)
+                        .error(error)
+                )
+            }
+        }
+
+        if persistedCount > 0 {
+            let budgetBytes = currentTransportStoreBudgetBytes()
+            if shouldPruneTransportRequests(
+                afterPersistingBytes: estimatedPersistedBytes,
+                budgetBytes: budgetBytes
+            ) {
+                do {
+                    try pruneTransportRequestsIfNeeded()
+                    markTransportPruneCompleted()
+                } catch {
+                    CoreLog.storage.warning(
+                        LogEvent.storage("prune_transport_request")
+                            .failure()
+                            .error(error)
+                    )
+                }
+            }
+            notifyNewTransportRequest()
+            if let lastError {
+                CoreLog.storage.warning(
+                    LogEvent.storage("save_transport_request_batch")
+                        .failure()
+                        .with("persisted_count", value: persistedCount)
+                        .with("failed_count", value: max(0, requests.count - persistedCount))
+                        .error(lastError)
+                )
+                throw lastError
+            }
+            return
+        }
+
+        if let lastError {
+            throw lastError
+        }
+    }
+
+    private func writeTransportRequestData(_ data: Data, to fileURL: URL) throws {
+        do {
+            try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        } catch {
+            CoreLog.storage.warning(
+                LogEvent.storage("save_transport_request")
+                    .failure()
+                    .with("reason", value: "file_protection_retry")
+                    .error(error)
+            )
+            try data.write(to: fileURL, options: [.atomic, .noFileProtection])
+        }
+    }
+
+    /// Loads all captured transport events from the shared container.
+    public func loadAllTransportRequests() throws -> [TransportRequest] {
+        guard let container = containerURL else {
+            throw StorageError.containerNotFound
+        }
+
+        let requestsURL = container.appendingPathComponent(transportRequestsDirectory)
+        guard FileManager.default.fileExists(atPath: requestsURL.path) else {
+            return []
+        }
+
+        let fileURLs = try FileManager.default.contentsOfDirectory(
+            at: requestsURL,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        let decoder = makeDecoder()
+
+        var requests: [TransportRequest] = []
+        for fileURL in fileURLs where fileURL.pathExtension == "json" {
+            if let request = decodeTransportRequest(from: fileURL, decoder: decoder) {
+                requests.append(request)
+            }
+        }
+
+        return requests.sorted { $0.timestamp > $1.timestamp }
+    }
+
+    /// Loads captured transport events newer than the provided timestamp.
+    /// Optimized for incremental UI updates where most stored files are already known.
+    public func loadTransportRequests(
+        newerThan timestamp: Date,
+        excludingIDs: Set<UUID> = [],
+        limit: Int? = nil
+    ) throws -> [TransportRequest] {
+        guard let container = containerURL else {
+            throw StorageError.containerNotFound
+        }
+
+        let requestsURL = container.appendingPathComponent(transportRequestsDirectory)
+        guard FileManager.default.fileExists(atPath: requestsURL.path) else {
+            return []
+        }
+
+        let fileURLs = try FileManager.default.contentsOfDirectory(
+            at: requestsURL,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        let decoder = makeDecoder()
+        var requests: [TransportRequest] = []
+        requests.reserveCapacity(32)
+
+        for fileURL in fileURLs where fileURL.pathExtension == "json" {
+            if let requestID = transportRequestID(from: fileURL),
+               excludingIDs.contains(requestID) {
+                continue
+            }
+
+            if let createdAt = try? fileURL.resourceValues(forKeys: [.creationDateKey]).creationDate,
+               createdAt < timestamp {
+                continue
+            }
+
+            guard let request = decodeTransportRequest(from: fileURL, decoder: decoder),
+                  request.timestamp >= timestamp else {
+                continue
+            }
+
+            requests.append(request)
+        }
+
+        let sorted = requests.sorted { $0.timestamp > $1.timestamp }
+        guard let limit else { return sorted }
+        return Array(sorted.prefix(max(0, limit)))
+    }
+
+    /// Loads all captured transport events from the shared container on a background queue.
+    public func loadAllTransportRequestsAsync() async throws -> [TransportRequest] {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try continuation.resume(returning: self.loadAllTransportRequests())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Loads captured transport events newer than the given timestamp on a background queue.
+    public func loadTransportRequestsAsync(
+        newerThan timestamp: Date,
+        excludingIDs: Set<UUID> = [],
+        limit: Int? = nil
+    ) async throws -> [TransportRequest] {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try continuation.resume(returning: self.loadTransportRequests(
+                        newerThan: timestamp,
+                        excludingIDs: excludingIDs,
+                        limit: limit
+                    ))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Deletes all captured transport events.
+    public func clearAllTransportRequests() throws {
+        guard let container = containerURL else {
+            throw StorageError.containerNotFound
+        }
+
+        let requestsURL = container.appendingPathComponent(transportRequestsDirectory)
+        guard FileManager.default.fileExists(atPath: requestsURL.path) else { return }
+        let fileURLs = try FileManager.default.contentsOfDirectory(
+            at: requestsURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+        for fileURL in fileURLs where fileURL.pathExtension == "json" {
+            try? deleteTransportRequestFileAndBody(at: fileURL)
+        }
+
+        transportPruneStateLock.lock()
+        lastTransportPruneAt = Date()
+        transportBytesWrittenSinceLastPrune = 0
+        transportPruneStateLock.unlock()
+    }
+
+    private struct TransportStorageEntry {
+        let fileURL: URL
+        let timestamp: Date
+        let totalBytes: Int
+    }
+
+    private func currentTransportStoreBudgetBytes() -> Int {
+        transportStoreBudgetLock.lock()
+        defer { transportStoreBudgetLock.unlock() }
+        return transportStoreBudgetBytes
+    }
+
+    private func estimatedTransportStoredBytes(for request: TransportRequest, metadataBytes: Int) -> Int {
+        max(0, metadataBytes + request.payloadBytes + (request.packetBytes ?? 0))
+    }
+
+    private func shouldPruneTransportRequests(afterPersistingBytes bytes: Int, budgetBytes: Int) -> Bool {
+        transportPruneStateLock.lock()
+        transportBytesWrittenSinceLastPrune += max(0, bytes)
+
+        // Oversized batches should prune immediately to keep budget bounded.
+        let shouldPrune =
+            budgetBytes <= 0 ||
+            bytes >= budgetBytes ||
+            transportBytesWrittenSinceLastPrune >= AppGroupStorage.transportPruneWriteThresholdBytes ||
+            Date().timeIntervalSince(lastTransportPruneAt) >= AppGroupStorage.transportPruneMinInterval
+
+        transportPruneStateLock.unlock()
+        return shouldPrune
+    }
+
+    private func markTransportPruneCompleted() {
+        transportPruneStateLock.lock()
+        lastTransportPruneAt = Date()
+        transportBytesWrittenSinceLastPrune = 0
+        transportPruneStateLock.unlock()
+    }
+
+    private func pruneTransportRequestsIfNeeded() throws {
+        guard let container = containerURL else {
+            throw StorageError.containerNotFound
+        }
+
+        let requestsURL = container.appendingPathComponent(transportRequestsDirectory)
+        guard FileManager.default.fileExists(atPath: requestsURL.path) else { return }
+
+        let budgetBytes = currentTransportStoreBudgetBytes()
+        guard budgetBytes > 0 else {
+            try clearAllTransportRequests()
+            return
+        }
+
+        let fileURLs = try FileManager.default.contentsOfDirectory(
+            at: requestsURL,
+            includingPropertiesForKeys: [.fileSizeKey, .creationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        var totalBytes = 0
+        var entries: [TransportStorageEntry] = []
+        let decoder = makeDecoder()
+
+        for fileURL in fileURLs where fileURL.pathExtension == "json" {
+            let fileValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .creationDateKey])
+            let jsonBytes = fileValues?.fileSize ?? 0
+            var entryBytes = jsonBytes
+            var timestamp = fileValues?.creationDate ?? .distantPast
+
+            if let data = try? Data(contentsOf: fileURL),
+               let request = try? decoder.decode(TransportRequest.self, from: data) {
+                timestamp = request.timestamp
+
+                var filePaths: Set<String> = []
+                if let payloadURL = bodyFileURL(for: request.payload),
+                   filePaths.insert(payloadURL.path).inserted {
+                    entryBytes += fileSize(at: payloadURL)
+                }
+                if let packetURL = bodyFileURL(for: request.packet),
+                   filePaths.insert(packetURL.path).inserted {
+                    entryBytes += fileSize(at: packetURL)
+                }
+            }
+
+            totalBytes += entryBytes
+            entries.append(TransportStorageEntry(fileURL: fileURL, timestamp: timestamp, totalBytes: entryBytes))
+        }
+
+        guard totalBytes > budgetBytes else { return }
+
+        let sortedByOldest = entries.sorted { lhs, rhs in
+            if lhs.timestamp == rhs.timestamp {
+                return lhs.fileURL.lastPathComponent < rhs.fileURL.lastPathComponent
+            }
+            return lhs.timestamp < rhs.timestamp
+        }
+
+        var remainingEntries = sortedByOldest.count
+        var remainingBytes = totalBytes
+        var prunedCount = 0
+
+        for entry in sortedByOldest where remainingBytes > budgetBytes {
+            // Keep at least the newest event, even if oversized.
+            guard remainingEntries > 1 else { break }
+
+            do {
+                try deleteTransportRequestFileAndBody(at: entry.fileURL)
+            } catch {
+                CoreLog.storage.warning(
+                    LogEvent.storage("prune_transport_request")
+                        .failure()
+                        .with("file", value: entry.fileURL.lastPathComponent)
+                        .error(error)
+                )
+                continue
+            }
+
+            remainingEntries -= 1
+            remainingBytes = max(0, remainingBytes - entry.totalBytes)
+            prunedCount += 1
+        }
+
+        if prunedCount > 0 {
+            CoreLog.storage.info(
+                "event=storage.transport_prune outcome=success pruned=\(prunedCount) total_bytes_before=\(totalBytes) total_bytes_after=\(remainingBytes) budget_bytes=\(budgetBytes)"
+            )
+        }
+    }
+
+    private func fileSize(at url: URL) -> Int {
+        (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+    }
+
+    private func decodeTransportRequest(from fileURL: URL, decoder: JSONDecoder) -> TransportRequest? {
+        do {
+            let data = try Data(contentsOf: fileURL)
+            return try decoder.decode(TransportRequest.self, from: data)
+        } catch {
+            CoreLog.storage.error(
+                LogEvent.storage("load_transport_request")
+                    .failure()
+                    .with("file", value: fileURL.lastPathComponent)
+                    .error(error)
+            )
+            return nil
+        }
+    }
+
+    private func transportRequestID(from fileURL: URL) -> UUID? {
+        UUID(uuidString: fileURL.deletingPathExtension().lastPathComponent)
+    }
+
+    private func bodyFileURL(for body: BodyStorage?) -> URL? {
+        guard let body else { return nil }
+        switch body {
+        case let .file(url, _, _):
+            return url
+        case let .truncatedFile(url, _, _, _):
+            return url
+        default:
+            return nil
+        }
     }
 
     // MARK: - Packet Flow Storage
@@ -1132,6 +1548,7 @@ public class AppGroupStorage: @unchecked Sendable {
     // Observers for notifications
     private let notificationObserversLock = NSLock()
     private var requestObservers: [UUID: NotificationObserver] = [:]
+    private var transportRequestObservers: [UUID: NotificationObserver] = [:]
     private var webSocketObservers: [UUID: NotificationObserver] = [:]
     private var sseObservers: [UUID: NotificationObserver] = [:]
     private var udpFlowObservers: [UUID: NotificationObserver] = [:]
@@ -1142,6 +1559,13 @@ public class AppGroupStorage: @unchecked Sendable {
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let notificationName = "com.trace.newRequest" as CFString
 
+        CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
+    }
+
+    /// Notifies the main app that a new transport event was captured.
+    private func notifyNewTransportRequest() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let notificationName = "com.trace.newTransportRequest" as CFString
         CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
     }
 
@@ -1192,6 +1616,33 @@ public class AppGroupStorage: @unchecked Sendable {
         notificationObserversLock.lock()
         let observers = Array(requestObservers.values)
         requestObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
+    }
+
+    /// Sets up listener for new transport request notifications (call from main app).
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeNewTransportRequests(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.newTransportRequest", handler: handler)
+        notificationObserversLock.lock()
+        transportRequestObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.transportRequestObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingNewTransportRequests() {
+        notificationObserversLock.lock()
+        let observers = Array(transportRequestObservers.values)
+        transportRequestObservers.removeAll()
         notificationObserversLock.unlock()
         observers.forEach { $0.stop() }
     }
@@ -1316,6 +1767,19 @@ public class AppGroupStorage: @unchecked Sendable {
             if let request = try? decoder.decode(NetworkRequest.self, from: data) {
                 request.requestBody.deleteFile()
                 request.responseBody.deleteFile()
+            }
+        }
+
+        try FileManager.default.removeItem(at: fileURL)
+    }
+
+    private func deleteTransportRequestFileAndBody(at fileURL: URL) throws {
+        if let data = try? Data(contentsOf: fileURL) {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            if let request = try? decoder.decode(TransportRequest.self, from: data) {
+                request.payload.deleteFile()
+                request.packet?.deleteFile()
             }
         }
 
@@ -1518,6 +1982,7 @@ public struct CaptureConfiguration: Codable, Sendable {
     public var fullTunnelSocks5Host: String
     public var fullTunnelSocks5Port: UInt16
     public var fullTunnelUDPForwardingMode: UDPForwardingMode
+    public var fullTunnelHybridTCPMITMEnabled: Bool
     public var dualMITMPolicy: DualMITMPolicy
     public var tcpBypassTTLSeconds: Int
     public var quicHostFailOpenSeconds: Int
@@ -1546,6 +2011,7 @@ public struct CaptureConfiguration: Codable, Sendable {
             fullTunnelSocks5Host: "",
             fullTunnelSocks5Port: 0,
             fullTunnelUDPForwardingMode: .hevOnly,
+            fullTunnelHybridTCPMITMEnabled: false,
             dualMITMPolicy: .adaptiveFailOpen,
             tcpBypassTTLSeconds: 180,
             quicHostFailOpenSeconds: 1800,
@@ -1573,6 +2039,7 @@ public struct CaptureConfiguration: Codable, Sendable {
         case fullTunnelSocks5Host
         case fullTunnelSocks5Port
         case fullTunnelUDPForwardingMode
+        case fullTunnelHybridTCPMITMEnabled
         case dualMITMPolicy
         case tcpBypassTTLSeconds
         case quicHostFailOpenSeconds
@@ -1599,6 +2066,7 @@ public struct CaptureConfiguration: Codable, Sendable {
         fullTunnelSocks5Host: String,
         fullTunnelSocks5Port: UInt16,
         fullTunnelUDPForwardingMode: UDPForwardingMode,
+        fullTunnelHybridTCPMITMEnabled: Bool = false,
         dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
         tcpBypassTTLSeconds: Int = 180,
         quicHostFailOpenSeconds: Int = 1800,
@@ -1623,6 +2091,7 @@ public struct CaptureConfiguration: Codable, Sendable {
         self.fullTunnelSocks5Host = fullTunnelSocks5Host
         self.fullTunnelSocks5Port = fullTunnelSocks5Port
         self.fullTunnelUDPForwardingMode = fullTunnelUDPForwardingMode
+        self.fullTunnelHybridTCPMITMEnabled = fullTunnelHybridTCPMITMEnabled
         self.dualMITMPolicy = dualMITMPolicy
         self.tcpBypassTTLSeconds = tcpBypassTTLSeconds
         self.quicHostFailOpenSeconds = quicHostFailOpenSeconds
@@ -1658,6 +2127,8 @@ public struct CaptureConfiguration: Codable, Sendable {
             ?? defaults.fullTunnelSocks5Port
         fullTunnelUDPForwardingMode = try container.decodeIfPresent(UDPForwardingMode.self, forKey: .fullTunnelUDPForwardingMode)
             ?? defaults.fullTunnelUDPForwardingMode
+        fullTunnelHybridTCPMITMEnabled = try container.decodeIfPresent(Bool.self, forKey: .fullTunnelHybridTCPMITMEnabled)
+            ?? defaults.fullTunnelHybridTCPMITMEnabled
         dualMITMPolicy = try container.decodeIfPresent(DualMITMPolicy.self, forKey: .dualMITMPolicy)
             ?? defaults.dualMITMPolicy
         tcpBypassTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .tcpBypassTTLSeconds)
@@ -1697,6 +2168,7 @@ public struct CaptureConfiguration: Codable, Sendable {
         try container.encode(normalized.fullTunnelSocks5Host, forKey: .fullTunnelSocks5Host)
         try container.encode(normalized.fullTunnelSocks5Port, forKey: .fullTunnelSocks5Port)
         try container.encode(normalized.fullTunnelUDPForwardingMode, forKey: .fullTunnelUDPForwardingMode)
+        try container.encode(normalized.fullTunnelHybridTCPMITMEnabled, forKey: .fullTunnelHybridTCPMITMEnabled)
         try container.encode(normalized.dualMITMPolicy, forKey: .dualMITMPolicy)
         try container.encode(normalized.tcpBypassTTLSeconds, forKey: .tcpBypassTTLSeconds)
         try container.encode(normalized.quicHostFailOpenSeconds, forKey: .quicHostFailOpenSeconds)
@@ -1796,6 +2268,7 @@ extension NetworkRequest: Codable {
     enum CodingKeys: String, CodingKey {
         case id, url, method, requestMethodRaw, statusCode, statusMessage, timestamp, duration
         case requestHeaders, responseHeaders, requestBody, responseBody, protocolVersion, sessionId
+        case capturePath, captureFlowID, capturePolicyModeRaw, captureMetadataVersion
         case timingPhases, tlsInfo
         case wasThrottled, throttlingProfile
         case isDuplicate, duplicateOfRequestId
@@ -1850,6 +2323,15 @@ extension NetworkRequest: Codable {
         }
 
         self.protocolVersion = try container.decodeIfPresent(HTTPProtocolVersion.self, forKey: .protocolVersion)
+        if let capturePathRaw = (try? container.decodeIfPresent(String.self, forKey: .capturePath)) ?? nil,
+           let parsedCapturePath = NetworkCapturePath(rawValue: capturePathRaw) {
+            self.capturePath = parsedCapturePath
+        } else {
+            self.capturePath = .unknown
+        }
+        self.captureFlowID = Self.decodeLossyUInt64(from: container, forKey: .captureFlowID)
+        self.capturePolicyModeRaw = Self.decodeLossyUInt8(from: container, forKey: .capturePolicyModeRaw)
+        self.captureMetadataVersion = Self.decodeLossyUInt8(from: container, forKey: .captureMetadataVersion)
         self.sessionId = try container.decodeIfPresent(UUID.self, forKey: .sessionId)
 
         self.timingPhases = try container.decodeIfPresent(NetworkTimingPhases.self, forKey: .timingPhases)
@@ -1903,6 +2385,34 @@ extension NetworkRequest: Codable {
         }
     }
 
+    private static func decodeLossyUInt64(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> UInt64? {
+        if let value = (try? container.decodeIfPresent(UInt64.self, forKey: key)) ?? nil {
+            return value
+        }
+        if let value = (try? container.decodeIfPresent(Int.self, forKey: key)) ?? nil,
+           value >= 0 {
+            return UInt64(value)
+        }
+        return nil
+    }
+
+    private static func decodeLossyUInt8(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> UInt8? {
+        if let value = (try? container.decodeIfPresent(UInt8.self, forKey: key)) ?? nil {
+            return value
+        }
+        if let value = (try? container.decodeIfPresent(Int.self, forKey: key)) ?? nil,
+           (0 ... 255).contains(value) {
+            return UInt8(value)
+        }
+        return nil
+    }
+
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
 
@@ -1919,6 +2429,10 @@ extension NetworkRequest: Codable {
         try container.encode(requestBody, forKey: .requestBody)
         try container.encode(responseBody, forKey: .responseBody)
         try container.encodeIfPresent(protocolVersion, forKey: .protocolVersion)
+        try container.encode(capturePath.rawValue, forKey: .capturePath)
+        try container.encodeIfPresent(captureFlowID, forKey: .captureFlowID)
+        try container.encodeIfPresent(capturePolicyModeRaw, forKey: .capturePolicyModeRaw)
+        try container.encodeIfPresent(captureMetadataVersion, forKey: .captureMetadataVersion)
         try container.encodeIfPresent(sessionId, forKey: .sessionId)
         try container.encodeIfPresent(timingPhases, forKey: .timingPhases)
         try container.encodeIfPresent(tlsInfo, forKey: .tlsInfo)

@@ -10,6 +10,51 @@ import Foundation
 import SwiftUI
 #endif
 
+public enum NetworkCapturePath: String, Codable, Sendable, CaseIterable {
+    case unknown
+    case proxy
+    case proxyWithUpstreamHint = "proxy_with_upstream_hint"
+    case tunneledHTTPS = "tunneled_https"
+    case tunneledHTTPSWithUpstreamHint = "tunneled_https_with_upstream_hint"
+
+    public var displayName: String {
+        switch self {
+        case .unknown:
+            "Unknown"
+        case .proxy:
+            "Proxy"
+        case .proxyWithUpstreamHint:
+            "Full Tunnel (Proxy Ingress)"
+        case .tunneledHTTPS:
+            "MITM Decrypted (Tunneled HTTPS)"
+        case .tunneledHTTPSWithUpstreamHint:
+            "Full Tunnel + MITM Decrypted"
+        }
+    }
+
+    public var markerLabel: String? {
+        switch self {
+        case .unknown, .proxy:
+            nil
+        case .proxyWithUpstreamHint:
+            "FT"
+        case .tunneledHTTPS:
+            "MITM"
+        case .tunneledHTTPSWithUpstreamHint:
+            "FT+MITM"
+        }
+    }
+
+    public var isFullTunnelEvidence: Bool {
+        switch self {
+        case .proxyWithUpstreamHint, .tunneledHTTPSWithUpstreamHint:
+            true
+        case .unknown, .proxy, .tunneledHTTPS:
+            false
+        }
+    }
+}
+
 public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public let id: UUID
     public var url: String
@@ -25,6 +70,10 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public var requestBody: BodyStorage
     public var responseBody: BodyStorage
     public var protocolVersion: HTTPProtocolVersion?
+    public var capturePath: NetworkCapturePath = .unknown
+    public var captureFlowID: UInt64?
+    public var capturePolicyModeRaw: UInt8?
+    public var captureMetadataVersion: UInt8?
 
     // Advanced Performance Metrics
     public var timingPhases: NetworkTimingPhases?
@@ -169,6 +218,10 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         requestBody: BodyStorage = .empty,
         responseBody: BodyStorage = .empty,
         protocolVersion: HTTPProtocolVersion? = nil,
+        capturePath: NetworkCapturePath = .unknown,
+        captureFlowID: UInt64? = nil,
+        capturePolicyModeRaw: UInt8? = nil,
+        captureMetadataVersion: UInt8? = nil,
         timingPhases: NetworkTimingPhases? = nil,
         tlsInfo: TLSConnectionInfo? = nil,
         wasThrottled: Bool = false,
@@ -192,6 +245,10 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         self.requestBody = requestBody
         self.responseBody = responseBody
         self.protocolVersion = protocolVersion ?? Self.detectProtocolVersion(from: requestHeaders, responseHeaders: responseHeaders)
+        self.capturePath = capturePath
+        self.captureFlowID = captureFlowID
+        self.capturePolicyModeRaw = capturePolicyModeRaw
+        self.captureMetadataVersion = captureMetadataVersion
         self.timingPhases = timingPhases
         self.tlsInfo = tlsInfo
         self.wasThrottled = wasThrottled
