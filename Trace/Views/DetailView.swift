@@ -142,12 +142,14 @@ struct DetailView: View {
                 if viewModel.isLoadingRequestBody {
                     LoadingPlaceholderCard(
                         title: "Request Body",
+                        headerSystemImage: nil,
                         message: "Loading request body..."
                     )
                 } else {
                     let contentType = viewModel.requestContentType(from: request)
                     BodyInspectorView(
                         title: "Request Body",
+                        headerSystemImage: nil,
                         content: viewModel.requestBodyText ?? "",
                         contentType: contentType,
                         rawData: viewModel.requestBodyRawData,
@@ -181,6 +183,7 @@ struct DetailView: View {
                 if viewModel.isLoadingResponseBody {
                     LoadingPlaceholderCard(
                         title: "Response Body",
+                        headerSystemImage: nil,
                         message: "Loading response body..."
                     )
                 } else {
@@ -188,6 +191,7 @@ struct DetailView: View {
                     let fileName = viewModel.responseAttachmentFilename(from: request)
                     BodyInspectorView(
                         title: "Response Body",
+                        headerSystemImage: nil,
                         content: viewModel.responseBodyText ?? "",
                         contentType: contentType,
                         rawData: viewModel.responseBodyRawData,
