@@ -8,53 +8,6 @@
 import Foundation
 import GRDB
 
-public struct WidgetSharedState: Codable, Equatable, Sendable {
-    public var isCapturing: Bool
-    public var requestCount: Int
-    public var dataTransferred: String
-    public var recentRequests: [WidgetRecentRequest]
-
-    public init(
-        isCapturing: Bool = false,
-        requestCount: Int = 0,
-        dataTransferred: String = "0 B",
-        recentRequests: [WidgetRecentRequest] = []
-    ) {
-        self.isCapturing = isCapturing
-        self.requestCount = requestCount
-        self.dataTransferred = dataTransferred
-        self.recentRequests = recentRequests
-    }
-}
-
-public struct WidgetPendingAction: Codable, Equatable, Sendable {
-    public var action: WidgetAction
-    public var actionDate: Date
-    public var actionView: String?
-
-    public init(action: WidgetAction, actionDate: Date = Date(), actionView: String? = nil) {
-        self.action = action
-        self.actionDate = actionDate
-        self.actionView = actionView
-    }
-}
-
-public struct MITMAutoBypassStoredEntry: Codable, Equatable, Sendable {
-    public var host: String
-    public var reason: String
-    public var createdAt: Date
-    public var expiresAt: Date
-    public var isAlias: Bool
-
-    public init(host: String, reason: String, createdAt: Date, expiresAt: Date, isAlias: Bool) {
-        self.host = host
-        self.reason = reason
-        self.createdAt = createdAt
-        self.expiresAt = expiresAt
-        self.isAlias = isAlias
-    }
-}
-
 /// Manages storage in the shared App Group container
 /// This allows the main app and Network Extension to share captured request data
 public class AppGroupStorage: @unchecked Sendable {
@@ -770,6 +723,131 @@ public class AppGroupStorage: @unchecked Sendable {
     /// Async wrapper for loading requests (alias for loadAllRequestsAsync)
     public func loadRequests() async throws -> [NetworkRequest] {
         try await loadAllRequestsAsync()
+    }
+
+    /// Loads captured requests newer than the given timestamp.
+    public func loadRequests(
+        newerThan timestamp: Date,
+        excludingIDs: Set<UUID> = [],
+        limit: Int? = nil
+    ) throws -> [NetworkRequest] {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT id, payload
+                        FROM network_requests
+                        WHERE timestamp >= ?
+                        ORDER BY timestamp DESC, id DESC
+                        """,
+                        arguments: [timestamp.timeIntervalSince1970]
+                    )
+
+                    let excluded = Set(excludingIDs.map(\.uuidString))
+                    let effectiveLimit = limit.map { max(0, $0) }
+                    if let effectiveLimit, effectiveLimit == 0 {
+                        return []
+                    }
+
+                    let decoder = makeDecoder()
+                    var requests: [NetworkRequest] = []
+                    requests.reserveCapacity(rows.count)
+
+                    for row in rows {
+                        if let effectiveLimit, requests.count >= effectiveLimit {
+                            break
+                        }
+
+                        let requestID: String = row["id"]
+                        if excluded.contains(requestID) {
+                            continue
+                        }
+
+                        let payload: Data = row["payload"]
+                        guard let request = try? decoder.decode(NetworkRequest.self, from: payload),
+                              request.timestamp >= timestamp else {
+                            continue
+                        }
+                        requests.append(request)
+                    }
+
+                    return requests
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    /// Loads captured requests newer than the given timestamp on a background queue.
+    public func loadRequestsAsync(
+        newerThan timestamp: Date,
+        excludingIDs: Set<UUID> = [],
+        limit: Int? = nil
+    ) async throws -> [NetworkRequest] {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try continuation.resume(returning: self.loadRequests(
+                        newerThan: timestamp,
+                        excludingIDs: excludingIDs,
+                        limit: limit
+                    ))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Loads a single captured request by identifier.
+    public func loadRequest(_ id: UUID) throws -> NetworkRequest? {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    guard let payload = try Data.fetchOne(
+                        db,
+                        sql: """
+                        SELECT payload
+                        FROM network_requests
+                        WHERE id = ?
+                        """,
+                        arguments: [id.uuidString]
+                    ) else {
+                        return nil
+                    }
+
+                    do {
+                        return try makeDecoder().decode(NetworkRequest.self, from: payload)
+                    } catch {
+                        CoreLog.storage.error(
+                            LogEvent.storage("load_request_by_id")
+                                .failure()
+                                .with("request_id", value: id.uuidString, privacy: .public)
+                                .error(error)
+                        )
+                        return nil
+                    }
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    /// Loads a single captured request by identifier on a background queue.
+    public func loadRequestAsync(_ id: UUID) async throws -> NetworkRequest? {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try continuation.resume(returning: self.loadRequest(id))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     func setTransportStoreBudgetBytesForTesting(_ bytes: Int?) {
@@ -2400,673 +2478,5 @@ public class AppGroupStorage: @unchecked Sendable {
     /// Updates an existing session (same as save, but with explicit semantics)
     public func updateSession(_ session: CaptureSession) throws {
         try saveSession(session)
-    }
-}
-
-// MARK: - App Group Configuration
-
-public enum AppGroupConfiguration {
-    /// Centralized App Group identifier to keep the main app and extension in sync.
-    public static let appGroupIdentifier: String = {
-        // Allow overriding via Info.plist so release builds can set the correct group without code changes.
-        if let infoIdentifier = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String,
-           let sanitized = sanitizeIdentifier(infoIdentifier) {
-            return sanitized
-        }
-
-        if let bundleIdentifier = Bundle.main.bundleIdentifier,
-           !bundleIdentifier.isEmpty {
-            return "group.\(bundleIdentifier)"
-        }
-
-        return "group.unknown"
-    }()
-
-    private static func sanitizeIdentifier(_ value: String) -> String? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        guard !trimmed.contains("$("), !trimmed.contains("${") else { return nil }
-        return trimmed
-    }
-}
-
-// MARK: - Configuration Model
-
-public enum CaptureMode: String, Codable, Sendable {
-    case proxyOnly
-    case fullTunnel
-    case fullTunnelDualMITM
-
-    public var usesPacketTunnelRouting: Bool {
-        switch self {
-        case .proxyOnly:
-            false
-        case .fullTunnel, .fullTunnelDualMITM:
-            true
-        }
-    }
-
-    public var usesSystemHTTPProxy: Bool {
-        switch self {
-        case .proxyOnly, .fullTunnel:
-            true
-        case .fullTunnelDualMITM:
-            false
-        }
-    }
-
-    public var supportsCustomSocksServer: Bool {
-        self == .fullTunnel
-    }
-
-    public var enablesTCPTransparentMITM: Bool {
-        self == .fullTunnelDualMITM
-    }
-}
-
-public enum UDPForwardingMode: String, Codable, Sendable {
-    case hevOnly
-    case direct
-    case split
-}
-
-public enum DualMITMPolicy: String, Codable, Sendable {
-    case adaptiveFailOpen
-    case strictMITM
-}
-
-public struct CaptureConfiguration: Codable, Sendable {
-    public static let defaultFullTunnelDNSServers = ["1.1.1.1", "8.8.8.8"]
-
-    public var isEnabled: Bool
-    public var filterMode: FilterMode
-    public var domainFilters: [String] // Domains to include/exclude based on filterMode
-    public var captureHeaders: Bool
-    public var captureBody: Bool
-    public var maxBodySize: Int // Maximum body size to capture in bytes
-    public var captureMode: CaptureMode
-    public var fullTunnelDNSServers: [String]
-    public var fullTunnelSearchDomains: [String]
-    public var fullTunnelIPv6Enabled: Bool
-    public var fullTunnelSocks5Host: String
-    public var fullTunnelSocks5Port: UInt16
-    public var fullTunnelUDPForwardingMode: UDPForwardingMode
-    public var fullTunnelHybridTCPMITMEnabled: Bool
-    public var dualMITMPolicy: DualMITMPolicy
-    public var tcpBypassTTLSeconds: Int
-    public var quicHostFailOpenSeconds: Int
-    public var dualMITMCircuitBreakerEnabled: Bool
-    public var quicNoProgressGraceMs: Int
-    public var quicNoProgressIdleMs: Int
-    public var quicNoProgressAbsoluteMs: Int
-    public var quicNoProgressMinClientDatagrams: Int
-    public var quicAuthorityRetryAttempts: Int
-    public var quicCertMaterialCacheTTLSeconds: Int
-
-    public static let `default` = {
-        let captureDefaults = CaptureOptions.default
-        return CaptureConfiguration(
-            isEnabled: true,
-            filterMode: .all,
-            domainFilters: [],
-            captureHeaders: captureDefaults.captureHeaders,
-            captureBody: captureDefaults.captureBody,
-            // Default to 10 MB; large bodies are stored on disk and can be increased in Settings.
-            maxBodySize: captureDefaults.maxBodySize,
-            captureMode: .proxyOnly,
-            fullTunnelDNSServers: [],
-            fullTunnelSearchDomains: [],
-            fullTunnelIPv6Enabled: true,
-            fullTunnelSocks5Host: "",
-            fullTunnelSocks5Port: 0,
-            fullTunnelUDPForwardingMode: .hevOnly,
-            fullTunnelHybridTCPMITMEnabled: false,
-            dualMITMPolicy: .adaptiveFailOpen,
-            tcpBypassTTLSeconds: 180,
-            quicHostFailOpenSeconds: 1800,
-            dualMITMCircuitBreakerEnabled: true,
-            quicNoProgressGraceMs: 6000,
-            quicNoProgressIdleMs: 6000,
-            quicNoProgressAbsoluteMs: 20000,
-            quicNoProgressMinClientDatagrams: 6,
-            quicAuthorityRetryAttempts: 1,
-            quicCertMaterialCacheTTLSeconds: 1800
-        )
-    }()
-
-    enum CodingKeys: String, CodingKey {
-        case isEnabled
-        case filterMode
-        case domainFilters
-        case captureHeaders
-        case captureBody
-        case maxBodySize
-        case captureMode
-        case fullTunnelDNSServers
-        case fullTunnelSearchDomains
-        case fullTunnelIPv6Enabled
-        case fullTunnelSocks5Host
-        case fullTunnelSocks5Port
-        case fullTunnelUDPForwardingMode
-        case fullTunnelHybridTCPMITMEnabled
-        case dualMITMPolicy
-        case tcpBypassTTLSeconds
-        case quicHostFailOpenSeconds
-        case dualMITMCircuitBreakerEnabled
-        case quicNoProgressGraceMs
-        case quicNoProgressIdleMs
-        case quicNoProgressAbsoluteMs
-        case quicNoProgressMinClientDatagrams
-        case quicAuthorityRetryAttempts
-        case quicCertMaterialCacheTTLSeconds
-    }
-
-    public init(
-        isEnabled: Bool,
-        filterMode: FilterMode,
-        domainFilters: [String],
-        captureHeaders: Bool,
-        captureBody: Bool,
-        maxBodySize: Int,
-        captureMode: CaptureMode,
-        fullTunnelDNSServers: [String],
-        fullTunnelSearchDomains: [String],
-        fullTunnelIPv6Enabled: Bool,
-        fullTunnelSocks5Host: String,
-        fullTunnelSocks5Port: UInt16,
-        fullTunnelUDPForwardingMode: UDPForwardingMode,
-        fullTunnelHybridTCPMITMEnabled: Bool = false,
-        dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
-        tcpBypassTTLSeconds: Int = 180,
-        quicHostFailOpenSeconds: Int = 1800,
-        dualMITMCircuitBreakerEnabled: Bool = true,
-        quicNoProgressGraceMs: Int = 6000,
-        quicNoProgressIdleMs: Int = 6000,
-        quicNoProgressAbsoluteMs: Int = 20000,
-        quicNoProgressMinClientDatagrams: Int = 6,
-        quicAuthorityRetryAttempts: Int = 1,
-        quicCertMaterialCacheTTLSeconds: Int = 1800
-    ) {
-        self.isEnabled = isEnabled
-        self.filterMode = filterMode
-        self.domainFilters = domainFilters
-        self.captureHeaders = captureHeaders
-        self.captureBody = captureBody
-        self.maxBodySize = maxBodySize
-        self.captureMode = captureMode
-        self.fullTunnelDNSServers = fullTunnelDNSServers
-        self.fullTunnelSearchDomains = fullTunnelSearchDomains
-        self.fullTunnelIPv6Enabled = fullTunnelIPv6Enabled
-        self.fullTunnelSocks5Host = fullTunnelSocks5Host
-        self.fullTunnelSocks5Port = fullTunnelSocks5Port
-        self.fullTunnelUDPForwardingMode = fullTunnelUDPForwardingMode
-        self.fullTunnelHybridTCPMITMEnabled = fullTunnelHybridTCPMITMEnabled
-        self.dualMITMPolicy = dualMITMPolicy
-        self.tcpBypassTTLSeconds = tcpBypassTTLSeconds
-        self.quicHostFailOpenSeconds = quicHostFailOpenSeconds
-        self.dualMITMCircuitBreakerEnabled = dualMITMCircuitBreakerEnabled
-        self.quicNoProgressGraceMs = quicNoProgressGraceMs
-        self.quicNoProgressIdleMs = quicNoProgressIdleMs
-        self.quicNoProgressAbsoluteMs = quicNoProgressAbsoluteMs
-        self.quicNoProgressMinClientDatagrams = quicNoProgressMinClientDatagrams
-        self.quicAuthorityRetryAttempts = quicAuthorityRetryAttempts
-        self.quicCertMaterialCacheTTLSeconds = quicCertMaterialCacheTTLSeconds
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-
-        let defaults = CaptureConfiguration.default
-        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? defaults.isEnabled
-        filterMode = try container.decodeIfPresent(FilterMode.self, forKey: .filterMode) ?? defaults.filterMode
-        domainFilters = try container.decodeIfPresent([String].self, forKey: .domainFilters) ?? defaults.domainFilters
-        captureHeaders = try container.decodeIfPresent(Bool.self, forKey: .captureHeaders) ?? defaults.captureHeaders
-        captureBody = try container.decodeIfPresent(Bool.self, forKey: .captureBody) ?? defaults.captureBody
-        maxBodySize = try container.decodeIfPresent(Int.self, forKey: .maxBodySize) ?? defaults.maxBodySize
-        captureMode = try container.decodeIfPresent(CaptureMode.self, forKey: .captureMode) ?? defaults.captureMode
-        fullTunnelDNSServers = try container.decodeIfPresent([String].self, forKey: .fullTunnelDNSServers)
-            ?? defaults.fullTunnelDNSServers
-        fullTunnelSearchDomains = try container.decodeIfPresent([String].self, forKey: .fullTunnelSearchDomains)
-            ?? defaults.fullTunnelSearchDomains
-        fullTunnelIPv6Enabled = try container.decodeIfPresent(Bool.self, forKey: .fullTunnelIPv6Enabled)
-            ?? defaults.fullTunnelIPv6Enabled
-        fullTunnelSocks5Host = try container.decodeIfPresent(String.self, forKey: .fullTunnelSocks5Host)
-            ?? defaults.fullTunnelSocks5Host
-        fullTunnelSocks5Port = try container.decodeIfPresent(UInt16.self, forKey: .fullTunnelSocks5Port)
-            ?? defaults.fullTunnelSocks5Port
-        fullTunnelUDPForwardingMode = try container.decodeIfPresent(UDPForwardingMode.self, forKey: .fullTunnelUDPForwardingMode)
-            ?? defaults.fullTunnelUDPForwardingMode
-        fullTunnelHybridTCPMITMEnabled = try container.decodeIfPresent(Bool.self, forKey: .fullTunnelHybridTCPMITMEnabled)
-            ?? defaults.fullTunnelHybridTCPMITMEnabled
-        dualMITMPolicy = try container.decodeIfPresent(DualMITMPolicy.self, forKey: .dualMITMPolicy)
-            ?? defaults.dualMITMPolicy
-        tcpBypassTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .tcpBypassTTLSeconds)
-            ?? defaults.tcpBypassTTLSeconds
-        quicHostFailOpenSeconds = try container.decodeIfPresent(Int.self, forKey: .quicHostFailOpenSeconds)
-            ?? defaults.quicHostFailOpenSeconds
-        dualMITMCircuitBreakerEnabled = try container.decodeIfPresent(Bool.self, forKey: .dualMITMCircuitBreakerEnabled)
-            ?? defaults.dualMITMCircuitBreakerEnabled
-        quicNoProgressGraceMs = try container.decodeIfPresent(Int.self, forKey: .quicNoProgressGraceMs)
-            ?? defaults.quicNoProgressGraceMs
-        quicNoProgressIdleMs = try container.decodeIfPresent(Int.self, forKey: .quicNoProgressIdleMs)
-            ?? defaults.quicNoProgressIdleMs
-        quicNoProgressAbsoluteMs = try container.decodeIfPresent(Int.self, forKey: .quicNoProgressAbsoluteMs)
-            ?? defaults.quicNoProgressAbsoluteMs
-        quicNoProgressMinClientDatagrams = try container.decodeIfPresent(Int.self, forKey: .quicNoProgressMinClientDatagrams)
-            ?? defaults.quicNoProgressMinClientDatagrams
-        quicAuthorityRetryAttempts = try container.decodeIfPresent(Int.self, forKey: .quicAuthorityRetryAttempts)
-            ?? defaults.quicAuthorityRetryAttempts
-        quicCertMaterialCacheTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .quicCertMaterialCacheTTLSeconds)
-            ?? defaults.quicCertMaterialCacheTTLSeconds
-        self = normalized()
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        let normalized = normalized()
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(normalized.isEnabled, forKey: .isEnabled)
-        try container.encode(normalized.filterMode, forKey: .filterMode)
-        try container.encode(normalized.domainFilters, forKey: .domainFilters)
-        try container.encode(normalized.captureHeaders, forKey: .captureHeaders)
-        try container.encode(normalized.captureBody, forKey: .captureBody)
-        try container.encode(normalized.maxBodySize, forKey: .maxBodySize)
-        try container.encode(normalized.captureMode, forKey: .captureMode)
-        try container.encode(normalized.fullTunnelDNSServers, forKey: .fullTunnelDNSServers)
-        try container.encode(normalized.fullTunnelSearchDomains, forKey: .fullTunnelSearchDomains)
-        try container.encode(normalized.fullTunnelIPv6Enabled, forKey: .fullTunnelIPv6Enabled)
-        try container.encode(normalized.fullTunnelSocks5Host, forKey: .fullTunnelSocks5Host)
-        try container.encode(normalized.fullTunnelSocks5Port, forKey: .fullTunnelSocks5Port)
-        try container.encode(normalized.fullTunnelUDPForwardingMode, forKey: .fullTunnelUDPForwardingMode)
-        try container.encode(normalized.fullTunnelHybridTCPMITMEnabled, forKey: .fullTunnelHybridTCPMITMEnabled)
-        try container.encode(normalized.dualMITMPolicy, forKey: .dualMITMPolicy)
-        try container.encode(normalized.tcpBypassTTLSeconds, forKey: .tcpBypassTTLSeconds)
-        try container.encode(normalized.quicHostFailOpenSeconds, forKey: .quicHostFailOpenSeconds)
-        try container.encode(normalized.dualMITMCircuitBreakerEnabled, forKey: .dualMITMCircuitBreakerEnabled)
-        try container.encode(normalized.quicNoProgressGraceMs, forKey: .quicNoProgressGraceMs)
-        try container.encode(normalized.quicNoProgressIdleMs, forKey: .quicNoProgressIdleMs)
-        try container.encode(normalized.quicNoProgressAbsoluteMs, forKey: .quicNoProgressAbsoluteMs)
-        try container.encode(normalized.quicNoProgressMinClientDatagrams, forKey: .quicNoProgressMinClientDatagrams)
-        try container.encode(normalized.quicAuthorityRetryAttempts, forKey: .quicAuthorityRetryAttempts)
-        try container.encode(normalized.quicCertMaterialCacheTTLSeconds, forKey: .quicCertMaterialCacheTTLSeconds)
-    }
-
-    public func normalized() -> CaptureConfiguration {
-        var normalizedConfig = self
-        normalizedConfig.normalizeInPlace()
-        return normalizedConfig
-    }
-
-    private mutating func normalizeInPlace() {
-        fullTunnelSocks5Host = fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
-        if fullTunnelSocks5Host.isEmpty {
-            fullTunnelSocks5Port = 0
-        }
-
-        fullTunnelDNSServers = Self.normalizedStringList(fullTunnelDNSServers)
-        fullTunnelSearchDomains = Self.normalizedStringList(fullTunnelSearchDomains)
-        tcpBypassTTLSeconds = max(30, min(86400, tcpBypassTTLSeconds))
-        quicHostFailOpenSeconds = max(60, min(86400, quicHostFailOpenSeconds))
-        quicNoProgressGraceMs = max(3000, min(20000, quicNoProgressGraceMs))
-        quicNoProgressIdleMs = max(3000, min(20000, quicNoProgressIdleMs))
-        quicNoProgressAbsoluteMs = max(8000, min(30000, quicNoProgressAbsoluteMs))
-        quicNoProgressMinClientDatagrams = max(1, min(8, quicNoProgressMinClientDatagrams))
-        quicAuthorityRetryAttempts = max(0, min(2, quicAuthorityRetryAttempts))
-        quicCertMaterialCacheTTLSeconds = max(60, min(86400, quicCertMaterialCacheTTLSeconds))
-
-        if captureMode.usesPacketTunnelRouting, fullTunnelDNSServers.isEmpty {
-            fullTunnelDNSServers = Self.defaultFullTunnelDNSServers
-        }
-    }
-
-    private static func normalizedStringList(_ values: [String]) -> [String] {
-        var seen = Set<String>()
-        var normalized: [String] = []
-        for value in values {
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            if seen.insert(trimmed).inserted {
-                normalized.append(trimmed)
-            }
-        }
-        return normalized
-    }
-}
-
-public enum FilterMode: String, Codable, Sendable {
-    case all // Capture everything
-    case whitelist // Only capture specified domains
-    case blacklist // Capture everything except specified domains
-}
-
-// MARK: - Storage Stats
-
-public struct StorageStats {
-    public let totalRequests: Int
-    public let totalSize: Int64
-
-    public var formattedSize: String {
-        ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
-    }
-}
-
-// MARK: - Errors
-
-public enum StorageError: LocalizedError, Equatable {
-    case containerNotFound
-    case databaseUnavailable
-    case encodingFailed
-    case decodingFailed
-    case fileNotFound
-
-    public var errorDescription: String? {
-        switch self {
-        case .containerNotFound:
-            "App Group container not found. Ensure App Group is configured in entitlements."
-        case .databaseUnavailable:
-            "Shared GRDB database is unavailable"
-        case .encodingFailed:
-            "Failed to encode data"
-        case .decodingFailed:
-            "Failed to decode data"
-        case .fileNotFound:
-            "File not found"
-        }
-    }
-}
-
-// MARK: - NetworkRequest Codable Extension
-
-extension NetworkRequest: Codable {
-    enum CodingKeys: String, CodingKey {
-        case id, url, method, requestMethodRaw, statusCode, statusMessage, timestamp, duration
-        case requestHeaders, responseHeaders, requestBody, responseBody, protocolVersion, sessionId
-        case capturePath, captureFlowID, capturePolicyModeRaw, captureMetadataVersion
-        case timingPhases, tlsInfo
-        case wasThrottled, throttlingProfile
-        case isDuplicate, duplicateOfRequestId
-        case isManual
-        case wasBlocked, wasCancelled, wasRewritten, isMocked, isReplayed
-        case appliedScriptName, hitBreakpoint, retryAttempts
-        case executionLog, executionErrors, appliedRuleIds
-        case contentType, contentEncoding, userAgent, cacheControl
-        case requestCookies, responseCookies
-        case queryParameters, authorization, tlsAlerts
-        case http2Streams, http2ConnectionInfo
-        case redirectChain
-        case curlExecutionMetadata
-    }
-
-    private enum LegacyCodingKeys: String, CodingKey {
-        case rawMethod
-        case curlMetadata
-    }
-
-    private struct QueryItemStorage: Codable {
-        let name: String
-        let value: String?
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-
-        self.id = try container.decode(UUID.self, forKey: .id)
-        self.url = try container.decode(String.self, forKey: .url)
-        self.method = try container.decode(HTTPMethod.self, forKey: .method)
-        self.requestMethodRaw = try container.decodeIfPresent(String.self, forKey: .requestMethodRaw)
-        self.statusCode = try container.decodeIfPresent(Int.self, forKey: .statusCode)
-        self.statusMessage = try container.decodeIfPresent(String.self, forKey: .statusMessage)
-        self.timestamp = try container.decode(Date.self, forKey: .timestamp)
-        self.duration = try container.decode(TimeInterval.self, forKey: .duration)
-        self.requestHeaders = try container.decode([TraceHTTPHeader].self, forKey: .requestHeaders)
-        self.responseHeaders = try container.decode([TraceHTTPHeader].self, forKey: .responseHeaders)
-
-        // Support legacy String? format for backward compatibility
-        // Use try? to handle type mismatches (when it's actually a BodyStorage dictionary)
-        if let bodyString = try? container.decode(String.self, forKey: .requestBody) {
-            self.requestBody = BodyStorage.fromLegacyString(bodyString)
-        } else {
-            self.requestBody = try container.decodeIfPresent(BodyStorage.self, forKey: .requestBody) ?? .empty
-        }
-
-        if let bodyString = try? container.decode(String.self, forKey: .responseBody) {
-            self.responseBody = BodyStorage.fromLegacyString(bodyString)
-        } else {
-            self.responseBody = try container.decodeIfPresent(BodyStorage.self, forKey: .responseBody) ?? .empty
-        }
-
-        self.protocolVersion = try container.decodeIfPresent(HTTPProtocolVersion.self, forKey: .protocolVersion)
-        if let capturePathRaw = (try? container.decodeIfPresent(String.self, forKey: .capturePath)) ?? nil,
-           let parsedCapturePath = NetworkCapturePath(rawValue: capturePathRaw) {
-            self.capturePath = parsedCapturePath
-        } else {
-            self.capturePath = .unknown
-        }
-        self.captureFlowID = Self.decodeLossyUInt64(from: container, forKey: .captureFlowID)
-        self.capturePolicyModeRaw = Self.decodeLossyUInt8(from: container, forKey: .capturePolicyModeRaw)
-        self.captureMetadataVersion = Self.decodeLossyUInt8(from: container, forKey: .captureMetadataVersion)
-        self.sessionId = try container.decodeIfPresent(UUID.self, forKey: .sessionId)
-
-        self.timingPhases = try container.decodeIfPresent(NetworkTimingPhases.self, forKey: .timingPhases)
-        self.tlsInfo = try container.decodeIfPresent(TLSConnectionInfo.self, forKey: .tlsInfo)
-        self.wasThrottled = try container.decodeIfPresent(Bool.self, forKey: .wasThrottled) ?? false
-        self.throttlingProfile = try container.decodeIfPresent(String.self, forKey: .throttlingProfile)
-        self.isDuplicate = try container.decodeIfPresent(Bool.self, forKey: .isDuplicate) ?? false
-        self.duplicateOfRequestId = try container.decodeIfPresent(UUID.self, forKey: .duplicateOfRequestId)
-        self.isManual = try container.decodeIfPresent(Bool.self, forKey: .isManual) ?? false
-        self.wasBlocked = try container.decodeIfPresent(Bool.self, forKey: .wasBlocked) ?? false
-        self.wasCancelled = try container.decodeIfPresent(Bool.self, forKey: .wasCancelled) ?? false
-        self.wasRewritten = try container.decodeIfPresent(Bool.self, forKey: .wasRewritten) ?? false
-        self.isMocked = try container.decodeIfPresent(Bool.self, forKey: .isMocked) ?? false
-        self.isReplayed = try container.decodeIfPresent(Bool.self, forKey: .isReplayed) ?? false
-        self.appliedScriptName = try container.decodeIfPresent(String.self, forKey: .appliedScriptName)
-        self.hitBreakpoint = try container.decodeIfPresent(Bool.self, forKey: .hitBreakpoint) ?? false
-        self.retryAttempts = try container.decodeIfPresent(Int.self, forKey: .retryAttempts) ?? 0
-        self.executionLog = try container.decodeIfPresent([ExecutionLogEntry].self, forKey: .executionLog) ?? []
-        self.executionErrors = try container.decodeIfPresent([ExecutionError].self, forKey: .executionErrors) ?? []
-        self.appliedRuleIds = try container.decodeIfPresent([UUID].self, forKey: .appliedRuleIds) ?? []
-        self.contentType = try container.decodeIfPresent(String.self, forKey: .contentType)
-        self.contentEncoding = try container.decodeIfPresent(String.self, forKey: .contentEncoding)
-        self.userAgent = try container.decodeIfPresent(String.self, forKey: .userAgent)
-        self.cacheControl = try container.decodeIfPresent(String.self, forKey: .cacheControl)
-        self.requestCookies = try container.decodeIfPresent([HTTPCookie].self, forKey: .requestCookies)
-        self.responseCookies = try container.decodeIfPresent([HTTPCookie].self, forKey: .responseCookies)
-        if let storedQueryItems = try container.decodeIfPresent([QueryItemStorage].self, forKey: .queryParameters) {
-            self.queryParameters = storedQueryItems.map { URLQueryItem(name: $0.name, value: $0.value) }
-        } else {
-            self.queryParameters = nil
-        }
-        self.authorization = try container.decodeIfPresent(String.self, forKey: .authorization)
-        self.tlsAlerts = try container.decodeIfPresent([TLSAlertMessage].self, forKey: .tlsAlerts)
-        self.http2Streams = try container.decodeIfPresent([HTTP2StreamInfo].self, forKey: .http2Streams)
-        self.http2ConnectionInfo = try container.decodeIfPresent(HTTP2ConnectionInfo.self, forKey: .http2ConnectionInfo)
-        self.redirectChain = try container.decodeIfPresent([RedirectInfo].self, forKey: .redirectChain) ?? []
-        self.curlExecutionMetadata = try container.decodeIfPresent(CurlExecutionMetadata.self, forKey: .curlExecutionMetadata)
-
-        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
-        if self.requestMethodRaw == nil {
-            self.requestMethodRaw = try legacyContainer.decodeIfPresent(String.self, forKey: .rawMethod)
-        }
-        if self.curlExecutionMetadata == nil {
-            // Accept either legacy CurlRequestMetadata ("options") or legacy-keyed
-            // CurlExecutionMetadata ("effectiveOptions") payloads.
-            if let legacyExecution = try? legacyContainer.decode(CurlExecutionMetadata.self, forKey: .curlMetadata) {
-                self.curlExecutionMetadata = legacyExecution
-            } else if let legacyMetadata = try? legacyContainer.decode(CurlRequestMetadata.self, forKey: .curlMetadata) {
-                self.curlExecutionMetadata = legacyMetadata.asExecutionMetadata
-            }
-        }
-    }
-
-    private static func decodeLossyUInt64(
-        from container: KeyedDecodingContainer<CodingKeys>,
-        forKey key: CodingKeys
-    ) -> UInt64? {
-        if let value = (try? container.decodeIfPresent(UInt64.self, forKey: key)) ?? nil {
-            return value
-        }
-        if let value = (try? container.decodeIfPresent(Int.self, forKey: key)) ?? nil,
-           value >= 0 {
-            return UInt64(value)
-        }
-        return nil
-    }
-
-    private static func decodeLossyUInt8(
-        from container: KeyedDecodingContainer<CodingKeys>,
-        forKey key: CodingKeys
-    ) -> UInt8? {
-        if let value = (try? container.decodeIfPresent(UInt8.self, forKey: key)) ?? nil {
-            return value
-        }
-        if let value = (try? container.decodeIfPresent(Int.self, forKey: key)) ?? nil,
-           (0 ... 255).contains(value) {
-            return UInt8(value)
-        }
-        return nil
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-
-        try container.encode(id, forKey: .id)
-        try container.encode(url, forKey: .url)
-        try container.encode(method, forKey: .method)
-        try container.encodeIfPresent(requestMethodRaw, forKey: .requestMethodRaw)
-        try container.encodeIfPresent(statusCode, forKey: .statusCode)
-        try container.encodeIfPresent(statusMessage, forKey: .statusMessage)
-        try container.encode(timestamp, forKey: .timestamp)
-        try container.encode(duration, forKey: .duration)
-        try container.encode(requestHeaders, forKey: .requestHeaders)
-        try container.encode(responseHeaders, forKey: .responseHeaders)
-        try container.encode(requestBody, forKey: .requestBody)
-        try container.encode(responseBody, forKey: .responseBody)
-        try container.encodeIfPresent(protocolVersion, forKey: .protocolVersion)
-        try container.encode(capturePath.rawValue, forKey: .capturePath)
-        try container.encodeIfPresent(captureFlowID, forKey: .captureFlowID)
-        try container.encodeIfPresent(capturePolicyModeRaw, forKey: .capturePolicyModeRaw)
-        try container.encodeIfPresent(captureMetadataVersion, forKey: .captureMetadataVersion)
-        try container.encodeIfPresent(sessionId, forKey: .sessionId)
-        try container.encodeIfPresent(timingPhases, forKey: .timingPhases)
-        try container.encodeIfPresent(tlsInfo, forKey: .tlsInfo)
-        try container.encode(wasThrottled, forKey: .wasThrottled)
-        try container.encodeIfPresent(throttlingProfile, forKey: .throttlingProfile)
-        try container.encode(isDuplicate, forKey: .isDuplicate)
-        try container.encodeIfPresent(duplicateOfRequestId, forKey: .duplicateOfRequestId)
-        try container.encode(isManual, forKey: .isManual)
-        try container.encode(wasBlocked, forKey: .wasBlocked)
-        try container.encode(wasCancelled, forKey: .wasCancelled)
-        try container.encode(wasRewritten, forKey: .wasRewritten)
-        try container.encode(isMocked, forKey: .isMocked)
-        try container.encode(isReplayed, forKey: .isReplayed)
-        try container.encodeIfPresent(appliedScriptName, forKey: .appliedScriptName)
-        try container.encode(hitBreakpoint, forKey: .hitBreakpoint)
-        try container.encode(retryAttempts, forKey: .retryAttempts)
-        try container.encode(executionLog, forKey: .executionLog)
-        try container.encode(executionErrors, forKey: .executionErrors)
-        try container.encode(appliedRuleIds, forKey: .appliedRuleIds)
-        try container.encodeIfPresent(contentType, forKey: .contentType)
-        try container.encodeIfPresent(contentEncoding, forKey: .contentEncoding)
-        try container.encodeIfPresent(userAgent, forKey: .userAgent)
-        try container.encodeIfPresent(cacheControl, forKey: .cacheControl)
-        try container.encodeIfPresent(requestCookies, forKey: .requestCookies)
-        try container.encodeIfPresent(responseCookies, forKey: .responseCookies)
-        let storedQueryItems = queryParameters?.map { QueryItemStorage(name: $0.name, value: $0.value) }
-        try container.encodeIfPresent(storedQueryItems, forKey: .queryParameters)
-        try container.encodeIfPresent(authorization, forKey: .authorization)
-        try container.encodeIfPresent(tlsAlerts, forKey: .tlsAlerts)
-        try container.encodeIfPresent(http2Streams, forKey: .http2Streams)
-        try container.encodeIfPresent(http2ConnectionInfo, forKey: .http2ConnectionInfo)
-        try container.encode(redirectChain, forKey: .redirectChain)
-        try container.encodeIfPresent(curlExecutionMetadata, forKey: .curlExecutionMetadata)
-    }
-}
-
-extension HTTPMethod: Codable {}
-
-// MARK: - Notification Observer Helper
-
-/// Helper class to properly manage CFNotificationCenter observer lifecycle
-public class NotificationObserver {
-    private let lock = NSLock()
-    private var observer: UnsafeMutableRawPointer?
-    private var handler: (@Sendable () -> Void)?
-    private var notificationName: CFString?
-
-    public func stop() {
-        lock.lock()
-        let observer = observer
-        let notificationName = notificationName
-        self.observer = nil
-        self.notificationName = nil
-        handler = nil
-        lock.unlock()
-
-        guard let observer, let notificationName else { return }
-        CFNotificationCenterRemoveObserver(
-            CFNotificationCenterGetDarwinNotifyCenter(),
-            observer,
-            CFNotificationName(notificationName),
-            nil
-        )
-        Unmanaged<NotificationObserver>.fromOpaque(observer).release()
-    }
-
-    public func observe(notificationName: String, handler: @escaping @Sendable () -> Void) {
-        stop()
-
-        lock.lock()
-        self.handler = handler
-        self.notificationName = notificationName as CFString
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        lock.unlock()
-
-        // Use a weak reference pattern
-        let callback: CFNotificationCallback = { _, observer, _, _, _ in
-            guard let observer else { return }
-            let instance = Unmanaged<NotificationObserver>.fromOpaque(observer).takeUnretainedValue()
-            let handler = instance.handler
-            DispatchQueue.main.async {
-                handler?()
-            }
-        }
-
-        lock.lock()
-        self.observer = Unmanaged.passRetained(self).toOpaque()
-        let observer = self.observer
-        let name = self.notificationName
-        lock.unlock()
-        CFNotificationCenterAddObserver(
-            center,
-            observer,
-            callback,
-            name,
-            nil,
-            .deliverImmediately
-        )
-    }
-
-    deinit {
-        stop()
-    }
-}
-
-public final class AppGroupStorageObserverToken: @unchecked Sendable {
-    private var cancelHandler: (() -> Void)?
-    private let cancelLock = NSLock()
-
-    public init(_ cancelHandler: @escaping () -> Void) {
-        self.cancelHandler = cancelHandler
-    }
-
-    public func cancel() {
-        cancelLock.lock()
-        let handler = cancelHandler
-        cancelHandler = nil
-        cancelLock.unlock()
-        handler?()
-    }
-
-    deinit {
-        cancel()
     }
 }

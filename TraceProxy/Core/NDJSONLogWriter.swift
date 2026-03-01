@@ -12,8 +12,8 @@ import TraceCore
 /// Represents a single NDJSON log event stored as one JSON object per line.
 public struct NDJSONLogEvent: Codable {
     public let ts: Double
-    public let type: String
     public let msg: String
+    public let type: String
 }
 
 /// Writes an append-only NDJSON log backed by a file in the app group container.
@@ -31,6 +31,10 @@ public final class NDJSONLogWriter {
     private var bufferedEventCount = 0
     private var scheduledFlush: DispatchWorkItem?
     private static let newline = Data([0x0A])
+    private static let prefixData = Data("{\"ts\":".utf8)
+    private static let messageKeyData = Data(",\"msg\":".utf8)
+    private static let typeKeyData = Data(",\"type\":".utf8)
+    private static let suffixData = Data("}".utf8)
 
     init(
         logFileURL: URL,
@@ -63,8 +67,38 @@ public final class NDJSONLogWriter {
         DispatchQueue.getSpecific(key: queueKey) != nil
     }
 
+    private func jsonStringLiteral(_ value: String) throws -> Data {
+        try encoder.encode(value)
+    }
+
+    private func jsonNumberLiteral(_ value: Double) throws -> Data {
+        try encoder.encode(value)
+    }
+
     private func encodedLine(for event: NDJSONLogEvent) throws -> Data {
-        var data = try encoder.encode(event)
+        let tsData = try jsonNumberLiteral(event.ts)
+        let msgData = try jsonStringLiteral(event.msg)
+        let typeData = try jsonStringLiteral(event.type)
+
+        // Keep a stable field order across all NDJSON lines: ts, msg, type.
+        var data = Data()
+        data.reserveCapacity(
+            Self.prefixData.count +
+                tsData.count +
+                Self.messageKeyData.count +
+                msgData.count +
+                Self.typeKeyData.count +
+                typeData.count +
+                Self.suffixData.count +
+                Self.newline.count
+        )
+        data.append(Self.prefixData)
+        data.append(tsData)
+        data.append(Self.messageKeyData)
+        data.append(msgData)
+        data.append(Self.typeKeyData)
+        data.append(typeData)
+        data.append(Self.suffixData)
         data.append(Self.newline)
         return data
     }
@@ -117,7 +151,7 @@ public final class NDJSONLogWriter {
     /// Enqueues a log event append.
     /// - Note: This is best-effort and logs on failure; it does not throw.
     public func append(type: String, msg: String) {
-        let event = NDJSONLogEvent(ts: Date().timeIntervalSince1970, type: type, msg: msg)
+        let event = NDJSONLogEvent(ts: Date().timeIntervalSince1970, msg: msg, type: type)
         queue.async { [weak self] in
             guard let self, let h = self.handle else { return }
             do {
@@ -135,7 +169,7 @@ public final class NDJSONLogWriter {
     /// Rationale: Use this for critical lifecycle events (e.g. tunnel stop) to avoid losing
     /// the final log lines if the extension exits immediately after completion.
     public func appendSync(type: String, msg: String) {
-        let event = NDJSONLogEvent(ts: Date().timeIntervalSince1970, type: type, msg: msg)
+        let event = NDJSONLogEvent(ts: Date().timeIntervalSince1970, msg: msg, type: type)
         let writeBlock = { [weak self] in
             guard let self, let h = self.handle else { return }
             do {

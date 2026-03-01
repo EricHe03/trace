@@ -967,6 +967,7 @@ struct FullTunnelSelfCheckView: View {
 }
 
 private struct VPNEventLine: Decodable {
+    let ts: Double
     let type: String
     let msg: String
 }

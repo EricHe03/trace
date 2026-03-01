@@ -1,6 +1,6 @@
 # Trace
 
-An iOS network debugger for capturing and inspecting HTTP(S), WebSocket, and SSE traffic.
+An iOS network debugger for capturing and inspecting HTTP(S), WebSocket, SSE, and QUIC/HTTP3 traffic.
 
 ![Swift](https://img.shields.io/badge/Swift-6%20toolchain-orange)
 ![Platform](https://img.shields.io/badge/platform-iOS%2016.0%2B-blue)
@@ -33,10 +33,10 @@ Trace is built as a local Network Extension packet tunnel with on-device TLS MIT
 - Runtime foundation: shared NIOTS event-loop + AsyncHTTPClient lifecycle via `TraceCore/Networking/NIORuntime.swift`.
 - Request execution path: `TraceFeatures/Request/RequestExecutor.swift` uses AsyncHTTPClient transport abstraction (API unchanged for `execute/replay/get/post`).
 - Proxy/MITM path: `TraceProxy/MITM/MITMProxyServer.swift` delegates to NIO engine `TraceProxy/MITM/NIOMITMProxyEngine.swift` (HTTP/1.1 codec, HTTP/2 stream handling, NIOSSL MITM TLS).
+- QUIC/HTTP3 path: `TraceQUIC` provides HTTP3 client and MITM session orchestration, backed by `CQuicheFFI` and `build/quiche` artifacts produced by `Tools/QUIC`.
 - Proxy ingress: explicit proxy CONNECT handling remains default, with optional transparent TLS ClientHello ingress mode preserved behind runtime config.
 - VPN path: SOCKS5 + UDP forwarding in `TraceVPN/Providers/LocalSocks5Server.swift`, `TraceVPN/UDP/UDPForwarder.swift`, and UDP probe in `TraceVPN/Providers/HevSocks5TunnelForwarder.swift` run on NIOTS/NIO.
 - Intentional exception: app-originated capture through `Trace/NetworkInterceptor.swift` remains URLProtocol-based.
-- Removed legacy runtime/parser stack: `TraceCurlRuntime`, vendored curl artifacts, and custom HTTP/1.1/HTTP/2/WebSocket parser modules.
 
 ## Requirements
 
@@ -112,38 +112,40 @@ Trace/
 ├── TraceCompression/       # Brotli, Deflate, Zstd decoding
 ├── TraceNetworking/        # DNS parsing and shared networking diagnostics utilities
 ├── TraceSecurity/          # Certificate and TLS handling
+├── TraceQUIC/              # QUIC/HTTP3 client and MITM pipeline
 ├── TraceProxy/             # MITM proxy and capture pipeline
 ├── TracePacket/            # Packet parsing and TCP/UDP reassembly
 ├── TraceFeatures/          # Feature modules (VPN, export, scripting, cleanup, etc.)
 ├── TraceUI/                # Shared UI components/utilities
 ├── TraceTests/             # Unit tests
 ├── TraceUITests/           # UI tests
-└── ThirdParty/hev-socks5-tunnel/  # Git submodule: tun2socks for full-tunnel forwarding
+├── ThirdParty/quiche/      # Git submodule: QUIC/HTTP3 implementation
+├── ThirdParty/hev-socks5-tunnel/  # Git submodule: tun2socks for full-tunnel forwarding
+└── Tools/QUIC/             # quiche build/verification scripts
 ```
 
 ## Testing
 
-- Xcode: run the `Trace` scheme tests (`Cmd+U`).
-- CLI example:
+Run the same commands used by CI:
 
 ```bash
-xcodebuild test \
-  -project Trace.xcodeproj \
-  -scheme Trace \
-  -testPlan Trace \
-  -destination 'platform=iOS Simulator,name=<Your Simulator Name>'
-```
+xcodebuild -project Trace.xcodeproj -scheme Trace -configuration Debug -sdk iphonesimulator \
+  -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' build-for-testing
 
-- Format check:
+xcodebuild -project Trace.xcodeproj -scheme Trace -configuration Debug -sdk iphonesimulator \
+  -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' test-without-building
+```
 
 ```bash
 swiftformat --lint . --config .swiftformat
+swiftlint lint --strict --config .swiftlint.yml
 ```
 
-- Lint check:
+For QUIC toolchain changes, also run:
 
 ```bash
-swiftlint lint --strict --config .swiftlint.yml
+./Tools/QUIC/build_quiche_apple.sh
+./Tools/QUIC/verify_quiche_symbols.sh build/quiche/quiche.xcframework
 ```
 
 ## Limitations
@@ -155,7 +157,7 @@ swiftlint lint --strict --config .swiftlint.yml
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and PR guidance, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for participation standards.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and PR guidance, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for participation standards. Commit messages follow Conventional Commits (`type(scope): summary`).
 
 ## Security
 

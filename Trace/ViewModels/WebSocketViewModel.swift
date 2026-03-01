@@ -18,7 +18,13 @@ final class WebSocketViewModel: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private var storageObserverToken: AppGroupStorageObserverToken?
 
-    @Published var connections: [WebSocketConnection] = []
+    @Published var connections: [WebSocketConnection] = [] {
+        didSet {
+            connectionsChangeToken &+= 1
+        }
+    }
+
+    @Published private(set) var connectionsChangeToken: UInt64 = 0
     @Published var searchText: String = ""
     @Published var filterStatus: WebSocketConnectionStatus?
 

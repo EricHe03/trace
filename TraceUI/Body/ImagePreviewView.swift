@@ -11,10 +11,21 @@ import UIKit
 /// Presents a full-screen image preview using standard iOS preview UI (Quick Look) when possible.
 public struct ImagePreviewView: View {
     public let imageData: Data
+    public let preferredFilename: String?
+    public let contentType: String?
+    public let title: String
     @Environment(\.dismiss) private var dismiss: DismissAction
 
-    public init(imageData: Data) {
+    public init(
+        imageData: Data,
+        preferredFilename: String? = nil,
+        contentType: String? = nil,
+        title: String = "Image"
+    ) {
         self.imageData = imageData
+        self.preferredFilename = preferredFilename
+        self.contentType = contentType
+        self.title = title
     }
 
     private var isSVG: Bool {
@@ -31,7 +42,7 @@ public struct ImagePreviewView: View {
                 SVGPreviewView(svgData: imageData, isScrollable: true)
                     .background(Color.black)
             } else if let tempURL {
-                QuickLookPreviewController(url: tempURL, title: "Image") {
+                QuickLookPreviewController(url: tempURL, title: title) {
                     dismiss()
                 }
             } else if let prepareError {
@@ -68,9 +79,17 @@ public struct ImagePreviewView: View {
         }
 
         let data = imageData
+        let preferredFilename = preferredFilename
+        let contentType = contentType
+        let defaultBasename = title
         do {
             let url = try await Task.detached(priority: .userInitiated) {
-                try ImagePreviewTempFile.write(data: data)
+                try ImagePreviewTempFile.write(
+                    data: data,
+                    preferredFilename: preferredFilename,
+                    contentType: contentType,
+                    defaultBasename: defaultBasename
+                )
             }.value
             await MainActor.run {
                 tempURL = url

@@ -12,6 +12,7 @@ import UIKit
 /// Presents request/response body data with mode switching and type-aware rendering.
 public struct BodyInspectorView: View {
     public let title: String
+    public var headerSystemImage: String?
     public let content: String
     public var contentType: String?
     public var rawData: Data?
@@ -21,12 +22,12 @@ public struct BodyInspectorView: View {
     public var onShare: (() -> Void)?
 
     @State private var viewMode: ViewMode = .auto
-    @State private var showingImagePreview = false
-    @State private var previewImageData: Data?
+    @State private var previewImageItem: PreviewImageItem?
     @State private var showingFullViewer = false
 
     public init(
         title: String,
+        headerSystemImage: String? = "doc.text",
         content: String,
         contentType: String? = nil,
         rawData: Data? = nil,
@@ -36,6 +37,7 @@ public struct BodyInspectorView: View {
         onShare: (() -> Void)? = nil
     ) {
         self.title = title
+        self.headerSystemImage = headerSystemImage
         self.content = content
         self.contentType = contentType
         self.rawData = rawData
@@ -56,7 +58,7 @@ public struct BodyInspectorView: View {
     }
 
     public var body: some View {
-        SectionCard(title: title, systemImage: "doc.text") {
+        SectionCard(title: title, systemImage: headerSystemImage) {
             VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
                 metadataRow
                 viewModePicker
@@ -64,10 +66,13 @@ public struct BodyInspectorView: View {
                 contentArea
             }
         }
-        .sheet(isPresented: $showingImagePreview) {
-            if let previewImageData {
-                ImagePreviewView(imageData: previewImageData)
-            }
+        .sheet(item: $previewImageItem) { item in
+            ImagePreviewView(
+                imageData: item.data,
+                preferredFilename: item.filename,
+                contentType: item.contentType,
+                title: item.title
+            )
         }
         .sheet(isPresented: $showingFullViewer) {
             fullViewerSheet
@@ -246,8 +251,12 @@ public struct BodyInspectorView: View {
         } else if let imageData = imageDataFromContent,
                   let uiImage = UIImage(data: imageData) {
             Button {
-                previewImageData = imageData
-                showingImagePreview = true
+                previewImageItem = PreviewImageItem(
+                    data: imageData,
+                    filename: fileName,
+                    contentType: contentType,
+                    title: fileName ?? "Image"
+                )
             } label: {
                 Image(uiImage: uiImage)
                     .resizable()
@@ -360,7 +369,12 @@ public struct BodyInspectorView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(DesignSystem.Colors.surface)
         } else if let data = imageDataFromContent {
-            ImagePreviewView(imageData: data)
+            ImagePreviewView(
+                imageData: data,
+                preferredFilename: fileName,
+                contentType: contentType,
+                title: fileName ?? "Image"
+            )
         } else if let image = imageFromContent {
             Image(uiImage: image)
                 .resizable()
@@ -533,5 +547,13 @@ public struct BodyInspectorView: View {
 
     private var svgData: Data? {
         SVGPreviewHelper.svgData(from: content, contentType: contentType)
+    }
+
+    private struct PreviewImageItem: Identifiable {
+        let id = UUID()
+        let data: Data
+        let filename: String?
+        let contentType: String?
+        let title: String
     }
 }

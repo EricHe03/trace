@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 enum ImagePreviewTempFile {
     static func write(
@@ -44,8 +46,12 @@ enum ImagePreviewTempFile {
             return ext
         }
 
+        if let ext = fileExtension(fromImageData: data) {
+            return ext
+        }
+
         // Magic-number sniffing (kept intentionally small).
-        guard data.count >= 12 else { return "img" }
+        guard data.count >= 12 else { return "png" }
         let bytes = [UInt8](data.prefix(16))
 
         // PNG: 89 50 4E 47
@@ -76,7 +82,7 @@ enum ImagePreviewTempFile {
             if ["avif", "avis"].contains(brand) { return "avif" }
         }
 
-        return "img"
+        return "png"
     }
 
     private static func fileExtension(fromContentType contentType: String) -> String? {
@@ -84,6 +90,11 @@ enum ImagePreviewTempFile {
 
         // Strip charset/boundary parameters.
         let typeOnly = lower.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? lower
+
+        if let type = UTType(mimeType: typeOnly),
+           let ext = type.preferredFilenameExtension {
+            return ext
+        }
 
         switch typeOnly {
         case "image/png":
@@ -104,8 +115,20 @@ enum ImagePreviewTempFile {
             return "bmp"
         case "image/tiff":
             return "tiff"
+        case "image/x-icon", "image/vnd.microsoft.icon":
+            return "ico"
+        case "image/x-ms-bmp":
+            return "bmp"
         default:
             return nil
         }
+    }
+
+    private static func fileExtension(fromImageData data: Data) -> String? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let typeIdentifier = CGImageSourceGetType(source) as String? else {
+            return nil
+        }
+        return UTType(typeIdentifier)?.preferredFilenameExtension
     }
 }
