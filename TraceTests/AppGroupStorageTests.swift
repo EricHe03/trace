@@ -416,6 +416,26 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(incremental.last?.id, second.id)
     }
 
+    func testLoadTransportRequestsNewerThanWithZeroLimitReturnsNothing() throws {
+        let anchor = Date(timeIntervalSinceNow: -120)
+        let first = createMockTransportRequest(
+            timestamp: Date(timeIntervalSinceNow: -20),
+            sourcePort: 55201,
+            destinationPort: 53
+        )
+        let second = createMockTransportRequest(
+            timestamp: Date(),
+            sourcePort: 55202,
+            destinationPort: 123
+        )
+
+        try storage.saveTransportRequests([first, second])
+
+        let incremental = try storage.loadTransportRequests(newerThan: anchor, limit: 0)
+
+        XCTAssertTrue(incremental.isEmpty)
+    }
+
     func testClearAllTransportRequests() throws {
         try storage.saveTransportRequest(createMockTransportRequest(destinationPort: 53))
         try storage.saveTransportRequest(createMockTransportRequest(destinationPort: 161))
@@ -534,6 +554,36 @@ final class AppGroupStorageTests: XCTestCase {
         let loaded = storage.loadMITMAllowlist()
 
         XCTAssertEqual(loaded, ["example.com", "*.api.example.com"])
+    }
+
+    func testReplaceMITMAutoBypassEntriesAllowsSameHostForDirectAndAlias() throws {
+        let host = "203.0.113.42"
+        let now = Date()
+        let entries = [
+            MITMAutoBypassStoredEntry(
+                host: host,
+                reason: "direct-host",
+                createdAt: now,
+                expiresAt: now.addingTimeInterval(600),
+                isAlias: false
+            ),
+            MITMAutoBypassStoredEntry(
+                host: host,
+                reason: "alias-host",
+                createdAt: now.addingTimeInterval(1),
+                expiresAt: now.addingTimeInterval(600),
+                isAlias: true
+            )
+        ]
+
+        try storage.replaceMITMAutoBypassEntries(entries)
+        let loaded = storage
+            .loadMITMAutoBypassEntries()
+            .filter { $0.host == host }
+
+        XCTAssertEqual(loaded.count, 2)
+        XCTAssertEqual(Set(loaded.map(\.isAlias)), Set([false, true]))
+        XCTAssertEqual(Set(loaded.map(\.reason)), Set(["direct-host", "alias-host"]))
     }
 
     func testSaveAndLoadThrottlingState() throws {

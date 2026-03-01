@@ -37,6 +37,7 @@ let externalDependencies: [Package.Dependency] = [
     .package(url: "https://github.com/apple/swift-certificates.git", exact: "1.17.1"),
     .package(url: "https://github.com/apple/swift-asn1.git", exact: "1.5.1"),
     .package(url: "https://github.com/facebook/zstd.git", exact: "1.5.7"),
+    .package(url: "https://github.com/groue/GRDB.swift.git", from: "6.0.0"),
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
     .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.0.0"),
     .package(url: "https://github.com/apple/swift-nio-transport-services.git", from: "1.0.0"),
@@ -108,6 +109,7 @@ let traceCompressionDependencies: [Target.Dependency] = [
 
 let traceCoreDependencies: [Target.Dependency] = [
     "TraceCompression",
+    .product(name: "GRDB", package: "GRDB.swift"),
     .product(name: "AsyncHTTPClient", package: "async-http-client"),
     .product(name: "NIOCore", package: "swift-nio"),
     .product(name: "NIOTransportServices", package: "swift-nio-transport-services")

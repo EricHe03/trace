@@ -200,16 +200,7 @@ final class MITMAutoBypassCacheTests: XCTestCase {
     }
 
     func testPersistedEntriesAreLoadedByNewInstance() {
-        // Given
-        let suiteName = "MITMAutoBypassCacheTests.\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            XCTFail("Failed to create test defaults suite")
-            return
-        }
-        defaults.removePersistentDomain(forName: suiteName)
-
         let writer = MITMAutoBypassCache(
-            defaults: defaults,
             ttl: 3600,
             nowProvider: { Date(timeIntervalSince1970: 1000) }
         )
@@ -218,7 +209,6 @@ final class MITMAutoBypassCacheTests: XCTestCase {
 
         // When
         let reader = MITMAutoBypassCache(
-            defaults: defaults,
             ttl: 3600,
             nowProvider: { Date(timeIntervalSince1970: 1100) }
         )
@@ -228,20 +218,10 @@ final class MITMAutoBypassCacheTests: XCTestCase {
         XCTAssertEqual(reader.reason(host: "persisted.example.com"), "pinning")
 
         reader.clear()
-        defaults.removePersistentDomain(forName: suiteName)
     }
 
     func testLegacyQUICReasonsArePrunedOnLoad() {
-        // Given
-        let suiteName = "MITMAutoBypassCacheTests.\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            XCTFail("Failed to create test defaults suite")
-            return
-        }
-        defaults.removePersistentDomain(forName: suiteName)
-
         let writer = MITMAutoBypassCache(
-            defaults: defaults,
             ttl: 3600,
             nowProvider: { Date(timeIntervalSince1970: 1000) }
         )
@@ -251,7 +231,6 @@ final class MITMAutoBypassCacheTests: XCTestCase {
 
         // When
         let reader = MITMAutoBypassCache(
-            defaults: defaults,
             ttl: 3600,
             nowProvider: { Date(timeIntervalSince1970: 1100) }
         )
@@ -263,20 +242,10 @@ final class MITMAutoBypassCacheTests: XCTestCase {
         XCTAssertEqual(reader.reason(host: "tcp.example.com"), "pinning requirements")
 
         reader.clear()
-        defaults.removePersistentDomain(forName: suiteName)
     }
 
     func testResolvedIPAliasesAreBypassed() {
-        // Given
-        let suiteName = "MITMAutoBypassCacheTests.\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            XCTFail("Failed to create test defaults suite")
-            return
-        }
-        defaults.removePersistentDomain(forName: suiteName)
-
         let cache = MITMAutoBypassCache(
-            defaults: defaults,
             ttl: 3600,
             nowProvider: { Date(timeIntervalSince1970: 1000) },
             aliasResolver: { host in
@@ -299,20 +268,10 @@ final class MITMAutoBypassCacheTests: XCTestCase {
         XCTAssertEqual(cache.reason(host: "[2001:db8::10]"), "pinning")
 
         cache.clear()
-        defaults.removePersistentDomain(forName: suiteName)
     }
 
     func testPersistedAliasesAreLoadedByNewInstance() {
-        // Given
-        let suiteName = "MITMAutoBypassCacheTests.\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            XCTFail("Failed to create test defaults suite")
-            return
-        }
-        defaults.removePersistentDomain(forName: suiteName)
-
         let writer = MITMAutoBypassCache(
-            defaults: defaults,
             ttl: 3600,
             nowProvider: { Date(timeIntervalSince1970: 1000) },
             aliasResolver: { host in
@@ -325,7 +284,6 @@ final class MITMAutoBypassCacheTests: XCTestCase {
 
         // When
         let reader = MITMAutoBypassCache(
-            defaults: defaults,
             ttl: 3600,
             nowProvider: { Date(timeIntervalSince1970: 1100) },
             aliasResolver: { _ in [] },
@@ -338,20 +296,10 @@ final class MITMAutoBypassCacheTests: XCTestCase {
         XCTAssertEqual(reader.reason(host: "203.0.113.20"), "pinning")
 
         reader.clear()
-        defaults.removePersistentDomain(forName: suiteName)
     }
 
     func testExpiredPersistedEntriesArePrunedOnLoad() {
-        // Given
-        let suiteName = "MITMAutoBypassCacheTests.\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            XCTFail("Failed to create test defaults suite")
-            return
-        }
-        defaults.removePersistentDomain(forName: suiteName)
-
         let writer = MITMAutoBypassCache(
-            defaults: defaults,
             ttl: 10,
             nowProvider: { Date(timeIntervalSince1970: 1000) }
         )
@@ -360,7 +308,6 @@ final class MITMAutoBypassCacheTests: XCTestCase {
 
         // When
         let reader = MITMAutoBypassCache(
-            defaults: defaults,
             ttl: 10,
             nowProvider: { Date(timeIntervalSince1970: 2000) }
         )
@@ -370,7 +317,6 @@ final class MITMAutoBypassCacheTests: XCTestCase {
         XCTAssertNil(reader.reason(host: "expired.example.com"))
 
         reader.clear()
-        defaults.removePersistentDomain(forName: suiteName)
     }
 
     // MARK: - Concurrent Access Tests
@@ -445,7 +391,6 @@ final class MITMAutoBypassCacheTests: XCTestCase {
     func testReasonSpecificTTLPinningPersistsBeyondDefaultHour() {
         var now = Date(timeIntervalSince1970: 1_000)
         let cache = MITMAutoBypassCache(
-            defaults: nil,
             ttl: 3_600,
             nowProvider: { now },
             aliasResolver: { _ in [] },
@@ -463,7 +408,6 @@ final class MITMAutoBypassCacheTests: XCTestCase {
     func testReasonSpecificTTLConnectionClosedEarlyExpiresQuickly() {
         var now = Date(timeIntervalSince1970: 2_000)
         let cache = MITMAutoBypassCache(
-            defaults: nil,
             ttl: 3_600,
             nowProvider: { now },
             aliasResolver: { _ in [] },
@@ -478,7 +422,6 @@ final class MITMAutoBypassCacheTests: XCTestCase {
     func testReasonSpecificTTLUpstreamTimeoutExpiresQuickly() {
         var now = Date(timeIntervalSince1970: 3_000)
         let cache = MITMAutoBypassCache(
-            defaults: nil,
             ttl: 3_600,
             nowProvider: { now },
             aliasResolver: { _ in [] },
@@ -492,7 +435,6 @@ final class MITMAutoBypassCacheTests: XCTestCase {
 
     func testRecordingRelatedHostsUsesSharedLookupKeyspace() {
         let cache = MITMAutoBypassCache(
-            defaults: nil,
             ttl: 3_600,
             aliasResolver: { _ in [] },
             resolveAliasesAsynchronously: false

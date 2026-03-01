@@ -29,13 +29,7 @@ final class MITMAutoBypassCache: @unchecked Sendable {
         let expiresAt: Date
     }
 
-    private struct PersistedState: Codable {
-        let entries: [Entry]
-        let aliases: [Entry]
-    }
-
     private enum Storage {
-        static let key = "proxy.mitm_auto_bypass.entries.v1"
         static let cleanupLegacyTrustFailuresKey = "proxy.mitm_auto_bypass.cleanup_legacy_trust_failures.v1"
         static let cleanupLegacyTransientSetupFailuresKey = "proxy.mitm_auto_bypass.cleanup_legacy_transient_setup_failures.v1"
         static let cleanupLegacyQUICFailuresKey = "proxy.mitm_auto_bypass.cleanup_legacy_quic_failures.v1"
@@ -48,7 +42,7 @@ final class MITMAutoBypassCache: @unchecked Sendable {
     private var aliasEntries: [String: Entry] = [:]
     private var resolvingHosts: Set<String> = []
     private let aliasResolutionQueue: DispatchQueue
-    private let defaults: UserDefaults?
+    private let storage: AppGroupStorage
     private let defaultTTL: TimeInterval
     private let reasonTTLResolver: @Sendable (String, TimeInterval) -> TimeInterval
     private let nowProvider: @Sendable () -> Date
@@ -56,7 +50,7 @@ final class MITMAutoBypassCache: @unchecked Sendable {
     private let resolveAliasesAsynchronously: Bool
 
     init(
-        defaults: UserDefaults? = UserDefaults(suiteName: AppGroupConfiguration.appGroupIdentifier) ?? .standard,
+        storage: AppGroupStorage = .shared,
         ttl: TimeInterval = 60 * 60,
         reasonTTLResolver: @escaping @Sendable (String, TimeInterval) -> TimeInterval = MITMAutoBypassCache.defaultReasonTTLResolver,
         nowProvider: @escaping @Sendable () -> Date = Date.init,
@@ -67,7 +61,7 @@ final class MITMAutoBypassCache: @unchecked Sendable {
             qos: .userInitiated
         )
     ) {
-        self.defaults = defaults
+        self.storage = storage
         defaultTTL = ttl
         self.reasonTTLResolver = reasonTTLResolver
         self.nowProvider = nowProvider
@@ -199,42 +193,41 @@ final class MITMAutoBypassCache: @unchecked Sendable {
     }
 
     private func persistLocked() {
-        guard let defaults else { return }
-
-        guard !entries.isEmpty || !aliasEntries.isEmpty else {
-            defaults.removeObject(forKey: Storage.key)
-            return
+        let persistedEntries = Array(entries.values).map {
+            MITMAutoBypassStoredEntry(
+                host: $0.host,
+                reason: $0.reason,
+                createdAt: $0.createdAt,
+                expiresAt: $0.expiresAt,
+                isAlias: false
+            )
+        } + Array(aliasEntries.values).map {
+            MITMAutoBypassStoredEntry(
+                host: $0.host,
+                reason: $0.reason,
+                createdAt: $0.createdAt,
+                expiresAt: $0.expiresAt,
+                isAlias: true
+            )
         }
 
         do {
-            let state = PersistedState(
-                entries: Array(entries.values),
-                aliases: Array(aliasEntries.values)
-            )
-            let data = try JSONEncoder().encode(state)
-            defaults.set(data, forKey: Storage.key)
+            try storage.replaceMITMAutoBypassEntries(persistedEntries)
         } catch {
             // Keep runtime cache usable even if persistence fails.
         }
     }
 
     private func loadLocked() {
-        guard let defaults,
-              let data = defaults.data(forKey: Storage.key)
-        else {
-            return
+        let persisted = storage.loadMITMAutoBypassEntries()
+        let baseEntries = persisted.filter { !$0.isAlias }.map { entry in
+            Entry(host: entry.host, reason: entry.reason, createdAt: entry.createdAt, expiresAt: entry.expiresAt)
         }
-
-        if let decodedState = try? JSONDecoder().decode(PersistedState.self, from: data) {
-            entries = mergedEntries(decodedState.entries)
-            aliasEntries = mergedEntries(decodedState.aliases)
-        } else if let decodedEntries = try? JSONDecoder().decode([Entry].self, from: data) {
-            entries = mergedEntries(decodedEntries)
-            aliasEntries = [:]
-        } else {
-            defaults.removeObject(forKey: Storage.key)
-            return
+        let aliasPersistedEntries = persisted.filter(\.isAlias).map { entry in
+            Entry(host: entry.host, reason: entry.reason, createdAt: entry.createdAt, expiresAt: entry.expiresAt)
         }
+        entries = mergedEntries(baseEntries)
+        aliasEntries = mergedEntries(aliasPersistedEntries)
 
         let now = nowProvider()
         let pruned = pruneLocked(now: now)
@@ -246,9 +239,7 @@ final class MITMAutoBypassCache: @unchecked Sendable {
     }
 
     private func cleanupLegacyTrustFailuresLocked() {
-        guard let defaults else { return }
-        guard !defaults.bool(forKey: Storage.cleanupLegacyTrustFailuresKey) else { return }
-
+        guard !storage.loadMITMAutoBypassMetadataFlag(forKey: Storage.cleanupLegacyTrustFailuresKey) else { return }
         let originalEntryCount = entries.count
         let originalAliasCount = aliasEntries.count
 
@@ -262,14 +253,11 @@ final class MITMAutoBypassCache: @unchecked Sendable {
         if entries.count != originalEntryCount || aliasEntries.count != originalAliasCount {
             persistLocked()
         }
-
-        defaults.set(true, forKey: Storage.cleanupLegacyTrustFailuresKey)
+        try? storage.saveMITMAutoBypassMetadataFlag(true, forKey: Storage.cleanupLegacyTrustFailuresKey)
     }
 
     private func cleanupLegacyTransientSetupFailuresLocked() {
-        guard let defaults else { return }
-        guard !defaults.bool(forKey: Storage.cleanupLegacyTransientSetupFailuresKey) else { return }
-
+        guard !storage.loadMITMAutoBypassMetadataFlag(forKey: Storage.cleanupLegacyTransientSetupFailuresKey) else { return }
         let transientReasons: Set<String> = [
             "mitm setup failure",
             "upstream timeout",
@@ -291,13 +279,11 @@ final class MITMAutoBypassCache: @unchecked Sendable {
             persistLocked()
         }
 
-        defaults.set(true, forKey: Storage.cleanupLegacyTransientSetupFailuresKey)
+        try? storage.saveMITMAutoBypassMetadataFlag(true, forKey: Storage.cleanupLegacyTransientSetupFailuresKey)
     }
 
     private func cleanupLegacyQUICFailuresLocked() {
-        guard let defaults else { return }
-        guard !defaults.bool(forKey: Storage.cleanupLegacyQUICFailuresKey) else { return }
-
+        guard !storage.loadMITMAutoBypassMetadataFlag(forKey: Storage.cleanupLegacyQUICFailuresKey) else { return }
         let quicReasons: Set<String> = [
             "quic no progress fail open",
             "quic handshake failure"
@@ -317,7 +303,7 @@ final class MITMAutoBypassCache: @unchecked Sendable {
             persistLocked()
         }
 
-        defaults.set(true, forKey: Storage.cleanupLegacyQUICFailuresKey)
+        try? storage.saveMITMAutoBypassMetadataFlag(true, forKey: Storage.cleanupLegacyQUICFailuresKey)
     }
 
     private func mergedEntries(_ source: [Entry]) -> [String: Entry] {

@@ -157,33 +157,23 @@ actor DataCleanupManager {
     }
 
     private func cleanupOldPacketFlows() async -> (count: Int, bytes: Int64) {
-        guard let containerURL = AppGroupStorage.shared.containerURL else {
-            return (0, 0)
-        }
-
-        let flowsDir = containerURL.appendingPathComponent(DirectoryName.packetFlows)
         let retentionDate = Date().addingTimeInterval(-Double(config.requestRetentionDays * 24 * 3600))
 
         do {
-            let fileURLs = try FileManager.default.contentsOfDirectory(
-                at: flowsDir,
-                includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-                options: [.skipsHiddenFiles]
-            )
-
+            let flows = try AppGroupStorage.shared.loadAllPacketFlowRecords()
+            let encoder = JSONCoding.makeEncoder()
             var deletedCount = 0
             var bytesFreed: Int64 = 0
 
-            for fileURL in fileURLs {
-                if let attrs = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
-                   let modDate = attrs.contentModificationDate {
-                    if modDate < retentionDate {
-                        if let fileSize = attrs.fileSize {
-                            bytesFreed += Int64(fileSize)
-                        }
-                        try? FileManager.default.removeItem(at: fileURL)
-                        deletedCount += 1
-                    }
+            for flow in flows where flow.lastSeen < retentionDate {
+                if let bytes = try? encoder.encode(flow).count {
+                    bytesFreed += Int64(bytes)
+                }
+                do {
+                    try AppGroupStorage.shared.deletePacketFlowRecord(flow)
+                    deletedCount += 1
+                } catch {
+                    FeatureLog.storage.error("event=storage.cleanup_flows outcome=failure error=\(error.localizedDescription, privacy: .public)")
                 }
             }
 
@@ -226,37 +216,22 @@ actor DataCleanupManager {
     private func cleanupOldRequests() async -> (count: Int, bytes: Int64) {
         let cutoffDate = Date().addingTimeInterval(-Double(config.requestRetentionDays) * 24 * 60 * 60)
 
-        guard let containerURL = storageContainerURL() else {
-            return (0, 0)
-        }
-
-        let requestsDir = containerURL.appendingPathComponent(DirectoryName.requests)
-
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: requestsDir,
-            includingPropertiesForKeys: [.creationDateKey]
-        ) else {
-            return (0, 0)
-        }
-
         var deletedCount = 0
         var bytesFreed: Int64 = 0
 
-        for file in files {
-            guard let resourceValues = try? file.resourceValues(forKeys: [.creationDateKey]),
-                  let creationDate = resourceValues.creationDate else {
-                continue
-            }
-
-            if creationDate < cutoffDate {
+        do {
+            let requests = try AppGroupStorage.shared.loadAllRequests()
+            for request in requests where request.timestamp < cutoffDate {
+                bytesFreed += estimateStoredBytes(for: request)
                 do {
-                    let freed = try deleteRequestFileAndBodies(at: file)
+                    try AppGroupStorage.shared.deleteRequest(request)
                     deletedCount += 1
-                    bytesFreed += freed
                 } catch {
                     FeatureLog.storage.error("event=storage.delete_request outcome=failure error=\(error.localizedDescription, privacy: .public)")
                 }
             }
+        } catch {
+            FeatureLog.storage.error("event=storage.cleanup_requests outcome=failure error=\(error.localizedDescription, privacy: .public)")
         }
 
         return (deletedCount, bytesFreed)
@@ -299,32 +274,58 @@ actor DataCleanupManager {
             return
         }
 
-        let totalSize = calculateDirectorySize(containerURL)
+        var totalSize = calculateDirectorySize(containerURL)
         let maxBytes = Int64(config.maxStorageMB) * 1024 * 1024
 
         if totalSize > maxBytes {
             FeatureLog.storage.warning("event=storage.limit_exceeded total_bytes=\(totalSize) max_bytes=\(maxBytes)")
 
             // Rule: Remove oldest requests first to preserve recent captures.
-            var remainingToFree = totalSize - maxBytes
-            let freedFromRequests = await deleteOldestRequests(toFree: remainingToFree)
-            remainingToFree -= freedFromRequests
-
-            if remainingToFree > 0 {
-                let freedFromBodies = await deleteOldestFiles(
-                    in: containerURL.appendingPathComponent(DirectoryName.bodies),
-                    toFree: remainingToFree,
-                    label: "body files"
-                )
-                remainingToFree -= freedFromBodies
+            while totalSize > maxBytes {
+                let requiredBytes = totalSize - maxBytes
+                let requestCleanup = await deleteOldestRequests(toFree: requiredBytes)
+                guard requestCleanup.deletedCount > 0 else {
+                    break
+                }
+                let reclaimedDatabaseBytes = AppGroupStorage.shared.reclaimDatabaseSpace()
+                if reclaimedDatabaseBytes > 0 {
+                    FeatureLog.storage.info(
+                        "event=storage.enforce_limit_db_compaction outcome=success bytes_freed=\(reclaimedDatabaseBytes)"
+                    )
+                }
+                totalSize = calculateDirectorySize(containerURL)
             }
 
-            if remainingToFree > 0 {
+            if totalSize > maxBytes {
+                let reclaimedDatabaseBytes = AppGroupStorage.shared.reclaimDatabaseSpace()
+                if reclaimedDatabaseBytes > 0 {
+                    FeatureLog.storage.info(
+                        "event=storage.enforce_limit_db_compaction outcome=success bytes_freed=\(reclaimedDatabaseBytes)"
+                    )
+                }
+                totalSize = calculateDirectorySize(containerURL)
+            }
+
+            if totalSize > maxBytes {
+                _ = await deleteOldestFiles(
+                    in: containerURL.appendingPathComponent(DirectoryName.bodies),
+                    toFree: totalSize - maxBytes,
+                    label: "body files"
+                )
+                totalSize = calculateDirectorySize(containerURL)
+            }
+
+            if totalSize > maxBytes {
                 _ = await deleteOldestFiles(
                     in: containerURL.appendingPathComponent(DirectoryName.logs),
-                    toFree: remainingToFree,
+                    toFree: totalSize - maxBytes,
                     label: "log files"
                 )
+                totalSize = calculateDirectorySize(containerURL)
+            }
+
+            if totalSize > maxBytes {
+                FeatureLog.storage.warning("event=storage.limit_exceeded_after_cleanup total_bytes=\(totalSize) max_bytes=\(maxBytes)")
             }
         }
     }
@@ -348,74 +349,48 @@ actor DataCleanupManager {
         return totalSize
     }
 
-    private func deleteOldestRequests(toFree bytesToFree: Int64) async -> Int64 {
-        guard let containerURL = storageContainerURL() else {
-            return 0
-        }
-
-        let requestsDir = containerURL.appendingPathComponent(DirectoryName.requests)
-
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: requestsDir,
-            includingPropertiesForKeys: [.creationDateKey]
-        ) else {
-            return 0
-        }
-
-        let sortedFiles = files.sorted { file1, file2 in
-            let date1 = try? file1.resourceValues(forKeys: [.creationDateKey]).creationDate
-            let date2 = try? file2.resourceValues(forKeys: [.creationDateKey]).creationDate
-            return (date1 ?? Date()) < (date2 ?? Date())
-        }
-
-        var freedBytes: Int64 = 0
+    private func deleteOldestRequests(toFree bytesToFree: Int64) async -> (deletedCount: Int, estimatedFreedBytes: Int64) {
+        var estimatedFreedBytes: Int64 = 0
         var deletedCount = 0
 
-        for file in sortedFiles {
-            if freedBytes >= bytesToFree {
-                break
-            }
+        do {
+            let sortedRequests = try AppGroupStorage.shared.loadAllRequests().sorted { $0.timestamp < $1.timestamp }
+            for request in sortedRequests {
+                if estimatedFreedBytes >= bytesToFree {
+                    break
+                }
 
-            do {
-                let freed = try deleteRequestFileAndBodies(at: file)
-                freedBytes += freed
-                deletedCount += 1
-            } catch {
-                FeatureLog.storage.error("event=storage.enforce_limit outcome=failure error=\(error.localizedDescription, privacy: .public)")
+                let estimated = estimateStoredBytes(for: request)
+                do {
+                    try AppGroupStorage.shared.deleteRequest(request)
+                    estimatedFreedBytes += estimated
+                    deletedCount += 1
+                } catch {
+                    FeatureLog.storage.error("event=storage.enforce_limit outcome=failure error=\(error.localizedDescription, privacy: .public)")
+                }
             }
+        } catch {
+            FeatureLog.storage.error("event=storage.enforce_limit outcome=failure error=\(error.localizedDescription, privacy: .public)")
         }
 
-        FeatureLog.storage.info("event=storage.enforce_limit outcome=success deleted_count=\(deletedCount) bytes_freed=\(freedBytes)")
-        return freedBytes
+        FeatureLog.storage.info(
+            "event=storage.enforce_limit outcome=success deleted_count=\(deletedCount) bytes_freed_estimate=\(estimatedFreedBytes)"
+        )
+        return (deletedCount, estimatedFreedBytes)
     }
 
     // MARK: - Manual Operations
 
     func deleteAllRequests() async -> Int {
-        guard let containerURL = storageContainerURL() else {
+        do {
+            let deletedCount = try AppGroupStorage.shared.loadAllRequests().count
+            try AppGroupStorage.shared.clearAllRequests()
+            FeatureLog.storage.info("event=storage.delete_all outcome=success deleted_count=\(deletedCount)")
+            return deletedCount
+        } catch {
+            FeatureLog.storage.error("event=storage.delete_all outcome=failure error=\(error.localizedDescription, privacy: .public)")
             return 0
         }
-
-        let requestsDir = containerURL.appendingPathComponent("CapturedRequests")
-
-        guard let files = try? FileManager.default.contentsOfDirectory(at: requestsDir, includingPropertiesForKeys: nil) else {
-            return 0
-        }
-
-        var deletedCount = 0
-
-        for file in files {
-            do {
-                _ = try deleteRequestFileAndBodies(at: file)
-                deletedCount += 1
-            } catch {
-                FeatureLog.storage.error("event=storage.delete_request outcome=failure error=\(error.localizedDescription, privacy: .public)")
-            }
-        }
-
-        FeatureLog.storage.info("event=storage.delete_all outcome=success deleted_count=\(deletedCount)")
-
-        return deletedCount
     }
 
     func getStorageUsage() async -> (total: Int64, requests: Int64, bodies: Int64, logs: Int64) {
@@ -423,7 +398,7 @@ actor DataCleanupManager {
             return (0, 0, 0, 0)
         }
 
-        let requestsSize = calculateDirectorySize(containerURL.appendingPathComponent(DirectoryName.requests))
+        let requestsSize = AppGroupStorage.shared.getStorageStats().totalSize
         let bodiesSize = calculateDirectorySize(containerURL.appendingPathComponent(DirectoryName.bodies))
         let logsSize = calculateDirectorySize(containerURL.appendingPathComponent(DirectoryName.logs))
         let totalSize = requestsSize + bodiesSize + logsSize
@@ -472,27 +447,7 @@ actor DataCleanupManager {
         return (deletedCount, bytesFreed)
     }
 
-    private func deleteRequestFileAndBodies(at fileURL: URL) throws -> Int64 {
-        var freedBytes: Int64 = 0
-
-        if let fileSize = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-            freedBytes += Int64(fileSize)
-        }
-
-        if let data = try? Data(contentsOf: fileURL) {
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            if let request = try? decoder.decode(NetworkRequest.self, from: data) {
-                freedBytes += deleteBodyFile(request.requestBody)
-                freedBytes += deleteBodyFile(request.responseBody)
-            }
-        }
-
-        try FileManager.default.removeItem(at: fileURL)
-        return freedBytes
-    }
-
-    private func deleteBodyFile(_ storage: BodyStorage) -> Int64 {
+    private func bodyFileSize(_ storage: BodyStorage) -> Int64 {
         let url: URL
         switch storage {
         case let .file(fileURL, _, _):
@@ -503,8 +458,14 @@ actor DataCleanupManager {
             return 0
         }
         let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        try? FileManager.default.removeItem(at: url)
         return Int64(fileSize)
+    }
+
+    private func estimateStoredBytes(for request: NetworkRequest) -> Int64 {
+        let metadataBytes = (try? JSONCoding.makeEncoder().encode(request).count) ?? 0
+        let requestBodyBytes = bodyFileSize(request.requestBody)
+        let responseBodyBytes = bodyFileSize(request.responseBody)
+        return Int64(metadataBytes) + requestBodyBytes + responseBodyBytes
     }
 
     private func deleteOldestFiles(in directory: URL, toFree bytesToFree: Int64, label: String) async -> Int64 {

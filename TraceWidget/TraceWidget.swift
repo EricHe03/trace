@@ -92,37 +92,23 @@ private func nextUpdateDate(for data: WidgetData, from currentDate: Date) -> Dat
 
 /// Fetches current network capture data from shared App Group storage.
 private func fetchWidgetData() -> WidgetData {
-    let appGroupIdentifier = AppGroupConfiguration.appGroupIdentifier
-    // Rule: Shared defaults keys MUST stay aligned with the host app's writer contract.
-    guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else {
-        return .placeholder
-    }
-
-    let isCapturing = defaults.bool(forKey: "widget.isCapturing")
-    let requestCount = defaults.integer(forKey: "widget.requestCount")
-    let dataTransferred = defaults.string(forKey: "widget.dataTransferred") ?? "0 B"
-
-    var recentRequests: [WidgetRequest] = []
-    // Rationale: Render widgets even when shared data is missing or stale.
-    if let requestsData = defaults.data(forKey: "widget.recentRequests"),
-       let decoded = try? JSONDecoder().decode([WidgetRecentRequest].self, from: requestsData) {
-        recentRequests = decoded.map { req in
-            let url = URL(string: req.url)
-            return WidgetRequest(
-                id: req.id,
-                method: req.method,
-                host: url?.host ?? req.url,
-                path: url?.path ?? "/",
-                statusCode: req.statusCode,
-                timestamp: req.timestamp
-            )
-        }
+    let state = AppGroupStorage.shared.loadWidgetState()
+    let recentRequests = state.recentRequests.map { req in
+        let url = URL(string: req.url)
+        return WidgetRequest(
+            id: req.id,
+            method: req.method,
+            host: url?.host ?? req.url,
+            path: url?.path ?? "/",
+            statusCode: req.statusCode,
+            timestamp: req.timestamp
+        )
     }
 
     return WidgetData(
-        isCapturing: isCapturing,
-        requestCount: requestCount,
-        dataTransferred: dataTransferred,
+        isCapturing: state.isCapturing,
+        requestCount: state.requestCount,
+        dataTransferred: state.dataTransferred,
         recentRequests: recentRequests
     )
 }

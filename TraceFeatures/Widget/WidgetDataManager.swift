@@ -14,12 +14,12 @@ import WidgetKit
 import ActivityKit
 #endif
 
-/// Manages widget data updates via App Group UserDefaults and Live Activities
+/// Manages widget data updates via shared App Group storage and Live Activities
 @MainActor
 public final class WidgetDataManager {
     public static let shared = WidgetDataManager()
 
-    private let defaults: UserDefaults?
+    private let storage: AppGroupStorage
     private var currentActivity: Any?
     private var captureStartTime: Date?
 
@@ -30,7 +30,7 @@ public final class WidgetDataManager {
     }
 
     private init() {
-        defaults = UserDefaults(suiteName: AppGroupConfiguration.appGroupIdentifier)
+        storage = AppGroupStorage.shared
     }
 
     // MARK: - Widget Updates
@@ -42,13 +42,17 @@ public final class WidgetDataManager {
         dataTransferred: String,
         recentRequests: [WidgetRecentRequest]
     ) {
-        defaults?.set(isCapturing, forKey: "widget.isCapturing")
-        defaults?.set(requestCount, forKey: "widget.requestCount")
-        defaults?.set(dataTransferred, forKey: "widget.dataTransferred")
-
-        // Encode recent requests
-        if let encoded = try? JSONEncoder().encode(recentRequests) {
-            defaults?.set(encoded, forKey: "widget.recentRequests")
+        do {
+            try storage.saveWidgetState(
+                WidgetSharedState(
+                    isCapturing: isCapturing,
+                    requestCount: requestCount,
+                    dataTransferred: dataTransferred,
+                    recentRequests: recentRequests
+                )
+            )
+        } catch {
+            FeatureLog.widget.error("event=widget.state_write outcome=failure error=\(error.localizedDescription, privacy: .public)")
         }
 
         // Force widget reload
@@ -66,7 +70,9 @@ public final class WidgetDataManager {
 
     /// Update widget when capture state changes
     public func notifyCaptureStateChanged(isCapturing: Bool) {
-        defaults?.set(isCapturing, forKey: "widget.isCapturing")
+        var state = storage.loadWidgetState()
+        state.isCapturing = isCapturing
+        try? storage.saveWidgetState(state)
         WidgetCenter.shared.reloadAllTimelines()
 
         if isCapturing {
@@ -78,7 +84,9 @@ public final class WidgetDataManager {
 
     /// Update widget with current request count
     public func updateRequestCount(_ count: Int) {
-        defaults?.set(count, forKey: "widget.requestCount")
+        var state = storage.loadWidgetState()
+        state.requestCount = count
+        try? storage.saveWidgetState(state)
         WidgetCenter.shared.reloadAllTimelines()
     }
 

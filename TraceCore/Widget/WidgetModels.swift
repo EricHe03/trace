@@ -17,7 +17,7 @@ public enum WidgetActionKey {
     public static let actionView = "widget.actionView"
 }
 
-public enum WidgetAction: String {
+public enum WidgetAction: String, Codable, Equatable, Sendable {
     case toggleCapture
     case startCapture
     case stopCapture
@@ -25,7 +25,7 @@ public enum WidgetAction: String {
     case openView
 }
 
-public struct WidgetRecentRequest: Codable, Identifiable {
+public struct WidgetRecentRequest: Codable, Identifiable, Equatable, Sendable {
     public let id: UUID
     public let method: String
     public let url: String
