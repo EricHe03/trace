@@ -108,6 +108,46 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(loaded.last?.url, "https://example.com/old", "Oldest request should be last")
     }
 
+    func testLoadRequestsNewerThanWithExclusionsAndLimit() throws {
+        let now = Date()
+        let oldRequest = createMockRequest(
+            url: "https://example.com/old",
+            timestamp: now.addingTimeInterval(-120)
+        )
+        let recentRequest = createMockRequest(
+            url: "https://example.com/recent",
+            timestamp: now.addingTimeInterval(-10)
+        )
+        let newestRequest = createMockRequest(
+            url: "https://example.com/newest",
+            timestamp: now
+        )
+
+        try storage.saveRequest(oldRequest)
+        try storage.saveRequest(recentRequest)
+        try storage.saveRequest(newestRequest)
+
+        let loaded = try storage.loadRequests(
+            newerThan: now.addingTimeInterval(-60),
+            excludingIDs: Set([newestRequest.id]),
+            limit: 10
+        )
+
+        XCTAssertEqual(loaded.map(\.id), [recentRequest.id])
+        XCTAssertTrue(loaded.allSatisfy { $0.timestamp >= now.addingTimeInterval(-60) })
+    }
+
+    func testLoadRequestByID() throws {
+        let request = createMockRequest(url: "https://example.com/by-id")
+        try storage.saveRequest(request)
+
+        let loaded = try storage.loadRequest(request.id)
+        XCTAssertEqual(loaded?.id, request.id)
+
+        let missing = try storage.loadRequest(UUID())
+        XCTAssertNil(missing)
+    }
+
     func testDeleteRequest() throws {
         let request = createMockRequest()
         try storage.saveRequest(request)

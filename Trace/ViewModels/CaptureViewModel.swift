@@ -136,9 +136,15 @@ enum RequestGroupingMode: String, CaseIterable, Codable {
 }
 
 struct DomainGroup: Identifiable {
-    let id = UUID()
+    let id: String
     let domain: String
     let requests: [NetworkRequest]
+
+    init(id: String? = nil, domain: String, requests: [NetworkRequest]) {
+        self.id = id ?? domain
+        self.domain = domain
+        self.requests = requests
+    }
 
     var requestCount: Int {
         requests.count
@@ -154,10 +160,13 @@ struct DomainGroup: Identifiable {
 }
 
 struct SessionGroup: Identifiable {
-    let id = UUID()
     let session: CaptureSession
     let requests: [NetworkRequest]
     let domainGroups: [DomainGroup]
+
+    var id: UUID {
+        session.id
+    }
 
     var requestCount: Int {
         requests.count
@@ -271,9 +280,16 @@ final class CaptureViewModel: ObservableObject {
         let searchScope: SearchScope
     }
 
+    private struct GroupingCacheKey: Hashable {
+        let mode: RequestGroupingMode
+        let filterKey: FilterCacheKey
+        let sessionsVersion: Int
+    }
+
     @Published var requests: [NetworkRequest] = [] {
         didSet {
             requestsVersion &+= 1
+            requestsChangeToken &+= 1
             filteredRequestsCache = nil
             invalidateGroupingCache()
             if filterShowDuplicatesOnly, !isRunningDuplicateDetection {
@@ -282,7 +298,14 @@ final class CaptureViewModel: ObservableObject {
         }
     }
 
-    @Published var transportRequests: [TransportRequest] = []
+    @Published var transportRequests: [TransportRequest] = [] {
+        didSet {
+            transportRequestsChangeToken &+= 1
+        }
+    }
+
+    @Published private(set) var requestsChangeToken: UInt64 = 0
+    @Published private(set) var transportRequestsChangeToken: UInt64 = 0
 
     @Published var isCapturing: Bool = false
     @Published var searchText: String = "" {
@@ -403,12 +426,18 @@ final class CaptureViewModel: ObservableObject {
         }
     }
 
-    @Published var sessions: [CaptureSession] = []
+    @Published var sessions: [CaptureSession] = [] {
+        didSet {
+            sessionsVersion &+= 1
+            invalidateGroupingCache()
+        }
+    }
+
     @Published var currentSession: CaptureSession?
     @Published var selectedSession: CaptureSession?
     @Published var selectedRequestId: UUID?
     private var cachedGroupedRequests: GroupedRequests?
-    private var lastGroupingTimestamp: Date?
+    private var cachedGroupingCacheKey: GroupingCacheKey?
     private var groupingRestoreEventTypes: Set<NetworkEventType>?
 
     /// Duplicate detection cache
@@ -435,11 +464,15 @@ final class CaptureViewModel: ObservableObject {
     private var requestsVersion = 0
     private var favoritesVersion = 0
     private var bodySearchVersion = 0
+    private var sessionsVersion = 0
 
     // Load debouncing to prevent excessive reloads
     private var loadTask: Task<Void, Never>?
     private var activeLoadTask: Task<Void, Never>?
     private var lastLoadTime: Date?
+    private var lastRequestFullReloadTime: Date?
+    private var requestIncrementalLoadsSinceFullReload = 0
+    private var requestIDSet: Set<UUID> = []
     private var transportLoadTask: Task<Void, Never>?
     private var activeTransportLoadTask: Task<Void, Never>?
     private var lastTransportLoadTime: Date?
@@ -447,6 +480,8 @@ final class CaptureViewModel: ObservableObject {
     private var transportIncrementalLoadsSinceFullReload = 0
     private var transportRequestIDSet: Set<UUID> = []
     private let minLoadInterval: TimeInterval = 0.5 // Minimum 500ms between loads
+    private let requestFullReloadInterval: TimeInterval = 20
+    private let maxIncrementalRequestLoadsBetweenFullReloads = 40
     private let transportFullReloadInterval: TimeInterval = 30
     private let maxIncrementalTransportLoadsBetweenFullReloads = 60
     private var notifiedRequestIds: Set<UUID> = []
@@ -460,6 +495,7 @@ final class CaptureViewModel: ObservableObject {
     private var isRunningDuplicateDetection = false
     private var isLoadingThrottlingState = false
     private var isLoadingSettings = false
+    private static let unknownSessionID = UUID(uuidString: "00000000-0000-0000-0000-000000000000") ?? UUID()
 
     init() {
         // Unit tests run with the full host app launched. Avoid starting long-lived observers,
@@ -745,60 +781,180 @@ final class CaptureViewModel: ObservableObject {
         loadTransportRequests(triggeredByNewRequest: true)
     }
 
-    private func loadRequests(triggeredByNewRequest: Bool = false) {
+    private func loadRequests(triggeredByNewRequest: Bool = false, forceFullReload: Bool = false) {
         lastLoadTime = Date()
         activeLoadTask?.cancel()
         activeLoadTask = Task { [weak self] in
             guard let self else { return }
 
-            do {
-                var loadedRequests = try await self.storage.loadAllRequestsAsync()
-                loadedRequests.sort { $0.timestamp > $1.timestamp }
+            let shouldRunFullReload = self.shouldPerformFullRequestReload(
+                triggeredByNewRequest: triggeredByNewRequest,
+                forceFullReload: forceFullReload
+            )
 
-                // Assign current session to requests without sessionId
+            do {
                 let currentSessionId = await MainActor.run { self.currentSession?.id }
-                if let sessionId = currentSessionId {
-                    for i in 0 ..< loadedRequests.count where loadedRequests[i].sessionId == nil {
-                        loadedRequests[i].sessionId = sessionId
-                        // Save the updated request with sessionId
-                        try? self.storage.saveRequest(loadedRequests[i])
+
+                if shouldRunFullReload {
+                    var loadedRequests = try await self.storage.loadAllRequestsAsync()
+                    loadedRequests = self.assignCurrentSession(to: loadedRequests, currentSessionID: currentSessionId)
+                    loadedRequests = self.optimizeRequestsForList(loadedRequests)
+                    loadedRequests.sort { $0.timestamp > $1.timestamp }
+
+                    guard !Task.isCancelled else { return }
+                    self.requests = self.redirectChainResolver.enrich(loadedRequests)
+                    self.requestIDSet = Set(self.requests.map(\.id))
+                    self.lastRequestFullReloadTime = Date()
+                    self.requestIncrementalLoadsSinceFullReload = 0
+                    CoreLog.storage.info(
+                        "event=storage.requests_load outcome=success count=\(self.requests.count) mode=full"
+                    )
+                    if let firstRequest = self.requests.first {
+                        CoreLog.storage.debug(
+                            "event=storage.requests_load_first outcome=success request_id=\(firstRequest.id.uuidString, privacy: .public) method=\(firstRequest.method.rawValue, privacy: .public) url=\(firstRequest.url, privacy: .private(mask: .hash))"
+                        )
                     }
+
+                    // Note: When running in the simulator, you may see network errors in the console for
+                    // URLs found in captured requests (e.g., "HTTP load failed" for external resources).
+                    // This occurs when iOS system components (like link preview generators or data detectors)
+                    // attempt to fetch metadata for URLs displayed in the UI. These errors are harmless and
+                    // simulator-specific; they don't affect app functionality or occur on real devices.
+                    self.debounceBodySearch()
+
+                    // Update widget with latest data
+                    self.updateWidget()
+
+                    if triggeredByNewRequest {
+                        self.processNewRequestsForNotifications()
+                    }
+                    return
                 }
+
+                guard let newestKnownTimestamp = self.requests.first?.timestamp else {
+                    self.loadRequests(triggeredByNewRequest: triggeredByNewRequest, forceFullReload: true)
+                    return
+                }
+
+                var loadedRequests = try await self.storage.loadRequestsAsync(
+                    newerThan: newestKnownTimestamp,
+                    excludingIDs: self.requestIDSet
+                )
+                loadedRequests = self.assignCurrentSession(to: loadedRequests, currentSessionID: currentSessionId)
+                loadedRequests = self.optimizeRequestsForList(loadedRequests)
 
                 guard !Task.isCancelled else { return }
-                self.requests = self.redirectChainResolver.enrich(loadedRequests)
-                self.invalidateGroupingCache()
-                CoreLog.storage.info(
-                    "event=storage.requests_load outcome=success count=\(self.requests.count)"
-                )
-                if let firstRequest = self.requests.first {
-                    CoreLog.storage.debug(
-                        "event=storage.requests_load_first outcome=success request_id=\(firstRequest.id.uuidString, privacy: .public) method=\(firstRequest.method.rawValue, privacy: .public) url=\(firstRequest.url, privacy: .private(mask: .hash))"
-                    )
-                }
+                let newRequestCount = self.mergeRequests(loadedRequests)
+                guard newRequestCount > 0 else { return }
 
-                // Note: When running in the simulator, you may see network errors in the console for
-                // URLs found in captured requests (e.g., "HTTP load failed" for external resources).
-                // This occurs when iOS system components (like link preview generators or data detectors)
-                // attempt to fetch metadata for URLs displayed in the UI. These errors are harmless and
-                // simulator-specific; they don't affect app functionality or occur on real devices.
+                self.requestIncrementalLoadsSinceFullReload += 1
                 self.debounceBodySearch()
-
-                // Update widget with latest data
                 self.updateWidget()
-
                 if triggeredByNewRequest {
                     self.processNewRequestsForNotifications()
                 }
+                CoreLog.storage.debug(
+                    "event=storage.requests_load outcome=success count=\(newRequestCount) mode=incremental"
+                )
             } catch {
                 guard !Task.isCancelled else { return }
                 CoreLog.storage.error(
                     "event=storage.requests_load outcome=failure error=\(error.localizedDescription, privacy: .public)"
                 )
-                self.requests = []
-                self.debounceBodySearch()
+                if shouldRunFullReload {
+                    self.requests = []
+                    self.requestIDSet = []
+                    self.lastRequestFullReloadTime = nil
+                    self.requestIncrementalLoadsSinceFullReload = 0
+                    self.debounceBodySearch()
+                }
             }
         }
+    }
+
+    private func shouldPerformFullRequestReload(triggeredByNewRequest: Bool, forceFullReload: Bool) -> Bool {
+        if forceFullReload { return true }
+        guard triggeredByNewRequest else { return true }
+        guard !requests.isEmpty else { return true }
+        guard requestIncrementalLoadsSinceFullReload < maxIncrementalRequestLoadsBetweenFullReloads else {
+            return true
+        }
+        guard let lastFullReloadTime = lastRequestFullReloadTime else { return true }
+        return Date().timeIntervalSince(lastFullReloadTime) >= requestFullReloadInterval
+    }
+
+    private func assignCurrentSession(
+        to loadedRequests: [NetworkRequest],
+        currentSessionID: UUID?
+    ) -> [NetworkRequest] {
+        guard let currentSessionID else { return loadedRequests }
+        guard !loadedRequests.isEmpty else { return loadedRequests }
+
+        var requestsToStore: [NetworkRequest] = []
+        var updatedRequests = loadedRequests
+        requestsToStore.reserveCapacity(updatedRequests.count)
+
+        for index in updatedRequests.indices where updatedRequests[index].sessionId == nil {
+            updatedRequests[index].sessionId = currentSessionID
+            requestsToStore.append(updatedRequests[index])
+        }
+
+        for request in requestsToStore {
+            try? storage.saveRequest(request)
+        }
+        return updatedRequests
+    }
+
+    private func optimizeRequestsForList(_ requests: [NetworkRequest]) -> [NetworkRequest] {
+        requests.map(optimizeRequestForList)
+    }
+
+    private func optimizeRequestForList(_ request: NetworkRequest) -> NetworkRequest {
+        var optimized = request
+        optimized.requestBody = optimizeBodyStorageForList(request.requestBody, previewLimit: maxSearchBodySize)
+        optimized.responseBody = optimizeBodyStorageForList(request.responseBody, previewLimit: maxSearchBodySize)
+        return optimized
+    }
+
+    private func optimizeBodyStorageForList(_ storage: BodyStorage, previewLimit: Int) -> BodyStorage {
+        switch storage {
+        case let .inline(data, charset, compressionInfo):
+            guard data.count > previewLimit else { return storage }
+            return .truncated(
+                Data(data.prefix(previewLimit)),
+                totalSize: data.count,
+                charset: charset,
+                compressionInfo: compressionInfo
+            )
+        case let .truncated(data, totalSize, charset, compressionInfo):
+            guard data.count > previewLimit else { return storage }
+            return .truncated(
+                Data(data.prefix(previewLimit)),
+                totalSize: totalSize,
+                charset: charset,
+                compressionInfo: compressionInfo
+            )
+        case .file, .truncatedFile, .empty:
+            return storage
+        }
+    }
+
+    @discardableResult
+    private func mergeRequests(_ loaded: [NetworkRequest]) -> Int {
+        guard !loaded.isEmpty else { return 0 }
+
+        var newRequests: [NetworkRequest] = []
+        newRequests.reserveCapacity(loaded.count)
+        for request in loaded where requestIDSet.insert(request.id).inserted {
+            newRequests.append(request)
+        }
+
+        guard !newRequests.isEmpty else { return 0 }
+
+        var mergedRequests = requests
+        mergedRequests.insert(contentsOf: newRequests, at: 0)
+        requests = redirectChainResolver.enrich(mergedRequests)
+        return newRequests.count
     }
 
     private func loadTransportRequests(triggeredByNewRequest: Bool = false, forceFullReload: Bool = false) {
@@ -886,7 +1042,7 @@ final class CaptureViewModel: ObservableObject {
 
     func reloadRequests() async {
         await MainActor.run {
-            loadRequests()
+            loadRequests(forceFullReload: true)
         }
         await activeLoadTask?.value
     }
@@ -940,8 +1096,12 @@ final class CaptureViewModel: ObservableObject {
             filterResponseTime != nil || filterShowDuplicatesOnly || filterShowErrorsOnly
     }
 
-    var filteredRequests: [NetworkRequest] {
-        let cacheKey = FilterCacheKey(
+    var eventRebuildFilterToken: Int {
+        makeFilterCacheKey().hashValue
+    }
+
+    private func makeFilterCacheKey() -> FilterCacheKey {
+        FilterCacheKey(
             requestsVersion: requestsVersion,
             favoritesVersion: favoritesVersion,
             bodySearchVersion: bodySearchVersion,
@@ -962,6 +1122,10 @@ final class CaptureViewModel: ObservableObject {
             searchText: searchText,
             searchScope: searchScope
         )
+    }
+
+    var filteredRequests: [NetworkRequest] {
+        let cacheKey = makeFilterCacheKey()
 
         if let cached = filteredRequestsCache, filteredRequestsCacheKey == cacheKey {
             return cached
@@ -974,10 +1138,15 @@ final class CaptureViewModel: ObservableObject {
         }
 
         if !hasActiveFilters, searchText.isEmpty {
-            let sorted = requests.sorted { $0.timestamp > $1.timestamp }
-            filteredRequestsCache = sorted
+            if requests.count > 1, requests[0].timestamp < requests[1].timestamp {
+                let sorted = requests.sorted { $0.timestamp > $1.timestamp }
+                filteredRequestsCache = sorted
+                filteredRequestsCacheKey = cacheKey
+                return sorted
+            }
+            filteredRequestsCache = requests
             filteredRequestsCacheKey = cacheKey
-            return sorted
+            return requests
         }
 
         var results: [NetworkRequest] = []
@@ -1039,7 +1208,9 @@ final class CaptureViewModel: ObservableObject {
             results.append(request)
         }
 
-        results.sort { $0.timestamp > $1.timestamp }
+        if results.count > 1, results[0].timestamp < results[1].timestamp {
+            results.sort { $0.timestamp > $1.timestamp }
+        }
         filteredRequestsCache = results
         filteredRequestsCacheKey = cacheKey
         return results
@@ -1186,6 +1357,9 @@ final class CaptureViewModel: ObservableObject {
         do {
             try storage.clearAllRequests()
             requests = []
+            requestIDSet = []
+            lastRequestFullReloadTime = nil
+            requestIncrementalLoadsSinceFullReload = 0
         } catch {
             CoreLog.storage.error(
                 "event=storage.requests_clear outcome=failure error=\(error.localizedDescription, privacy: .public)"
@@ -1219,6 +1393,7 @@ final class CaptureViewModel: ObservableObject {
         do {
             try storage.deleteRequest(request)
             requests.removeAll { $0.id == request.id }
+            requestIDSet.remove(request.id)
         } catch {
             CoreLog.storage.error(
                 "event=storage.request_delete outcome=failure request_id=\(request.id.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
@@ -1422,7 +1597,7 @@ final class CaptureViewModel: ObservableObject {
         do {
             sessions = try storage.loadAllSessions()
             // Find active session if any
-            currentSession = sessions.first(where: { $0.isActive })
+            currentSession = sessions.first { $0.isActive }
         } catch {
             CoreLog.storage.error(
                 "event=storage.sessions_load outcome=failure error=\(error.localizedDescription, privacy: .public)"
@@ -1525,18 +1700,20 @@ final class CaptureViewModel: ObservableObject {
 
     private func invalidateGroupingCache() {
         cachedGroupedRequests = nil
-        lastGroupingTimestamp = nil
+        cachedGroupingCacheKey = nil
     }
 
     var groupedRequests: GroupedRequests {
-        // Check cache validity (500ms window)
+        let cacheKey = GroupingCacheKey(
+            mode: groupingMode,
+            filterKey: makeFilterCacheKey(),
+            sessionsVersion: sessionsVersion
+        )
         if let cached = cachedGroupedRequests,
-           let timestamp = lastGroupingTimestamp,
-           Date().timeIntervalSince(timestamp) < 0.5 {
+           cachedGroupingCacheKey == cacheKey {
             return cached
         }
 
-        // Generate new grouped requests
         let grouped: GroupedRequests
         let requestsToGroup = filteredRequests
 
@@ -1551,17 +1728,15 @@ final class CaptureViewModel: ObservableObject {
             grouped = groupHierarchical(requests: requestsToGroup)
         }
 
-        // Cache the result
         cachedGroupedRequests = grouped
-        lastGroupingTimestamp = Date()
-
+        cachedGroupingCacheKey = cacheKey
         return grouped
     }
 
     private func groupByDomain(requests: [NetworkRequest]) -> GroupedRequests {
         let grouped = Dictionary(grouping: requests) { $0.host }
         let domainGroups = grouped.map { domain, reqs in
-            DomainGroup(domain: domain, requests: reqs.sorted { $0.timestamp > $1.timestamp })
+            DomainGroup(domain: domain, requests: reqs)
         }.sorted { $0.domain < $1.domain }
 
         return GroupedRequests(mode: .byDomain, domainGroups: domainGroups)
@@ -1585,10 +1760,9 @@ final class CaptureViewModel: ObservableObject {
         // Add known sessions
         for session in sessions {
             if let requestsForSession = sessionMap[session.id], !requestsForSession.isEmpty {
-                let sorted = requestsForSession.sorted { $0.timestamp > $1.timestamp }
                 sessionGroups.append(SessionGroup(
                     session: session,
-                    requests: sorted,
+                    requests: requestsForSession,
                     domainGroups: []
                 ))
             }
@@ -1597,15 +1771,15 @@ final class CaptureViewModel: ObservableObject {
         // Add orphaned requests as "Unknown Session"
         if !orphanedRequests.isEmpty {
             let unknownSession = CaptureSession(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!,
-                startTime: orphanedRequests.map(\.timestamp).min() ?? Date(),
-                endTime: orphanedRequests.map(\.timestamp).max(),
+                id: Self.unknownSessionID,
+                startTime: orphanedRequests.last?.timestamp ?? Date(),
+                endTime: orphanedRequests.first?.timestamp,
                 requestCount: orphanedRequests.count,
                 totalDataTransferred: orphanedRequests.reduce(0) { $0 + Int64($1.responseSize ?? 0) }
             )
             sessionGroups.append(SessionGroup(
                 session: unknownSession,
-                requests: orphanedRequests.sorted { $0.timestamp > $1.timestamp },
+                requests: orphanedRequests,
                 domainGroups: []
             ))
         }
@@ -1631,17 +1805,19 @@ final class CaptureViewModel: ObservableObject {
         // Add known sessions with domain groups
         for session in sessions {
             if let requestsForSession = sessionMap[session.id], !requestsForSession.isEmpty {
-                let sorted = requestsForSession.sorted { $0.timestamp > $1.timestamp }
-
                 // Group by domain within this session
-                let domainGrouped = Dictionary(grouping: sorted) { $0.host }
+                let domainGrouped = Dictionary(grouping: requestsForSession) { $0.host }
                 let domainGroups = domainGrouped.map { domain, reqs in
-                    DomainGroup(domain: domain, requests: reqs)
+                    DomainGroup(
+                        id: "\(session.id.uuidString)::\(domain)",
+                        domain: domain,
+                        requests: reqs
+                    )
                 }.sorted { $0.domain < $1.domain }
 
                 sessionGroups.append(SessionGroup(
                     session: session,
-                    requests: sorted,
+                    requests: requestsForSession,
                     domainGroups: domainGroups
                 ))
             }
@@ -1650,21 +1826,25 @@ final class CaptureViewModel: ObservableObject {
         // Add orphaned requests as "Unknown Session"
         if !orphanedRequests.isEmpty {
             let unknownSession = CaptureSession(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!,
-                startTime: orphanedRequests.map(\.timestamp).min() ?? Date(),
-                endTime: orphanedRequests.map(\.timestamp).max(),
+                id: Self.unknownSessionID,
+                startTime: orphanedRequests.last?.timestamp ?? Date(),
+                endTime: orphanedRequests.first?.timestamp,
                 requestCount: orphanedRequests.count,
                 totalDataTransferred: orphanedRequests.reduce(0) { $0 + Int64($1.responseSize ?? 0) }
             )
 
             let domainGrouped = Dictionary(grouping: orphanedRequests) { $0.host }
             let domainGroups = domainGrouped.map { domain, reqs in
-                DomainGroup(domain: domain, requests: reqs.sorted { $0.timestamp > $1.timestamp })
+                DomainGroup(
+                    id: "\(Self.unknownSessionID.uuidString)::\(domain)",
+                    domain: domain,
+                    requests: reqs
+                )
             }.sorted { $0.domain < $1.domain }
 
             sessionGroups.append(SessionGroup(
                 session: unknownSession,
-                requests: orphanedRequests.sorted { $0.timestamp > $1.timestamp },
+                requests: orphanedRequests,
                 domainGroups: domainGroups
             ))
         }

@@ -772,6 +772,131 @@ public class AppGroupStorage: @unchecked Sendable {
         try await loadAllRequestsAsync()
     }
 
+    /// Loads captured requests newer than the given timestamp.
+    public func loadRequests(
+        newerThan timestamp: Date,
+        excludingIDs: Set<UUID> = [],
+        limit: Int? = nil
+    ) throws -> [NetworkRequest] {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT id, payload
+                        FROM network_requests
+                        WHERE timestamp >= ?
+                        ORDER BY timestamp DESC, id DESC
+                        """,
+                        arguments: [timestamp.timeIntervalSince1970]
+                    )
+
+                    let excluded = Set(excludingIDs.map(\.uuidString))
+                    let effectiveLimit = limit.map { max(0, $0) }
+                    if let effectiveLimit, effectiveLimit == 0 {
+                        return []
+                    }
+
+                    let decoder = makeDecoder()
+                    var requests: [NetworkRequest] = []
+                    requests.reserveCapacity(rows.count)
+
+                    for row in rows {
+                        if let effectiveLimit, requests.count >= effectiveLimit {
+                            break
+                        }
+
+                        let requestID: String = row["id"]
+                        if excluded.contains(requestID) {
+                            continue
+                        }
+
+                        let payload: Data = row["payload"]
+                        guard let request = try? decoder.decode(NetworkRequest.self, from: payload),
+                              request.timestamp >= timestamp else {
+                            continue
+                        }
+                        requests.append(request)
+                    }
+
+                    return requests
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    /// Loads captured requests newer than the given timestamp on a background queue.
+    public func loadRequestsAsync(
+        newerThan timestamp: Date,
+        excludingIDs: Set<UUID> = [],
+        limit: Int? = nil
+    ) async throws -> [NetworkRequest] {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try continuation.resume(returning: self.loadRequests(
+                        newerThan: timestamp,
+                        excludingIDs: excludingIDs,
+                        limit: limit
+                    ))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Loads a single captured request by identifier.
+    public func loadRequest(_ id: UUID) throws -> NetworkRequest? {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    guard let payload = try Data.fetchOne(
+                        db,
+                        sql: """
+                        SELECT payload
+                        FROM network_requests
+                        WHERE id = ?
+                        """,
+                        arguments: [id.uuidString]
+                    ) else {
+                        return nil
+                    }
+
+                    do {
+                        return try makeDecoder().decode(NetworkRequest.self, from: payload)
+                    } catch {
+                        CoreLog.storage.error(
+                            LogEvent.storage("load_request_by_id")
+                                .failure()
+                                .with("request_id", value: id.uuidString, privacy: .public)
+                                .error(error)
+                        )
+                        return nil
+                    }
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    /// Loads a single captured request by identifier on a background queue.
+    public func loadRequestAsync(_ id: UUID) async throws -> NetworkRequest? {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try continuation.resume(returning: self.loadRequest(id))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     func setTransportStoreBudgetBytesForTesting(_ bytes: Int?) {
         transportStoreBudgetLock.lock()
         if let bytes {

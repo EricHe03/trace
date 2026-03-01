@@ -44,38 +44,22 @@ struct EventRebuildModifier: ViewModifier {
     let scheduleRebuild: () -> Void
 
     func body(content: Content) -> some View {
-        let requestSignatures = viewModel.filteredRequests.map {
-            "\($0.id.uuidString):\($0.statusCode ?? -1):\($0.duration):\($0.responseSize ?? -1)"
-        }
-        let webSocketSignatures = webSocketViewModel.connections.map {
-            "\($0.id.uuidString):\($0.status.rawValue):\($0.messageCount):\($0.endTime?.timeIntervalSince1970 ?? -1)"
-        }
-        let sseConnectionSignatures = sseViewModel.connections.map {
-            "\($0.id.uuidString):\($0.status.rawValue):\($0.eventCount):\($0.totalBytesReceived):\($0.isTruncated):\($0.endTime?.timeIntervalSince1970 ?? -1)"
-        }
-        let transportSignatures = viewModel.transportRequests.map {
-            "\($0.id.uuidString):\($0.applicationProtocol.rawValue):\($0.transport.rawValue):\($0.payloadBytes):\($0.parserOutcome.rawValue):\($0.timestamp.timeIntervalSince1970)"
-        }
-
-        let step1 = content.onChangeCompat(of: requestSignatures) {
+        let step1 = content.onChangeCompat(of: viewModel.requestsChangeToken) {
             scheduleRebuild()
         }
-        let step2 = step1.onChangeCompat(of: webSocketSignatures) {
+        let step2 = step1.onChangeCompat(of: viewModel.transportRequestsChangeToken) {
             scheduleRebuild()
         }
-        let step3 = step2.onChangeCompat(of: sseConnectionSignatures) {
+        let step3 = step2.onChangeCompat(of: webSocketViewModel.connectionsChangeToken) {
             scheduleRebuild()
         }
-        let step4 = step3.onChangeCompat(of: viewModel.searchText) {
+        let step4 = step3.onChangeCompat(of: sseViewModel.connectionsChangeToken) {
             scheduleRebuild()
         }
-        let step5 = step4.onChangeCompat(of: viewModel.searchScope) {
+        let step5 = step4.onChangeCompat(of: viewModel.eventRebuildFilterToken) {
             scheduleRebuild()
         }
-        let step6 = step5.onChangeCompat(of: transportSignatures) {
-            scheduleRebuild()
-        }
-        return step6.onChangeCompat(of: viewModel.filterNetworkEventTypes) {
+        return step5.onChangeCompat(of: viewModel.groupingMode) {
             scheduleRebuild()
         }
     }

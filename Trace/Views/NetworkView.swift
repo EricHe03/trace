@@ -28,9 +28,7 @@ struct NetworkView: View {
     @State private var shareSheetItem: ShareSheetItem?
     @State private var requestToOpen: NetworkRequest?
     @State private var hasLoaded = false
-    @State private var cachedEvents: [NetworkEvent] = []
     @State private var cachedFilteredEvents: [NetworkEvent] = []
-    @State private var cachedEventCounts: [NetworkEventType: Int] = [:]
     @State private var eventRebuildTask: Task<Void, Never>?
 
     @ObservedObject private var vpnManager = VPNManager.shared
@@ -179,7 +177,10 @@ struct NetworkView: View {
         .toolbar {
             NetworkViewToolbar(
                 viewModel: viewModel,
-                allEventsIsEmpty: allEvents.isEmpty,
+                allEventsIsEmpty: viewModel.requests.isEmpty &&
+                    viewModel.transportRequests.isEmpty &&
+                    webSocketViewModel.connections.isEmpty &&
+                    sseViewModel.connections.isEmpty,
                 onToggleFilters: { showingFilters = true },
                 onShowFavorites: { showingFavorites = true },
                 onShowCurlImport: { showingCurlImport = true },
@@ -269,16 +270,8 @@ struct NetworkView: View {
 
     // MARK: - Computed Properties
 
-    private var allEvents: [NetworkEvent] {
-        cachedEvents
-    }
-
     private var filteredEvents: [NetworkEvent] {
         cachedFilteredEvents
-    }
-
-    private var eventCountByType: [NetworkEventType: Int] {
-        cachedEventCounts
     }
 
     var shouldShowEmptyState: Bool {
@@ -406,98 +399,156 @@ struct NetworkView: View {
 
     @MainActor
     private func rebuildEventCaches() async {
-        let httpRequests = viewModel.filteredRequests
-        let transportRequests = viewModel.transportRequests
-        let webSockets = webSocketViewModel.connections
-        let sseConnections = sseViewModel.connections
-        let searchText = viewModel.searchText
-        let searchScope = viewModel.searchScope
-        let enabledTypes = viewModel.filterNetworkEventTypes
+        let input = EventBuildInput(
+            httpRequests: viewModel.filteredRequests,
+            transportRequests: viewModel.transportRequests,
+            webSockets: webSocketViewModel.connections,
+            sseConnections: sseViewModel.connections,
+            searchText: viewModel.searchText,
+            searchScope: viewModel.searchScope,
+            enabledTypes: viewModel.filterNetworkEventTypes
+        )
 
-        let results = await Task.detached(priority: .userInitiated) {
-            let httpEvents: [NetworkEvent] = httpRequests.map { .httpRequest($0) }
-            let transportEvents: [NetworkEvent] = transportRequests.map { .transportRequest($0) }
-            let webSocketEvents: [NetworkEvent] = webSockets.map { .webSocket($0) }
-            let sseEvents: [NetworkEvent] = sseConnections.map { .sse($0) }
-
-            func mergeSortedByTimestampDescending(_ arrays: [[NetworkEvent]]) -> [NetworkEvent] {
-                var indices = Array(repeating: 0, count: arrays.count)
-                let totalCount = arrays.reduce(0) { $0 + $1.count }
-                var merged: [NetworkEvent] = []
-                merged.reserveCapacity(totalCount)
-
-                while merged.count < totalCount {
-                    var selectedArrayIndex: Int?
-                    var selectedEvent: NetworkEvent?
-
-                    for arrayIndex in arrays.indices {
-                        let elementIndex = indices[arrayIndex]
-                        guard elementIndex < arrays[arrayIndex].count else { continue }
-                        let candidate = arrays[arrayIndex][elementIndex]
-
-                        if selectedEvent == nil || candidate.timestamp > selectedEvent!.timestamp {
-                            selectedEvent = candidate
-                            selectedArrayIndex = arrayIndex
-                        }
-                    }
-
-                    guard let selectedArrayIndex, let selectedEvent else { break }
-                    merged.append(selectedEvent)
-                    indices[selectedArrayIndex] += 1
-                }
-
-                return merged
-            }
-
-            let events = mergeSortedByTimestampDescending([httpEvents, transportEvents, webSocketEvents, sseEvents])
-
-            var counts: [NetworkEventType: Int] = [:]
-            for event in events {
-                counts[event.type, default: 0] += 1
-            }
-
-            let filtered = events.filter { event in
-                guard enabledTypes.contains(event.type) else { return false }
-                guard !searchText.isEmpty else { return true }
-                switch event {
-                case .httpRequest:
-                    return true
-                case let .webSocket(connection):
-                    guard searchScope == .all || searchScope == .url else { return false }
-                    return connection.url.localizedCaseInsensitiveContains(searchText)
-                case let .sse(connection):
-                    guard searchScope == .all || searchScope == .url else { return false }
-                    return connection.url.localizedCaseInsensitiveContains(searchText)
-                case let .transportRequest(request):
-                    let basicSearch = request.endpointSummary.localizedCaseInsensitiveContains(searchText) ||
-                        request.applicationProtocol.displayName.localizedCaseInsensitiveContains(searchText) ||
-                        (request.summary?.localizedCaseInsensitiveContains(searchText) ?? false)
-                    let bodySearch: Bool = if searchScope == .body || searchScope == .all {
-                        request.payload.getString(maxBytes: 32 * 1024)?
-                            .localizedCaseInsensitiveContains(searchText) ?? false
-                    } else {
-                        false
-                    }
-
-                    switch searchScope {
-                    case .all:
-                        return basicSearch || bodySearch
-                    case .url:
-                        return basicSearch
-                    case .headers:
-                        return false
-                    case .body:
-                        return bodySearch
-                    }
-                }
-            }
-
-            return (events, filtered, counts)
+        let filtered = await Task.detached(priority: .userInitiated) {
+            Self.buildFilteredEvents(from: input)
         }.value
 
-        cachedEvents = results.0
-        cachedFilteredEvents = results.1
-        cachedEventCounts = results.2
+        cachedFilteredEvents = filtered
+    }
+
+    private struct EventBuildInput: Sendable {
+        let httpRequests: [NetworkRequest]
+        let transportRequests: [TransportRequest]
+        let webSockets: [WebSocketConnection]
+        let sseConnections: [SSEConnection]
+        let searchText: String
+        let searchScope: SearchScope
+        let enabledTypes: Set<NetworkEventType>
+    }
+
+    private nonisolated static func buildFilteredEvents(from input: EventBuildInput) -> [NetworkEvent] {
+        var eventArrays: [[NetworkEvent]] = []
+
+        if input.enabledTypes.contains(.http) {
+            eventArrays.append(input.httpRequests.map { .httpRequest($0) })
+        }
+
+        if input.enabledTypes.contains(.webSocket) {
+            let filteredWebSockets = input.webSockets.filter {
+                matchesURLSearch($0.url, searchText: input.searchText, searchScope: input.searchScope)
+            }
+            if !filteredWebSockets.isEmpty {
+                eventArrays.append(filteredWebSockets.map { .webSocket($0) })
+            }
+        }
+
+        if input.enabledTypes.contains(.sse) {
+            let filteredSSE = input.sseConnections.filter {
+                matchesURLSearch($0.url, searchText: input.searchText, searchScope: input.searchScope)
+            }
+            if !filteredSSE.isEmpty {
+                eventArrays.append(filteredSSE.map { .sse($0) })
+            }
+        }
+
+        let transportEvents = filteredTransportEvents(
+            input.transportRequests,
+            searchText: input.searchText,
+            searchScope: input.searchScope,
+            enabledTypes: input.enabledTypes
+        )
+        if !transportEvents.isEmpty {
+            eventArrays.append(transportEvents)
+        }
+
+        guard !eventArrays.isEmpty else { return [] }
+        return mergeSortedByTimestampDescending(eventArrays)
+    }
+
+    private nonisolated static func matchesURLSearch(
+        _ value: String,
+        searchText: String,
+        searchScope: SearchScope
+    ) -> Bool {
+        guard !searchText.isEmpty else { return true }
+        guard searchScope == .all || searchScope == .url else { return false }
+        return value.localizedCaseInsensitiveContains(searchText)
+    }
+
+    private nonisolated static func filteredTransportEvents(
+        _ requests: [TransportRequest],
+        searchText: String,
+        searchScope: SearchScope,
+        enabledTypes: Set<NetworkEventType>
+    ) -> [NetworkEvent] {
+        var events: [NetworkEvent] = []
+        events.reserveCapacity(requests.count)
+
+        for request in requests {
+            let event = NetworkEvent.transportRequest(request)
+            guard enabledTypes.contains(event.type) else { continue }
+            guard matchesTransportSearch(request, searchText: searchText, searchScope: searchScope) else { continue }
+            events.append(event)
+        }
+        return events
+    }
+
+    private nonisolated static func matchesTransportSearch(
+        _ request: TransportRequest,
+        searchText: String,
+        searchScope: SearchScope
+    ) -> Bool {
+        guard !searchText.isEmpty else { return true }
+
+        let basicSearch = request.endpointSummary.localizedCaseInsensitiveContains(searchText) ||
+            request.applicationProtocol.displayName.localizedCaseInsensitiveContains(searchText) ||
+            (request.summary?.localizedCaseInsensitiveContains(searchText) ?? false)
+        let bodySearch: Bool = if searchScope == .body || searchScope == .all {
+            request.payload.getString(maxBytes: 32 * 1024)?
+                .localizedCaseInsensitiveContains(searchText) ?? false
+        } else {
+            false
+        }
+
+        switch searchScope {
+        case .all:
+            basicSearch || bodySearch
+        case .url:
+            basicSearch
+        case .headers:
+            false
+        case .body:
+            bodySearch
+        }
+    }
+
+    private nonisolated static func mergeSortedByTimestampDescending(_ arrays: [[NetworkEvent]]) -> [NetworkEvent] {
+        var indices = Array(repeating: 0, count: arrays.count)
+        let totalCount = arrays.reduce(0) { $0 + $1.count }
+        var merged: [NetworkEvent] = []
+        merged.reserveCapacity(totalCount)
+
+        while merged.count < totalCount {
+            var selectedArrayIndex: Int?
+            var selectedEvent: NetworkEvent?
+
+            for arrayIndex in arrays.indices {
+                let elementIndex = indices[arrayIndex]
+                guard elementIndex < arrays[arrayIndex].count else { continue }
+                let candidate = arrays[arrayIndex][elementIndex]
+
+                if selectedEvent == nil || (selectedEvent.map { candidate.timestamp > $0.timestamp } ?? false) {
+                    selectedEvent = candidate
+                    selectedArrayIndex = arrayIndex
+                }
+            }
+
+            guard let selectedArrayIndex, let selectedEvent else { break }
+            merged.append(selectedEvent)
+            indices[selectedArrayIndex] += 1
+        }
+
+        return merged
     }
 }
 
