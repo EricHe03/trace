@@ -85,6 +85,20 @@ final class CurlParserTests: XCTestCase {
         XCTAssertEqual(request.method, .head)
     }
 
+    func testParseHTTP3OptionSetsProtocolVersion() throws {
+        let curl = "curl --http3 https://example.com"
+        let request = try CurlParser.parse(curl)
+
+        XCTAssertEqual(request.protocolVersion, .http3)
+    }
+
+    func testParseHTTP3OnlyOptionSetsProtocolVersion() throws {
+        let curl = "curl --http3-only https://example.com"
+        let request = try CurlParser.parse(curl)
+
+        XCTAssertEqual(request.protocolVersion, .http3)
+    }
+
     // MARK: - Header Tests
 
     func testParseSingleHeader() throws {
@@ -336,6 +350,24 @@ final class CurlParserTests: XCTestCase {
         XCTAssertNotNil(bodyData)
         let bodyString = String(data: bodyData!, encoding: .utf8)
         XCTAssertTrue(bodyString?.contains("John") ?? false)
+    }
+
+    func testParseMultilineCommandWithLineContinuationAfterQuotedValues() throws {
+        let curl = """
+        curl -X POST -H 'Content-Type: application/json' \
+             -d '{"hello":"world"}' \
+             https://httpbin.org/post
+        """
+
+        let request = try CurlParser.parse(curl)
+
+        XCTAssertEqual(request.url, "https://httpbin.org/post")
+        XCTAssertEqual(request.method, .post)
+        XCTAssertEqual(request.requestHeaders.first(where: { $0.key == "Content-Type" })?.value, "application/json")
+
+        let bodyData = request.requestBody.getData()
+        XCTAssertNotNil(bodyData)
+        XCTAssertEqual(String(data: bodyData!, encoding: .utf8), "{\"hello\":\"world\"}")
     }
 
     func testParseRealWorldExample() throws {

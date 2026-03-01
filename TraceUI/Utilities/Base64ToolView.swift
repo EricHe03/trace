@@ -24,7 +24,8 @@ public struct Base64ToolView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(spacing: DesignSystem.Spacing.lgPlus) {
+            VStack(spacing: DesignSystem.Spacing.lg) {
+                // Mode picker
                 Picker("Mode", selection: $mode) {
                     ForEach(Mode.allCases, id: \.self) { mode in
                         Text(mode.rawValue).tag(mode)
@@ -38,8 +39,12 @@ public struct Base64ToolView: View {
                 .accessibilityLabel("Base64 mode")
                 .accessibilityHint("Choose between encoding and decoding")
 
-                VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-                    HStack {
+                // Input section
+                VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
+                    HStack(spacing: DesignSystem.Spacing.sm) {
+                        Image(systemName: "arrow.down.doc")
+                            .foregroundStyle(DesignSystem.Colors.info)
+                            .imageScale(.medium)
                         Text("Input")
                             .font(.headline)
 
@@ -49,6 +54,7 @@ public struct Base64ToolView: View {
                             inputText = ""
                             outputText = ""
                         }
+                        .buttonStyle(.bordered)
                         .font(.subheadline)
                         .disabled(inputText.isEmpty)
                         .accessibilityLabel("Clear input")
@@ -58,7 +64,17 @@ public struct Base64ToolView: View {
                     TextEditor(text: $inputText)
                         .frame(minHeight: DesignSystem.Form.textEditorMinHeightMedium)
                         .font(DesignSystem.Typography.monospacedFont)
-                        .formTextEditorStyle()
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .padding(DesignSystem.Spacing.sm)
+                        .background(
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .fill(DesignSystem.Form.textEditorBackground)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .stroke(DesignSystem.Colors.muted.opacity(0.3), lineWidth: 1)
+                        )
                         .onChangeCompat(of: inputText) {
                             processText()
                         }
@@ -67,6 +83,7 @@ public struct Base64ToolView: View {
                 }
                 .padding(.horizontal)
 
+                // Options section
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
                     Toggle("URL-Safe Base64", isOn: $useURLSafe)
                         .onChangeCompat(of: useURLSafe) {
@@ -79,9 +96,19 @@ public struct Base64ToolView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal)
+                .padding(.vertical, DesignSystem.Spacing.sm)
+                .background(
+                    RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                        .fill(DesignSystem.Colors.muted.opacity(0.1))
+                )
+                .padding(.horizontal)
 
-                VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-                    HStack {
+                // Output section
+                VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
+                    HStack(spacing: DesignSystem.Spacing.sm) {
+                        Image(systemName: "arrow.up.doc")
+                            .foregroundStyle(DesignSystem.Colors.success)
+                            .imageScale(.medium)
                         Text("Output")
                             .font(.headline)
 
@@ -96,6 +123,8 @@ public struct Base64ToolView: View {
                             Label("Copy", systemImage: "doc.on.doc")
                                 .font(.subheadline)
                         }
+                        .buttonStyle(.bordered)
+                        .tint(DesignSystem.Colors.success)
                         .disabled(outputText.isEmpty)
                         .accessibilityLabel("Copy output")
                         .accessibilityHint("Double tap to copy the output to clipboard")
@@ -105,8 +134,14 @@ public struct Base64ToolView: View {
                         Text(outputText.isEmpty ? "Result will appear here" : outputText)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(DesignSystem.Spacing.md)
-                            .background(DesignSystem.Form.textEditorBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Form.textEditorCornerRadius))
+                            .background(
+                                RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                    .fill(DesignSystem.Form.textEditorBackground)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                    .stroke(DesignSystem.Colors.muted.opacity(0.3), lineWidth: 1)
+                            )
                             .font(DesignSystem.Typography.monospacedFont)
                             .foregroundStyle(outputText.isEmpty ? .secondary : .primary)
                             .textSelection(.enabled)
@@ -115,7 +150,7 @@ public struct Base64ToolView: View {
                 }
                 .padding(.horizontal)
 
-                Spacer()
+                Spacer(minLength: DesignSystem.Spacing.md)
             }
             .padding(.vertical)
         }

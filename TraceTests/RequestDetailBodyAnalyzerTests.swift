@@ -62,14 +62,18 @@ final class RequestDetailBodyAnalyzerTests: XCTestCase {
         let summary = RequestDetailBodyAnalyzer.binarySummaryText(
             kind: .zip,
             fileName: "archive.zip",
-            totalSize: 4096,
+            receivedSize: 4096,
+            capturedSize: 2048,
             previewSize: 1024,
-            isPreview: true
+            isPreview: true,
+            isTruncated: true
         )
 
         XCTAssertTrue(summary.contains("ZIP body"))
+        XCTAssertTrue(summary.contains("Received:"))
+        XCTAssertTrue(summary.contains("Captured:"))
         XCTAssertTrue(summary.contains("Filename: archive.zip"))
-        XCTAssertTrue(summary.contains("Showing preview"))
+        XCTAssertTrue(summary.contains("Truncated at capture limit."))
+        XCTAssertTrue(summary.contains("Loaded in viewer:"))
     }
 }
-

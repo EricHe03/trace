@@ -122,12 +122,6 @@ struct RequestMapView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button {
-                            showingAddMap = true
-                        } label: {
-                            Label("Add Map", systemImage: "plus")
-                        }
-
-                        Button {
                             showingImport = true
                         } label: {
                             Label("Import Maps", systemImage: "square.and.arrow.down")

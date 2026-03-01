@@ -65,7 +65,7 @@ final class UDPFlowManager {
     }
 
     deinit {
-        stopTimers()
+        shutdown()
     }
 
     func recordDatagram(ipPacket: IPPacket, udpPacket: UDPPacket) {
@@ -135,6 +135,50 @@ final class UDPFlowManager {
         }
     }
 
+    func recordQUICInspection(
+        ipPacket: IPPacket,
+        udpPacket: UDPPacket,
+        outcome: QUICInspectionOutcome,
+        metadata: QUICFlowMetadata
+    ) {
+        let sourceIP = ipPacket.source.description
+        let destinationIP = ipPacket.destination.description
+        let key = FlowKey.normalized(
+            sourceIP: sourceIP,
+            sourcePort: udpPacket.sourcePort,
+            destinationIP: destinationIP,
+            destinationPort: udpPacket.destinationPort
+        )
+        let now = Date()
+
+        queue.async(flags: .barrier) { [weak self] in
+            guard let self else { return }
+            if self.flows[key] == nil {
+                self.evictIfNeeded(now: now)
+                let created = UDPFlowMetadata(
+                    sourceIP: key.sourceIP,
+                    destinationIP: key.destinationIP,
+                    sourcePort: key.sourcePort,
+                    destinationPort: key.destinationPort,
+                    startTime: now,
+                    lastActivity: now,
+                    termination: .active,
+                    detectedProtocol: .quic
+                )
+                self.flows[key] = FlowState(metadata: created)
+            }
+
+            guard var state = self.flows[key] else { return }
+            state.metadata.detectedProtocol = .quic
+            state.metadata.quicInspectionOutcome = outcome
+            state.metadata.quicFlowMetadata = metadata
+            state.metadata.lastActivity = now
+
+            self.flows[key] = state
+            self.dirtyFlows.insert(key)
+        }
+    }
+
     func flush() {
         if DispatchQueue.getSpecific(key: queueKey) != nil {
             persistDirtyFlows()
@@ -145,6 +189,16 @@ final class UDPFlowManager {
         }
     }
 
+    func shutdown() {
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            shutdownOnQueue()
+            return
+        }
+        queue.sync(flags: .barrier) {
+            shutdownOnQueue()
+        }
+    }
+
     private func detectProtocol(
         sourcePort: UInt16,
         destinationPort: UInt16,
@@ -152,60 +206,32 @@ final class UDPFlowManager {
         sourceIP: String,
         destinationIP: String
     ) -> UDPFlowProtocol? {
-        if sourcePort == 53 || destinationPort == 53 {
-            if DNSParser.parseSafely(
-                data: payload,
-                sourceIP: sourceIP,
-                sourcePort: sourcePort,
-                destIP: destinationIP,
-                destPort: destinationPort
-            ) != nil {
-                return .dns
-            }
-        }
+        let classification = UDPProtocolClassifier.classify(
+            sourcePort: sourcePort,
+            destinationPort: destinationPort,
+            payload: payload,
+            sourceIP: sourceIP,
+            destinationIP: destinationIP
+        )
 
-        if sourcePort == 5353 || destinationPort == 5353 {
-            if DNSParser.parseSafely(
-                data: payload,
-                sourceIP: sourceIP,
-                sourcePort: sourcePort,
-                destIP: destinationIP,
-                destPort: destinationPort
-            ) != nil {
-                return .mdns
-            }
-        }
-
-        if sourcePort == 443 || destinationPort == 443 {
-            if let first = payload.first, (first & 0x80) == 0x80 {
-                return .quic
-            }
-        }
-
-        if sourcePort == 67 || sourcePort == 68 || destinationPort == 67 || destinationPort == 68 {
-            if payload.count >= 240 {
-                let cookieOffset = 236
-                let cookie = UInt32(payload[cookieOffset]) << 24 |
-                    UInt32(payload[cookieOffset + 1]) << 16 |
-                    UInt32(payload[cookieOffset + 2]) << 8 |
-                    UInt32(payload[cookieOffset + 3])
-                if cookie == 0x6382_5363 {
-                    return .dhcp
-                }
-            }
-        }
-
-        if sourcePort == 123 || destinationPort == 123 {
-            if payload.count == 48 {
-                return .ntp
-            }
-        }
-
-        if sourcePort == 161 || sourcePort == 162 || destinationPort == 161 || destinationPort == 162 {
+        switch classification.applicationProtocol {
+        case .dns:
+            return .dns
+        case .mdns:
+            return .mdns
+        case .ntp:
+            return .ntp
+        case .dhcpv4, .dhcpv6:
+            return .dhcp
+        case .snmp:
             return .snmp
+        case .quic:
+            return .quic
+        case .http, .tls:
+            return nil
+        case .unknown:
+            return nil
         }
-
-        return nil
     }
 
     private func startTimers() {
@@ -237,6 +263,29 @@ final class UDPFlowManager {
         cleanupTimer = nil
         persistTimer?.cancel()
         persistTimer = nil
+    }
+
+    private func shutdownOnQueue() {
+        stopTimers()
+        persistDirtyFlows()
+        guard !flows.isEmpty else { return }
+
+        let shutdownTime = Date()
+        for key in Array(flows.keys) {
+            guard var state = flows[key] else { continue }
+            state.metadata.termination = .closed
+            state.metadata.endTime = shutdownTime
+            do {
+                try AppGroupStorage.shared.saveUDPFlowMetadata(state.metadata)
+            } catch {
+                if logSampler.shouldLog(event: "vpn.udp_flow_store", key: "shutdown", first: 3, every: 200) {
+                    VPNLog.tunnel.warning("event=vpn.udp_flow_store outcome=failure error=\(error.localizedDescription, privacy: .public)")
+                }
+            }
+        }
+
+        flows.removeAll(keepingCapacity: false)
+        dirtyFlows.removeAll(keepingCapacity: false)
     }
 
     private func cleanupExpiredFlows() {

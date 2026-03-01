@@ -331,68 +331,82 @@ struct ActionEditorView: View {
         case .setHeader:
             TextField("Header Name", text: binding(for: "key"))
                 .autocapitalization(.none)
+                .autocorrectionDisabled()
                 .accessibilityLabel("Header name")
             TextField("Header Value", text: binding(for: "value"))
+                .autocorrectionDisabled()
                 .accessibilityLabel("Header value")
 
         case .removeHeader:
             TextField("Header Name", text: binding(for: "key"))
                 .autocapitalization(.none)
+                .autocorrectionDisabled()
                 .accessibilityLabel("Header name")
 
         case .replaceBody:
             TextField("Pattern (regex)", text: binding(for: "pattern"))
                 .autocapitalization(.none)
+                .autocorrectionDisabled()
                 .accessibilityLabel("Pattern")
                 .accessibilityHint("Regular expression to match in the body")
             TextField("Replacement", text: binding(for: "replacement"))
+                .autocorrectionDisabled()
                 .accessibilityLabel("Replacement")
 
         case .setBody:
             TextEditor(text: binding(for: "content"))
                 .frame(minHeight: textEditorHeight)
                 .font(.system(.body, design: .monospaced))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
                 .formTextEditorStyle()
                 .accessibilityLabel("Body content")
 
         case .setStatusCode:
             TextField("Status Code", text: binding(for: "code"))
-                .keyboardType(.numberPad)
+                .keyboardType(.asciiCapableNumberPad)
                 .accessibilityLabel("Status code")
 
         case .addDelay:
             TextField("Delay (milliseconds)", text: binding(for: "milliseconds"))
-                .keyboardType(.numberPad)
+                .keyboardType(.asciiCapableNumberPad)
                 .accessibilityLabel("Delay in milliseconds")
 
         case .redirectTo:
             TextField("Redirect URL", text: binding(for: "url"))
                 .autocapitalization(.none)
                 .autocorrectionDisabled()
+                .keyboardType(.URL)
                 .accessibilityLabel("Redirect URL")
 
         case .setQueryParam:
             TextField("Param Name", text: binding(for: "name"))
                 .autocapitalization(.none)
+                .autocorrectionDisabled()
                 .accessibilityLabel("Query parameter name")
             TextField("Param Value", text: binding(for: "value"))
+                .autocorrectionDisabled()
                 .accessibilityLabel("Query parameter value")
 
         case .removeQueryParam:
             TextField("Param Name", text: binding(for: "name"))
                 .autocapitalization(.none)
+                .autocorrectionDisabled()
                 .accessibilityLabel("Query parameter name")
 
         case .setCookie:
             TextField("Cookie Name", text: binding(for: "name"))
                 .autocapitalization(.none)
+                .autocorrectionDisabled()
                 .accessibilityLabel("Cookie name")
             TextField("Cookie Value", text: binding(for: "value"))
+                .autocorrectionDisabled()
                 .accessibilityLabel("Cookie value")
 
         case .removeCookie:
             TextField("Cookie Name", text: binding(for: "name"))
                 .autocapitalization(.none)
+                .autocorrectionDisabled()
                 .accessibilityLabel("Cookie name")
 
         case .base64Encode, .base64Decode, .urlEncode, .urlDecode, .jsonToXml, .xmlToJson,
@@ -404,37 +418,43 @@ struct ActionEditorView: View {
         case .compress, .decompress:
             TextField("Algorithm (gzip, deflate, br)", text: binding(for: "algorithm"))
                 .autocapitalization(.none)
+                .autocorrectionDisabled()
                 .accessibilityLabel("Compression algorithm")
 
         case .jsonPathSet:
             TextField("JSONPath", text: binding(for: "path"))
                 .autocapitalization(.none)
+                .autocorrectionDisabled()
                 .accessibilityLabel("JSONPath")
             TextField("Value (JSON)", text: binding(for: "value"))
+                .autocorrectionDisabled()
                 .accessibilityLabel("Value")
 
         case .jsonPathDelete:
             TextField("JSONPath", text: binding(for: "path"))
                 .autocapitalization(.none)
+                .autocorrectionDisabled()
                 .accessibilityLabel("JSONPath")
 
         case .throttle:
             TextField("Bandwidth (bytes/sec)", text: binding(for: "bandwidth"))
-                .keyboardType(.numberPad)
+                .keyboardType(.asciiCapableNumberPad)
                 .accessibilityLabel("Bandwidth in bytes per second")
 
         case .addJitter:
             TextField("Base Delay (ms)", text: binding(for: "baseDelay"))
-                .keyboardType(.numberPad)
+                .keyboardType(.asciiCapableNumberPad)
                 .accessibilityLabel("Base delay in milliseconds")
             TextField("Variance (ms)", text: binding(for: "variance"))
-                .keyboardType(.numberPad)
+                .keyboardType(.asciiCapableNumberPad)
                 .accessibilityLabel("Variance in milliseconds")
 
         case .setBodyFromTemplate:
             TextEditor(text: binding(for: "template"))
                 .frame(minHeight: textEditorHeight)
                 .font(.system(.body, design: .monospaced))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
                 .formTextEditorStyle()
                 .accessibilityLabel("Body template")
         }

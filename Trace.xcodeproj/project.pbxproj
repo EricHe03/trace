@@ -302,6 +302,7 @@
 				5FCEEBFD2F0152E400D3CD59 /* Sources */,
 				5FCEEBFE2F0152E400D3CD59 /* Frameworks */,
 				5FCEEBFF2F0152E400D3CD59 /* Resources */,
+				5F8D6F7A3A00110000ABCDEF /* Create Trace App Alias for UITests */,
 				5FCEECE92F02AE4600D3CD59 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
@@ -507,6 +508,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		5F8D6F7A3A00110000ABCDEF /* Create Trace App Alias for UITests */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Create Trace App Alias for UITests";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(PRODUCT_NAME)",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ -d \"${TARGET_BUILD_DIR}/${FULL_PRODUCT_NAME}\" ]; then\n  ln -sfn \"${FULL_PRODUCT_NAME}\" \"${TARGET_BUILD_DIR}/${PRODUCT_NAME}\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		5F6EDD1E2F081F82002BB89C /* Sources */ = {

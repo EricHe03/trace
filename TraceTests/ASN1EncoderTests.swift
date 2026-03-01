@@ -5,276 +5,198 @@
 //  Created by Justin on 2026/01/08.
 //
 
+import Foundation
+import Security
 import XCTest
+import SwiftASN1
+import X509
 @testable import Trace
 @testable import TraceSecurity
 
 final class ASN1EncoderTests: XCTestCase {
+    // MARK: - Distinguished Name Tests
 
-    // MARK: - Integer Encoding Tests
+    func testDistinguishedNameSimpleFactory() {
+        let name = DistinguishedName.simple("example.com")
 
-    func testEncodeInteger() {
-        let data = Data([0x01, 0x02, 0x03])
-        let encoded = ASN1Encoder.encodeInteger(data)
-
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.integer.rawValue)
-        XCTAssertGreaterThan(encoded.count, 1)
+        XCTAssertEqual(name.commonName, "example.com")
+        XCTAssertNil(name.organization)
+        XCTAssertNil(name.country)
+        XCTAssertNil(name.organizationalUnit)
     }
 
-    func testEncodeIntegerFromInt() {
-        let encoded = ASN1Encoder.encodeInteger(42)
+    func testDistinguishedNameForCAFactory() {
+        let name = DistinguishedName.forCA(commonName: "Trace Root CA")
 
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.integer.rawValue)
-        XCTAssertEqual(encoded[1], 0x01) // Length
-        XCTAssertEqual(encoded[2], 0x2A) // 42 in hex
+        XCTAssertEqual(name.commonName, "Trace Root CA")
+        XCTAssertEqual(name.organization, "Trace Network Debugger")
+        XCTAssertEqual(name.country, "US")
     }
 
-    func testEncodeIntegerZero() {
-        let encoded = ASN1Encoder.encodeInteger(0)
+    // MARK: - Certificate Builder Tests
 
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.integer.rawValue)
-        XCTAssertEqual(encoded[1], 0x01)
-        XCTAssertEqual(encoded[2], 0x00)
+    func testX509CertificateBuilderBuildsSelfSignedCA() throws {
+        let caKey = try makeEphemeralRSAKey()
+        let subject = DistinguishedName.forCA(commonName: "Trace Unit Test Root")
+
+        let cert = try X509CertificateBuilder.buildCertificate(
+            subject: subject,
+            issuer: subject,
+            subjectPrivateKey: caKey,
+            signingKey: caKey,
+            notBefore: Date(),
+            notAfter: Date().addingTimeInterval(60 * 60 * 24 * 365),
+            isCA: true
+        )
+
+        let der = SecCertificateCopyData(cert) as Data
+        XCTAssertFalse(der.isEmpty)
+        XCTAssertTrue((cert.summary).contains("Trace Unit Test Root"))
+
+        let parsed = try parseCertificate(cert)
+        try assertCAProfile(parsed)
     }
 
-    func testEncodeIntegerNegative() {
-        let encoded = ASN1Encoder.encodeInteger(-1)
+    func testX509CertificateBuilderBuildsLeafCertificate() throws {
+        let caKey = try makeEphemeralRSAKey()
+        let leafKey = try makeEphemeralRSAKey()
 
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.integer.rawValue)
-        XCTAssertGreaterThan(encoded.count, 2)
+        let issuer = DistinguishedName.forCA(commonName: "Trace Unit Test Root")
+        let subject = DistinguishedName.simple("api.example.com")
+
+        let cert = try X509CertificateBuilder.buildCertificate(
+            subject: subject,
+            issuer: issuer,
+            subjectPrivateKey: leafKey,
+            signingKey: caKey,
+            notBefore: Date(),
+            notAfter: Date().addingTimeInterval(60 * 60 * 24 * 365),
+            isCA: false
+        )
+
+        let der = SecCertificateCopyData(cert) as Data
+        XCTAssertFalse(der.isEmpty)
+        XCTAssertEqual(cert.commonName, "api.example.com")
+
+        let parsed = try parseCertificate(cert)
+        try assertLeafProfile(parsed, expectedDNSName: "api.example.com")
     }
 
-    // MARK: - Bit String Tests
+    func testX509CertificateBuilderSupportsIPAddressSubject() throws {
+        let caKey = try makeEphemeralRSAKey()
+        let leafKey = try makeEphemeralRSAKey()
 
-    func testEncodeBitString() {
-        let data = Data([0xFF, 0x00])
-        let encoded = ASN1Encoder.encodeBitString(data)
+        let issuer = DistinguishedName.forCA(commonName: "Trace Unit Test Root")
+        let subject = DistinguishedName.simple("127.0.0.1")
 
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.bitString.rawValue)
-        XCTAssertGreaterThan(encoded.count, 2)
+        let cert = try X509CertificateBuilder.buildCertificate(
+            subject: subject,
+            issuer: issuer,
+            subjectPrivateKey: leafKey,
+            signingKey: caKey,
+            notBefore: Date(),
+            notAfter: Date().addingTimeInterval(60 * 60 * 24 * 365),
+            isCA: false
+        )
+
+        XCTAssertFalse((SecCertificateCopyData(cert) as Data).isEmpty)
+        XCTAssertEqual(cert.commonName, "127.0.0.1")
+
+        let parsed = try parseCertificate(cert)
+        try assertLeafProfile(parsed, expectedIPAddress: [127, 0, 0, 1])
     }
 
-    func testEncodeBitStringWithUnusedBits() {
-        let data = Data([0xFF])
-        let encoded = ASN1Encoder.encodeBitString(data, unusedBits: 3)
+    // MARK: - Helpers
 
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.bitString.rawValue)
-        XCTAssertEqual(encoded[2], 0x03) // Unused bits count
+    private func parseCertificate(_ certificate: SecCertificate) throws -> Certificate {
+        try Certificate(certificate)
     }
 
-    // MARK: - Octet String Tests
+    private func assertCAProfile(_ certificate: Certificate) throws {
+        XCTAssertEqual(certificate.subject, certificate.issuer)
 
-    func testEncodeOctetString() {
-        let data = "Hello".data(using: .utf8)!
-        let encoded = ASN1Encoder.encodeOctetString(data)
+        let basicConstraintsExtension = try XCTUnwrap(
+            certificate.extensions[oid: .X509ExtensionID.basicConstraints]
+        )
+        XCTAssertTrue(basicConstraintsExtension.critical)
 
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.octetString.rawValue)
-        XCTAssertEqual(encoded[1], 0x05) // Length
-    }
-
-    func testEncodeEmptyOctetString() {
-        let data = Data()
-        let encoded = ASN1Encoder.encodeOctetString(data)
-
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.octetString.rawValue)
-        XCTAssertEqual(encoded[1], 0x00) // Length = 0
-    }
-
-    // MARK: - Null Tests
-
-    func testEncodeNull() {
-        let encoded = ASN1Encoder.encodeNull()
-
-        XCTAssertEqual(encoded.count, 2)
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.null.rawValue)
-        XCTAssertEqual(encoded[1], 0x00)
-    }
-
-    // MARK: - Object Identifier Tests
-
-    func testEncodeObjectIdentifier() {
-        let oid = "2.5.4.3" // Common Name
-        let encoded = ASN1Encoder.encodeObjectIdentifier(oid)
-
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.objectIdentifier.rawValue)
-        XCTAssertGreaterThan(encoded.count, 2)
-    }
-
-    func testEncodeObjectIdentifierSHA256() {
-        let oid = "1.2.840.113549.1.1.11" // SHA-256 with RSA
-        let encoded = ASN1Encoder.encodeObjectIdentifier(oid)
-
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.objectIdentifier.rawValue)
-        XCTAssertGreaterThan(encoded.count, 2)
-    }
-
-    func testEncodeObjectIdentifierInvalid() {
-        let oid = "1" // Invalid (needs at least 2 components)
-        let encoded = ASN1Encoder.encodeObjectIdentifier(oid)
-
-        XCTAssertEqual(encoded.count, 0, "Invalid OID should return empty data")
-    }
-
-    // MARK: - String Encoding Tests
-
-    func testEncodeUTF8String() {
-        let string = "Hello World"
-        let encoded = ASN1Encoder.encodeUTF8String(string)
-
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.utf8String.rawValue)
-        XCTAssertGreaterThan(encoded.count, 2)
-    }
-
-    func testEncodePrintableString() {
-        let string = "ExampleCA"
-        let encoded = ASN1Encoder.encodePrintableString(string)
-
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.printableString.rawValue)
-        XCTAssertGreaterThan(encoded.count, 2)
-    }
-
-    func testEncodeIA5String() {
-        let string = "test@example.com"
-        let encoded = ASN1Encoder.encodeIA5String(string)
-
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.ia5String.rawValue)
-        XCTAssertGreaterThan(encoded.count, 2)
-    }
-
-    // MARK: - UTC Time Tests
-
-    func testEncodeUTCTime() {
-        let date = Date()
-        let encoded = ASN1Encoder.encodeUTCTime(date)
-
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.utcTime.rawValue)
-        XCTAssertGreaterThan(encoded.count, 2)
-    }
-
-    func testEncodeUTCTimeFormat() {
-        // Create a specific date
-        let calendar = Calendar(identifier: .gregorian)
-        var components = DateComponents()
-        components.year = 2025
-        components.month = 12
-        components.day = 30
-        components.hour = 10
-        components.minute = 30
-        components.second = 00
-        components.timeZone = TimeZone(identifier: "UTC")
-
-        guard let date = calendar.date(from: components) else {
-            XCTFail("Failed to create test date")
-            return
+        let basicConstraints = try XCTUnwrap(certificate.extensions.basicConstraints)
+        switch basicConstraints {
+        case .isCertificateAuthority(let maxPathLength):
+            XCTAssertNil(maxPathLength)
+        default:
+            XCTFail("Expected CA basic constraints")
         }
 
-        let encoded = ASN1Encoder.encodeUTCTime(date)
+        let keyUsageExtension = try XCTUnwrap(certificate.extensions[oid: .X509ExtensionID.keyUsage])
+        XCTAssertTrue(keyUsageExtension.critical)
 
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.utcTime.rawValue)
-        // UTC time should be in format: YYMMDDhhmmssZ
-        XCTAssertEqual(encoded[1], 13) // Length of "251230103000Z"
+        let keyUsage = try XCTUnwrap(certificate.extensions.keyUsage)
+        XCTAssertTrue(keyUsage.digitalSignature)
+        XCTAssertTrue(keyUsage.keyCertSign)
+        XCTAssertTrue(keyUsage.cRLSign)
+        XCTAssertFalse(keyUsage.keyEncipherment)
+
+        XCTAssertNil(try certificate.extensions.extendedKeyUsage)
+        XCTAssertNil(try certificate.extensions.subjectAlternativeNames)
+
+        let ski = try XCTUnwrap(certificate.extensions.subjectKeyIdentifier)
+        let aki = try XCTUnwrap(certificate.extensions.authorityKeyIdentifier)
+        XCTAssertEqual(aki.keyIdentifier, ski.keyIdentifier)
     }
 
-    // MARK: - Sequence Tests
+    private func assertLeafProfile(
+        _ certificate: Certificate,
+        expectedDNSName: String? = nil,
+        expectedIPAddress: [UInt8]? = nil
+    ) throws {
+        XCTAssertNil(try certificate.extensions.basicConstraints)
 
-    func testEncodeSequenceFromArray() {
-        let data1 = Data([0x01, 0x02])
-        let data2 = Data([0x03, 0x04])
-        let encoded = ASN1Encoder.encodeSequence([data1, data2])
+        let keyUsageExtension = try XCTUnwrap(certificate.extensions[oid: .X509ExtensionID.keyUsage])
+        XCTAssertTrue(keyUsageExtension.critical)
 
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.sequence.rawValue)
-        XCTAssertGreaterThan(encoded.count, 2)
+        let keyUsage = try XCTUnwrap(certificate.extensions.keyUsage)
+        XCTAssertTrue(keyUsage.digitalSignature)
+        XCTAssertTrue(keyUsage.keyEncipherment)
+        XCTAssertFalse(keyUsage.keyCertSign)
+        XCTAssertFalse(keyUsage.cRLSign)
+
+        let eku = try XCTUnwrap(certificate.extensions.extendedKeyUsage)
+        XCTAssertTrue(eku.contains(.serverAuth))
+        XCTAssertTrue(eku.contains(.clientAuth))
+
+        let san = try XCTUnwrap(certificate.extensions.subjectAlternativeNames)
+        if let expectedDNSName {
+            XCTAssertTrue(san.contains(.dnsName(expectedDNSName)))
+        }
+        if let expectedIPAddress {
+            let hasIPAddress = san.contains { name in
+                if case .ipAddress(let address) = name {
+                    return Array(address.bytes) == expectedIPAddress
+                }
+                return false
+            }
+            XCTAssertTrue(hasIPAddress)
+        }
+
+        XCTAssertNotNil(try certificate.extensions.subjectKeyIdentifier)
+        XCTAssertNotNil(try certificate.extensions.authorityKeyIdentifier)
     }
 
-    func testEncodeSequenceFromData() {
-        let data = Data([0x01, 0x02, 0x03])
-        let encoded = ASN1Encoder.encodeSequence(data)
+    private func makeEphemeralRSAKey() throws -> SecKey {
+        var error: Unmanaged<CFError>?
+        let attributes: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+            kSecAttrKeySizeInBits as String: 2048,
+            kSecPrivateKeyAttrs as String: [
+                kSecAttrIsPermanent as String: false
+            ]
+        ]
 
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.sequence.rawValue)
-        XCTAssertEqual(encoded[1], 0x03) // Length
-    }
+        guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
+            throw error?.takeRetainedValue() as Error? ?? CertificateError.keyGenerationFailed(nil)
+        }
 
-    func testEncodeEmptySequence() {
-        let encoded = ASN1Encoder.encodeSequence([])
-
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.sequence.rawValue)
-        XCTAssertEqual(encoded[1], 0x00) // Length = 0
-    }
-
-    // MARK: - Set Tests
-
-    func testEncodeSet() {
-        let data = Data([0x01, 0x02])
-        let encoded = ASN1Encoder.encodeSet(data)
-
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.set.rawValue)
-        XCTAssertEqual(encoded[1], 0x02) // Length
-    }
-
-    // MARK: - Context Specific Tests
-
-    func testEncodeContextSpecific() {
-        let data = Data([0x01, 0x02])
-        let encoded = ASN1Encoder.encodeContextSpecific(0, data, constructed: true)
-
-        XCTAssertEqual(encoded[0], 0xA0) // Context-specific tag 0, constructed
-        XCTAssertGreaterThan(encoded.count, 2)
-    }
-
-    func testEncodeContextSpecificNotConstructed() {
-        let data = Data([0x01, 0x02])
-        let encoded = ASN1Encoder.encodeContextSpecific(2, data, constructed: false)
-
-        XCTAssertEqual(encoded[0], 0x82) // Context-specific tag 2, primitive
-        XCTAssertGreaterThan(encoded.count, 2)
-    }
-
-    // MARK: - X509CertificateBuilder OID Tests
-
-    func testOIDConstants() {
-        XCTAssertEqual(X509CertificateBuilder.OID.commonName, "2.5.4.3")
-        XCTAssertEqual(X509CertificateBuilder.OID.sha256WithRSAEncryption, "1.2.840.113549.1.1.11")
-        XCTAssertEqual(X509CertificateBuilder.OID.rsaEncryption, "1.2.840.113549.1.1.1")
-        XCTAssertEqual(X509CertificateBuilder.OID.basicConstraints, "2.5.29.19")
-        XCTAssertEqual(X509CertificateBuilder.OID.keyUsage, "2.5.29.15")
-        XCTAssertEqual(X509CertificateBuilder.OID.serverAuth, "1.3.6.1.5.5.7.3.1")
-    }
-
-    // MARK: - Length Encoding Tests
-
-    func testShortFormLength() {
-        // Test that lengths < 128 use short form
-        let data = Data(repeating: 0x00, count: 100)
-        let encoded = ASN1Encoder.encodeOctetString(data)
-
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.octetString.rawValue)
-        XCTAssertEqual(encoded[1], 100) // Short form length
-    }
-
-    func testLongFormLength() {
-        // Test that lengths >= 128 use long form
-        let data = Data(repeating: 0x00, count: 200)
-        let encoded = ASN1Encoder.encodeOctetString(data)
-
-        XCTAssertEqual(encoded[0], ASN1Encoder.Tag.octetString.rawValue)
-        XCTAssertTrue(encoded[1] & 0x80 != 0, "Should use long form length")
-    }
-
-    // MARK: - Integration Tests
-
-    func testEncodeComplexSequence() {
-        // Build a complex nested structure
-        let innerSeq = ASN1Encoder.encodeSequence([
-            ASN1Encoder.encodeInteger(1),
-            ASN1Encoder.encodeUTF8String("test")
-        ])
-
-        let outerSeq = ASN1Encoder.encodeSequence([
-            innerSeq,
-            ASN1Encoder.encodeNull()
-        ])
-
-        XCTAssertEqual(outerSeq[0], ASN1Encoder.Tag.sequence.rawValue)
-        XCTAssertGreaterThan(outerSeq.count, 4)
+        return key
     }
 }

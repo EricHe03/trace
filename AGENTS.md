@@ -1,24 +1,49 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`Trace` is a modular Swift 6 iOS project. Main app code lives in `Trace/` (views, services, repositories). Extension targets are `TraceVPN/` (packet tunnel) and `TraceWidget/` (widget source for `TraceWidgetExtension`). Shared modules are split by responsibility: `TraceCore/` (models/storage/logging), `TraceNetworking/`, `TraceSecurity/`, `TraceCompression/`, `TracePacket/`, `TraceProxy/`, `TraceFeatures/`, and `TraceUI/`. Tests live in `TraceTests/` (unit/integration) and `TraceUITests/` (UI flows). Third-party tunnel code is in the git submodule `ThirdParty/hev-socks5-tunnel/`.
+`Trace` is an iOS app with multiple Swift modules and extensions:
+- `Trace/`: main app target.
+- `TraceVPN/`: Packet Tunnel extension.
+- `TraceWidget/`: widget/live activity source (`TraceWidgetExtension` target).
+- Shared modules: `TraceCore`, `TraceFeatures`, `TraceProxy`, `TracePacket`, `TraceNetworking`, `TraceSecurity`, `TraceCompression`, `TraceUI`.
+- Tests: `TraceTests/` (unit) and `TraceUITests/` (UI).
+- Third-party and tooling: `ThirdParty/` (submodules) and `Tools/QUIC/` scripts.
 
 ## Build, Test, and Development Commands
-- `git submodule update --init --recursive`: pull required third-party sources after clone.
-- `open Trace.xcodeproj`: primary local development entry point.
-- `xcodebuild -project Trace.xcodeproj -scheme Trace -configuration Debug -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' build-for-testing`: CI-aligned simulator build.
-- `xcodebuild -project Trace.xcodeproj -scheme Trace -configuration Debug -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' test-without-building`: run tests from built artifacts.
-- `swiftformat --lint . --config .swiftformat`: formatting check.
-- `swiftlint lint --strict --config .swiftlint.yml`: lint check.
+Use the same commands CI runs:
+
+```bash
+git submodule update --init --recursive
+open Trace.xcodeproj
+```
+
+```bash
+xcodebuild -project Trace.xcodeproj -scheme Trace -configuration Debug -sdk iphonesimulator \
+  -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' build-for-testing
+xcodebuild -project Trace.xcodeproj -scheme Trace -configuration Debug -sdk iphonesimulator \
+  -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' test-without-building
+swiftformat --lint . --config .swiftformat
+swiftlint lint --strict --config .swiftlint.yml
+```
+
+For QUIC toolchain changes, also run:
+`./Tools/QUIC/build_quiche_apple.sh` and `./Tools/QUIC/verify_quiche_symbols.sh build/quiche/quiche.xcframework`.
 
 ## Coding Style & Naming Conventions
-Use Swift 6 conventions and keep module boundaries clean. Formatting uses 4-space indentation and rules from `.swiftformat`; linting uses `.swiftlint.yml`. Follow existing naming patterns: types/protocols in `UpperCamelCase`, methods/properties in `lowerCamelCase`. Prefer descriptive file names matching primary types (for example, `NetworkCaptureService.swift`). SwiftUI screens should keep the `...View` suffix.
+- Swift 6 with 4-space indentation (see `.swiftformat`).
+- Run SwiftFormat and SwiftLint before pushing.
+- Keep module boundaries clean; place shared logic in `TraceCore`/`TraceFeatures`, not UI targets.
+- Naming: types/protocols `UpperCamelCase`, functions/properties `lowerCamelCase`, and file names that match the primary type (for example, `NetworkRequestRepository.swift`).
+- Prefer explicit, descriptive names over abbreviations unless already established (for example, `URL`, `DNS`).
 
 ## Testing Guidelines
-Write or update tests for behavior changes. Use XCTest naming like `test<Scenario>_<ExpectedResult>()` when practical; keep test files as `*Tests.swift`. Run `Cmd+U` in Xcode or the `xcodebuild` commands above. The shared test plan is `TraceTests/Trace.xctestplan`. There is no explicit coverage threshold in CI, so focus on meaningful assertions around changed logic and regressions.
+- Framework: XCTest (`TraceTests`, `TraceUITests`).
+- Add or update tests with every behavior change.
+- Unit tests should be narrowly scoped and named `FeatureBehaviorTests.swift`.
+- No strict coverage percentage is enforced, but changed paths should be meaningfully covered.
 
 ## Commit & Pull Request Guidelines
-History follows Conventional Commits (for example, `feat(widget): ...`, `fix(session): ...`, `refactor(compression)!: ...`). Keep commits focused and PRs small. PRs should explain what changed and why, link related issues, include screenshots/screen recordings for UI work, call out breaking changes or migration steps, and confirm build/lint/tests status.
-
-## Security & Configuration Notes
-Do not open public issues for vulnerabilities; use GitHub Security Advisories. Keep bundle identifiers, entitlements, and `APP_GROUP_IDENTIFIER` aligned across app/extension targets. If the VPN extension bundle ID changes, also update `providerBundleIdentifier` in `TraceFeatures/VPN/VPNManager.swift`.
+- Follow Conventional Commits style seen in history: `type(scope): summary` (for example, `feat(vpn): ...`, `fix(diagnostics): ...`, `refactor(capture): ...`).
+- Keep commits focused; split refactors from functional changes.
+- PRs should include: purpose, key changes, linked issue(s), test evidence, and screenshots/screen recordings for UI changes.
+- Call out breaking changes, migration steps, and signing/entitlement impacts explicitly.

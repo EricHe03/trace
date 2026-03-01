@@ -477,6 +477,16 @@ final class PacketFlowLoopTests: XCTestCase {
         XCTAssertTrue(pipeline.udpTracked, "UDP flow should be tracked")
     }
 
+    func testPacketCapturePipelineRejectsPacketsAfterStop() {
+        let pipeline = PacketCapturePipeline(maxPending: 8)
+        pipeline.configure(enabled: true, limit: 0, writer: nil)
+
+        pipeline.stop()
+
+        let accepted = pipeline.enqueue(packets: [Data([0x45, 0x00])])
+        XCTAssertEqual(accepted, 0)
+    }
+
     func testPipelineStageOrder() {
         var stages: [String] = []
 

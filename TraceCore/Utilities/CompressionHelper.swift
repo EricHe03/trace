@@ -26,7 +26,7 @@ public enum CompressionHelper {
             if let maxOutputBytes, wrapped.count > maxOutputBytes { return nil }
             return wrapped
         case "br", "brotli":
-            return nil
+            return compress(data: data, algorithm: COMPRESSION_BROTLI, maxOutputBytes: maxOutputBytes)
         default:
             return nil
         }
@@ -152,7 +152,13 @@ public enum CompressionHelper {
         if algorithm == COMPRESSION_ZLIB {
             return zlibCompressBound(inputSize)
         }
-        return max(64, inputSize)
+        if algorithm == COMPRESSION_BROTLI {
+            // Conservative upper bound for one-shot Brotli output buffer sizing.
+            let n = Int64(inputSize)
+            let bound = n + max(1024, n / 6)
+            return bound >= Int64(Int.max) ? Int.max : max(64, Int(bound))
+        }
+        return max(64, inputSize + max(64, inputSize / 8))
     }
 
     private static func zlibCompressBound(_ inputSize: Int) -> Int {

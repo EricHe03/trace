@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import GRDB
 
 /// Manages storage in the shared App Group container
 /// This allows the main app and Network Extension to share captured request data
@@ -41,6 +42,7 @@ public class AppGroupStorage: @unchecked Sendable {
     private let webSocketDirectory = "WebSocketConnections"
     private let sseDirectory = "SSEConnections"
     private let sessionsDirectory = "CaptureSessions"
+    private let transportRequestsDirectory = "TransportRequests"
     private let packetFlowsDirectory = "PacketFlows"
     private let udpFlowsDirectory = "UDPFlows"
     private let throttlingConfigFileName = "throttling.json"
@@ -49,6 +51,10 @@ public class AppGroupStorage: @unchecked Sendable {
     private let samplingConfigFileName = "sampling.json"
     private let configurationFileName = "configuration.json"
     private let mitmAllowlistFileName = "mitm_allowlist.json"
+    private static let defaultTransportStoreBudgetBytes = 512 * 1024 * 1024
+    private static let transportPruneMinInterval: TimeInterval = 5
+    private static let transportPruneWriteThresholdBytes = 8 * 1024 * 1024
+    private static let hardCutoverMarkerKey = "storage.grdb_hard_cutover_v1"
 
     private enum DefaultsKey {
         static let captureConfiguration = "trace.settings.captureConfiguration"
@@ -77,7 +83,14 @@ public class AppGroupStorage: @unchecked Sendable {
     /// Cached container URL to prevent repeated app group lookups
     private var _cachedContainerURL: URL?
     private let containerURLLock = NSLock()
+    private let transportStoreBudgetLock = NSLock()
+    private let transportPruneStateLock = NSLock()
+    private var transportStoreBudgetBytes = AppGroupStorage.defaultTransportStoreBudgetBytes
+    private var lastTransportPruneAt: Date = .distantPast
+    private var transportBytesWrittenSinceLastPrune = 0
     private var didLogMisconfiguration = false
+    private let databaseLock = NSLock()
+    private var database: TraceDatabase?
 
     public var containerURL: URL? {
         containerURLLock.lock()
@@ -108,27 +121,9 @@ public class AppGroupStorage: @unchecked Sendable {
 
     public init() {
         setupDirectories()
+        initializeDatabase()
+        performHardCutoverIfNeeded()
         logStorageConfiguration()
-    }
-
-    // MARK: - Shared Defaults
-
-    private var sharedUserDefaults: UserDefaults {
-        if let defaults = UserDefaults(suiteName: appGroupIdentifier) {
-            return defaults
-        }
-        if Self.allowsFallbackStorage {
-            isUsingFallback = true
-            CoreLog.storage.warning("event=storage.userdefaults outcome=fallback reason=suite_unavailable")
-            return UserDefaults.standard
-        }
-
-        isMisconfigured = true
-        if !didLogMisconfiguration {
-            didLogMisconfiguration = true
-            CoreLog.storage.error("event=storage.userdefaults outcome=failure reason=suite_unavailable app_group=\(self.appGroupIdentifier, privacy: .private)")
-        }
-        return UserDefaults.standard
     }
 
     private func makeEncoder() -> JSONEncoder {
@@ -139,11 +134,12 @@ public class AppGroupStorage: @unchecked Sendable {
         JSONCoding.makeDecoder()
     }
 
-    /// Clears UserDefaults-backed settings (does not delete captured requests).
+    /// Clears DB-backed settings (does not delete captured requests).
     public func resetStoredSettings() {
-        let defaults = sharedUserDefaults
-        for key in DefaultsKey.all {
-            defaults.removeObject(forKey: key)
+        executeDBWrite { db in
+            try db.execute(sql: "DELETE FROM settings_kv")
+            try db.execute(sql: "DELETE FROM config_blobs")
+            try db.execute(sql: "DELETE FROM mitm_auto_bypass_entries")
         }
 
         // Best-effort cleanup of legacy, file-based settings.
@@ -160,6 +156,12 @@ public class AppGroupStorage: @unchecked Sendable {
                 try? FileManager.default.removeItem(at: url)
             }
         }
+
+        let defaults = sharedUserDefaultsForCleanup()
+        for key in DefaultsKey.all {
+            defaults.removeObject(forKey: key)
+        }
+        removeLegacySharedDefaultsKeys(from: defaults)
     }
 
     // MARK: - Setup
@@ -176,6 +178,7 @@ public class AppGroupStorage: @unchecked Sendable {
             container.appendingPathComponent(webSocketDirectory),
             container.appendingPathComponent(sseDirectory),
             container.appendingPathComponent(sessionsDirectory),
+            container.appendingPathComponent(transportRequestsDirectory),
             container.appendingPathComponent(packetFlowsDirectory),
             container.appendingPathComponent(udpFlowsDirectory)
         ]
@@ -226,33 +229,441 @@ public class AppGroupStorage: @unchecked Sendable {
         return fallbackURL
     }
 
+    // MARK: - Database
+
+    private enum SettingScope {
+        static let capture = "capture_settings"
+        static let hardening = "hardening"
+        static let widget = "widget"
+        static let widgetAction = "widget_action"
+        static let mitmAutoBypassMeta = "mitm_auto_bypass_meta"
+    }
+
+    private enum LegacyHardeningKey {
+        static let all = [
+            "hardening.enableRobustReassembly",
+            "hardening.enableMetrics",
+            "hardening.enableDebugLogging",
+            "hardening.rolloutStage",
+            "hardening.enableRawCapture",
+            "hardening.maxRawCaptureSize",
+            "hardening.mitmAllowlist",
+            "hardening.quicHandlingMode",
+            "hardening.blockQUIC",
+            "hardening.enableNIOMITM",
+            "hardening.enableNetworkFrameworkMITM",
+            "hardening.dualMitmPolicyEngineShadow",
+            "hardening.dualMitmPolicyEngineEnforcedTCP",
+            "hardening.dualMitmPolicyEngineEnforcedProxy",
+            "hardening.dualMitmPolicyEngineEnforcedQUIC",
+            "hardening.dualMitmMITMEngineV2",
+            "hardening.dualMitmHttp2MITMEnabled",
+            "hardening.dualMitmStrictEnforcementHardFail"
+        ]
+    }
+
+    private enum LegacyWidgetKey {
+        static let all = [
+            "widget.isCapturing",
+            "widget.requestCount",
+            "widget.dataTransferred",
+            "widget.recentRequests",
+            WidgetActionKey.action,
+            WidgetActionKey.actionDate,
+            WidgetActionKey.actionView
+        ]
+    }
+
+    private enum LegacyMITMAutoBypassKey {
+        static let all = [
+            "proxy.mitm_auto_bypass.entries.v1",
+            "proxy.mitm_auto_bypass.cleanup_legacy_trust_failures.v1",
+            "proxy.mitm_auto_bypass.cleanup_legacy_transient_setup_failures.v1",
+            "proxy.mitm_auto_bypass.cleanup_legacy_quic_failures.v1"
+        ]
+    }
+
+    private func initializeDatabase() {
+        guard let container = containerURL else {
+            CoreLog.storage.error("event=storage.database_init outcome=failure reason=container_not_found")
+            return
+        }
+
+        let databaseURL = container.appendingPathComponent("trace.sqlite")
+        do {
+            let db = try TraceDatabase(databaseURL: databaseURL)
+            databaseLock.lock()
+            database = db
+            databaseLock.unlock()
+            CoreLog.storage.info("event=storage.database_init outcome=success")
+        } catch {
+            databaseLock.lock()
+            database = nil
+            databaseLock.unlock()
+            CoreLog.storage.error(
+                LogEvent.storage("database_init")
+                    .failure()
+                    .error(error)
+            )
+        }
+    }
+
+    private func withDatabase<T>(_ body: (DatabasePool) throws -> T) throws -> T {
+        databaseLock.lock()
+        let pool = database?.pool
+        databaseLock.unlock()
+        guard let pool else {
+            throw StorageError.databaseUnavailable
+        }
+        return try body(pool)
+    }
+
+    @discardableResult
+    private func executeDBWrite(_ body: (Database) throws -> Void) -> Bool {
+        do {
+            try withDatabase { pool in
+                try pool.write { db in
+                    try body(db)
+                }
+            }
+            return true
+        } catch {
+            CoreLog.storage.error(
+                LogEvent.storage("db_write")
+                    .failure()
+                    .error(error)
+            )
+            return false
+        }
+    }
+
+    private func performHardCutoverIfNeeded() {
+        let shouldCutover: Bool
+        do {
+            shouldCutover = try withDatabase { pool in
+                try pool.read { db in
+                    try String.fetchOne(
+                        db,
+                        sql: "SELECT value FROM storage_metadata WHERE key = ?",
+                        arguments: [Self.hardCutoverMarkerKey]
+                    ) == nil
+                }
+            }
+        } catch {
+            CoreLog.storage.error(
+                LogEvent.storage("hard_cutover_check")
+                    .failure()
+                    .error(error)
+            )
+            return
+        }
+
+        guard shouldCutover else { return }
+
+        clearLegacyStorageArtifacts()
+
+        _ = executeDBWrite { db in
+            let now = Date().timeIntervalSince1970
+            try db.execute(sql: "DELETE FROM network_requests")
+            try db.execute(sql: "DELETE FROM transport_requests")
+            try db.execute(sql: "DELETE FROM capture_sessions")
+            try db.execute(sql: "DELETE FROM packet_flows")
+            try db.execute(sql: "DELETE FROM udp_flows")
+            try db.execute(sql: "DELETE FROM websocket_connections")
+            try db.execute(sql: "DELETE FROM sse_connections")
+            try db.execute(sql: "DELETE FROM config_blobs")
+            try db.execute(sql: "DELETE FROM settings_kv")
+            try db.execute(sql: "DELETE FROM mitm_auto_bypass_entries")
+            try db.execute(
+                sql: """
+                INSERT OR REPLACE INTO storage_metadata (key, value, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                arguments: [Self.hardCutoverMarkerKey, "completed", now]
+            )
+        }
+        CoreLog.storage.info("event=storage.hard_cutover outcome=success")
+    }
+
+    private func clearLegacyStorageArtifacts() {
+        guard let container = containerURL else { return }
+
+        let directories = [
+            requestsDirectory,
+            transportRequestsDirectory,
+            packetFlowsDirectory,
+            udpFlowsDirectory,
+            webSocketDirectory,
+            sseDirectory,
+            sessionsDirectory
+        ]
+        for directory in directories {
+            let url = container.appendingPathComponent(directory)
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+
+        if let configURL = configFileURL(for: "")?.deletingLastPathComponent() {
+            let knownLegacyFiles = [
+                configurationFileName,
+                captureOptionsFileName,
+                bodyStorageConfigFileName,
+                samplingConfigFileName,
+                mitmAllowlistFileName,
+                throttlingConfigFileName,
+                "DNSMessages.json",
+                "BreakpointConfiguration.json",
+                "rewrite_rules.json",
+                "request_maps.json",
+                "host_entries.json",
+                "scripts.json",
+                "breakpoints.json",
+                "favorites.json",
+                "RewriteRules.json",
+                "RequestMaps.json",
+                "HostEntries.json",
+                "Scripts.json",
+                "RuleGroups.json",
+                "Profiles.json",
+                "BreakpointPresets.json",
+                "Favorites.json"
+            ]
+            for fileName in knownLegacyFiles {
+                try? FileManager.default.removeItem(at: configURL.appendingPathComponent(fileName))
+            }
+        }
+
+        deleteAllBodyFiles()
+
+        let defaults = sharedUserDefaultsForCleanup()
+        for key in DefaultsKey.all {
+            defaults.removeObject(forKey: key)
+        }
+        removeLegacySharedDefaultsKeys(from: defaults)
+    }
+
+    private func sharedUserDefaultsForCleanup() -> UserDefaults {
+        if let defaults = UserDefaults(suiteName: appGroupIdentifier) {
+            return defaults
+        }
+        return UserDefaults.standard
+    }
+
+    private func removeLegacySharedDefaultsKeys(from defaults: UserDefaults) {
+        for key in LegacyHardeningKey.all {
+            defaults.removeObject(forKey: key)
+        }
+        for key in LegacyWidgetKey.all {
+            defaults.removeObject(forKey: key)
+        }
+        for key in LegacyMITMAutoBypassKey.all {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    private func settingData(for scope: String, key: String) -> Data? {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    try Data.fetchOne(
+                        db,
+                        sql: "SELECT value FROM settings_kv WHERE scope = ? AND key = ?",
+                        arguments: [scope, key]
+                    )
+                }
+            }
+        } catch {
+            CoreLog.storage.error(
+                LogEvent.storage("setting_read")
+                    .failure()
+                    .with("scope", value: scope)
+                    .with("key", value: key, privacy: .public)
+                    .error(error)
+            )
+            return nil
+        }
+    }
+
+    private func saveSettingData(_ data: Data, scope: String, key: String) throws {
+        try withDatabase { pool in
+            try pool.write { db in
+                let now = Date().timeIntervalSince1970
+                try db.execute(
+                    sql: """
+                    INSERT OR REPLACE INTO settings_kv (scope, key, value, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    arguments: [scope, key, data, now]
+                )
+            }
+        }
+    }
+
+    private func saveSettingValue(_ value: some Encodable, scope: String, key: String) throws {
+        let data = try makeEncoder().encode(value)
+        try saveSettingData(data, scope: scope, key: key)
+    }
+
+    private func loadSettingValue<T: Decodable>(_ type: T.Type, scope: String, key: String) -> T? {
+        guard let data = settingData(for: scope, key: key) else { return nil }
+        return try? makeDecoder().decode(T.self, from: data)
+    }
+
+    private func removeSetting(scope: String, key: String) throws {
+        try withDatabase { pool in
+            try pool.write { db in
+                try db.execute(
+                    sql: "DELETE FROM settings_kv WHERE scope = ? AND key = ?",
+                    arguments: [scope, key]
+                )
+            }
+        }
+    }
+
+    private func mapDatabaseError(_ error: Error) -> StorageError {
+        if let storageError = error as? StorageError {
+            return storageError
+        }
+        return .databaseUnavailable
+    }
+
+    // MARK: - Typed Shared State
+
+    public func saveHardeningSetting(_ value: some Encodable, forKey key: String) throws {
+        try saveSettingValue(value, scope: SettingScope.hardening, key: key)
+    }
+
+    public func loadHardeningSetting<T: Decodable>(_ type: T.Type, forKey key: String) -> T? {
+        loadSettingValue(type, scope: SettingScope.hardening, key: key)
+    }
+
+    public func saveWidgetState(_ state: WidgetSharedState) throws {
+        try saveSettingValue(state, scope: SettingScope.widget, key: "state")
+    }
+
+    public func loadWidgetState() -> WidgetSharedState {
+        loadSettingValue(WidgetSharedState.self, scope: SettingScope.widget, key: "state") ?? WidgetSharedState()
+    }
+
+    public func saveWidgetPendingAction(_ action: WidgetPendingAction) throws {
+        try saveSettingValue(action, scope: SettingScope.widgetAction, key: "pending_action")
+    }
+
+    public func loadWidgetPendingAction() -> WidgetPendingAction? {
+        loadSettingValue(WidgetPendingAction.self, scope: SettingScope.widgetAction, key: "pending_action")
+    }
+
+    public func clearWidgetPendingAction() throws {
+        try removeSetting(scope: SettingScope.widgetAction, key: "pending_action")
+    }
+
+    public func consumeWidgetPendingAction(maxAge: TimeInterval) -> WidgetPendingAction? {
+        guard let action = loadWidgetPendingAction() else { return nil }
+        if Date().timeIntervalSince(action.actionDate) > maxAge {
+            try? clearWidgetPendingAction()
+            return nil
+        }
+        try? clearWidgetPendingAction()
+        return action
+    }
+
+    public func saveMITMAutoBypassMetadataFlag(_ value: Bool, forKey key: String) throws {
+        try saveSettingValue(value, scope: SettingScope.mitmAutoBypassMeta, key: key)
+    }
+
+    public func loadMITMAutoBypassMetadataFlag(forKey key: String) -> Bool {
+        loadSettingValue(Bool.self, scope: SettingScope.mitmAutoBypassMeta, key: key) ?? false
+    }
+
+    public func replaceMITMAutoBypassEntries(_ entries: [MITMAutoBypassStoredEntry]) throws {
+        try withDatabase { pool in
+            try pool.write { db in
+                try db.execute(sql: "DELETE FROM mitm_auto_bypass_entries")
+                for entry in entries {
+                    try db.execute(
+                        sql: """
+                        INSERT INTO mitm_auto_bypass_entries (host, reason, created_at, expires_at, is_alias)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        arguments: [
+                            entry.host,
+                            entry.reason,
+                            entry.createdAt.timeIntervalSince1970,
+                            entry.expiresAt.timeIntervalSince1970,
+                            entry.isAlias ? 1 : 0
+                        ]
+                    )
+                }
+            }
+        }
+    }
+
+    public func loadMITMAutoBypassEntries() -> [MITMAutoBypassStoredEntry] {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT host, reason, created_at, expires_at, is_alias
+                        FROM mitm_auto_bypass_entries
+                        ORDER BY created_at DESC, host ASC
+                        """
+                    )
+                    return rows.map { row in
+                        let isAliasInt: Int = row["is_alias"]
+                        return MITMAutoBypassStoredEntry(
+                            host: row["host"],
+                            reason: row["reason"],
+                            createdAt: Date(timeIntervalSince1970: row["created_at"]),
+                            expiresAt: Date(timeIntervalSince1970: row["expires_at"]),
+                            isAlias: isAliasInt != 0
+                        )
+                    }
+                }
+            }
+        } catch {
+            CoreLog.storage.error(
+                LogEvent.storage("mitm_auto_bypass_entries_load")
+                    .failure()
+                    .error(error)
+            )
+            return []
+        }
+    }
+
     // MARK: - Request Storage
 
     /// Saves a captured request to the shared container
     public func saveRequest(_ request: NetworkRequest) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
-        }
-
-        let requestsURL = container.appendingPathComponent(requestsDirectory)
-        let fileName = "\(request.id.uuidString).json"
-        let fileURL = requestsURL.appendingPathComponent(fileName)
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(request)
-
-        do {
-            try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-        } catch {
-            // Fallback: allow captures to persist even when the device is locked.
-            CoreLog.storage.warning(
-                LogEvent.storage("save_request")
-                    .outcome(.failure)
-                    .with("reason", value: "file_protection_retry")
-                    .error(error)
+        let payload = try makeEncoder().encode(request)
+        let now = Date().timeIntervalSince1970
+        let sessionID = request.sessionId?.uuidString
+        let didWrite = executeDBWrite { db in
+            try db.execute(
+                sql: """
+                INSERT INTO network_requests (id, timestamp, session_id, url, payload, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    timestamp = excluded.timestamp,
+                    session_id = excluded.session_id,
+                    url = excluded.url,
+                    payload = excluded.payload,
+                    updated_at = excluded.updated_at
+                """,
+                arguments: [
+                    request.id.uuidString,
+                    request.timestamp.timeIntervalSince1970,
+                    sessionID,
+                    request.url,
+                    payload,
+                    now,
+                    now
+                ]
             )
-            try data.write(to: fileURL, options: [.atomic, .noFileProtection])
+        }
+        if !didWrite {
+            throw StorageError.databaseUnavailable
         }
 
         // Notify main app of new request
@@ -261,69 +672,39 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Loads all captured requests from the shared container
     public func loadAllRequests() throws -> [NetworkRequest] {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
-        }
-
-        let requestsURL = container.appendingPathComponent(requestsDirectory)
-
-        guard FileManager.default.fileExists(atPath: requestsURL.path) else {
-            return []
-        }
-
-        let fileURLs = try FileManager.default.contentsOfDirectory(
-            at: requestsURL,
-            includingPropertiesForKeys: [.creationDateKey],
-            options: [.skipsHiddenFiles]
-        )
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        var requests: [NetworkRequest] = []
-
-        for fileURL in fileURLs where fileURL.pathExtension == "json" {
-            let data: Data
-            do {
-                data = try Data(contentsOf: fileURL)
-                let request = try decoder.decode(NetworkRequest.self, from: data)
-                requests.append(request)
-            } catch {
-                CoreLog.storage.error(
-                    LogEvent.storage("load_request")
-                        .failure()
-                        .with("file", value: fileURL.lastPathComponent)
-                        .error(error)
-                )
-
-                if let decodingError = error as? DecodingError {
-                    let detail = switch decodingError {
-                    case let .keyNotFound(key, context):
-                        "Missing key '\(key.stringValue)' at: \(context.codingPath.map(\.stringValue).joined(separator: "."))"
-                    case let .typeMismatch(type, context):
-                        "Type mismatch for \(type) at: \(context.codingPath.map(\.stringValue).joined(separator: ".")) | \(context.debugDescription)"
-                    case let .valueNotFound(type, context):
-                        "Value not found for \(type) at: \(context.codingPath.map(\.stringValue).joined(separator: "."))"
-                    case let .dataCorrupted(context):
-                        "Data corrupted at: \(context.codingPath.map(\.stringValue).joined(separator: ".")) | \(context.debugDescription)"
-                    @unknown default:
-                        "Unknown decoding error for file \(fileURL.lastPathComponent)"
-                    }
-                    CoreLog.storage.debug("event=storage.decode_detail detail=\(detail, privacy: .public)")
-                }
-
-                if let data = try? Data(contentsOf: fileURL),
-                   let jsonString = String(data: data, encoding: .utf8) {
-                    let previewBytes = min(500, jsonString.utf8.count)
-                    CoreLog.storage.debug(
-                        "event=storage.json_preview bytes=\(data.count) preview_bytes=\(previewBytes)"
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT payload
+                        FROM network_requests
+                        ORDER BY timestamp DESC, id DESC
+                        """
                     )
+
+                    var requests: [NetworkRequest] = []
+                    requests.reserveCapacity(rows.count)
+                    let decoder = makeDecoder()
+                    for row in rows {
+                        let payload: Data = row["payload"]
+                        do {
+                            try requests.append(decoder.decode(NetworkRequest.self, from: payload))
+                        } catch {
+                            CoreLog.storage.error(
+                                LogEvent.storage("load_request")
+                                    .failure()
+                                    .error(error)
+                            )
+                        }
+                    }
+                    return requests
                 }
             }
+        } catch {
+            throw mapDatabaseError(error)
         }
-
-        // Sort by timestamp, most recent first
-        return requests.sorted { $0.timestamp > $1.timestamp }
     }
 
     /// Loads all captured requests from the shared container on a background queue
@@ -344,95 +725,622 @@ public class AppGroupStorage: @unchecked Sendable {
         try await loadAllRequestsAsync()
     }
 
-    // MARK: - Packet Flow Storage
+    /// Loads captured requests newer than the given timestamp.
+    public func loadRequests(
+        newerThan timestamp: Date,
+        excludingIDs: Set<UUID> = [],
+        limit: Int? = nil
+    ) throws -> [NetworkRequest] {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT id, payload
+                        FROM network_requests
+                        WHERE timestamp >= ?
+                        ORDER BY timestamp DESC, id DESC
+                        """,
+                        arguments: [timestamp.timeIntervalSince1970]
+                    )
 
-    /// Saves a packet flow record to the shared container.
-    public func savePacketFlowRecord(_ record: PacketFlowRecord) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+                    let excluded = Set(excludingIDs.map(\.uuidString))
+                    let effectiveLimit = limit.map { max(0, $0) }
+                    if let effectiveLimit, effectiveLimit == 0 {
+                        return []
+                    }
+
+                    let decoder = makeDecoder()
+                    var requests: [NetworkRequest] = []
+                    requests.reserveCapacity(rows.count)
+
+                    for row in rows {
+                        if let effectiveLimit, requests.count >= effectiveLimit {
+                            break
+                        }
+
+                        let requestID: String = row["id"]
+                        if excluded.contains(requestID) {
+                            continue
+                        }
+
+                        let payload: Data = row["payload"]
+                        guard let request = try? decoder.decode(NetworkRequest.self, from: payload),
+                              request.timestamp >= timestamp else {
+                            continue
+                        }
+                        requests.append(request)
+                    }
+
+                    return requests
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
         }
-
-        let flowsURL = container.appendingPathComponent(packetFlowsDirectory)
-        let fileName = "\(record.id.uuidString).json"
-        let fileURL = flowsURL.appendingPathComponent(fileName)
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(record)
-
-        try data.write(to: fileURL, options: [.atomic])
     }
 
-    /// Loads all packet flow records from the shared container.
-    public func loadAllPacketFlowRecords() throws -> [PacketFlowRecord] {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+    /// Loads captured requests newer than the given timestamp on a background queue.
+    public func loadRequestsAsync(
+        newerThan timestamp: Date,
+        excludingIDs: Set<UUID> = [],
+        limit: Int? = nil
+    ) async throws -> [NetworkRequest] {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try continuation.resume(returning: self.loadRequests(
+                        newerThan: timestamp,
+                        excludingIDs: excludingIDs,
+                        limit: limit
+                    ))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
         }
+    }
 
-        let flowsURL = container.appendingPathComponent(packetFlowsDirectory)
+    /// Loads a single captured request by identifier.
+    public func loadRequest(_ id: UUID) throws -> NetworkRequest? {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    guard let payload = try Data.fetchOne(
+                        db,
+                        sql: """
+                        SELECT payload
+                        FROM network_requests
+                        WHERE id = ?
+                        """,
+                        arguments: [id.uuidString]
+                    ) else {
+                        return nil
+                    }
 
-        guard FileManager.default.fileExists(atPath: flowsURL.path) else {
-            return []
+                    do {
+                        return try makeDecoder().decode(NetworkRequest.self, from: payload)
+                    } catch {
+                        CoreLog.storage.error(
+                            LogEvent.storage("load_request_by_id")
+                                .failure()
+                                .with("request_id", value: id.uuidString, privacy: .public)
+                                .error(error)
+                        )
+                        return nil
+                    }
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
         }
+    }
 
-        let fileURLs = try FileManager.default.contentsOfDirectory(
-            at: flowsURL,
-            includingPropertiesForKeys: [.creationDateKey],
-            options: [.skipsHiddenFiles]
-        )
+    /// Loads a single captured request by identifier on a background queue.
+    public func loadRequestAsync(_ id: UUID) async throws -> NetworkRequest? {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try continuation.resume(returning: self.loadRequest(id))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
 
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+    func setTransportStoreBudgetBytesForTesting(_ bytes: Int?) {
+        transportStoreBudgetLock.lock()
+        if let bytes {
+            transportStoreBudgetBytes = max(0, bytes)
+        } else {
+            transportStoreBudgetBytes = AppGroupStorage.defaultTransportStoreBudgetBytes
+        }
+        transportStoreBudgetLock.unlock()
 
-        var records: [PacketFlowRecord] = []
+        transportPruneStateLock.lock()
+        lastTransportPruneAt = .distantPast
+        transportBytesWrittenSinceLastPrune = 0
+        transportPruneStateLock.unlock()
+    }
 
-        for fileURL in fileURLs where fileURL.pathExtension == "json" {
+    // MARK: - Transport Request Storage
+
+    /// Saves a captured transport event to the shared container.
+    public func saveTransportRequest(_ request: TransportRequest) throws {
+        try saveTransportRequests([request])
+    }
+
+    /// Saves captured transport events to the shared container in a single batch.
+    /// Posts one notification when at least one event is persisted.
+    /// Throws when any item in the batch fails, even if some items were persisted.
+    public func saveTransportRequests(_ requests: [TransportRequest]) throws {
+        guard !requests.isEmpty else { return }
+        let encoder = makeEncoder()
+        var persistedCount = 0
+        var estimatedPersistedBytes = 0
+        var lastError: Error?
+
+        for request in requests {
             do {
-                let data = try Data(contentsOf: fileURL)
-                let record = try decoder.decode(PacketFlowRecord.self, from: data)
-                records.append(record)
+                let payload = try encoder.encode(request)
+                let now = Date().timeIntervalSince1970
+                try withDatabase { pool in
+                    try pool.write { db in
+                        try db.execute(
+                            sql: """
+                            INSERT INTO transport_requests (
+                                id, timestamp, flow_key, payload_bytes, packet_bytes, payload, created_at, updated_at
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(id) DO UPDATE SET
+                                timestamp = excluded.timestamp,
+                                flow_key = excluded.flow_key,
+                                payload_bytes = excluded.payload_bytes,
+                                packet_bytes = excluded.packet_bytes,
+                                payload = excluded.payload,
+                                updated_at = excluded.updated_at
+                            """,
+                            arguments: [
+                                request.id.uuidString,
+                                request.timestamp.timeIntervalSince1970,
+                                request.flowKey,
+                                request.payloadBytes,
+                                request.packetBytes,
+                                payload,
+                                now,
+                                now
+                            ]
+                        )
+                    }
+                }
+                persistedCount += 1
+                estimatedPersistedBytes += estimatedTransportStoredBytes(for: request, metadataBytes: payload.count)
             } catch {
+                lastError = error
                 CoreLog.storage.error(
-                    LogEvent.storage("load_packet_flow")
+                    LogEvent.storage("save_transport_request")
                         .failure()
-                        .with("file", value: fileURL.lastPathComponent)
+                        .with("request_id", value: request.id.uuidString, privacy: .public)
                         .error(error)
                 )
             }
         }
 
-        return records.sorted { $0.lastSeen > $1.lastSeen }
+        if persistedCount > 0 {
+            let budgetBytes = currentTransportStoreBudgetBytes()
+            if shouldPruneTransportRequests(
+                afterPersistingBytes: estimatedPersistedBytes,
+                budgetBytes: budgetBytes
+            ) {
+                do {
+                    try pruneTransportRequestsIfNeeded()
+                    markTransportPruneCompleted()
+                } catch {
+                    CoreLog.storage.warning(
+                        LogEvent.storage("prune_transport_request")
+                            .failure()
+                            .error(error)
+                    )
+                }
+            }
+            notifyNewTransportRequest()
+            if let lastError {
+                CoreLog.storage.warning(
+                    LogEvent.storage("save_transport_request_batch")
+                        .failure()
+                        .with("persisted_count", value: persistedCount)
+                        .with("failed_count", value: max(0, requests.count - persistedCount))
+                        .error(lastError)
+                )
+                throw lastError
+            }
+            return
+        }
+
+        if let lastError {
+            throw lastError
+        }
+    }
+
+    /// Loads all captured transport events from the shared container.
+    public func loadAllTransportRequests() throws -> [TransportRequest] {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT payload
+                        FROM transport_requests
+                        ORDER BY timestamp DESC, id DESC
+                        """
+                    )
+                    var requests: [TransportRequest] = []
+                    requests.reserveCapacity(rows.count)
+                    let decoder = makeDecoder()
+                    for row in rows {
+                        let payload: Data = row["payload"]
+                        do {
+                            try requests.append(decoder.decode(TransportRequest.self, from: payload))
+                        } catch {
+                            CoreLog.storage.error(
+                                LogEvent.storage("load_transport_request")
+                                    .failure()
+                                    .error(error)
+                            )
+                        }
+                    }
+                    return requests
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    /// Loads captured transport events newer than the provided timestamp.
+    /// Optimized for incremental UI updates where most stored files are already known.
+    public func loadTransportRequests(
+        newerThan timestamp: Date,
+        excludingIDs: Set<UUID> = [],
+        limit: Int? = nil
+    ) throws -> [TransportRequest] {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT id, payload
+                        FROM transport_requests
+                        WHERE timestamp >= ?
+                        ORDER BY timestamp DESC, id DESC
+                        """,
+                        arguments: [timestamp.timeIntervalSince1970]
+                    )
+
+                    let excluded = Set(excludingIDs.map(\.uuidString))
+                    let effectiveLimit = limit.map { max(0, $0) }
+                    if let effectiveLimit, effectiveLimit == 0 {
+                        return []
+                    }
+                    let decoder = makeDecoder()
+                    var requests: [TransportRequest] = []
+                    requests.reserveCapacity(rows.count)
+
+                    for row in rows {
+                        if let effectiveLimit, requests.count >= effectiveLimit {
+                            break
+                        }
+
+                        let requestID: String = row["id"]
+                        if excluded.contains(requestID) {
+                            continue
+                        }
+
+                        let payload: Data = row["payload"]
+                        guard let request = try? decoder.decode(TransportRequest.self, from: payload),
+                              request.timestamp >= timestamp else {
+                            continue
+                        }
+                        requests.append(request)
+                    }
+
+                    return requests
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    /// Loads all captured transport events from the shared container on a background queue.
+    public func loadAllTransportRequestsAsync() async throws -> [TransportRequest] {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try continuation.resume(returning: self.loadAllTransportRequests())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Loads captured transport events newer than the given timestamp on a background queue.
+    public func loadTransportRequestsAsync(
+        newerThan timestamp: Date,
+        excludingIDs: Set<UUID> = [],
+        limit: Int? = nil
+    ) async throws -> [TransportRequest] {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try continuation.resume(returning: self.loadTransportRequests(
+                        newerThan: timestamp,
+                        excludingIDs: excludingIDs,
+                        limit: limit
+                    ))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Deletes all captured transport events.
+    public func clearAllTransportRequests() throws {
+        do {
+            try withDatabase { pool in
+                try pool.write { db in
+                    let rows = try Row.fetchAll(db, sql: "SELECT payload FROM transport_requests")
+                    let decoder = makeDecoder()
+                    for row in rows {
+                        let payload: Data = row["payload"]
+                        if let request = try? decoder.decode(TransportRequest.self, from: payload) {
+                            request.payload.deleteFile()
+                            request.packet?.deleteFile()
+                        }
+                    }
+                    try db.execute(sql: "DELETE FROM transport_requests")
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+
+        transportPruneStateLock.lock()
+        lastTransportPruneAt = Date()
+        transportBytesWrittenSinceLastPrune = 0
+        transportPruneStateLock.unlock()
+    }
+
+    private struct TransportStorageEntry {
+        let id: String
+        let timestamp: Date
+        let request: TransportRequest?
+        let totalBytes: Int
+    }
+
+    private func currentTransportStoreBudgetBytes() -> Int {
+        transportStoreBudgetLock.lock()
+        defer { transportStoreBudgetLock.unlock() }
+        return transportStoreBudgetBytes
+    }
+
+    private func estimatedTransportStoredBytes(for request: TransportRequest, metadataBytes: Int) -> Int {
+        max(0, metadataBytes + request.payloadBytes + (request.packetBytes ?? 0))
+    }
+
+    private func shouldPruneTransportRequests(afterPersistingBytes bytes: Int, budgetBytes: Int) -> Bool {
+        transportPruneStateLock.lock()
+        transportBytesWrittenSinceLastPrune += max(0, bytes)
+
+        // Oversized batches should prune immediately to keep budget bounded.
+        let shouldPrune =
+            budgetBytes <= 0 ||
+            bytes >= budgetBytes ||
+            transportBytesWrittenSinceLastPrune >= AppGroupStorage.transportPruneWriteThresholdBytes ||
+            Date().timeIntervalSince(lastTransportPruneAt) >= AppGroupStorage.transportPruneMinInterval
+
+        transportPruneStateLock.unlock()
+        return shouldPrune
+    }
+
+    private func markTransportPruneCompleted() {
+        transportPruneStateLock.lock()
+        lastTransportPruneAt = Date()
+        transportBytesWrittenSinceLastPrune = 0
+        transportPruneStateLock.unlock()
+    }
+
+    private func pruneTransportRequestsIfNeeded() throws {
+        let budgetBytes = currentTransportStoreBudgetBytes()
+        guard budgetBytes > 0 else {
+            try clearAllTransportRequests()
+            return
+        }
+
+        do {
+            try withDatabase { pool in
+                try pool.write { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT id, timestamp, payload
+                        FROM transport_requests
+                        ORDER BY timestamp ASC, id ASC
+                        """
+                    )
+                    guard !rows.isEmpty else { return }
+
+                    let decoder = makeDecoder()
+                    var totalBytes = 0
+                    var entries: [TransportStorageEntry] = []
+                    entries.reserveCapacity(rows.count)
+
+                    for row in rows {
+                        let id: String = row["id"]
+                        let timestampValue: Double = row["timestamp"]
+                        let payload: Data = row["payload"]
+                        let request = try? decoder.decode(TransportRequest.self, from: payload)
+                        var entryBytes = payload.count
+                        var filePaths: Set<String> = []
+                        if let request,
+                           let payloadURL = bodyFileURL(for: request.payload),
+                           filePaths.insert(payloadURL.path).inserted {
+                            entryBytes += fileSize(at: payloadURL)
+                        }
+                        if let request,
+                           let packetURL = bodyFileURL(for: request.packet),
+                           filePaths.insert(packetURL.path).inserted {
+                            entryBytes += fileSize(at: packetURL)
+                        }
+
+                        totalBytes += entryBytes
+                        entries.append(
+                            TransportStorageEntry(
+                                id: id,
+                                timestamp: Date(timeIntervalSince1970: timestampValue),
+                                request: request,
+                                totalBytes: entryBytes
+                            )
+                        )
+                    }
+
+                    guard totalBytes > budgetBytes else { return }
+
+                    var remainingEntries = entries.count
+                    var remainingBytes = totalBytes
+                    var prunedCount = 0
+
+                    for entry in entries where remainingBytes > budgetBytes {
+                        // Keep at least the newest event, even if oversized.
+                        guard remainingEntries > 1 else { break }
+
+                        entry.request?.payload.deleteFile()
+                        entry.request?.packet?.deleteFile()
+
+                        try db.execute(
+                            sql: "DELETE FROM transport_requests WHERE id = ?",
+                            arguments: [entry.id]
+                        )
+
+                        remainingEntries -= 1
+                        remainingBytes = max(0, remainingBytes - entry.totalBytes)
+                        prunedCount += 1
+                    }
+
+                    if prunedCount > 0 {
+                        CoreLog.storage.info(
+                            "event=storage.transport_prune outcome=success pruned=\(prunedCount) total_bytes_before=\(totalBytes) total_bytes_after=\(remainingBytes) budget_bytes=\(budgetBytes)"
+                        )
+                    }
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    private func fileSize(at url: URL) -> Int {
+        (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+    }
+
+    private func bodyFileURL(for body: BodyStorage?) -> URL? {
+        guard let body else { return nil }
+        switch body {
+        case let .file(url, _, _):
+            return url
+        case let .truncatedFile(url, _, _, _):
+            return url
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Packet Flow Storage
+
+    /// Saves a packet flow record to the shared container.
+    public func savePacketFlowRecord(_ record: PacketFlowRecord) throws {
+        let payload = try makeEncoder().encode(record)
+        let now = Date().timeIntervalSince1970
+        let didWrite = executeDBWrite { db in
+            try db.execute(
+                sql: """
+                INSERT INTO packet_flows (id, last_seen, payload, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    last_seen = excluded.last_seen,
+                    payload = excluded.payload,
+                    updated_at = excluded.updated_at
+                """,
+                arguments: [record.id.uuidString, record.lastSeen.timeIntervalSince1970, payload, now]
+            )
+        }
+        if !didWrite {
+            throw StorageError.databaseUnavailable
+        }
+    }
+
+    /// Loads all packet flow records from the shared container.
+    public func loadAllPacketFlowRecords() throws -> [PacketFlowRecord] {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT payload
+                        FROM packet_flows
+                        ORDER BY last_seen DESC, id DESC
+                        """
+                    )
+                    let decoder = makeDecoder()
+                    var records: [PacketFlowRecord] = []
+                    records.reserveCapacity(rows.count)
+                    for row in rows {
+                        let payload: Data = row["payload"]
+                        do {
+                            try records.append(decoder.decode(PacketFlowRecord.self, from: payload))
+                        } catch {
+                            CoreLog.storage.error(
+                                LogEvent.storage("load_packet_flow")
+                                    .failure()
+                                    .error(error)
+                            )
+                        }
+                    }
+                    return records
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
     }
 
     /// Deletes a packet flow record from the shared container.
     public func deletePacketFlowRecord(_ record: PacketFlowRecord) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        let didWrite = executeDBWrite { db in
+            try db.execute(
+                sql: "DELETE FROM packet_flows WHERE id = ?",
+                arguments: [record.id.uuidString]
+            )
         }
-
-        let flowsURL = container.appendingPathComponent(packetFlowsDirectory)
-        let fileURL = flowsURL.appendingPathComponent("\(record.id.uuidString).json")
-
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            try FileManager.default.removeItem(at: fileURL)
+        if !didWrite {
+            throw StorageError.databaseUnavailable
         }
     }
 
     /// Removes all packet flow records.
     public func clearAllPacketFlowRecords() throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        let didWrite = executeDBWrite { db in
+            try db.execute(sql: "DELETE FROM packet_flows")
         }
-
-        let flowsURL = container.appendingPathComponent(packetFlowsDirectory)
-        guard FileManager.default.fileExists(atPath: flowsURL.path) else { return }
-        let fileURLs = try FileManager.default.contentsOfDirectory(
-            at: flowsURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-        for fileURL in fileURLs where fileURL.pathExtension == "json" {
-            try? FileManager.default.removeItem(at: fileURL)
+        if !didWrite {
+            throw StorageError.databaseUnavailable
         }
     }
 
@@ -440,97 +1348,117 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Saves UDP flow metadata to the shared container.
     public func saveUDPFlowMetadata(_ flow: UDPFlowMetadata) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        let payload = try makeEncoder().encode(flow)
+        let now = Date().timeIntervalSince1970
+        let didWrite = executeDBWrite { db in
+            try db.execute(
+                sql: """
+                INSERT INTO udp_flows (id, last_activity, payload, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    last_activity = excluded.last_activity,
+                    payload = excluded.payload,
+                    updated_at = excluded.updated_at
+                """,
+                arguments: [flow.id.uuidString, flow.lastActivity.timeIntervalSince1970, payload, now]
+            )
         }
-
-        let flowsURL = container.appendingPathComponent(udpFlowsDirectory)
-        let fileName = "\(flow.id.uuidString).json"
-        let fileURL = flowsURL.appendingPathComponent(fileName)
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(flow)
-
-        try data.write(to: fileURL, options: [.atomic])
+        if !didWrite {
+            throw StorageError.databaseUnavailable
+        }
 
         notifyNewUDPFlow()
     }
 
     /// Loads all UDP flow metadata from the shared container.
     public func loadAllUDPFlowMetadata() throws -> [UDPFlowMetadata] {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
-        }
-
-        let flowsURL = container.appendingPathComponent(udpFlowsDirectory)
-        guard FileManager.default.fileExists(atPath: flowsURL.path) else {
-            return []
-        }
-
-        let fileURLs = try FileManager.default.contentsOfDirectory(
-            at: flowsURL,
-            includingPropertiesForKeys: [.creationDateKey],
-            options: [.skipsHiddenFiles]
-        )
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        var flows: [UDPFlowMetadata] = []
-        for fileURL in fileURLs where fileURL.pathExtension == "json" {
-            do {
-                let data = try Data(contentsOf: fileURL)
-                let flow = try decoder.decode(UDPFlowMetadata.self, from: data)
-                flows.append(flow)
-            } catch {
-                CoreLog.storage.error(
-                    LogEvent.storage("load_udp_flow")
-                        .failure()
-                        .with("file", value: fileURL.lastPathComponent)
-                        .error(error)
-                )
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT payload
+                        FROM udp_flows
+                        ORDER BY last_activity DESC, id DESC
+                        """
+                    )
+                    let decoder = makeDecoder()
+                    var flows: [UDPFlowMetadata] = []
+                    flows.reserveCapacity(rows.count)
+                    for row in rows {
+                        let payload: Data = row["payload"]
+                        do {
+                            try flows.append(decoder.decode(UDPFlowMetadata.self, from: payload))
+                        } catch {
+                            CoreLog.storage.error(
+                                LogEvent.storage("load_udp_flow")
+                                    .failure()
+                                    .error(error)
+                            )
+                        }
+                    }
+                    return flows
+                }
             }
+        } catch {
+            throw mapDatabaseError(error)
         }
-
-        return flows.sorted { $0.lastActivity > $1.lastActivity }
     }
 
     /// Deletes a UDP flow metadata record from the shared container.
     public func deleteUDPFlowMetadata(_ id: UUID) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        let didWrite = executeDBWrite { db in
+            try db.execute(
+                sql: "DELETE FROM udp_flows WHERE id = ?",
+                arguments: [id.uuidString]
+            )
         }
-
-        let flowsURL = container.appendingPathComponent(udpFlowsDirectory)
-        let fileURL = flowsURL.appendingPathComponent("\(id.uuidString).json")
-
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            try FileManager.default.removeItem(at: fileURL)
+        if !didWrite {
+            throw StorageError.databaseUnavailable
         }
     }
 
     /// Removes all UDP flow metadata records.
     public func clearAllUDPFlowMetadata() throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        let didWrite = executeDBWrite { db in
+            try db.execute(sql: "DELETE FROM udp_flows")
         }
-
-        let flowsURL = container.appendingPathComponent(udpFlowsDirectory)
-        guard FileManager.default.fileExists(atPath: flowsURL.path) else { return }
-        let fileURLs = try FileManager.default.contentsOfDirectory(
-            at: flowsURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-        for fileURL in fileURLs where fileURL.pathExtension == "json" {
-            try? FileManager.default.removeItem(at: fileURL)
+        if !didWrite {
+            throw StorageError.databaseUnavailable
         }
     }
 
     /// Loads all captured requests for a specific session
     public func loadRequestsForSession(_ sessionId: UUID) throws -> [NetworkRequest] {
-        try loadAllRequests().filter { $0.sessionId == sessionId }
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT payload
+                        FROM network_requests
+                        WHERE session_id = ?
+                        ORDER BY timestamp DESC, id DESC
+                        """,
+                        arguments: [sessionId.uuidString]
+                    )
+                    let decoder = makeDecoder()
+                    var requests: [NetworkRequest] = []
+                    requests.reserveCapacity(rows.count)
+                    for row in rows {
+                        let payload: Data = row["payload"]
+                        if let request = try? decoder.decode(NetworkRequest.self, from: payload) {
+                            requests.append(request)
+                        }
+                    }
+                    return requests
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
     }
 
     /// Saves multiple requests to the shared container
@@ -546,15 +1474,30 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Deletes a specific request
     public func deleteRequest(_ requestID: UUID) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        do {
+            try withDatabase { pool in
+                try pool.write { db in
+                    let payload = try Data.fetchOne(
+                        db,
+                        sql: "SELECT payload FROM network_requests WHERE id = ?",
+                        arguments: [requestID.uuidString]
+                    )
+                    if let payload {
+                        let decoder = makeDecoder()
+                        if let request = try? decoder.decode(NetworkRequest.self, from: payload) {
+                            request.requestBody.deleteFile()
+                            request.responseBody.deleteFile()
+                        }
+                    }
+                    try db.execute(
+                        sql: "DELETE FROM network_requests WHERE id = ?",
+                        arguments: [requestID.uuidString]
+                    )
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
         }
-
-        let requestsURL = container.appendingPathComponent(requestsDirectory)
-        let fileName = "\(requestID.uuidString).json"
-        let fileURL = requestsURL.appendingPathComponent(fileName)
-
-        try deleteRequestFileAndBodies(at: fileURL)
     }
 
     /// Deletes a specific request (convenience overload)
@@ -564,55 +1507,95 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Deletes all captured requests
     public func clearAllRequests() throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        do {
+            try withDatabase { pool in
+                try pool.write { db in
+                    let rows = try Row.fetchAll(db, sql: "SELECT payload FROM network_requests")
+                    let decoder = makeDecoder()
+                    for row in rows {
+                        let payload: Data = row["payload"]
+                        if let request = try? decoder.decode(NetworkRequest.self, from: payload) {
+                            request.requestBody.deleteFile()
+                            request.responseBody.deleteFile()
+                        }
+                    }
+                    try db.execute(sql: "DELETE FROM network_requests")
+                }
+            }
+            deleteAllBodyFiles()
+        } catch {
+            throw mapDatabaseError(error)
         }
-
-        let requestsURL = container.appendingPathComponent(requestsDirectory)
-
-        let fileURLs = (try? FileManager.default.contentsOfDirectory(
-            at: requestsURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )) ?? []
-
-        for fileURL in fileURLs where fileURL.pathExtension == "json" {
-            try? deleteRequestFileAndBodies(at: fileURL)
-        }
-
-        deleteAllBodyFiles()
     }
 
     // MARK: - Generic Storage
 
+    private func canonicalConfigBlobName(for fileName: String) -> String {
+        switch fileName.lowercased() {
+        case "rewrite_rules.json", "rewriterules.json":
+            "RewriteRules.json"
+        case "request_maps.json", "requestmaps.json":
+            "RequestMaps.json"
+        case "host_entries.json", "hostentries.json":
+            "HostEntries.json"
+        case "scripts.json":
+            "Scripts.json"
+        case "favorites.json":
+            "Favorites.json"
+        case "rulegroups.json":
+            "RuleGroups.json"
+        case "profiles.json":
+            "Profiles.json"
+        default:
+            fileName
+        }
+    }
+
     /// Load data from a file in the config directory
     public func loadData(from fileName: String) throws -> Data {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        let key = canonicalConfigBlobName(for: fileName)
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    guard let data = try Data.fetchOne(
+                        db,
+                        sql: "SELECT data FROM config_blobs WHERE name = ?",
+                        arguments: [key]
+                    ) else {
+                        throw StorageError.fileNotFound
+                    }
+                    return data
+                }
+            }
+        } catch let error as StorageError {
+            throw error
+        } catch {
+            throw mapDatabaseError(error)
         }
-
-        let fileURL = container
-            .appendingPathComponent(configDirectory)
-            .appendingPathComponent(fileName)
-
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            throw StorageError.fileNotFound
-        }
-
-        return try Data(contentsOf: fileURL)
     }
 
     /// Save data to a file in the config directory
     public func saveData(_ data: Data, to fileName: String) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        let key = canonicalConfigBlobName(for: fileName)
+        let now = Date().timeIntervalSince1970
+        do {
+            try withDatabase { pool in
+                try pool.write { db in
+                    try db.execute(
+                        sql: """
+                        INSERT INTO config_blobs (name, data, updated_at)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(name) DO UPDATE SET
+                            data = excluded.data,
+                            updated_at = excluded.updated_at
+                        """,
+                        arguments: [key, data, now]
+                    )
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
         }
-
-        let fileURL = container
-            .appendingPathComponent(configDirectory)
-            .appendingPathComponent(fileName)
-
-        try data.write(to: fileURL, options: [.atomic])
     }
 
     /// Get the URL for a config file in the shared container.
@@ -660,58 +1643,65 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Get the last modification date for a config file, if it exists.
     public func configFileModificationDate(for fileName: String) -> Date? {
-        guard let fileURL = configFileURL(for: fileName) else {
+        let key = canonicalConfigBlobName(for: fileName)
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    guard let updatedAt = try Double.fetchOne(
+                        db,
+                        sql: "SELECT updated_at FROM config_blobs WHERE name = ?",
+                        arguments: [key]
+                    ) else {
+                        return nil
+                    }
+                    return Date(timeIntervalSince1970: updatedAt)
+                }
+            }
+        } catch {
+            CoreLog.storage.error(
+                LogEvent.storage("config_blob_modification_date")
+                    .failure()
+                    .with("file", value: fileName, privacy: .public)
+                    .error(error)
+            )
             return nil
         }
-
-        let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
-        return attributes?[.modificationDate] as? Date
     }
 
     // MARK: - Configuration Storage
 
     /// Saves capture configuration (filters, settings, etc.)
     public func saveConfiguration(_ config: CaptureConfiguration) throws {
-        let data = try makeEncoder().encode(config)
-        sharedUserDefaults.set(data, forKey: DefaultsKey.captureConfiguration)
+        let normalized = config.normalized()
+        try saveSettingValue(normalized, scope: SettingScope.capture, key: DefaultsKey.captureConfiguration)
     }
 
     /// Loads capture configuration
     public func loadConfiguration() -> CaptureConfiguration {
-        if let data = sharedUserDefaults.data(forKey: DefaultsKey.captureConfiguration),
-           let config = try? makeDecoder().decode(CaptureConfiguration.self, from: data) {
-            return config
+        if let config = loadSettingValue(
+            CaptureConfiguration.self,
+            scope: SettingScope.capture,
+            key: DefaultsKey.captureConfiguration
+        ) {
+            return config.normalized()
         }
-
-        // Legacy migration: JSON file in App Group container.
-        if let legacyData = try? loadData(from: configurationFileName),
-           let legacyConfig = try? makeDecoder().decode(CaptureConfiguration.self, from: legacyData) {
-            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.captureConfiguration)
-            return legacyConfig
-        }
-
-        return CaptureConfiguration.default
+        return CaptureConfiguration.default.normalized()
     }
 
     // MARK: - Capture Options
 
     public func saveCaptureOptions(_ options: CaptureOptions) throws {
         let normalized = options.normalized()
-        let data = try makeEncoder().encode(normalized)
-        sharedUserDefaults.set(data, forKey: DefaultsKey.captureOptions)
+        try saveSettingValue(normalized, scope: SettingScope.capture, key: DefaultsKey.captureOptions)
     }
 
     public func loadCaptureOptions() -> CaptureOptions {
-        if let data = sharedUserDefaults.data(forKey: DefaultsKey.captureOptions),
-           let options = try? makeDecoder().decode(CaptureOptions.self, from: data) {
+        if let options = loadSettingValue(
+            CaptureOptions.self,
+            scope: SettingScope.capture,
+            key: DefaultsKey.captureOptions
+        ) {
             return options.normalized()
-        }
-
-        // Legacy migration: JSON file in App Group container.
-        if let legacyData = try? loadData(from: captureOptionsFileName),
-           let legacy = try? makeDecoder().decode(CaptureOptions.self, from: legacyData) {
-            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.captureOptions)
-            return legacy.normalized()
         }
 
         try? saveCaptureOptions(.default)
@@ -722,21 +1712,16 @@ public class AppGroupStorage: @unchecked Sendable {
 
     public func saveBodyStorageConfig(_ config: BodyStorageConfig) throws {
         let normalized = config.normalized()
-        let data = try makeEncoder().encode(normalized)
-        sharedUserDefaults.set(data, forKey: DefaultsKey.bodyStorageConfig)
+        try saveSettingValue(normalized, scope: SettingScope.capture, key: DefaultsKey.bodyStorageConfig)
     }
 
     public func loadBodyStorageConfig() -> BodyStorageConfig {
-        if let data = sharedUserDefaults.data(forKey: DefaultsKey.bodyStorageConfig),
-           let config = try? makeDecoder().decode(BodyStorageConfig.self, from: data) {
+        if let config = loadSettingValue(
+            BodyStorageConfig.self,
+            scope: SettingScope.capture,
+            key: DefaultsKey.bodyStorageConfig
+        ) {
             return config.normalized()
-        }
-
-        // Legacy migration: JSON file in App Group container.
-        if let legacyData = try? loadData(from: bodyStorageConfigFileName),
-           let legacy = try? makeDecoder().decode(BodyStorageConfig.self, from: legacyData) {
-            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.bodyStorageConfig)
-            return legacy.normalized()
         }
 
         try? saveBodyStorageConfig(.default)
@@ -747,21 +1732,16 @@ public class AppGroupStorage: @unchecked Sendable {
 
     public func saveSamplingConfig(_ config: SamplingConfig) throws {
         let normalized = config.normalized()
-        let data = try makeEncoder().encode(normalized)
-        sharedUserDefaults.set(data, forKey: DefaultsKey.samplingConfig)
+        try saveSettingValue(normalized, scope: SettingScope.capture, key: DefaultsKey.samplingConfig)
     }
 
     public func loadSamplingConfig() -> SamplingConfig {
-        if let data = sharedUserDefaults.data(forKey: DefaultsKey.samplingConfig),
-           let config = try? makeDecoder().decode(SamplingConfig.self, from: data) {
+        if let config = loadSettingValue(
+            SamplingConfig.self,
+            scope: SettingScope.capture,
+            key: DefaultsKey.samplingConfig
+        ) {
             return config.normalized()
-        }
-
-        // Legacy migration: JSON file in App Group container.
-        if let legacyData = try? loadData(from: samplingConfigFileName),
-           let legacy = try? makeDecoder().decode(SamplingConfig.self, from: legacyData) {
-            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.samplingConfig)
-            return legacy.normalized()
         }
 
         try? saveSamplingConfig(.default)
@@ -772,21 +1752,16 @@ public class AppGroupStorage: @unchecked Sendable {
 
     public func saveMITMAllowlist(_ allowlist: [String]) throws {
         let sanitized = sanitizeDomainList(allowlist)
-        let data = try makeEncoder().encode(sanitized)
-        sharedUserDefaults.set(data, forKey: DefaultsKey.mitmAllowlist)
+        try saveSettingValue(sanitized, scope: SettingScope.capture, key: DefaultsKey.mitmAllowlist)
     }
 
     public func loadMITMAllowlist() -> [String] {
-        if let data = sharedUserDefaults.data(forKey: DefaultsKey.mitmAllowlist),
-           let list = try? makeDecoder().decode([String].self, from: data) {
+        if let list = loadSettingValue(
+            [String].self,
+            scope: SettingScope.capture,
+            key: DefaultsKey.mitmAllowlist
+        ) {
             return sanitizeDomainList(list)
-        }
-
-        // Legacy migration: JSON file in App Group container.
-        if let legacyData = try? loadData(from: mitmAllowlistFileName),
-           let legacy = try? makeDecoder().decode([String].self, from: legacyData) {
-            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.mitmAllowlist)
-            return sanitizeDomainList(legacy)
         }
 
         try? saveMITMAllowlist(["*"])
@@ -929,22 +1904,17 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Saves network throttling state for the tunnel provider.
     public func saveThrottlingState(_ state: NetworkThrottlingState) throws {
-        let data = try makeEncoder().encode(state)
-        sharedUserDefaults.set(data, forKey: DefaultsKey.throttlingState)
+        try saveSettingValue(state, scope: SettingScope.capture, key: DefaultsKey.throttlingState)
     }
 
     /// Loads network throttling state.
     public func loadThrottlingState() -> NetworkThrottlingState {
-        if let data = sharedUserDefaults.data(forKey: DefaultsKey.throttlingState),
-           let state = try? makeDecoder().decode(NetworkThrottlingState.self, from: data) {
+        if let state = loadSettingValue(
+            NetworkThrottlingState.self,
+            scope: SettingScope.capture,
+            key: DefaultsKey.throttlingState
+        ) {
             return state
-        }
-
-        // Legacy migration: JSON file in App Group container.
-        if let legacyData = try? loadData(from: throttlingConfigFileName),
-           let legacy = try? makeDecoder().decode(NetworkThrottlingState.self, from: legacyData) {
-            sharedUserDefaults.set(legacyData, forKey: DefaultsKey.throttlingState)
-            return legacy
         }
 
         return .disabled
@@ -954,19 +1924,24 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Saves a WebSocket connection to the shared container
     public func saveWebSocketConnection(_ connection: WebSocketConnection) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        let payload = try makeEncoder().encode(connection)
+        let now = Date().timeIntervalSince1970
+        let didWrite = executeDBWrite { db in
+            try db.execute(
+                sql: """
+                INSERT INTO websocket_connections (id, start_time, payload, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    start_time = excluded.start_time,
+                    payload = excluded.payload,
+                    updated_at = excluded.updated_at
+                """,
+                arguments: [connection.id.uuidString, connection.startTime.timeIntervalSince1970, payload, now]
+            )
         }
-
-        let wsURL = container.appendingPathComponent(webSocketDirectory)
-        let fileName = "\(connection.id.uuidString).json"
-        let fileURL = wsURL.appendingPathComponent(fileName)
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(connection)
-
-        try data.write(to: fileURL)
+        if !didWrite {
+            throw StorageError.databaseUnavailable
+        }
 
         // Notify main app of new/updated WebSocket connection
         notifyNewWebSocket()
@@ -974,82 +1949,79 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Loads all WebSocket connections from the shared container
     public func loadAllWebSocketConnections() throws -> [WebSocketConnection] {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
-        }
-
-        let wsURL = container.appendingPathComponent(webSocketDirectory)
-
-        guard FileManager.default.fileExists(atPath: wsURL.path) else {
-            return []
-        }
-
-        let fileURLs = try FileManager.default.contentsOfDirectory(
-            at: wsURL,
-            includingPropertiesForKeys: [.creationDateKey],
-            options: [.skipsHiddenFiles]
-        )
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        var connections: [WebSocketConnection] = []
-
-        for fileURL in fileURLs where fileURL.pathExtension == "json" {
-            if let data = try? Data(contentsOf: fileURL),
-               let connection = try? decoder.decode(WebSocketConnection.self, from: data) {
-                connections.append(connection)
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT payload
+                        FROM websocket_connections
+                        ORDER BY start_time DESC, id DESC
+                        """
+                    )
+                    let decoder = makeDecoder()
+                    var connections: [WebSocketConnection] = []
+                    connections.reserveCapacity(rows.count)
+                    for row in rows {
+                        let payload: Data = row["payload"]
+                        if let connection = try? decoder.decode(WebSocketConnection.self, from: payload) {
+                            connections.append(connection)
+                        }
+                    }
+                    return connections
+                }
             }
+        } catch {
+            throw mapDatabaseError(error)
         }
-
-        // Sort by start time, most recent first
-        return connections.sorted { $0.startTime > $1.startTime }
     }
 
     /// Deletes a specific WebSocket connection
     public func deleteWebSocketConnection(_ connectionID: UUID) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        let didWrite = executeDBWrite { db in
+            try db.execute(
+                sql: "DELETE FROM websocket_connections WHERE id = ?",
+                arguments: [connectionID.uuidString]
+            )
         }
-
-        let wsURL = container.appendingPathComponent(webSocketDirectory)
-        let fileName = "\(connectionID.uuidString).json"
-        let fileURL = wsURL.appendingPathComponent(fileName)
-
-        try FileManager.default.removeItem(at: fileURL)
+        if !didWrite {
+            throw StorageError.databaseUnavailable
+        }
     }
 
     /// Deletes all WebSocket connections
     public func clearAllWebSocketConnections() throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        let didWrite = executeDBWrite { db in
+            try db.execute(sql: "DELETE FROM websocket_connections")
         }
-
-        let wsURL = container.appendingPathComponent(webSocketDirectory)
-
-        // Remove and recreate the directory
-        try FileManager.default.removeItem(at: wsURL)
-        try FileManager.default.createDirectory(at: wsURL, withIntermediateDirectories: true)
+        if !didWrite {
+            throw StorageError.databaseUnavailable
+        }
     }
 
     // MARK: - SSE Storage
 
     /// Saves an SSE connection to the shared container
     public func saveSSEConnection(_ connection: SSEConnection) throws {
-        guard let container = containerURL else {
-            CoreLog.storage.error("event=storage.save_sse outcome=failure error=container_not_found")
-            throw StorageError.containerNotFound
+        let payload = try makeEncoder().encode(connection)
+        let now = Date().timeIntervalSince1970
+        let didWrite = executeDBWrite { db in
+            try db.execute(
+                sql: """
+                INSERT INTO sse_connections (id, start_time, payload, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    start_time = excluded.start_time,
+                    payload = excluded.payload,
+                    updated_at = excluded.updated_at
+                """,
+                arguments: [connection.id.uuidString, connection.startTime.timeIntervalSince1970, payload, now]
+            )
         }
-
-        let sseURL = container.appendingPathComponent(sseDirectory)
-        let fileName = "\(connection.id.uuidString).json"
-        let fileURL = sseURL.appendingPathComponent(fileName)
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(connection)
-
-        try data.write(to: fileURL)
+        if !didWrite {
+            throw StorageError.databaseUnavailable
+        }
 
         // Notify main app of new/updated SSE connection
         notifyNewSSE()
@@ -1057,68 +2029,64 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Loads all SSE connections from the shared container
     public func loadAllSSEConnections() throws -> [SSEConnection] {
-        guard let container = containerURL else {
-            CoreLog.storage.error("event=storage.load_sse outcome=failure error=container_not_found")
-            throw StorageError.containerNotFound
-        }
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT payload
+                        FROM sse_connections
+                        ORDER BY start_time DESC, id DESC
+                        """
+                    )
 
-        let sseURL = container.appendingPathComponent(sseDirectory)
+                    let decoder = makeDecoder()
+                    var connections: [SSEConnection] = []
+                    connections.reserveCapacity(rows.count)
 
-        guard FileManager.default.fileExists(atPath: sseURL.path) else {
-            CoreLog.storage.info("event=storage.load_sse outcome=success count=0 reason=directory_not_found")
-            return []
-        }
+                    for row in rows {
+                        let payload: Data = row["payload"]
+                        if let connection = try? decoder.decode(SSEConnection.self, from: payload) {
+                            connections.append(connection)
+                        }
+                    }
 
-        let fileURLs = try FileManager.default.contentsOfDirectory(
-            at: sseURL,
-            includingPropertiesForKeys: [.creationDateKey],
-            options: [.skipsHiddenFiles]
-        )
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        var connections: [SSEConnection] = []
-
-        for fileURL in fileURLs where fileURL.pathExtension == "json" {
-            if let data = try? Data(contentsOf: fileURL),
-               let connection = try? decoder.decode(SSEConnection.self, from: data) {
-                connections.append(connection)
-            } else {
-                CoreLog.storage.warning("event=storage.load_sse_file outcome=failure file=\(fileURL.lastPathComponent, privacy: .public)")
+                    CoreLog.storage.info("event=storage.load_sse outcome=success count=\(connections.count, privacy: .public)")
+                    return connections
+                }
             }
+        } catch {
+            CoreLog.storage.error(
+                LogEvent.storage("load_sse")
+                    .failure()
+                    .error(error)
+            )
+            throw mapDatabaseError(error)
         }
-
-        CoreLog.storage.info("event=storage.load_sse outcome=success count=\(connections.count, privacy: .public)")
-
-        // Sort by start time, most recent first
-        return connections.sorted { $0.startTime > $1.startTime }
     }
 
     /// Deletes a specific SSE connection
     public func deleteSSEConnection(_ connectionID: UUID) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        let didWrite = executeDBWrite { db in
+            try db.execute(
+                sql: "DELETE FROM sse_connections WHERE id = ?",
+                arguments: [connectionID.uuidString]
+            )
         }
-
-        let sseURL = container.appendingPathComponent(sseDirectory)
-        let fileName = "\(connectionID.uuidString).json"
-        let fileURL = sseURL.appendingPathComponent(fileName)
-
-        try FileManager.default.removeItem(at: fileURL)
+        if !didWrite {
+            throw StorageError.databaseUnavailable
+        }
     }
 
     /// Deletes all SSE connections
     public func clearAllSSEConnections() throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        let didWrite = executeDBWrite { db in
+            try db.execute(sql: "DELETE FROM sse_connections")
         }
-
-        let sseURL = container.appendingPathComponent(sseDirectory)
-
-        // Remove and recreate the directory
-        try FileManager.default.removeItem(at: sseURL)
-        try FileManager.default.createDirectory(at: sseURL, withIntermediateDirectories: true)
+        if !didWrite {
+            throw StorageError.databaseUnavailable
+        }
     }
 
     // MARK: - Inter-Process Communication
@@ -1126,6 +2094,7 @@ public class AppGroupStorage: @unchecked Sendable {
     // Observers for notifications
     private let notificationObserversLock = NSLock()
     private var requestObservers: [UUID: NotificationObserver] = [:]
+    private var transportRequestObservers: [UUID: NotificationObserver] = [:]
     private var webSocketObservers: [UUID: NotificationObserver] = [:]
     private var sseObservers: [UUID: NotificationObserver] = [:]
     private var udpFlowObservers: [UUID: NotificationObserver] = [:]
@@ -1136,6 +2105,13 @@ public class AppGroupStorage: @unchecked Sendable {
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let notificationName = "com.trace.newRequest" as CFString
 
+        CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
+    }
+
+    /// Notifies the main app that a new transport event was captured.
+    private func notifyNewTransportRequest() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let notificationName = "com.trace.newTransportRequest" as CFString
         CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
     }
 
@@ -1186,6 +2162,33 @@ public class AppGroupStorage: @unchecked Sendable {
         notificationObserversLock.lock()
         let observers = Array(requestObservers.values)
         requestObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
+    }
+
+    /// Sets up listener for new transport request notifications (call from main app).
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeNewTransportRequests(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.newTransportRequest", handler: handler)
+        notificationObserversLock.lock()
+        transportRequestObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.transportRequestObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingNewTransportRequests() {
+        notificationObserversLock.lock()
+        let observers = Array(transportRequestObservers.values)
+        transportRequestObservers.removeAll()
         notificationObserversLock.unlock()
         observers.forEach { $0.stop() }
     }
@@ -1276,45 +2279,62 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Returns storage statistics
     public func getStorageStats() -> StorageStats {
-        guard let container = containerURL else {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let row = try Row.fetchOne(
+                        db,
+                        sql: """
+                        SELECT COUNT(*) AS count, COALESCE(SUM(length(payload)), 0) AS total_bytes
+                        FROM network_requests
+                        """
+                    )
+                    let count = row?["count"] as Int? ?? 0
+                    let bytes = row?["total_bytes"] as Int64? ?? 0
+                    return StorageStats(totalRequests: count, totalSize: bytes)
+                }
+            }
+        } catch {
+            CoreLog.storage.error(
+                LogEvent.storage("storage_stats")
+                    .failure()
+                    .error(error)
+            )
             return StorageStats(totalRequests: 0, totalSize: 0)
         }
+    }
 
-        let requestsURL = container.appendingPathComponent(requestsDirectory)
+    /// Triggers SQLite compaction and returns reclaimed bytes on disk.
+    /// Includes `trace.sqlite`, `trace.sqlite-wal`, and `trace.sqlite-shm` files.
+    public func reclaimDatabaseSpace() -> Int64 {
+        guard let container = containerURL else { return 0 }
+        let databaseURL = container.appendingPathComponent("trace.sqlite")
+        let sizeBefore = sqliteFootprintBytes(at: databaseURL)
 
-        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
-            at: requestsURL,
-            includingPropertiesForKeys: [.fileSizeKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return StorageStats(totalRequests: 0, totalSize: 0)
+        do {
+            try withDatabase { pool in
+                try pool.writeWithoutTransaction { db in
+                    _ = try db.checkpoint(.truncate)
+                }
+                try pool.vacuum()
+                try pool.writeWithoutTransaction { db in
+                    _ = try db.checkpoint(.truncate)
+                }
+            }
+        } catch {
+            CoreLog.storage.error(
+                LogEvent.storage("reclaim_database_space")
+                    .failure()
+                    .error(error)
+            )
+            return 0
         }
 
-        let totalSize = fileURLs.reduce(0) { total, url in
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-            return total + size
-        }
-
-        return StorageStats(
-            totalRequests: fileURLs.count(where: { $0.pathExtension == "json" }),
-            totalSize: Int64(totalSize)
-        )
+        let sizeAfter = sqliteFootprintBytes(at: databaseURL)
+        return max(0, sizeBefore - sizeAfter)
     }
 
     // MARK: - Request Helpers
-
-    private func deleteRequestFileAndBodies(at fileURL: URL) throws {
-        if let data = try? Data(contentsOf: fileURL) {
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            if let request = try? decoder.decode(NetworkRequest.self, from: data) {
-                request.requestBody.deleteFile()
-                request.responseBody.deleteFile()
-            }
-        }
-
-        try FileManager.default.removeItem(at: fileURL)
-    }
 
     private func deleteAllBodyFiles() {
         guard let container = containerURL else { return }
@@ -1331,6 +2351,18 @@ public class AppGroupStorage: @unchecked Sendable {
         }
     }
 
+    private func sqliteFootprintBytes(at databaseURL: URL) -> Int64 {
+        let sqliteFiles = [
+            databaseURL,
+            URL(fileURLWithPath: databaseURL.path + "-wal"),
+            URL(fileURLWithPath: databaseURL.path + "-shm")
+        ]
+        return sqliteFiles.reduce(into: Int64(0)) { partialResult, url in
+            let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? nil
+            partialResult += Int64(fileSize ?? 0)
+        }
+    }
+
     private func sanitizeDomainList(_ list: [String]) -> [String] {
         let cleaned = list
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
@@ -1342,8 +2374,30 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Saves multiple sessions to the shared container (async)
     public func saveSessions(_ sessions: [CaptureSession]) async throws {
-        for session in sessions {
-            try saveSession(session)
+        guard !sessions.isEmpty else { return }
+        let encoder = makeEncoder()
+        do {
+            try withDatabase { pool in
+                try pool.write { db in
+                    let now = Date().timeIntervalSince1970
+                    for session in sessions {
+                        let payload = try encoder.encode(session)
+                        try db.execute(
+                            sql: """
+                            INSERT INTO capture_sessions (id, start_time, payload, updated_at)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(id) DO UPDATE SET
+                                start_time = excluded.start_time,
+                                payload = excluded.payload,
+                                updated_at = excluded.updated_at
+                            """,
+                            arguments: [session.id.uuidString, session.startTime.timeIntervalSince1970, payload, now]
+                        )
+                    }
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
         }
     }
 
@@ -1354,506 +2408,75 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Saves a capture session to the shared container
     public func saveSession(_ session: CaptureSession) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
-        }
-
-        let sessionsURL = container.appendingPathComponent(sessionsDirectory)
-        let fileURL = sessionsURL.appendingPathComponent("\(session.id.uuidString).json")
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-
-        guard let data = try? encoder.encode(session) else {
+        guard let data = try? makeEncoder().encode(session) else {
             throw StorageError.encodingFailed
         }
-
-        try data.write(to: fileURL, options: [.atomic])
+        let now = Date().timeIntervalSince1970
+        let didWrite = executeDBWrite { db in
+            try db.execute(
+                sql: """
+                INSERT INTO capture_sessions (id, start_time, payload, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    start_time = excluded.start_time,
+                    payload = excluded.payload,
+                    updated_at = excluded.updated_at
+                """,
+                arguments: [session.id.uuidString, session.startTime.timeIntervalSince1970, data, now]
+            )
+        }
+        if !didWrite {
+            throw StorageError.databaseUnavailable
+        }
         CoreLog.storage.debug("event=storage.session_save outcome=success session_id=\(session.id.uuidString, privacy: .public)")
     }
 
     /// Loads all capture sessions from storage
     public func loadAllSessions() throws -> [CaptureSession] {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
-        }
-
-        let sessionsURL = container.appendingPathComponent(sessionsDirectory)
-
-        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
-            at: sessionsURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else {
-            return []
-        }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        var sessions: [CaptureSession] = []
-        for fileURL in fileURLs where fileURL.pathExtension == "json" {
-            guard let data = try? Data(contentsOf: fileURL),
-                  let session = try? decoder.decode(CaptureSession.self, from: data) else {
-                continue
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: """
+                        SELECT payload
+                        FROM capture_sessions
+                        ORDER BY start_time DESC, id DESC
+                        """
+                    )
+                    let decoder = makeDecoder()
+                    var sessions: [CaptureSession] = []
+                    sessions.reserveCapacity(rows.count)
+                    for row in rows {
+                        let payload: Data = row["payload"]
+                        if let session = try? decoder.decode(CaptureSession.self, from: payload) {
+                            sessions.append(session)
+                        }
+                    }
+                    return sessions
+                }
             }
-            sessions.append(session)
+        } catch {
+            throw mapDatabaseError(error)
         }
-
-        return sessions.sorted { $0.startTime > $1.startTime }
     }
 
     /// Deletes a specific session from storage
     public func deleteSession(_ sessionID: UUID) throws {
-        guard let container = containerURL else {
-            throw StorageError.containerNotFound
+        let didWrite = executeDBWrite { db in
+            try db.execute(
+                sql: "DELETE FROM capture_sessions WHERE id = ?",
+                arguments: [sessionID.uuidString]
+            )
         }
-
-        let sessionsURL = container.appendingPathComponent(sessionsDirectory)
-        let fileURL = sessionsURL.appendingPathComponent("\(sessionID.uuidString).json")
-
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            try FileManager.default.removeItem(at: fileURL)
-            CoreLog.storage.debug("event=storage.session_delete outcome=success session_id=\(sessionID.uuidString, privacy: .public)")
+        if !didWrite {
+            throw StorageError.databaseUnavailable
         }
+        CoreLog.storage.debug("event=storage.session_delete outcome=success session_id=\(sessionID.uuidString, privacy: .public)")
     }
 
     /// Updates an existing session (same as save, but with explicit semantics)
     public func updateSession(_ session: CaptureSession) throws {
         try saveSession(session)
-    }
-}
-
-// MARK: - App Group Configuration
-
-public enum AppGroupConfiguration {
-    /// Centralized App Group identifier to keep the main app and extension in sync.
-    public static let appGroupIdentifier: String = {
-        // Allow overriding via Info.plist so release builds can set the correct group without code changes.
-        if let infoIdentifier = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String,
-           let sanitized = sanitizeIdentifier(infoIdentifier) {
-            return sanitized
-        }
-
-        if let bundleIdentifier = Bundle.main.bundleIdentifier,
-           !bundleIdentifier.isEmpty {
-            return "group.\(bundleIdentifier)"
-        }
-
-        return "group.unknown"
-    }()
-
-    private static func sanitizeIdentifier(_ value: String) -> String? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        guard !trimmed.contains("$("), !trimmed.contains("${") else { return nil }
-        return trimmed
-    }
-}
-
-// MARK: - Configuration Model
-
-public enum CaptureMode: String, Codable, Sendable {
-    case proxyOnly
-    case fullTunnel
-}
-
-public enum UDPForwardingMode: String, Codable, Sendable {
-    case hevOnly
-    case direct
-    case split
-}
-
-public struct CaptureConfiguration: Codable, Sendable {
-    public var isEnabled: Bool
-    public var filterMode: FilterMode
-    public var domainFilters: [String] // Domains to include/exclude based on filterMode
-    public var captureHeaders: Bool
-    public var captureBody: Bool
-    public var maxBodySize: Int // Maximum body size to capture in bytes
-    public var captureMode: CaptureMode
-    public var fullTunnelDNSServers: [String]
-    public var fullTunnelSearchDomains: [String]
-    public var fullTunnelIPv6Enabled: Bool
-    public var fullTunnelSocks5Host: String
-    public var fullTunnelSocks5Port: UInt16
-    public var fullTunnelUDPForwardingMode: UDPForwardingMode
-
-    public static let `default` = {
-        let captureDefaults = CaptureOptions.default
-        return CaptureConfiguration(
-            isEnabled: true,
-            filterMode: .all,
-            domainFilters: [],
-            captureHeaders: captureDefaults.captureHeaders,
-            captureBody: captureDefaults.captureBody,
-            // Default to 10 MB; large bodies are stored on disk and can be increased in Settings.
-            maxBodySize: captureDefaults.maxBodySize,
-            captureMode: .proxyOnly,
-            fullTunnelDNSServers: [],
-            fullTunnelSearchDomains: [],
-            fullTunnelIPv6Enabled: true,
-            fullTunnelSocks5Host: "",
-            fullTunnelSocks5Port: 0,
-            fullTunnelUDPForwardingMode: .hevOnly
-        )
-    }()
-
-    enum CodingKeys: String, CodingKey {
-        case isEnabled
-        case filterMode
-        case domainFilters
-        case captureHeaders
-        case captureBody
-        case maxBodySize
-        case captureMode
-        case fullTunnelDNSServers
-        case fullTunnelSearchDomains
-        case fullTunnelIPv6Enabled
-        case fullTunnelSocks5Host
-        case fullTunnelSocks5Port
-        case fullTunnelUDPForwardingMode
-    }
-
-    public init(
-        isEnabled: Bool,
-        filterMode: FilterMode,
-        domainFilters: [String],
-        captureHeaders: Bool,
-        captureBody: Bool,
-        maxBodySize: Int,
-        captureMode: CaptureMode,
-        fullTunnelDNSServers: [String],
-        fullTunnelSearchDomains: [String],
-        fullTunnelIPv6Enabled: Bool,
-        fullTunnelSocks5Host: String,
-        fullTunnelSocks5Port: UInt16,
-        fullTunnelUDPForwardingMode: UDPForwardingMode
-    ) {
-        self.isEnabled = isEnabled
-        self.filterMode = filterMode
-        self.domainFilters = domainFilters
-        self.captureHeaders = captureHeaders
-        self.captureBody = captureBody
-        self.maxBodySize = maxBodySize
-        self.captureMode = captureMode
-        self.fullTunnelDNSServers = fullTunnelDNSServers
-        self.fullTunnelSearchDomains = fullTunnelSearchDomains
-        self.fullTunnelIPv6Enabled = fullTunnelIPv6Enabled
-        self.fullTunnelSocks5Host = fullTunnelSocks5Host
-        self.fullTunnelSocks5Port = fullTunnelSocks5Port
-        self.fullTunnelUDPForwardingMode = fullTunnelUDPForwardingMode
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-
-        let defaults = CaptureConfiguration.default
-        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? defaults.isEnabled
-        filterMode = try container.decodeIfPresent(FilterMode.self, forKey: .filterMode) ?? defaults.filterMode
-        domainFilters = try container.decodeIfPresent([String].self, forKey: .domainFilters) ?? defaults.domainFilters
-        captureHeaders = try container.decodeIfPresent(Bool.self, forKey: .captureHeaders) ?? defaults.captureHeaders
-        captureBody = try container.decodeIfPresent(Bool.self, forKey: .captureBody) ?? defaults.captureBody
-        maxBodySize = try container.decodeIfPresent(Int.self, forKey: .maxBodySize) ?? defaults.maxBodySize
-        captureMode = try container.decodeIfPresent(CaptureMode.self, forKey: .captureMode) ?? defaults.captureMode
-        fullTunnelDNSServers = try container.decodeIfPresent([String].self, forKey: .fullTunnelDNSServers)
-            ?? defaults.fullTunnelDNSServers
-        fullTunnelSearchDomains = try container.decodeIfPresent([String].self, forKey: .fullTunnelSearchDomains)
-            ?? defaults.fullTunnelSearchDomains
-        fullTunnelIPv6Enabled = try container.decodeIfPresent(Bool.self, forKey: .fullTunnelIPv6Enabled)
-            ?? defaults.fullTunnelIPv6Enabled
-        fullTunnelSocks5Host = try container.decodeIfPresent(String.self, forKey: .fullTunnelSocks5Host)
-            ?? defaults.fullTunnelSocks5Host
-        fullTunnelSocks5Port = try container.decodeIfPresent(UInt16.self, forKey: .fullTunnelSocks5Port)
-            ?? defaults.fullTunnelSocks5Port
-        fullTunnelUDPForwardingMode = try container.decodeIfPresent(UDPForwardingMode.self, forKey: .fullTunnelUDPForwardingMode)
-            ?? defaults.fullTunnelUDPForwardingMode
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(isEnabled, forKey: .isEnabled)
-        try container.encode(filterMode, forKey: .filterMode)
-        try container.encode(domainFilters, forKey: .domainFilters)
-        try container.encode(captureHeaders, forKey: .captureHeaders)
-        try container.encode(captureBody, forKey: .captureBody)
-        try container.encode(maxBodySize, forKey: .maxBodySize)
-        try container.encode(captureMode, forKey: .captureMode)
-        try container.encode(fullTunnelDNSServers, forKey: .fullTunnelDNSServers)
-        try container.encode(fullTunnelSearchDomains, forKey: .fullTunnelSearchDomains)
-        try container.encode(fullTunnelIPv6Enabled, forKey: .fullTunnelIPv6Enabled)
-        try container.encode(fullTunnelSocks5Host, forKey: .fullTunnelSocks5Host)
-        try container.encode(fullTunnelSocks5Port, forKey: .fullTunnelSocks5Port)
-        try container.encode(fullTunnelUDPForwardingMode, forKey: .fullTunnelUDPForwardingMode)
-    }
-}
-
-public enum FilterMode: String, Codable, Sendable {
-    case all // Capture everything
-    case whitelist // Only capture specified domains
-    case blacklist // Capture everything except specified domains
-}
-
-// MARK: - Storage Stats
-
-public struct StorageStats {
-    public let totalRequests: Int
-    public let totalSize: Int64
-
-    public var formattedSize: String {
-        ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
-    }
-}
-
-// MARK: - Errors
-
-public enum StorageError: LocalizedError, Equatable {
-    case containerNotFound
-    case encodingFailed
-    case decodingFailed
-    case fileNotFound
-
-    public var errorDescription: String? {
-        switch self {
-        case .containerNotFound:
-            "App Group container not found. Ensure App Group is configured in entitlements."
-        case .encodingFailed:
-            "Failed to encode data"
-        case .decodingFailed:
-            "Failed to decode data"
-        case .fileNotFound:
-            "File not found"
-        }
-    }
-}
-
-// MARK: - NetworkRequest Codable Extension
-
-extension NetworkRequest: Codable {
-    enum CodingKeys: String, CodingKey {
-        case id, url, method, statusCode, statusMessage, timestamp, duration
-        case requestHeaders, responseHeaders, requestBody, responseBody, protocolVersion, sessionId
-        case timingPhases, tlsInfo
-        case wasThrottled, throttlingProfile
-        case isDuplicate, duplicateOfRequestId
-        case isManual
-        case wasBlocked, wasCancelled, wasRewritten, isMocked, isReplayed
-        case appliedScriptName, hitBreakpoint, retryAttempts
-        case executionLog, executionErrors, appliedRuleIds
-        case contentType, contentEncoding, userAgent, cacheControl
-        case requestCookies, responseCookies
-        case queryParameters, authorization, tlsAlerts
-        case http2Streams, http2ConnectionInfo
-        case redirectChain
-    }
-
-    private struct QueryItemStorage: Codable {
-        let name: String
-        let value: String?
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-
-        self.id = try container.decode(UUID.self, forKey: .id)
-        self.url = try container.decode(String.self, forKey: .url)
-        self.method = try container.decode(HTTPMethod.self, forKey: .method)
-        self.statusCode = try container.decodeIfPresent(Int.self, forKey: .statusCode)
-        self.statusMessage = try container.decodeIfPresent(String.self, forKey: .statusMessage)
-        self.timestamp = try container.decode(Date.self, forKey: .timestamp)
-        self.duration = try container.decode(TimeInterval.self, forKey: .duration)
-        self.requestHeaders = try container.decode([TraceHTTPHeader].self, forKey: .requestHeaders)
-        self.responseHeaders = try container.decode([TraceHTTPHeader].self, forKey: .responseHeaders)
-
-        // Support legacy String? format for backward compatibility
-        // Use try? to handle type mismatches (when it's actually a BodyStorage dictionary)
-        if let bodyString = try? container.decode(String.self, forKey: .requestBody) {
-            self.requestBody = BodyStorage.fromLegacyString(bodyString)
-        } else {
-            self.requestBody = try container.decodeIfPresent(BodyStorage.self, forKey: .requestBody) ?? .empty
-        }
-
-        if let bodyString = try? container.decode(String.self, forKey: .responseBody) {
-            self.responseBody = BodyStorage.fromLegacyString(bodyString)
-        } else {
-            self.responseBody = try container.decodeIfPresent(BodyStorage.self, forKey: .responseBody) ?? .empty
-        }
-
-        self.protocolVersion = try container.decodeIfPresent(HTTPProtocolVersion.self, forKey: .protocolVersion)
-        self.sessionId = try container.decodeIfPresent(UUID.self, forKey: .sessionId)
-
-        self.timingPhases = try container.decodeIfPresent(NetworkTimingPhases.self, forKey: .timingPhases)
-        self.tlsInfo = try container.decodeIfPresent(TLSConnectionInfo.self, forKey: .tlsInfo)
-        self.wasThrottled = try container.decodeIfPresent(Bool.self, forKey: .wasThrottled) ?? false
-        self.throttlingProfile = try container.decodeIfPresent(String.self, forKey: .throttlingProfile)
-        self.isDuplicate = try container.decodeIfPresent(Bool.self, forKey: .isDuplicate) ?? false
-        self.duplicateOfRequestId = try container.decodeIfPresent(UUID.self, forKey: .duplicateOfRequestId)
-        self.isManual = try container.decodeIfPresent(Bool.self, forKey: .isManual) ?? false
-        self.wasBlocked = try container.decodeIfPresent(Bool.self, forKey: .wasBlocked) ?? false
-        self.wasCancelled = try container.decodeIfPresent(Bool.self, forKey: .wasCancelled) ?? false
-        self.wasRewritten = try container.decodeIfPresent(Bool.self, forKey: .wasRewritten) ?? false
-        self.isMocked = try container.decodeIfPresent(Bool.self, forKey: .isMocked) ?? false
-        self.isReplayed = try container.decodeIfPresent(Bool.self, forKey: .isReplayed) ?? false
-        self.appliedScriptName = try container.decodeIfPresent(String.self, forKey: .appliedScriptName)
-        self.hitBreakpoint = try container.decodeIfPresent(Bool.self, forKey: .hitBreakpoint) ?? false
-        self.retryAttempts = try container.decodeIfPresent(Int.self, forKey: .retryAttempts) ?? 0
-        self.executionLog = try container.decodeIfPresent([ExecutionLogEntry].self, forKey: .executionLog) ?? []
-        self.executionErrors = try container.decodeIfPresent([ExecutionError].self, forKey: .executionErrors) ?? []
-        self.appliedRuleIds = try container.decodeIfPresent([UUID].self, forKey: .appliedRuleIds) ?? []
-        self.contentType = try container.decodeIfPresent(String.self, forKey: .contentType)
-        self.contentEncoding = try container.decodeIfPresent(String.self, forKey: .contentEncoding)
-        self.userAgent = try container.decodeIfPresent(String.self, forKey: .userAgent)
-        self.cacheControl = try container.decodeIfPresent(String.self, forKey: .cacheControl)
-        self.requestCookies = try container.decodeIfPresent([HTTPCookie].self, forKey: .requestCookies)
-        self.responseCookies = try container.decodeIfPresent([HTTPCookie].self, forKey: .responseCookies)
-        if let storedQueryItems = try container.decodeIfPresent([QueryItemStorage].self, forKey: .queryParameters) {
-            self.queryParameters = storedQueryItems.map { URLQueryItem(name: $0.name, value: $0.value) }
-        } else {
-            self.queryParameters = nil
-        }
-        self.authorization = try container.decodeIfPresent(String.self, forKey: .authorization)
-        self.tlsAlerts = try container.decodeIfPresent([TLSAlertMessage].self, forKey: .tlsAlerts)
-        self.http2Streams = try container.decodeIfPresent([HTTP2StreamInfo].self, forKey: .http2Streams)
-        self.http2ConnectionInfo = try container.decodeIfPresent(HTTP2ConnectionInfo.self, forKey: .http2ConnectionInfo)
-        self.redirectChain = try container.decodeIfPresent([RedirectInfo].self, forKey: .redirectChain) ?? []
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-
-        try container.encode(id, forKey: .id)
-        try container.encode(url, forKey: .url)
-        try container.encode(method, forKey: .method)
-        try container.encodeIfPresent(statusCode, forKey: .statusCode)
-        try container.encodeIfPresent(statusMessage, forKey: .statusMessage)
-        try container.encode(timestamp, forKey: .timestamp)
-        try container.encode(duration, forKey: .duration)
-        try container.encode(requestHeaders, forKey: .requestHeaders)
-        try container.encode(responseHeaders, forKey: .responseHeaders)
-        try container.encode(requestBody, forKey: .requestBody)
-        try container.encode(responseBody, forKey: .responseBody)
-        try container.encodeIfPresent(protocolVersion, forKey: .protocolVersion)
-        try container.encodeIfPresent(sessionId, forKey: .sessionId)
-        try container.encodeIfPresent(timingPhases, forKey: .timingPhases)
-        try container.encodeIfPresent(tlsInfo, forKey: .tlsInfo)
-        try container.encode(wasThrottled, forKey: .wasThrottled)
-        try container.encodeIfPresent(throttlingProfile, forKey: .throttlingProfile)
-        try container.encode(isDuplicate, forKey: .isDuplicate)
-        try container.encodeIfPresent(duplicateOfRequestId, forKey: .duplicateOfRequestId)
-        try container.encode(isManual, forKey: .isManual)
-        try container.encode(wasBlocked, forKey: .wasBlocked)
-        try container.encode(wasCancelled, forKey: .wasCancelled)
-        try container.encode(wasRewritten, forKey: .wasRewritten)
-        try container.encode(isMocked, forKey: .isMocked)
-        try container.encode(isReplayed, forKey: .isReplayed)
-        try container.encodeIfPresent(appliedScriptName, forKey: .appliedScriptName)
-        try container.encode(hitBreakpoint, forKey: .hitBreakpoint)
-        try container.encode(retryAttempts, forKey: .retryAttempts)
-        try container.encode(executionLog, forKey: .executionLog)
-        try container.encode(executionErrors, forKey: .executionErrors)
-        try container.encode(appliedRuleIds, forKey: .appliedRuleIds)
-        try container.encodeIfPresent(contentType, forKey: .contentType)
-        try container.encodeIfPresent(contentEncoding, forKey: .contentEncoding)
-        try container.encodeIfPresent(userAgent, forKey: .userAgent)
-        try container.encodeIfPresent(cacheControl, forKey: .cacheControl)
-        try container.encodeIfPresent(requestCookies, forKey: .requestCookies)
-        try container.encodeIfPresent(responseCookies, forKey: .responseCookies)
-        let storedQueryItems = queryParameters?.map { QueryItemStorage(name: $0.name, value: $0.value) }
-        try container.encodeIfPresent(storedQueryItems, forKey: .queryParameters)
-        try container.encodeIfPresent(authorization, forKey: .authorization)
-        try container.encodeIfPresent(tlsAlerts, forKey: .tlsAlerts)
-        try container.encodeIfPresent(http2Streams, forKey: .http2Streams)
-        try container.encodeIfPresent(http2ConnectionInfo, forKey: .http2ConnectionInfo)
-        try container.encode(redirectChain, forKey: .redirectChain)
-    }
-}
-
-extension HTTPMethod: Codable {}
-
-// MARK: - Notification Observer Helper
-
-/// Helper class to properly manage CFNotificationCenter observer lifecycle
-public class NotificationObserver {
-    private let lock = NSLock()
-    private var observer: UnsafeMutableRawPointer?
-    private var handler: (@Sendable () -> Void)?
-    private var notificationName: CFString?
-
-    public func stop() {
-        lock.lock()
-        let observer = observer
-        let notificationName = notificationName
-        self.observer = nil
-        self.notificationName = nil
-        handler = nil
-        lock.unlock()
-
-        guard let observer, let notificationName else { return }
-        CFNotificationCenterRemoveObserver(
-            CFNotificationCenterGetDarwinNotifyCenter(),
-            observer,
-            CFNotificationName(notificationName),
-            nil
-        )
-        Unmanaged<NotificationObserver>.fromOpaque(observer).release()
-    }
-
-    public func observe(notificationName: String, handler: @escaping @Sendable () -> Void) {
-        stop()
-
-        lock.lock()
-        self.handler = handler
-        self.notificationName = notificationName as CFString
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        lock.unlock()
-
-        // Use a weak reference pattern
-        let callback: CFNotificationCallback = { _, observer, _, _, _ in
-            guard let observer else { return }
-            let instance = Unmanaged<NotificationObserver>.fromOpaque(observer).takeUnretainedValue()
-            let handler = instance.handler
-            DispatchQueue.main.async {
-                handler?()
-            }
-        }
-
-        lock.lock()
-        self.observer = Unmanaged.passRetained(self).toOpaque()
-        let observer = self.observer
-        let name = self.notificationName
-        lock.unlock()
-        CFNotificationCenterAddObserver(
-            center,
-            observer,
-            callback,
-            name,
-            nil,
-            .deliverImmediately
-        )
-    }
-
-    deinit {
-        stop()
-    }
-}
-
-public final class AppGroupStorageObserverToken: @unchecked Sendable {
-    private var cancelHandler: (() -> Void)?
-    private let cancelLock = NSLock()
-
-    public init(_ cancelHandler: @escaping () -> Void) {
-        self.cancelHandler = cancelHandler
-    }
-
-    public func cancel() {
-        cancelLock.lock()
-        let handler = cancelHandler
-        cancelHandler = nil
-        cancelLock.unlock()
-        handler?()
-    }
-
-    deinit {
-        cancel()
     }
 }

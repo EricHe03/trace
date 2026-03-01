@@ -485,6 +485,6 @@ public actor LogStore {
 /// This matches the format used by `NDJSONLogWriter` in the VPN extension.
 private struct VPNLogEvent: Codable {
     let ts: Double
-    let type: String
     let msg: String
+    let type: String
 }

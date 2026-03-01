@@ -132,6 +132,24 @@ final class CaptureSessionTests: XCTestCase {
         XCTAssertEqual(durationString, "0s")
     }
 
+    func testDurationStringSubSecondShowsMilliseconds() {
+        let startTime = Date()
+        let endTime = startTime.addingTimeInterval(0.256)
+        let session = CaptureSession(startTime: startTime, endTime: endTime)
+
+        let durationString = session.durationString
+        XCTAssertEqual(durationString, "256 ms")
+    }
+
+    func testDurationStringTinySubSecondShowsLessThanOneMillisecond() {
+        let startTime = Date()
+        let endTime = startTime.addingTimeInterval(0.0004)
+        let session = CaptureSession(startTime: startTime, endTime: endTime)
+
+        let durationString = session.durationString
+        XCTAssertEqual(durationString, "<1 ms")
+    }
+
     func testDurationStringRelativeToReferenceDateWhenActive() {
         let referenceDate = Date(timeIntervalSince1970: 10_000)
         let startTime = referenceDate.addingTimeInterval(-125) // 2m 5s
@@ -374,7 +392,7 @@ final class CaptureSessionTests: XCTestCase {
         let session = CaptureSession(startTime: startTime, endTime: endTime)
 
         let duration = session.duration
-        XCTAssertLessThan(duration, 0)
+        XCTAssertEqual(duration, 0)
     }
 
     func testVeryLargeRequestCount() {

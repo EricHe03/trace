@@ -10,15 +10,17 @@ import SwiftUI
 /// Presents a lightweight loading placeholder in the shared card style.
 public struct LoadingPlaceholderCard: View {
     public let title: String
+    public var headerSystemImage: String?
     public var message: String
 
-    public init(title: String, message: String) {
+    public init(title: String, headerSystemImage: String? = "hourglass", message: String) {
         self.title = title
+        self.headerSystemImage = headerSystemImage
         self.message = message
     }
 
     public var body: some View {
-        SectionCard(title: title, systemImage: "hourglass") {
+        SectionCard(title: title, systemImage: headerSystemImage) {
             HStack(spacing: DesignSystem.Spacing.md) {
                 ProgressView()
                     .controlSize(.small)
@@ -31,4 +33,3 @@ public struct LoadingPlaceholderCard: View {
         }
     }
 }
-

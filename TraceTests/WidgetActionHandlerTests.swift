@@ -11,13 +11,74 @@ import XCTest
 @testable import TraceFeatures
 
 final class WidgetActionHandlerTests: XCTestCase {
+    final class WidgetActionStoreAdapter {
+        private let storage: AppGroupStorage
+
+        init(storage: AppGroupStorage = .shared) {
+            self.storage = storage
+        }
+
+        func removeObject(forKey key: String) {
+            switch key {
+            case WidgetActionKey.action:
+                try? storage.clearWidgetPendingAction()
+            case WidgetActionKey.actionDate:
+                guard var pending = storage.loadWidgetPendingAction() else { return }
+                pending.actionDate = Date()
+                try? storage.saveWidgetPendingAction(pending)
+            case WidgetActionKey.actionView:
+                guard var pending = storage.loadWidgetPendingAction() else { return }
+                pending.actionView = nil
+                try? storage.saveWidgetPendingAction(pending)
+            default:
+                break
+            }
+        }
+
+        func set(_ value: Any?, forKey key: String) {
+            var pending = storage.loadWidgetPendingAction() ?? WidgetPendingAction(action: .toggleCapture)
+            switch key {
+            case WidgetActionKey.action:
+                if let rawValue = value as? String, let action = WidgetAction(rawValue: rawValue) {
+                    pending.action = action
+                }
+            case WidgetActionKey.actionDate:
+                if let date = value as? Date {
+                    pending.actionDate = date
+                }
+            case WidgetActionKey.actionView:
+                pending.actionView = value as? String
+            default:
+                return
+            }
+            try? storage.saveWidgetPendingAction(pending)
+        }
+
+        func string(forKey key: String) -> String? {
+            guard let pending = storage.loadWidgetPendingAction() else { return nil }
+            switch key {
+            case WidgetActionKey.action:
+                return pending.action.rawValue
+            case WidgetActionKey.actionView:
+                return pending.actionView
+            default:
+                return nil
+            }
+        }
+
+        func object(forKey key: String) -> Any? {
+            guard key == WidgetActionKey.actionDate else { return nil }
+            return storage.loadWidgetPendingAction()?.actionDate
+        }
+    }
+
     var sut: WidgetActionHandler!
-    var defaults: UserDefaults?
+    var defaults: WidgetActionStoreAdapter?
 
     override func setUp() async throws {
         try await super.setUp()
         sut = WidgetActionHandler.shared
-        defaults = UserDefaults(suiteName: AppGroupConfiguration.appGroupIdentifier)
+        defaults = WidgetActionStoreAdapter()
 
         // Clear any existing widget actions
         clearWidgetActions()
@@ -228,7 +289,7 @@ final class WidgetActionHandlerTests: XCTestCase {
         setWidgetAction(.toggleCapture, view: "capture")
 
         // When - Verify data persists in defaults
-        let newDefaults = UserDefaults(suiteName: AppGroupConfiguration.appGroupIdentifier)
+        let newDefaults = WidgetActionStoreAdapter()
 
         // Then
         XCTAssertEqual(newDefaults?.string(forKey: WidgetActionKey.action), "toggleCapture")

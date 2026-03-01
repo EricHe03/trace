@@ -141,13 +141,6 @@ struct DNSListView: View {
             .help("Filter DNS messages")
 
             Button {
-                viewModel.refreshStatistics()
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .help("Refresh statistics")
-
-            Button {
                 showingExport.toggle()
             } label: {
                 Label("Export", systemImage: "square.and.arrow.up")

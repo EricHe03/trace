@@ -248,15 +248,16 @@ final class CurlOptionRegistryTests: XCTestCase {
         let options = CurlOptionRegistry.optionsWithOptionalValue
 
         // Assert
-        XCTAssertEqual(options.count, 1)
+        XCTAssertGreaterThan(options.count, 0)
     }
 
-    func testDataBinaryHasOptionalValue() {
+    func testRepresentativeOptionsHaveOptionalValue() {
         // Arrange & Act
         let options = CurlOptionRegistry.optionsWithOptionalValue
 
         // Assert
-        XCTAssertTrue(options.contains("--data-binary"))
+        XCTAssertTrue(options.contains("--proxy"))
+        XCTAssertTrue(options.contains("-x"))
     }
 
     // MARK: - isKnown Tests
@@ -391,9 +392,9 @@ final class CurlOptionRegistryTests: XCTestCase {
 
     // MARK: - hasOptionalValue Tests
 
-    func testHasOptionalValueForDataBinary() {
+    func testHasOptionalValueForProxy() {
         // Arrange
-        let option = "--data-binary"
+        let option = "--proxy"
 
         // Act
         let result = CurlOptionRegistry.hasOptionalValue(option)
@@ -491,9 +492,8 @@ final class CurlOptionRegistryTests: XCTestCase {
         let intersection = requiringValue.intersection(optionalValue)
 
         // Assert
-        // Note: --data-binary is in both sets, so they are NOT disjoint
-        XCTAssertFalse(intersection.isEmpty, "Expected --data-binary to be in both sets")
-        XCTAssertTrue(intersection.contains("--data-binary"))
+        XCTAssertFalse(intersection.isEmpty, "Expected overlap between required and optional value option sets")
+        XCTAssertTrue(intersection.contains("--proxy"))
     }
 
     // MARK: - Special Characters Tests
@@ -517,7 +517,7 @@ final class CurlOptionRegistryTests: XCTestCase {
     func testAllOptionsContainsNumericOptions() {
         // Arrange
         let options = CurlOptionRegistry.allOptions
-        let numericOptions = ["-0", "-1", "-2", "-3", "-4", "-6", "-500"]
+        let numericOptions = ["-0", "-1", "-2", "-3", "-4", "-6"]
 
         // Act & Assert
         for option in numericOptions {

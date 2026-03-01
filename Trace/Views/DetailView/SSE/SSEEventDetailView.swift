@@ -22,7 +22,7 @@ struct SSEEventDetailView: View {
                             if let eventType = event.eventType {
                                 HStack {
                                     Text("Event Type:")
-                                    .foregroundStyle(.secondary)
+                                        .foregroundStyle(.secondary)
                                     Spacer()
                                     Text(eventType)
                                         .fontWeight(.medium)

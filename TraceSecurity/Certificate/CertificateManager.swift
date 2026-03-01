@@ -8,6 +8,7 @@
 import CryptoKit
 import Foundation
 import Security
+import X509
 
 /// Manages Root CA generation and dynamic certificate signing for MITM.
 public class CertificateManager {
@@ -256,16 +257,9 @@ public class CertificateManager {
         }
         SecurityLog.crypto.debug("event=crypto.rsa_keygen outcome=success")
 
-        guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
-            SecurityLog.crypto.error("event=crypto.public_key_extract outcome=failure")
-            throw CertificateError.publicKeyExtractionFailed
-        }
-        SecurityLog.crypto.debug("event=crypto.public_key_extract outcome=success")
-
         SecurityLog.certificate.debug("event=cert.create_self_signed outcome=pending cn=\(self.rootCACommonName, privacy: .private(mask: .hash))")
         let certificate = try createSelfSignedCertificate(
             commonName: rootCACommonName,
-            publicKey: publicKey,
             privateKey: privateKey,
             isCA: true
         )
@@ -389,15 +383,10 @@ public class CertificateManager {
         }
         SecurityLog.crypto.debug("event=crypto.rsa_keygen outcome=success domain=\(domain, privacy: .private(mask: .hash))")
 
-        guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
-            SecurityLog.crypto.error("event=crypto.public_key_extract outcome=failure domain=\(domain, privacy: .private(mask: .hash))")
-            throw CertificateError.publicKeyExtractionFailed
-        }
-
         SecurityLog.certificate.debug("event=cert.sign outcome=pending domain=\(domain, privacy: .private(mask: .hash))")
         let certificate = try createSignedCertificate(
             commonName: domain,
-            publicKey: publicKey,
+            subjectPrivateKey: privateKey,
             signingKey: rootPrivateKey,
             isCA: false
         )
@@ -529,11 +518,10 @@ public class CertificateManager {
     /// - Important: Uses a complete Distinguished Name for browser compatibility.
     private func createSelfSignedCertificate(
         commonName: String,
-        publicKey: SecKey,
         privateKey: SecKey,
         isCA: Bool
     ) throws -> SecCertificate {
-        // Rationale: Use the custom ASN.1 encoder to generate RFC 5280-compliant certificates.
+        // Rationale: Use apple/swift-certificates for standards-compliant X.509 generation.
 
         let subjectDN = rootCADistinguishedName
 
@@ -541,7 +529,7 @@ public class CertificateManager {
             subject: subjectDN,
             // Rule: Self-signed certificates must use the same subject and issuer.
             issuer: subjectDN,
-            publicKey: publicKey,
+            subjectPrivateKey: privateKey,
             signingKey: privateKey,
             isCA: isCA,
             validityDays: 3650
@@ -552,7 +540,7 @@ public class CertificateManager {
     /// - Important: Leaf certificates use a simple subject DN but must use the Root CA DN as issuer.
     private func createSignedCertificate(
         commonName: String,
-        publicKey: SecKey,
+        subjectPrivateKey: SecKey,
         signingKey: SecKey,
         isCA: Bool
     ) throws -> SecCertificate {
@@ -565,31 +553,33 @@ public class CertificateManager {
         return try buildX509Certificate(
             subject: subjectDN,
             issuer: issuerDN,
-            publicKey: publicKey,
+            subjectPrivateKey: subjectPrivateKey,
             signingKey: signingKey,
             isCA: isCA,
             validityDays: 365
         )
     }
 
-    /// Builds an X.509 certificate using the custom ASN.1 encoder.
+    /// Builds an X.509 certificate using apple/swift-certificates.
     private func buildX509Certificate(
         subject: DistinguishedName,
         issuer: DistinguishedName,
-        publicKey: SecKey,
+        subjectPrivateKey: SecKey,
         signingKey: SecKey,
         isCA: Bool,
         validityDays: Int
     ) throws -> SecCertificate {
-        let notBefore = Date()
-        guard let notAfter = Calendar.current.date(byAdding: .day, value: validityDays, to: notBefore) else {
+        let now = Date()
+        // Backdate validity slightly so trust evaluation is resilient to small clock skew.
+        let notBefore = now.addingTimeInterval(-300)
+        guard let notAfter = Calendar.current.date(byAdding: .day, value: validityDays, to: now) else {
             throw CertificateError.validityDateCalculationFailed
         }
 
         return try X509CertificateBuilder.buildCertificate(
             subject: subject,
             issuer: issuer,
-            publicKey: publicKey,
+            subjectPrivateKey: subjectPrivateKey,
             signingKey: signingKey,
             notBefore: notBefore,
             notAfter: notAfter,
@@ -681,14 +671,9 @@ public class CertificateManager {
                 SecurityLog.crypto.debug("event=crypto.ephemeral_keygen outcome=failure error=\(errorDesc)")
                 return false
             }
-            guard let leafPublicKey = SecKeyCopyPublicKey(leafPrivateKey) else {
-                SecurityLog.crypto.debug("event=crypto.public_key_extract outcome=failure reason=ephemeral_leaf")
-                return false
-            }
-
             let leafCert = try createSignedCertificate(
                 commonName: testHost,
-                publicKey: leafPublicKey,
+                subjectPrivateKey: leafPrivateKey,
                 signingKey: rootPrivateKey,
                 isCA: false
             )
@@ -779,6 +764,11 @@ public class CertificateManager {
 
     /// Extracts the notBefore date using SecCertificateCopyValues when available.
     private func extractNotBeforeDate(from certificate: SecCertificate) -> Date? {
+        // Prefer swift-certificates parsing on all platforms.
+        if let parsed = try? Certificate(certificate) {
+            return parsed.notValidBefore
+        }
+
         #if os(macOS)
         // Rationale: macOS exposes SecCertificateCopyValues for structured access.
         var error: Unmanaged<CFError>?

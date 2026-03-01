@@ -50,9 +50,21 @@ public struct CaptureSession: Codable, Identifiable, Equatable, Sendable {
     }
 
     private static func formatDuration(_ duration: TimeInterval) -> String {
-        let hours = Int(duration) / 3600
-        let minutes = Int(duration) / 60 % 60
-        let seconds = Int(duration) % 60
+        let normalized = max(0, duration)
+        if normalized == 0 {
+            return "0s"
+        }
+        if normalized < 1 {
+            let milliseconds = normalized * 1000
+            if milliseconds < 1 {
+                return "<1 ms"
+            }
+            return String(format: "%.0f ms", milliseconds)
+        }
+
+        let hours = Int(normalized) / 3600
+        let minutes = Int(normalized) / 60 % 60
+        let seconds = Int(normalized) % 60
 
         if hours > 0 {
             return String(format: "%dh %dm %ds", hours, minutes, seconds)

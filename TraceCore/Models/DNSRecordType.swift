@@ -9,6 +9,7 @@ import Foundation
 
 /// DNS Resource Record Types (RFC 1035 and extensions)
 public enum DNSRecordType: UInt16, Codable, CaseIterable, Sendable {
+    case unknown = 0 // Unknown / unsupported record type
     // Common types
     case a = 1 // Host address (IPv4)
     case ns = 2 // Authoritative name server
@@ -102,6 +103,7 @@ public enum DNSRecordType: UInt16, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
+        case .unknown: "UNKNOWN"
         case .a: "A"
         case .ns: "NS"
         case .md: "MD"
@@ -196,6 +198,7 @@ public enum DNSRecordType: UInt16, Codable, CaseIterable, Sendable {
 
     public var description: String {
         switch self {
+        case .unknown: "Unknown record type"
         case .a: "IPv4 host address"
         case .aaaa: "IPv6 host address"
         case .cname: "Canonical name for an alias"
@@ -219,6 +222,7 @@ public enum DNSRecordType: UInt16, Codable, CaseIterable, Sendable {
 
 /// DNS Class values (RFC 1035)
 public enum DNSClass: UInt16, Codable, Sendable {
+    case unknown = 0 // Unknown / unsupported class
     case `in` = 1 // Internet
     case cs = 2 // CSNET (obsolete)
     case ch = 3 // CHAOS
@@ -228,6 +232,7 @@ public enum DNSClass: UInt16, Codable, Sendable {
 
     public var displayName: String {
         switch self {
+        case .unknown: "UNKNOWN"
         case .in: "IN"
         case .cs: "CS"
         case .ch: "CH"
@@ -239,6 +244,7 @@ public enum DNSClass: UInt16, Codable, Sendable {
 
     public var description: String {
         switch self {
+        case .unknown: "Unknown class"
         case .in: "Internet"
         case .cs: "CSNET"
         case .ch: "CHAOS"

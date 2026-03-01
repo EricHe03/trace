@@ -24,8 +24,10 @@ public enum CurlCommandGenerator {
     /// - Parameter request: The network request to convert
     /// - Returns: A formatted cURL command string
     public static func generate(from request: NetworkRequest, options: CurlExportOptions = .init()) -> String {
+        let trimmedMethodToken = request.requestMethodRaw?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let methodToken = trimmedMethodToken.flatMap { $0.isEmpty ? nil : $0 } ?? request.method.rawValue
         // Keep `curl -X <METHOD>` together to make the output stable and easy to match/copy.
-        var curl = "curl -X \(request.method.rawValue)"
+        var curl = "curl -X \(methodToken)"
         switch request.protocolVersion {
         case .http10:
             curl += " --http1.0"

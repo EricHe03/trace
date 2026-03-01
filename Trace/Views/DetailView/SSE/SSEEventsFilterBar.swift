@@ -21,6 +21,8 @@ struct SSEEventsFilterBar: View {
         VStack(spacing: DesignSystem.Spacing.sm) {
             TextField("Search events", text: $searchText)
                 .textFieldStyle(.roundedBorder)
+                .keyboardType(.webSearch)
+                .submitLabel(.search)
 
             HStack(spacing: DesignSystem.Spacing.sm) {
                 Menu {
@@ -57,4 +59,3 @@ struct SSEEventsFilterBar: View {
         .accessibilityLabel("SSE filters")
     }
 }
-

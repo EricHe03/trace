@@ -360,46 +360,25 @@ public actor BreakpointManager {
     // MARK: - Persistence
 
     private func loadConfiguration() {
-        guard let container = storage.containerURL else {
-            FeatureLog.breakpoint.error("event=breakpoint.config_load outcome=failure error=app_group_unavailable")
-            configuration = BreakpointConfiguration()
-            return
-        }
-
-        let fileURL = container
-            .appendingPathComponent("Configuration")
-            .appendingPathComponent(configFileName)
-
         do {
-            let data = try Data(contentsOf: fileURL)
-            configuration = try JSONDecoder().decode(BreakpointConfiguration.self, from: data)
+            let data = try storage.loadData(from: configFileName)
+            configuration = try JSONCoding.decode(BreakpointConfiguration.self, from: data)
             FeatureLog.breakpoint.info("event=breakpoint.config_load outcome=success")
-        } catch {
-            // Rule: Treat missing configuration as first launch and use defaults.
-            if (error as NSError).domain == NSCocoaErrorDomain && (error as NSError).code == NSFileReadNoSuchFileError {
-                FeatureLog.breakpoint.info("event=breakpoint.config_load outcome=skipped reason=file_not_found")
-            } else {
-                FeatureLog.breakpoint.error("event=breakpoint.config_load outcome=failure error=\(error.localizedDescription, privacy: .public)")
-            }
+        } catch let error as StorageError where error == .fileNotFound {
+            FeatureLog.breakpoint.info("event=breakpoint.config_load outcome=skipped reason=file_not_found")
             configuration = BreakpointConfiguration()
-            // Rule: Persist defaults to create the configuration file.
+            // Rule: Persist defaults to create the initial configuration record.
             saveConfiguration()
+        } catch {
+            FeatureLog.breakpoint.error("event=breakpoint.config_load outcome=failure error=\(error.localizedDescription, privacy: .public)")
+            configuration = BreakpointConfiguration()
         }
     }
 
     private func saveConfiguration() {
-        guard let container = storage.containerURL else {
-            FeatureLog.breakpoint.error("event=breakpoint.config_save outcome=failure error=app_group_unavailable")
-            return
-        }
-
-        let fileURL = container
-            .appendingPathComponent("Configuration")
-            .appendingPathComponent(configFileName)
-
         do {
-            let data = try JSONEncoder().encode(configuration)
-            try data.write(to: fileURL)
+            let data = try JSONCoding.makeEncoder().encode(configuration)
+            try storage.saveData(data, to: configFileName)
         } catch {
             FeatureLog.breakpoint.error("event=breakpoint.config_save outcome=failure error=\(error.localizedDescription, privacy: .public)")
         }

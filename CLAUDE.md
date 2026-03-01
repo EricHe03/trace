@@ -1,194 +1,98 @@
 # CLAUDE.md
 
-This file provides guidance to Claude ​Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## Build & Run
 
-Trace is an iOS network debugger for capturing and inspecting HTTP(S), WebSocket, and SSE traffic. It's built as a local Network Extension packet tunnel with on-device TLS MITM via a self-generated root CA. All captured data stays on-device.
+- Xcode 26.2 (Swift 6 toolchain), iOS 16.0+ deployment target
+- Open `Trace.xcodeproj` and run on a **physical device** — packet tunnel is unavailable in Simulator
+- Submodules must be initialized: `git submodule update --init --recursive`
+- Build QUIC library (only needed when updating the quiche submodule): `Tools/QUIC/build_quiche_apple.sh` (requires Rust/Cargo)
 
-**Key characteristics:**
-- Swift 6 toolchain with strict concurrency enabled
-- iOS 16.0+ deployment target
-- Requires Xcode 26.2 or newer
-- Must be tested on a physical iOS device (VPN Network Extensions don't work in simulator)
+## Tests
 
-## Development Commands
-
-### Building
+Run full suite from CLI:
 ```bash
-# Open the project
-open Trace.xcodeproj
-
-# Build via xcodebuild (use Trace scheme)
-xcodebuild build -project Trace.xcodeproj -scheme "Trace (Trace)" -destination 'platform=iOS Simulator,name=iPhone 15 Pro'
-```
-
-### Testing
-```bash
-# Run all tests via Xcode
-# Cmd+U in Xcode
-
-# Run tests via command line
 xcodebuild test \
   -project Trace.xcodeproj \
   -scheme Trace \
   -testPlan Trace \
-  -destination 'platform=iOS Simulator,name=iPhone 15 Pro'
+  -destination 'platform=iOS Simulator,name=<Your Simulator Name>'
+```
 
-# Run a single test
+Run a specific test class or method:
+```bash
 xcodebuild test \
   -project Trace.xcodeproj \
   -scheme Trace \
-  -only-testing:TraceTests/SSEHandlerTests/testParseBasicEvent \
-  -destination 'platform=iOS Simulator,name=iPhone 15 Pro'
+  -testPlan Trace \
+  -destination 'platform=iOS Simulator,name=<Your Simulator Name>' \
+  -only-testing:TraceTests/<TestClassName>/<testMethodName>
 ```
 
-### Code Quality
+VPN/packet-tunnel end-to-end tests require a physical device.
+
+## Lint & Format
+
 ```bash
-# Format code with SwiftFormat
-swiftformat .
+# Format check (CI enforced)
+swiftformat --lint . --config .swiftformat
 
-# Lint code with SwiftLint
-swiftlint lint
+# Format fix
+swiftformat --fix . --config .swiftformat
 
-# Auto-fix SwiftLint issues
-swiftlint --fix
+# Lint (CI enforced, strict mode)
+swiftlint lint --strict --config .swiftlint.yml
 ```
+
+## Commit Style
+
+Conventional Commits titles: `feat(vpn): ...`, `fix(ui): ...`, `refactor(proxy): ...`
 
 ## Architecture
 
-### Module Layering
+The project uses Swift Package Manager with four dependency layers:
 
-The codebase follows a strict layered architecture defined in `Package.swift`:
+### Layer 1 — Foundation
+- **TraceCore**: models, GRDB-backed SQLite storage (app group shared), NIO runtime lifecycle, throttling, configuration, logging
+- **TraceCompression**: Brotli/Deflate/Zstd decompression
 
-**Foundation Layer** (no dependencies):
-- `TraceCore`: Shared models, storage (`AppGroupStorage`), logging, and core utilities
-- `TraceCompression`: Compression/decompression (Brotli, Deflate, Zstd)
+### Layer 2 — Infrastructure
+- **TraceSecurity**: X.509 cert generation, TLS, root CA for MITM
+- **TraceNetworking**: DNS parsing, network diagnostics
+- **TracePacket**: IP/TCP/UDP packet parsing and TCP/UDP flow reassembly
+- **TraceQUIC**: QUIC/HTTP3 via quiche FFI bindings (`CQuicheFFI` target), MITM abstractions
+- **HevSocks5Tunnel**: C submodule for full-tunnel tun2socks forwarding (`ThirdParty/hev-socks5-tunnel/`)
 
-**Infrastructure Layer**:
-- `TraceSecurity`: Certificate management and TLS handling
-- `TraceNetworking`: Protocol parsers (HTTP, HTTP/2, WebSocket, SSE)
-- `TracePacket`: IP/TCP parsing and packet reassembly
-- `HevSocks5Tunnel`: C tunnel over SOCKS5 (external git submodule in `ThirdParty/`)
+### Layer 3 — Features
+- **TraceProxy**: NIO-based MITM proxy engine (`NIOMITMProxyEngine.swift`), HTTP/1.1 + HTTP/2 + WebSocket interception, PCAP/NDJSON logging
+- **TraceFeatures**: 18+ sub-modules — VPN management, request execution, rewrite rules, breakpoints, request maps, HAR/cURL export, scripting, profiles, widgets, notifications, data cleanup
+- **TraceUI**: shared SwiftUI components
 
-**Feature Layer**:
-- `TraceProxy`: MITM proxy server and connection management
-- `TraceFeatures`: Application features (VPN lifecycle, export, scripting, cleanup, breakpoints, etc.)
-- `TraceUI`: Reusable SwiftUI components
+### Layer 4 — Targets
+- **Trace** (main app): ViewModels, Repositories, SwiftUI views. App-originated traffic captured via `Trace/NetworkInterceptor.swift` (URLProtocol-based — intentional exception to the NIO path)
+- **TraceVPN** (Network Extension): `PacketTunnelProvider.swift` entry point, SOCKS5 server, UDP forwarding, QUIC flow routing
+- **TraceWidget** (WidgetKit): live activities and quick stats
 
-**App Targets**:
-- `Trace`: Main iOS app
-- `TraceVPN`: Packet Tunnel Network Extension (runs in separate process)
-- `TraceWidget`: Widget Extension source
+### Networking Architecture
+- **Shared runtime**: `TraceCore/Networking/NIORuntime.swift` — NIOTSEventLoopGroup + AsyncHTTPClient lifecycle
+- **Request execution**: `TraceFeatures/Request/RequestExecutor.swift` uses AsyncHTTPClient
+- **MITM proxy**: `TraceProxy/MITM/MITMProxyServer.swift` → `NIOMITMProxyEngine.swift` (NIOSSL TLS)
+- **VPN path**: `TraceVPN/Providers/LocalSocks5Server.swift`, `UDPForwarder.swift`, `HevSocks5TunnelForwarder.swift`
 
-### Critical Architecture Concepts
+## Bundle IDs & App Group
 
-#### 1. App Group Storage (`TraceCore/Storage/AppGroupStorage.swift`)
+| Item | Default |
+|---|---|
+| App | `com.justin.trace` |
+| VPN extension | `com.justin.trace.vpn` — must match `providerBundleIdentifier` in `TraceFeatures/VPN/VPNManager.swift` |
+| Widget | `com.justin.trace.tracewidget` |
+| App Group | `group.com.justin.trace` — shared across app, VPN extension, and widget |
+| Keychain group | `$(AppIdentifierPrefix)com.justin.trace` |
 
-The main app and VPN extension run in **separate processes** and share data via an **App Group container**. The App Group identifier is:
-- Default: `group.com.justin.trace`
-- Configurable via `Info.plist` key `AppGroupIdentifier`
-- Must match across main app, VPN extension, and Widget entitlements
+## Key Technical Context
 
-**Inter-process communication:**
-- Network requests, WebSocket connections, SSE connections are saved as JSON files in the shared container
-- Configuration (capture rules, MITM allowlist, throttling state) is stored in shared `UserDefaults` suite
-- Darwin notifications (`CFNotificationCenter`) notify the main app when new data is available
-
-#### 2. VPN Lifecycle (`TraceFeatures/VPN/VPNManager.swift`)
-
-**VPN Manager** controls the VPN connection lifecycle:
-- `initializeIfNeeded()`: Loads existing VPN configuration without prompting user
-- `requestVPNPermission()`: Creates VPN configuration and triggers iOS permission prompt
-- `start()`: Starts the VPN tunnel (calls `PacketTunnelProvider.startTunnel()`)
-- `stop()`: Stops the VPN tunnel
-
-**IMPORTANT:** The VPN extension bundle ID must match `providerBundleIdentifier` in `VPNManager.swift` (line 169):
-```swift
-protocolConfiguration.providerBundleIdentifier = "com.justin.trace.vpn"
-```
-
-#### 3. Packet Tunnel Provider (`TraceVPN/Providers/PacketTunnelProvider.swift`)
-
-The VPN extension runs in a separate process and implements `NEPacketTunnelProvider`. It has two capture modes:
-
-**Proxy-only mode** (default):
-- Routes HTTP/HTTPS traffic through local MITM proxy (port 8888)
-- Non-HTTP traffic is not captured
-- Uses VPN proxy settings (`NEProxySettings`)
-
-**Full-tunnel mode**:
-- Routes all TCP/UDP traffic through the tunnel
-- Uses `hev-socks5-tunnel` (C library) for tun2socks forwarding
-- Supports custom DNS, IPv6, and SOCKS5 upstream proxy
-
-**IPC between main app and VPN extension:**
-- Main app sends messages via `NETunnelProviderSession.sendProviderMessage()`
-- VPN extension handles messages in `handleAppMessage(_:completionHandler:)`
-- Commands include: update config, update throttling state, clear requests
-
-#### 4. MITM Proxy (`TraceProxy/MITM/MITMProxyServer.swift`)
-
-The MITM proxy server:
-- Listens on `127.0.0.1:8888`
-- Intercepts HTTP/HTTPS traffic and performs TLS MITM
-- Uses a self-generated root CA stored in iOS Keychain
-- Saves captured requests to `AppGroupStorage`
-- Supports WebSocket and SSE protocol upgrades
-
-#### 5. Protocol Parsing
-
-- **HTTP/HTTP2**: `TraceNetworking` contains parsers for HTTP/1.1 and HTTP/2 frames
-- **WebSocket**: Handled by `TraceNetworking/WebSocket/`
-- **SSE**: Handled by `TraceNetworking/SSE/SSEHandler.swift`
-
-### Testing Considerations
-
-- VPN functionality cannot be tested in iOS Simulator (use physical device only)
-- Unit tests run in simulator and use fallback storage (not real App Group)
-- Tests are excluded from SwiftFormat and SwiftLint (see `.swiftformat` and `.swiftlint.yml`)
-
-## Configuration Files
-
-### Bundle IDs and Identifiers
-
-| Component | Default Bundle ID | Configuration |
-|-----------|------------------|---------------|
-| Main app | `com.justin.trace` | Xcode target settings |
-| VPN extension | `com.justin.trace.vpn` | Must match `providerBundleIdentifier` in `VPNManager.swift` |
-| Widget | `com.justin.trace.tracewidget` | `TraceWidgetExtension` target |
-| App Group | `group.com.justin.trace` | Shared storage across app/extension/widget |
-| Keychain group | `$(AppIdentifierPrefix)com.justin.trace` | App and VPN entitlements |
-
-### Signing Requirements
-
-All three targets (`Trace`, `TraceVPN`, `TraceWidgetExtension`) must:
-- Use the same App Group identifier in entitlements
-- Use the same Team ID
-- Have Network Extension capability enabled (for VPN target)
-
-## Git Submodules
-
-The project includes one git submodule:
-```bash
-# Initialize submodules after cloning
-git submodule update --init --recursive
-```
-
-Submodule location: `ThirdParty/hev-socks5-tunnel/`
-
-## Code Style
-
-- **Swift 6 language mode** with strict concurrency checking
-- **SwiftFormat** configuration in `.swiftformat`
-- **SwiftLint** configuration in `.swiftlint.yml`
-- Disabled rules: `line_length`, `function_body_length`, `type_body_length` (SwiftUI views can be long)
-- Opt-in rules include: `force_unwrapping`, `implicitly_unwrapped_optional`
-
-## Common Development Pitfalls
-
-1. **App Group misconfiguration**: If the app can't save/load requests, verify App Group entitlements match across all targets
-2. **VPN bundle ID mismatch**: If VPN won't start, verify `providerBundleIdentifier` in `VPNManager.swift` matches the VPN extension's bundle ID
-3. **Simulator limitations**: VPN Network Extensions don't work in simulator - test on real device
-4. **Concurrent modifications**: When modifying VPN configuration while connected, use `applyProtocolRoutingDefaults()` pattern to avoid reassert cycles
-5. **Swift 6 concurrency**: All types crossing concurrency boundaries must be `Sendable`. Use actors or `@unchecked Sendable` with manual synchronization.
+- **Swift 6 strict concurrency**: all types crossing actor boundaries must be `Sendable`; avoid introducing data races
+- **Multi-target storage**: GRDB SQLite in the app group container is read/written by all three targets
+- **QUIC submodule**: `ThirdParty/quiche/` is a Rust library; `CQuicheFFI` wraps the compiled `.xcframework` in `build/quiche/`
+- **Docs**: `Docs/SwiftNIO-Behavior-Parity-Contract.md` documents the NIO runtime contract; read before changing `NIORuntime.swift`

@@ -211,7 +211,7 @@ final class PacketTunnelProviderTests: XCTestCase {
     }
 
     func testDecideUDPForwardingHevOnlyFallsBackToDirectWhenTunnelUDPUnsupported() {
-        let decision = PacketFlowLoop.decideUDPForwarding(
+        let decision = decideUDPForwarding(
             udpForwarderAvailable: true,
             mode: .hevOnly,
             sourcePort: 50_000,
@@ -225,7 +225,7 @@ final class PacketTunnelProviderTests: XCTestCase {
     }
 
     func testDecideUDPForwardingSplitFallsBackToDirectForQUICWhenTunnelUDPUnsupported() {
-        let decision = PacketFlowLoop.decideUDPForwarding(
+        let decision = decideUDPForwarding(
             udpForwarderAvailable: true,
             mode: .split,
             sourcePort: 50_000,
@@ -239,7 +239,7 @@ final class PacketTunnelProviderTests: XCTestCase {
     }
 
     func testDecideUDPForwardingHevOnlyUsesTunnelWhenTunnelUDPSupported() {
-        let decision = PacketFlowLoop.decideUDPForwarding(
+        let decision = decideUDPForwarding(
             udpForwarderAvailable: true,
             mode: .hevOnly,
             sourcePort: 50_000,
@@ -249,6 +249,62 @@ final class PacketTunnelProviderTests: XCTestCase {
         )
 
         XCTAssertEqual(decision.decision, .forwardTunnel)
+        XCTAssertTrue(decision.isQUIC)
+    }
+
+    func testDecideUDPForwardingFallsBackToTunnelWhenDirectForwarderUnavailable() {
+        let decision = decideUDPForwarding(
+            udpForwarderAvailable: false,
+            mode: .direct,
+            sourcePort: 40_000,
+            destinationPort: 53,
+            blockQUICEnabled: false,
+            tunnelUDPSupported: true
+        )
+
+        XCTAssertEqual(decision.decision, .forwardTunnel)
+        XCTAssertFalse(decision.isQUIC)
+    }
+
+    func testDecideUDPForwardingInterceptModeMarksQUICForInterception() {
+        let decision = decideUDPForwarding(
+            udpForwarderAvailable: true,
+            mode: .direct,
+            sourcePort: 45_000,
+            destinationPort: 443,
+            quicHandlingMode: .intercept,
+            tunnelUDPSupported: true
+        )
+
+        XCTAssertEqual(decision.decision, .interceptQUIC)
+        XCTAssertTrue(decision.isQUIC)
+    }
+
+    func testDecideUDPForwardingPassThroughModeKeepsConnectivityPath() {
+        let decision = decideUDPForwarding(
+            udpForwarderAvailable: true,
+            mode: .split,
+            sourcePort: 45_000,
+            destinationPort: 443,
+            quicHandlingMode: .passThrough,
+            tunnelUDPSupported: false
+        )
+
+        XCTAssertEqual(decision.decision, .forwardDirect)
+        XCTAssertTrue(decision.isQUIC)
+    }
+
+    func testDecideUDPForwardingBlockModeDropsQUIC() {
+        let decision = decideUDPForwarding(
+            udpForwarderAvailable: true,
+            mode: .direct,
+            sourcePort: 45_000,
+            destinationPort: 443,
+            quicHandlingMode: .block,
+            tunnelUDPSupported: true
+        )
+
+        XCTAssertEqual(decision.decision, .dropQUIC)
         XCTAssertTrue(decision.isQUIC)
     }
 

@@ -65,15 +65,6 @@ struct FiltersView: View {
                     Toggle("Duplicates Only", isOn: $viewModel.filterShowDuplicatesOnly)
                         .tint(DesignSystem.Colors.warning)
                         .accessibilityHint("Filter to show only duplicate requests")
-
-                    if viewModel.filterShowDuplicatesOnly {
-                        Button(action: {
-                            viewModel.detectDuplicates()
-                        }) {
-                            Label("Refresh Duplicate Detection", systemImage: "arrow.clockwise")
-                        }
-                        .accessibilityHint("Double tap to re-detect duplicate requests")
-                    }
                 } header: {
                     Text("Quick Filters")
                 }
@@ -223,7 +214,7 @@ struct FiltersView: View {
                 } header: {
                     Text("Network Event Type")
                 } footer: {
-                    Text("Filter by network event type (HTTP, WebSocket, SSE)")
+                    Text("Filter by network event type (HTTP, WebSocket, SSE, TCP/UDP, DNS/mDNS/NTP/DHCP/SNMP/QUIC)")
                 }
 
                 // Response Time Filter
@@ -385,6 +376,7 @@ struct FiltersView: View {
                             TextField("example.com", text: $newDomain)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
+                                .keyboardType(.URL)
                         } header: {
                             Text("Domain")
                         } footer: {

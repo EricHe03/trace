@@ -10,19 +10,70 @@ import Foundation
 import SwiftUI
 #endif
 
+public enum NetworkCapturePath: String, Codable, Sendable, CaseIterable {
+    case unknown
+    case proxy
+    case proxyWithUpstreamHint = "proxy_with_upstream_hint"
+    case tunneledHTTPS = "tunneled_https"
+    case tunneledHTTPSWithUpstreamHint = "tunneled_https_with_upstream_hint"
+
+    public var displayName: String {
+        switch self {
+        case .unknown:
+            "Unknown"
+        case .proxy:
+            "Proxy"
+        case .proxyWithUpstreamHint:
+            "Full Tunnel (Proxy Ingress)"
+        case .tunneledHTTPS:
+            "MITM Decrypted (Tunneled HTTPS)"
+        case .tunneledHTTPSWithUpstreamHint:
+            "Full Tunnel + MITM Decrypted"
+        }
+    }
+
+    public var markerLabel: String? {
+        switch self {
+        case .unknown, .proxy:
+            nil
+        case .proxyWithUpstreamHint:
+            "FT"
+        case .tunneledHTTPS:
+            "MITM"
+        case .tunneledHTTPSWithUpstreamHint:
+            "FT+MITM"
+        }
+    }
+
+    public var isFullTunnelEvidence: Bool {
+        switch self {
+        case .proxyWithUpstreamHint, .tunneledHTTPSWithUpstreamHint:
+            true
+        case .unknown, .proxy, .tunneledHTTPS:
+            false
+        }
+    }
+}
+
 public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public let id: UUID
     public var url: String
     public let method: HTTPMethod
+    /// Original method token when it cannot be represented by `HTTPMethod`.
+    public var requestMethodRaw: String?
     public var statusCode: Int?
     public var statusMessage: String?
     public let timestamp: Date
-    public let duration: TimeInterval
+    public var duration: TimeInterval
     public var requestHeaders: [TraceHTTPHeader]
     public var responseHeaders: [TraceHTTPHeader]
     public var requestBody: BodyStorage
     public var responseBody: BodyStorage
     public var protocolVersion: HTTPProtocolVersion?
+    public var capturePath: NetworkCapturePath = .unknown
+    public var captureFlowID: UInt64?
+    public var capturePolicyModeRaw: UInt8?
+    public var captureMetadataVersion: UInt8?
 
     // Advanced Performance Metrics
     public var timingPhases: NetworkTimingPhases?
@@ -85,6 +136,13 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         set { retryAttempts = newValue }
     }
 
+    /// Backward-compatible alias for `requestMethodRaw`.
+    @available(*, deprecated, renamed: "requestMethodRaw")
+    public var rawMethod: String? {
+        get { requestMethodRaw }
+        set { requestMethodRaw = newValue }
+    }
+
     /// Alias for appliedScriptName for backward compatibility
     public var scriptName: String? {
         get { appliedScriptName }
@@ -95,6 +153,13 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public var hasBreakpoint: Bool {
         get { hitBreakpoint }
         set { hitBreakpoint = newValue }
+    }
+
+    /// Backward-compatible alias for `curlExecutionMetadata`.
+    @available(*, deprecated, message: "Use curlExecutionMetadata")
+    public var curlMetadata: CurlRequestMetadata? {
+        get { curlExecutionMetadata.map(CurlRequestMetadata.init(executionMetadata:)) }
+        set { curlExecutionMetadata = newValue?.asExecutionMetadata }
     }
 
     /// Computed count of duplicate requests
@@ -136,10 +201,72 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     /// Redirect history when the client follows redirects.
     public var redirectChain: [RedirectInfo] = []
 
+    /// cURL import/execution metadata when this request was produced from a cURL command.
+    public var curlExecutionMetadata: CurlExecutionMetadata?
+
     public init(
         id: UUID = UUID(),
         url: String,
         method: HTTPMethod,
+        requestMethodRaw: String? = nil,
+        statusCode: Int? = nil,
+        statusMessage: String? = nil,
+        timestamp: Date = Date(),
+        duration: TimeInterval,
+        requestHeaders: [TraceHTTPHeader] = [],
+        responseHeaders: [TraceHTTPHeader] = [],
+        requestBody: BodyStorage = .empty,
+        responseBody: BodyStorage = .empty,
+        protocolVersion: HTTPProtocolVersion? = nil,
+        capturePath: NetworkCapturePath = .unknown,
+        captureFlowID: UInt64? = nil,
+        capturePolicyModeRaw: UInt8? = nil,
+        captureMetadataVersion: UInt8? = nil,
+        timingPhases: NetworkTimingPhases? = nil,
+        tlsInfo: TLSConnectionInfo? = nil,
+        wasThrottled: Bool = false,
+        throttlingProfile: String? = nil,
+        executionLog: [ExecutionLogEntry] = [],
+        executionErrors: [ExecutionError] = [],
+        appliedRuleIds: [UUID] = [],
+        redirectChain: [RedirectInfo] = [],
+        curlExecutionMetadata: CurlExecutionMetadata? = nil
+    ) {
+        self.id = id
+        self.url = url
+        self.method = method
+        self.requestMethodRaw = requestMethodRaw
+        self.statusCode = statusCode
+        self.statusMessage = statusMessage
+        self.timestamp = timestamp
+        self.duration = duration
+        self.requestHeaders = requestHeaders
+        self.responseHeaders = responseHeaders
+        self.requestBody = requestBody
+        self.responseBody = responseBody
+        self.protocolVersion = protocolVersion ?? Self.detectProtocolVersion(from: requestHeaders, responseHeaders: responseHeaders)
+        self.capturePath = capturePath
+        self.captureFlowID = captureFlowID
+        self.capturePolicyModeRaw = capturePolicyModeRaw
+        self.captureMetadataVersion = captureMetadataVersion
+        self.timingPhases = timingPhases
+        self.tlsInfo = tlsInfo
+        self.wasThrottled = wasThrottled
+        self.throttlingProfile = throttlingProfile
+        self.executionLog = executionLog
+        self.executionErrors = executionErrors
+        self.appliedRuleIds = appliedRuleIds
+        self.redirectChain = redirectChain
+        self.curlExecutionMetadata = curlExecutionMetadata
+    }
+
+    /// Backward-compatible initializer for older call sites using `rawMethod`/`curlMetadata`.
+    @available(*, deprecated, message: "Use initializer with requestMethodRaw and curlExecutionMetadata")
+    public init(
+        id: UUID = UUID(),
+        url: String,
+        method: HTTPMethod,
+        rawMethod: String?,
         statusCode: Int? = nil,
         statusMessage: String? = nil,
         timestamp: Date = Date(),
@@ -156,28 +283,33 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         executionLog: [ExecutionLogEntry] = [],
         executionErrors: [ExecutionError] = [],
         appliedRuleIds: [UUID] = [],
-        redirectChain: [RedirectInfo] = []
+        redirectChain: [RedirectInfo] = [],
+        curlMetadata: CurlRequestMetadata?
     ) {
-        self.id = id
-        self.url = url
-        self.method = method
-        self.statusCode = statusCode
-        self.statusMessage = statusMessage
-        self.timestamp = timestamp
-        self.duration = duration
-        self.requestHeaders = requestHeaders
-        self.responseHeaders = responseHeaders
-        self.requestBody = requestBody
-        self.responseBody = responseBody
-        self.protocolVersion = protocolVersion ?? Self.detectProtocolVersion(from: requestHeaders, responseHeaders: responseHeaders)
-        self.timingPhases = timingPhases
-        self.tlsInfo = tlsInfo
-        self.wasThrottled = wasThrottled
-        self.throttlingProfile = throttlingProfile
-        self.executionLog = executionLog
-        self.executionErrors = executionErrors
-        self.appliedRuleIds = appliedRuleIds
-        self.redirectChain = redirectChain
+        self.init(
+            id: id,
+            url: url,
+            method: method,
+            requestMethodRaw: rawMethod,
+            statusCode: statusCode,
+            statusMessage: statusMessage,
+            timestamp: timestamp,
+            duration: duration,
+            requestHeaders: requestHeaders,
+            responseHeaders: responseHeaders,
+            requestBody: requestBody,
+            responseBody: responseBody,
+            protocolVersion: protocolVersion,
+            timingPhases: timingPhases,
+            tlsInfo: tlsInfo,
+            wasThrottled: wasThrottled,
+            throttlingProfile: throttlingProfile,
+            executionLog: executionLog,
+            executionErrors: executionErrors,
+            appliedRuleIds: appliedRuleIds,
+            redirectChain: redirectChain,
+            curlExecutionMetadata: curlMetadata?.asExecutionMetadata
+        )
     }
 
     /// Detect HTTP protocol version from headers
@@ -598,7 +730,7 @@ public struct TLSAlertMessage: Codable, Equatable, Identifiable {
 }
 
 /// HTTP Protocol Version
-public enum HTTPProtocolVersion: String, Codable {
+public enum HTTPProtocolVersion: String, Codable, Sendable {
     case http10 = "HTTP/1.0"
     case http11 = "HTTP/1.1"
     case http2 = "HTTP/2"
@@ -765,6 +897,83 @@ public struct RedirectInfo: Identifiable, Codable, Hashable, Sendable {
         self.toURL = toURL
         self.statusCode = statusCode
         self.location = location
+    }
+}
+
+public struct CurlExecutionMetadata: Codable, Equatable, Sendable {
+    public let originalCommand: String
+    public let transferIndex: Int
+    public let transferCount: Int
+    public let effectiveOptions: [String: [String]]
+    public let diagnostics: [CurlExecutionDiagnostic]
+
+    public init(
+        originalCommand: String,
+        transferIndex: Int,
+        transferCount: Int,
+        effectiveOptions: [String: [String]] = [:],
+        diagnostics: [CurlExecutionDiagnostic] = []
+    ) {
+        self.originalCommand = originalCommand
+        self.transferIndex = transferIndex
+        self.transferCount = transferCount
+        self.effectiveOptions = effectiveOptions
+        self.diagnostics = diagnostics
+    }
+}
+
+/// Backward-compatible cURL metadata model kept for serialization and symbol compatibility.
+public struct CurlRequestMetadata: Codable, Equatable, Sendable {
+    public let originalCommand: String
+    public let transferIndex: Int
+    public let transferCount: Int
+    public let options: [String: [String]]
+    public let diagnostics: [CurlExecutionDiagnostic]
+
+    public init(
+        originalCommand: String,
+        transferIndex: Int,
+        transferCount: Int,
+        options: [String: [String]] = [:],
+        diagnostics: [CurlExecutionDiagnostic] = []
+    ) {
+        self.originalCommand = originalCommand
+        self.transferIndex = transferIndex
+        self.transferCount = transferCount
+        self.options = options
+        self.diagnostics = diagnostics
+    }
+
+    public init(executionMetadata: CurlExecutionMetadata) {
+        self.init(
+            originalCommand: executionMetadata.originalCommand,
+            transferIndex: executionMetadata.transferIndex,
+            transferCount: executionMetadata.transferCount,
+            options: executionMetadata.effectiveOptions,
+            diagnostics: executionMetadata.diagnostics
+        )
+    }
+
+    public var asExecutionMetadata: CurlExecutionMetadata {
+        CurlExecutionMetadata(
+            originalCommand: originalCommand,
+            transferIndex: transferIndex,
+            transferCount: transferCount,
+            effectiveOptions: options,
+            diagnostics: diagnostics
+        )
+    }
+}
+
+public struct CurlExecutionDiagnostic: Codable, Equatable, Sendable {
+    public let severity: String
+    public let option: String?
+    public let message: String
+
+    public init(severity: String, option: String? = nil, message: String) {
+        self.severity = severity
+        self.option = option
+        self.message = message
     }
 }
 

@@ -106,12 +106,6 @@ struct ScriptListView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button {
-                            showingAddScript = true
-                        } label: {
-                            Label("New Script", systemImage: "plus")
-                        }
-
-                        Button {
                             showingTemplates = true
                         } label: {
                             Label("Load Template", systemImage: "doc.text")

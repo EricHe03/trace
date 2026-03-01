@@ -34,7 +34,8 @@ public struct JSONFormatterView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(spacing: DesignSystem.Spacing.lgPlus) {
+            VStack(spacing: DesignSystem.Spacing.lg) {
+                // Format picker
                 Picker("Format", selection: $formatMode) {
                     ForEach(FormatMode.allCases, id: \.self) { mode in
                         Text(mode.rawValue).tag(mode)
@@ -48,8 +49,12 @@ public struct JSONFormatterView: View {
                 .accessibilityLabel("JSON format mode")
                 .accessibilityHint("Choose between pretty-printed and minified JSON")
 
-                VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-                    HStack {
+                // Input section
+                VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
+                    HStack(spacing: DesignSystem.Spacing.sm) {
+                        Image(systemName: "arrow.down.doc")
+                            .foregroundStyle(DesignSystem.Colors.info)
+                            .imageScale(.medium)
                         Text("Input JSON")
                             .font(.headline)
 
@@ -60,12 +65,7 @@ public struct JSONFormatterView: View {
                             outputText = ""
                             validationMessage = ""
                         }
-                        .font(.subheadline)
-                        .disabled(inputText.isEmpty)
-
-                        Button("Validate") {
-                            validateJSON()
-                        }
+                        .buttonStyle(.bordered)
                         .font(.subheadline)
                         .disabled(inputText.isEmpty)
                     }
@@ -75,17 +75,27 @@ public struct JSONFormatterView: View {
                         .font(DesignSystem.Typography.monospacedFont)
                         .autocapitalization(.none)
                         .autocorrectionDisabled()
-                        .formTextEditorStyle()
+                        .padding(DesignSystem.Spacing.sm)
+                        .background(
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .fill(DesignSystem.Form.textEditorBackground)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .stroke(DesignSystem.Colors.muted.opacity(0.3), lineWidth: 1)
+                        )
                         .onChangeCompat(of: inputText) {
                             formatJSON()
                         }
                 }
                 .padding(.horizontal)
 
+                // Validation status
                 if !validationMessage.isEmpty {
                     HStack(spacing: DesignSystem.Spacing.sm) {
                         Image(systemName: isValid ? "checkmark.circle.fill" : "xmark.circle.fill")
                             .foregroundStyle(isValid ? DesignSystem.Colors.success : DesignSystem.Colors.danger)
+                            .imageScale(.medium)
 
                         Text(validationMessage)
                             .font(.subheadline)
@@ -93,14 +103,24 @@ public struct JSONFormatterView: View {
 
                         Spacer()
                     }
-                    .padding()
-                    .background(isValid ? DesignSystem.Colors.success.opacity(0.1) : DesignSystem.Colors.danger.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
+                    .padding(DesignSystem.Spacing.md)
+                    .background(
+                        RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                            .fill((isValid ? DesignSystem.Colors.success : DesignSystem.Colors.danger).opacity(0.15))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                            .stroke((isValid ? DesignSystem.Colors.success : DesignSystem.Colors.danger).opacity(0.3), lineWidth: 1)
+                    )
                     .padding(.horizontal)
                 }
 
-                VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-                    HStack {
+                // Output section
+                VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
+                    HStack(spacing: DesignSystem.Spacing.sm) {
+                        Image(systemName: "arrow.up.doc")
+                            .foregroundStyle(DesignSystem.Colors.success)
+                            .imageScale(.medium)
                         Text("Formatted JSON")
                             .font(.headline)
 
@@ -115,6 +135,8 @@ public struct JSONFormatterView: View {
                             Label("Copy", systemImage: "doc.on.doc")
                                 .font(.subheadline)
                         }
+                        .buttonStyle(.bordered)
+                        .tint(DesignSystem.Colors.success)
                         .disabled(outputText.isEmpty)
                     }
 
@@ -122,8 +144,14 @@ public struct JSONFormatterView: View {
                         Text(outputText.isEmpty ? "Formatted JSON will appear here" : outputText)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(DesignSystem.Spacing.md)
-                            .background(DesignSystem.Form.textEditorBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Form.textEditorCornerRadius))
+                            .background(
+                                RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                    .fill(DesignSystem.Form.textEditorBackground)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                    .stroke(DesignSystem.Colors.muted.opacity(0.3), lineWidth: 1)
+                            )
                             .font(DesignSystem.Typography.monospacedFont)
                             .foregroundStyle(outputText.isEmpty ? .secondary : .primary)
                             .textSelection(.enabled)
@@ -132,7 +160,7 @@ public struct JSONFormatterView: View {
                 }
                 .padding(.horizontal)
 
-                Spacer()
+                Spacer(minLength: DesignSystem.Spacing.md)
             }
             .padding(.vertical)
         }
@@ -182,10 +210,6 @@ public struct JSONFormatterView: View {
             validationMessage = "Invalid JSON: \(error.localizedDescription)"
             isValid = false
         }
-    }
-
-    private func validateJSON() {
-        formatJSON()
     }
 }
 

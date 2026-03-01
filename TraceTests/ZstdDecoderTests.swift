@@ -7,59 +7,10 @@
 
 import Foundation
 import XCTest
-import Compression
 @testable import Trace
 @testable import TraceCompression
 
 final class ZstdDecoderTests: XCTestCase {
-    enum ZstdTestError: Error {
-        case compressionFailed
-    }
-
-    // MARK: - Helper Methods
-
-    private func requireZstdSupport() throws {
-        try XCTSkipIf(
-            ZstdCompressionAlgorithm.supportedAlgorithm == nil,
-            "Zstandard compression is unavailable on this SDK"
-        )
-    }
-
-    /// Compress data using zstd for testing
-    private func compressZstd(_ data: Data) throws -> Data {
-        guard let algorithm = ZstdCompressionAlgorithm.supportedAlgorithm else {
-            throw ZstdTestError.compressionFailed
-        }
-
-        let maxSize = max(data.count * 8, 1024)
-        var bufferSize = max(data.count, 64)
-
-        while bufferSize <= maxSize {
-            var compressedData = Data(count: bufferSize)
-            let actualSize = compressedData.withUnsafeMutableBytes { outputBuffer in
-                data.withUnsafeBytes { inputBuffer in
-                    compression_encode_buffer(
-                        outputBuffer.baseAddress!,
-                        bufferSize,
-                        inputBuffer.baseAddress!,
-                        data.count,
-                        nil,
-                        algorithm
-                    )
-                }
-            }
-
-            if actualSize > 0 {
-                compressedData.count = actualSize
-                return compressedData
-            }
-
-            bufferSize *= 2
-        }
-
-        throw ZstdTestError.compressionFailed
-    }
-
     // MARK: - Basic Tests
 
     func testZstdDecoder_EmptyData_ReturnsEmpty() throws {
@@ -82,6 +33,28 @@ final class ZstdDecoderTests: XCTestCase {
             }
         } catch {
             XCTFail("Expected CompressionError, got \(error)")
+        }
+    }
+
+    func testZstdDecoder_TruncatedData_ThrowsError() throws {
+        try requireZstdSupport()
+        let original = String(repeating: "truncated stream", count: 200).data(using: .utf8)!
+        let compressed = try compressZstd(original)
+        let truncated = compressed.dropLast(max(1, compressed.count / 10))
+
+        XCTAssertThrowsError(try ZstdDecoder.decompress(Data(truncated))) { error in
+            XCTAssertTrue(error is CompressionError)
+        }
+    }
+
+    func testZstdDecoder_CorruptedData_ThrowsError() throws {
+        try requireZstdSupport()
+        let original = String(repeating: "corrupted stream", count: 200).data(using: .utf8)!
+        var compressed = try compressZstd(original)
+        compressed[compressed.startIndex + 8] ^= 0xFF
+
+        XCTAssertThrowsError(try ZstdDecoder.decompress(compressed)) { error in
+            XCTAssertTrue(error is CompressionError)
         }
     }
 

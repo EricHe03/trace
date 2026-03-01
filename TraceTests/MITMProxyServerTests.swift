@@ -2,248 +2,132 @@
 //  MITMProxyServerTests.swift
 //  TraceTests
 //
-//  Created by Justin on 2026/01/13.
+//  Updated for NIO MITM server lifecycle.
 //
 
-import Foundation
 import XCTest
-@testable import TraceNetworking
-@testable import TraceVPN
+@testable import TraceCore
+@testable import TraceProxy
 
 final class MITMProxyServerTests: XCTestCase {
-
-    // MARK: - Chunked Transfer Encoding Tests
-
-    func testIsChunkedBodyComplete_SimpleChunk() {
-        let chunkedBody = makeChunkedBody(["Hello"])
-        let data = makeChunkedRequest(body: chunkedBody)
-
-        XCTAssertNotNil(HTTPParser.parseRequest(from: data))
+    override func tearDownWithError() throws {
+        try NIORuntime.shared.shutdown(reason: .tests)
+        try super.tearDownWithError()
     }
 
-    func testIsChunkedBodyComplete_MultipleChunks() {
-        let chunkedBody = makeChunkedBody(["Hello", " World"])
-        let data = makeChunkedRequest(body: chunkedBody)
+    func testStartStopIsIdempotent() throws {
+        let server = MITMProxyServer(port: 0)
 
-        XCTAssertNotNil(HTTPParser.parseRequest(from: data))
+        XCTAssertNoThrow(try server.start())
+        XCTAssertNoThrow(try server.start())
+
+        XCTAssertGreaterThanOrEqual(server.activeConnectionCount(), 0)
+
+        server.stop()
+        server.stop()
     }
 
-    func testIsChunkedBodyComplete_Incomplete() {
-        var chunkedBody = Data()
-        chunkedBody.append("5\r\nHello\r\n".data(using: .ascii)!)
+    func testConfigurationAndTogglesCanBeUpdatedBeforeStart() {
+        let server = MITMProxyServer(port: 0)
 
-        let data = makeChunkedRequest(body: chunkedBody)
+        server.updateConfiguration([
+            "transparentTLSModeEnabled": true,
+            "proxyTransportBackend": "legacy"
+        ])
+        server.setMitmAllowlist([" Example.com ", "", "api.example.com"])
+        server.setMitmEnabled(true)
+        server.updateThrottlingState(.disabled)
+        server.updateRawCaptureLimit(16 * 1024 * 1024)
+        server.configureRawCapture(enabled: false, writer: nil, limit: 0)
 
-        XCTAssertNil(HTTPParser.parseRequest(from: data))
+        XCTAssertEqual(server.activeConnectionCount(), 0)
     }
 
-    func testDecodeChunkedBody_Simple() {
-        let chunkedBody = makeChunkedBody(["Hello"])
-        let expected = "Hello".data(using: .ascii)!
+    func testLegacyTransparentTLSConfigKeyAccepted() {
+        let server = MITMProxyServer(port: 0)
 
-        XCTAssertEqual(HTTPParser.decodeChunkedBody(chunkedBody), expected)
+        server.updateConfiguration([
+            "enableTransparentTLSMode": true
+        ])
+
+        XCTAssertEqual(server.activeConnectionCount(), 0)
     }
 
-    func testDecodeChunkedBody_MultipleChunks() {
-        let chunkedBody = makeChunkedBody(["Hello", " World"])
-        let expected = "Hello World".data(using: .ascii)!
+    func testTransparentTLSModeConfigCanToggleWithoutCrash() {
+        let server = MITMProxyServer(port: 0)
 
-        XCTAssertEqual(HTTPParser.decodeChunkedBody(chunkedBody), expected)
+        server.updateConfiguration([
+            "transparentTLSModeEnabled": true
+        ])
+        server.updateConfiguration([
+            "transparentTLSModeEnabled": false
+        ])
+        server.updateConfiguration([
+            "enableTransparentTLSMode": true
+        ])
+
+        XCTAssertEqual(server.activeConnectionCount(), 0)
     }
 
-    func testDecodeChunkedBody_WithChunkExtensions() {
-        var chunkedBody = Data()
-        chunkedBody.append("5;ext=test\r\n".data(using: .ascii)!)
-        chunkedBody.append("Hello".data(using: .ascii)!)
-        chunkedBody.append("\r\n".data(using: .ascii)!)
-        chunkedBody.append("0\r\n\r\n".data(using: .ascii)!)
-
-        let expected = "Hello".data(using: .ascii)!
-
-        XCTAssertEqual(HTTPParser.decodeChunkedBody(chunkedBody), expected)
+    func testNormalizedAutoBypassReasonMapsTransparentTLSUpgradeTimeoutToNonHTTPProtocol() {
+        let reason = "mitm_non_http_protocol: transparent_tls_upgrade_timeout"
+        let normalized = MITMProxyServer.normalizedAutoBypassReason(forFailureReason: reason)
+        XCTAssertEqual(normalized, "mitm_non_http_protocol")
     }
 
-    func testDecodeChunkedBody_BinaryData() {
-        let binaryData = Data([0xFF, 0xFE, 0xFD, 0xFC, 0xFB])
-        var chunkedBody = Data()
-        chunkedBody.append("5\r\n".data(using: .ascii)!)
-        chunkedBody.append(binaryData)
-        chunkedBody.append("\r\n".data(using: .ascii)!)
-        chunkedBody.append("0\r\n\r\n".data(using: .ascii)!)
-
-        XCTAssertEqual(HTTPParser.decodeChunkedBody(chunkedBody), binaryData)
+    func testNormalizedAutoBypassReasonSkipsCANotTrustedFailures() {
+        let reason = "ca_not_trusted: root_ca_missing"
+        let normalized = MITMProxyServer.normalizedAutoBypassReason(forFailureReason: reason)
+        XCTAssertNil(normalized)
     }
 
-    func testDecodeChunkedBody_WithTrailers() {
-        var chunkedBody = Data()
-        chunkedBody.append("5\r\n".data(using: .ascii)!)
-        chunkedBody.append("Hello".data(using: .ascii)!)
-        chunkedBody.append("\r\n".data(using: .ascii)!)
-        chunkedBody.append("0\r\n".data(using: .ascii)!)
-        chunkedBody.append("Expires: Wed, 21 Oct 2015 07:28:00 GMT\r\n".data(using: .ascii)!)
-        chunkedBody.append("\r\n".data(using: .ascii)!)
-
-        let expected = "Hello".data(using: .ascii)!
-
-        XCTAssertEqual(HTTPParser.decodeChunkedBody(chunkedBody), expected)
+    func testNormalizedAutoBypassReasonMapsUpstreamHostnameMismatch() {
+        let reason = "tls_upstream_hostname_mismatch: example.com"
+        let normalized = MITMProxyServer.normalizedAutoBypassReason(forFailureReason: reason)
+        XCTAssertEqual(normalized, "tls_upstream_hostname_mismatch")
     }
 
-    func testDecodeChunkedBody_EmptyChunks() {
-        let chunkedBody = "0\r\n\r\n".data(using: .ascii)!
-
-        XCTAssertEqual(HTTPParser.decodeChunkedBody(chunkedBody), Data())
+    func testNormalizedAutoBypassReasonMapsClientRejectedPinning() {
+        let reason = "client_rejected_mitm_or_pinning: niossl_error_0"
+        let normalized = MITMProxyServer.normalizedAutoBypassReason(forFailureReason: reason)
+        XCTAssertEqual(normalized, "client_rejected_mitm_or_pinning")
     }
 
-    func testChunkedBodyEndIndex_IgnoresEmbeddedMarker() {
-        let payload = "hello0\r\n\r\nworld"
-        let chunkedBody = makeChunkedBody([payload])
-        let endIndex = HTTPParser.chunkedBodyEndIndex(chunkedBody)
-        XCTAssertEqual(endIndex, chunkedBody.count)
+    func testNormalizedAutoBypassReasonSkipsConnectionClosedEarly() {
+        let reason = "connection_closed_early"
+        let normalized = MITMProxyServer.normalizedAutoBypassReason(forFailureReason: reason)
+        XCTAssertNil(normalized)
     }
 
-    func testChunkedBodyEndIndex_StopsBeforeExtraData() {
-        let chunkedBody = makeChunkedBody(["Hello"])
-        let combined = chunkedBody + "EXTRA".data(using: .ascii)!
-        let endIndex = HTTPParser.chunkedBodyEndIndex(combined)
-        XCTAssertEqual(endIndex, chunkedBody.count)
+    func testRuntimeBypassCandidateReasonSkipsConnectionClosedEarly() {
+        let reason = "connection_closed_early"
+        let normalized = MITMProxyServer.runtimeBypassCandidateReason(forFailureReason: reason)
+        XCTAssertNil(normalized)
     }
 
-    func testDecodeChunkedBody_StopsBeforeExtraData() {
-        let chunkedBody = makeChunkedBody(["Hello"])
-        let combined = chunkedBody + "EXTRA".data(using: .ascii)!
-        let expected = "Hello".data(using: .ascii)!
-        XCTAssertEqual(HTTPParser.decodeChunkedBody(combined), expected)
+    func testRuntimeBypassCandidateReasonMapsUpstreamTimeout() {
+        let reason = "upstream_timeout"
+        let normalized = MITMProxyServer.runtimeBypassCandidateReason(forFailureReason: reason)
+        XCTAssertEqual(normalized, "upstream_timeout")
     }
 
-    func testDecodeChunkedBody_InvalidFormat() {
-        let chunkedBody = "XYZ\r\n".data(using: .ascii)!
-
-        XCTAssertNil(HTTPParser.decodeChunkedBody(chunkedBody))
+    func testRuntimeBypassCandidateReasonReturnsNilForTrustFailure() {
+        let reason = "tls_upstream_trust_failed"
+        let normalized = MITMProxyServer.runtimeBypassCandidateReason(forFailureReason: reason)
+        XCTAssertNil(normalized)
     }
 
-    func testDecodeChunkedBody_LargeChunkSize() {
-        let largeData = Data(repeating: 0x41, count: 255)
-        var chunkedBody = Data()
-        chunkedBody.append("FF\r\n".data(using: .ascii)!)
-        chunkedBody.append(largeData)
-        chunkedBody.append("\r\n".data(using: .ascii)!)
-        chunkedBody.append("0\r\n\r\n".data(using: .ascii)!)
-
-        XCTAssertEqual(HTTPParser.decodeChunkedBody(chunkedBody), largeData)
+    func testTransientFailureThresholdUsesDefaultForConnectionClosedEarly() {
+        let threshold = MITMProxyServer.transientFailureThreshold(
+            forRuntimeBypassReason: "connection_closed_early"
+        )
+        XCTAssertEqual(threshold, 5)
     }
 
-    // MARK: - Request Header Parsing Tests
-
-    func testParseRequestHeaders_ContentLength() {
-        let body = Data(repeating: 0x7A, count: 42)
-        let headersString = """
-        POST /api/test HTTP/1.1\r
-        Host: example.com\r
-        Content-Type: application/json\r
-        Content-Length: 42\r
-        \r
-        """
-        let data = Data(headersString.utf8) + body
-
-        let request = HTTPParser.parseRequest(from: data)
-        XCTAssertEqual(request?.body.count, 42)
-        XCTAssertEqual(request?.headers["content-length"]?.first, "42")
-    }
-
-    func testParseRequestHeaders_ChunkedTransferEncoding() {
-        let chunkedBody = makeChunkedBody(["Hello"])
-        let headersString = """
-        POST /api/test HTTP/1.1\r
-        Host: example.com\r
-        Transfer-Encoding: chunked\r
-        \r
-        """
-        let data = Data(headersString.utf8) + chunkedBody
-
-        let request = HTTPParser.parseRequest(from: data)
-        XCTAssertEqual(request?.body, "Hello".data(using: .ascii)!)
-    }
-
-    func testParseRequestHeaders_ChunkedTransferEncoding_WithExtraBytes() {
-        let chunkedBody = makeChunkedBody(["Hello"])
-        let extra = "EXTRA".data(using: .ascii)!
-        let headersString = """
-        POST /api/test HTTP/1.1\r
-        Host: example.com\r
-        Transfer-Encoding: chunked\r
-        \r
-        """
-        let data = Data(headersString.utf8) + chunkedBody + extra
-
-        let request = HTTPParser.parseRequest(from: data)
-        XCTAssertEqual(request?.body, "Hello".data(using: .ascii)!)
-        XCTAssertEqual(request?.rawRequest.count, data.count - extra.count)
-    }
-
-    func testParseRequestHeaders_BothContentLengthAndChunked() {
-        let chunkedBody = makeChunkedBody(["Hello"])
-        let headersString = """
-        POST /api/test HTTP/1.1\r
-        Host: example.com\r
-        Content-Length: 42\r
-        Transfer-Encoding: chunked\r
-        \r
-        """
-        let data = Data(headersString.utf8) + chunkedBody
-
-        let request = HTTPParser.parseRequest(from: data)
-        XCTAssertEqual(request?.body, "Hello".data(using: .ascii)!)
-        XCTAssertEqual(request?.headers["transfer-encoding"]?.first, "chunked")
-    }
-
-    func testParseRequestHeaders_NoContentLengthOrChunked() {
-        let headersString = """
-        GET /api/test HTTP/1.1\r
-        Host: example.com\r
-        \r
-        """
-        let data = Data(headersString.utf8)
-
-        let request = HTTPParser.parseRequest(from: data)
-        XCTAssertEqual(request?.body, Data())
-    }
-
-    func testParseRequestHeaders_CaseInsensitive() {
-        let headersString = """
-        POST /api/test HTTP/1.1\r
-        host: example.com\r
-        content-length: 3\r
-        transfer-encoding: chunked\r
-        \r
-        """
-        let data = Data(headersString.utf8) + makeChunkedBody(["abc"])
-
-        let request = HTTPParser.parseRequest(from: data)
-        XCTAssertEqual(request?.body, "abc".data(using: .ascii)!)
-        XCTAssertEqual(request?.headers["host"]?.first, "example.com")
-    }
-
-    // MARK: - Helpers
-
-    private func makeChunkedBody(_ chunks: [String]) -> Data {
-        var data = Data()
-        for chunk in chunks {
-            let size = String(format: "%X", chunk.utf8.count)
-            data.append("\(size)\r\n".data(using: .ascii)!)
-            data.append(chunk.data(using: .ascii)!)
-            data.append("\r\n".data(using: .ascii)!)
-        }
-        data.append("0\r\n\r\n".data(using: .ascii)!)
-        return data
-    }
-
-    private func makeChunkedRequest(body: Data) -> Data {
-        let headers = """
-        POST /api/test HTTP/1.1\r
-        Host: example.com\r
-        Transfer-Encoding: chunked\r
-        \r
-        """
-        return Data(headers.utf8) + body
+    func testTransientFailureThresholdUsesDefaultForOtherReasons() {
+        let threshold = MITMProxyServer.transientFailureThreshold(
+            forRuntimeBypassReason: "upstream_timeout"
+        )
+        XCTAssertEqual(threshold, 5)
     }
 }

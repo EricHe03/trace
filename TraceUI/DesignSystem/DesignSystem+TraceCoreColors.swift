@@ -41,6 +41,16 @@ public extension DesignSystem.Colors {
         case .http: accent
         case .webSocket: accentAlt
         case .sse: warning
+        case .tcp: info
+        case .udp: accent
+        case .dns: accentAlt
+        case .mdns: success
+        case .ntp: warning
+        case .dhcpv4: favorite
+        case .dhcpv6: favorite
+        case .snmp: danger
+        case .quic: success
+        case .transport: muted
         }
     }
 }

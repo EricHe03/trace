@@ -575,13 +575,18 @@ public extension DesignSystem {
 
     /// Formats a duration consistently for UI display.
     static func formattedDuration(_ duration: TimeInterval) -> String {
-        if duration < 1 {
-            return String(format: "%.0f ms", duration * 1000)
-        } else if duration < 60 {
-            return String(format: "%.2f s", duration)
+        let normalized = max(0, duration)
+        if normalized < 1 {
+            let milliseconds = normalized * 1000
+            if normalized > 0, milliseconds < 1 {
+                return "<1 ms"
+            }
+            return String(format: "%.0f ms", milliseconds)
+        } else if normalized < 60 {
+            return String(format: "%.2f s", normalized)
         } else {
-            let minutes = Int(duration / 60)
-            let seconds = Int(duration.truncatingRemainder(dividingBy: 60))
+            let minutes = Int(normalized / 60)
+            let seconds = Int(normalized.truncatingRemainder(dividingBy: 60))
             return "\(minutes)m \(seconds)s"
         }
     }

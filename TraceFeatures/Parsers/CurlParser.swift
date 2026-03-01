@@ -110,7 +110,9 @@ public class CurlParser {
     }
 
     // swiftlint:disable cyclomatic_complexity
-    /// Parse a cURL command string into a NetworkRequest
+    /// Legacy parser path that converts a cURL command into one synthesized request.
+    /// Use `CurlCommandAnalyzer` + `CurlCommandExecutor` for authoritative import behavior.
+    @available(*, deprecated, message: "Use CurlCommandAnalyzer/CurlCommandExecutor for authoritative cURL execution semantics.")
     public static func parse(_ curlCommand: String) throws -> NetworkRequest {
         let requests = try parseAll(curlCommand)
         guard let first = requests.first else {
@@ -122,7 +124,9 @@ public class CurlParser {
         return first
     }
 
-    /// Parse a cURL command string into one or more NetworkRequests
+    /// Legacy parser path that converts a cURL command into synthesized request models.
+    /// Use `CurlCommandAnalyzer` + `CurlCommandExecutor` for authoritative import behavior.
+    @available(*, deprecated, message: "Use CurlCommandAnalyzer/CurlCommandExecutor for authoritative cURL execution semantics.")
     public static func parseAll(_ curlCommand: String) throws -> [NetworkRequest] {
         // Clean up the command
         var command = curlCommand.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -211,6 +215,7 @@ public class CurlParser {
             if !currentToken.isEmpty {
                 tokens.append(currentToken)
                 currentToken = ""
+                justClosedQuote = false
             }
         }
 
@@ -528,7 +533,7 @@ public class CurlParser {
         case "--http2", "--http2-prior-knowledge":
             transfers[transfers.count - 1].protocolVersion = .http2
 
-        case "--http3":
+        case "--http3", "--http3-only":
             transfers[transfers.count - 1].protocolVersion = .http3
 
         default:

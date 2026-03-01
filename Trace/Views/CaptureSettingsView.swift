@@ -25,29 +25,54 @@ struct CaptureSettingsView: View {
                 Picker("Mode", selection: $config.captureMode) {
                     Text("Proxy Only").tag(CaptureMode.proxyOnly)
                     Text("Full Tunnel").tag(CaptureMode.fullTunnel)
+                    Text("Dual MITM").tag(CaptureMode.fullTunnelDualMITM)
                 }
                 .pickerStyle(.segmented)
                 .accessibilityLabel("Capture mode")
             }
 
-            if config.captureMode == .fullTunnel {
-                Section("SOCKS5 Forwarder (Optional)") {
-                    TextField("Host", text: $config.fullTunnelSocks5Host)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityLabel("SOCKS5 host")
+            if config.captureMode.usesPacketTunnelRouting {
+                if config.captureMode.supportsCustomSocksServer {
+                    Section("SOCKS5 Forwarder (Optional)") {
+                        TextField("Host", text: $config.fullTunnelSocks5Host)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                            .accessibilityLabel("SOCKS5 host")
 
-                    TextField("Port", text: $socksPortText)
-                        .keyboardType(.numberPad)
-                        .accessibilityLabel("SOCKS5 port")
+                        TextField("Port", text: $socksPortText)
+                            .keyboardType(.asciiCapableNumberPad)
+                            .accessibilityLabel("SOCKS5 port")
 
-                    Label {
-                        Text("Leave host empty to use Trace's built-in local SOCKS5 server. Set host and port only when using an external SOCKS5 server.")
-                    } icon: {
-                        Image(systemName: "exclamationmark.shield.fill")
+                        Label {
+                            Text("Leave host empty to use Trace's built-in local SOCKS5 server. Set host and port only when using an external SOCKS5 server.")
+                        } icon: {
+                            Image(systemName: "exclamationmark.shield.fill")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                } else {
+                    Section("SOCKS5 Forwarder") {
+                        Label {
+                            Text("Dual MITM mode always uses Trace's embedded local SOCKS5 forwarder.")
+                        } icon: {
+                            Image(systemName: "info.circle.fill")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+
+                if config.captureMode == .fullTunnel {
+                    Section("HTTPS Decryption") {
+                        Toggle("Enable Hybrid TCP MITM", isOn: $config.fullTunnelHybridTCPMITMEnabled)
+                            .accessibilityLabel("Enable hybrid TCP MITM")
+
+                        Text("Keeps Full Tunnel proxy routing enabled and also enables transparent TCP MITM for intercepted ports.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 DomainListEditor(
@@ -95,6 +120,7 @@ struct CaptureSettingsView: View {
         .onChangeCompat(of: config.fullTunnelDNSServers) { scheduleSave(showErrors: false) }
         .onChangeCompat(of: config.fullTunnelIPv6Enabled) { scheduleSave(showErrors: false) }
         .onChangeCompat(of: config.fullTunnelUDPForwardingMode) { scheduleSave(showErrors: false) }
+        .onChangeCompat(of: config.fullTunnelHybridTCPMITMEnabled) { scheduleSave(showErrors: false) }
         .onDisappear {
             saveTask?.cancel()
             saveTask = nil
@@ -134,7 +160,7 @@ struct CaptureSettingsView: View {
         let trimmedPortText = socksPortText.trimmingCharacters(in: .whitespacesAndNewlines)
         var updated = config
 
-        if config.captureMode == .fullTunnel {
+        if config.captureMode.supportsCustomSocksServer {
             updated.fullTunnelSocks5Host = trimmedHost
             if trimmedPortText.isEmpty {
                 updated.fullTunnelSocks5Port = 0

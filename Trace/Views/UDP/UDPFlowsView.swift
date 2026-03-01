@@ -247,6 +247,17 @@ private struct UDPFlowRow: View {
                         .foregroundStyle(protocolColor)
                         .cornerRadius(DesignSystem.Badge.cornerRadius)
 
+                    if let quicOutcome = flow.quicInspectionOutcome {
+                        Text(quicOutcomeBadgeTitle(quicOutcome))
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
+                            .padding(.vertical, DesignSystem.Badge.verticalPadding)
+                            .frame(minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget)
+                            .background(quicOutcomeBadgeColor(quicOutcome).opacity(0.1))
+                            .foregroundStyle(quicOutcomeBadgeColor(quicOutcome))
+                            .cornerRadius(DesignSystem.Badge.cornerRadius)
+                    }
+
                     Text("•")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -292,6 +303,32 @@ private struct UDPFlowRow: View {
         case .unknown: .gray
         }
     }
+
+    private func quicOutcomeBadgeTitle(_ outcome: QUICInspectionOutcome) -> String {
+        switch outcome {
+        case .intercepted:
+            "MITM"
+        case .passThroughMarked:
+            "Pass Through"
+        case .blocked:
+            "Blocked"
+        case .tunnelForwarded:
+            "Tunnel"
+        }
+    }
+
+    private func quicOutcomeBadgeColor(_ outcome: QUICInspectionOutcome) -> Color {
+        switch outcome {
+        case .intercepted:
+            .green
+        case .passThroughMarked:
+            .orange
+        case .blocked:
+            .red
+        case .tunnelForwarded:
+            .teal
+        }
+    }
 }
 
 private struct UDPFlowFiltersView: View {
@@ -304,6 +341,8 @@ private struct UDPFlowFiltersView: View {
                 TextField("Search by IP or port", text: $viewModel.searchText)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .keyboardType(.webSearch)
+                    .submitLabel(.search)
             }
 
             Section("Status") {
@@ -321,7 +360,7 @@ private struct UDPFlowFiltersView: View {
 
             Section("Port") {
                 TextField("Port", text: $viewModel.portFilter)
-                    .keyboardType(.numberPad)
+                    .keyboardType(.asciiCapableNumberPad)
             }
 
             Section("Sort") {

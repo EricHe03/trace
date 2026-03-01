@@ -91,6 +91,7 @@ struct HostEditorView: View {
                             .autocapitalization(.none)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
+                            .keyboardType(.URL)
                             .accessibilityLabel("Hostname")
 
                         Text("e.g., api.example.com or *.example.com")
@@ -109,7 +110,7 @@ struct HostEditorView: View {
                             .autocapitalization(.none)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
-                            .keyboardType(.numbersAndPunctuation)
+                            .keyboardType(.asciiCapable)
                             .accessibilityLabel("Target IP address")
 
                         Text("e.g., 192.168.1.100 or 10.0.0.50")
@@ -119,7 +120,7 @@ struct HostEditorView: View {
 
                     VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
                         TextField("Target Port (optional)", text: $targetPortString)
-                            .keyboardType(.numberPad)
+                            .keyboardType(.asciiCapableNumberPad)
                             .accessibilityLabel("Target port")
                             .accessibilityHint("Optional. Leave empty to keep the original port.")
 

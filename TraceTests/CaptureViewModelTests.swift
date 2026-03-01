@@ -247,6 +247,62 @@ final class CaptureViewModelTests: XCTestCase {
         XCTAssertEqual(filtered.last?.url, "https://example.com/old")
     }
 
+    func testDuplicateDetectionRunsAutomaticallyWhenEnabled() async {
+        let now = Date()
+        let original = createMockRequest(
+            url: "https://api.example.com/users",
+            method: .get,
+            timestamp: now.addingTimeInterval(-60)
+        )
+        let duplicate = createMockRequest(
+            url: "https://api.example.com/users",
+            method: .get,
+            timestamp: now
+        )
+
+        viewModel.requests = [original, duplicate]
+        viewModel.filterShowDuplicatesOnly = true
+        try? await Task.sleep(nanoseconds: 400_000_000)
+
+        XCTAssertEqual(viewModel.duplicateCount, 1)
+        XCTAssertEqual(viewModel.filteredRequests.count, 1)
+        XCTAssertTrue(viewModel.filteredRequests.allSatisfy(\.isDuplicate))
+    }
+
+    func testGroupedRequestsReflectFilterChangesImmediately() {
+        let request1 = createMockRequest(url: "https://api.example.com/users")
+        let request2 = createMockRequest(url: "https://cdn.example.com/script.js")
+
+        viewModel.requests = [request1, request2]
+        viewModel.setGroupingMode(.byDomain)
+
+        let initialGroups = viewModel.groupedRequests.domainGroups
+        XCTAssertEqual(initialGroups.count, 2)
+
+        viewModel.filterDomains = ["api.example.com"]
+        let filteredGroups = viewModel.groupedRequests.domainGroups
+        XCTAssertEqual(filteredGroups.count, 1)
+        XCTAssertEqual(filteredGroups.first?.domain, "api.example.com")
+    }
+
+    func testSessionGroupIDsAreStableAcrossRebuilds() {
+        let session = CaptureSession(startTime: Date(), endTime: nil, requestCount: 1, totalDataTransferred: 0)
+        let request = createMockRequest(
+            url: "https://api.example.com/users",
+            sessionId: session.id
+        )
+
+        viewModel.sessions = [session]
+        viewModel.requests = [request]
+        viewModel.setGroupingMode(.bySession)
+
+        let firstIDs = viewModel.groupedRequests.sessionGroups.map(\.id)
+        let secondIDs = viewModel.groupedRequests.sessionGroups.map(\.id)
+
+        XCTAssertEqual(firstIDs, secondIDs)
+        XCTAssertEqual(firstIDs, [session.id])
+    }
+
     // MARK: - App Theme Tests
 
     // MARK: - Helper Methods
@@ -255,9 +311,10 @@ final class CaptureViewModelTests: XCTestCase {
         url: String = "https://example.com",
         method: HTTPMethod = .get,
         statusCode: Int = 200,
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        sessionId: UUID? = nil
     ) -> NetworkRequest {
-        return NetworkRequest(
+        var request = NetworkRequest(
             url: url,
             method: method,
             statusCode: statusCode,
@@ -268,5 +325,7 @@ final class CaptureViewModelTests: XCTestCase {
             requestBody: .empty,
             responseBody: .empty
         )
+        request.sessionId = sessionId
+        return request
     }
 }

@@ -270,4 +270,101 @@ final class NDJSONLogWriterTests: XCTestCase {
             XCTAssertTrue(true)
         }
     }
+
+    func testBufferedAppendFlushesOnThreshold() throws {
+        let fileURL = tempDirectory.appendingPathComponent("threshold.ndjson")
+        let writer = try NDJSONLogWriter(
+            logFileURL: fileURL,
+            flushEventThreshold: 3,
+            flushByteThreshold: 1_024 * 1_024,
+            flushInterval: 60
+        )
+
+        writer.append(type: "info", msg: "first")
+        writer.append(type: "info", msg: "second")
+        writer.append(type: "info", msg: "third")
+
+        Thread.sleep(forTimeInterval: 0.2)
+
+        let eventsBeforeClose = try readEvents(from: fileURL)
+        XCTAssertEqual(eventsBeforeClose.count, 3)
+        XCTAssertEqual(eventsBeforeClose.map(\.msg), ["first", "second", "third"])
+
+        writer.close()
+    }
+
+    func testAppendSyncFlushesPendingAndPreservesOrder() throws {
+        let fileURL = tempDirectory.appendingPathComponent("sync-order.ndjson")
+        let writer = try NDJSONLogWriter(
+            logFileURL: fileURL,
+            flushEventThreshold: 64,
+            flushByteThreshold: 64 * 1_024,
+            flushInterval: 60
+        )
+
+        writer.append(type: "async", msg: "a1")
+        writer.append(type: "async", msg: "a2")
+        writer.appendSync(type: "sync", msg: "s1")
+        writer.close()
+
+        let events = try readEvents(from: fileURL)
+        XCTAssertEqual(events.map(\.msg), ["a1", "a2", "s1"])
+    }
+
+    func testCloseFlushesPendingBufferedEvents() throws {
+        let fileURL = tempDirectory.appendingPathComponent("close-flush.ndjson")
+        let writer = try NDJSONLogWriter(
+            logFileURL: fileURL,
+            flushEventThreshold: 64,
+            flushByteThreshold: 64 * 1_024,
+            flushInterval: 60
+        )
+
+        writer.append(type: "info", msg: "pending-1")
+        writer.append(type: "info", msg: "pending-2")
+        writer.close()
+
+        let events = try readEvents(from: fileURL)
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events.map(\.msg), ["pending-1", "pending-2"])
+    }
+
+    func testEncodedLineUsesCanonicalFieldOrder() throws {
+        let fileURL = tempDirectory.appendingPathComponent("field-order.ndjson")
+        let writer = try NDJSONLogWriter(logFileURL: fileURL)
+        let message = #"message="quoted" path=C:\\tmp"#
+
+        writer.appendSync(type: "order_test", msg: message)
+        writer.close()
+
+        let data = try Data(contentsOf: fileURL)
+        let lines = String(data: data, encoding: .utf8)?
+            .components(separatedBy: "\n")
+            .filter { !$0.isEmpty } ?? []
+        let line = try XCTUnwrap(lines.first)
+
+        let tsRange = try XCTUnwrap(line.range(of: #""ts":"#))
+        let msgRange = try XCTUnwrap(line.range(of: #""msg":"#))
+        let typeRange = try XCTUnwrap(line.range(of: #""type":"#))
+
+        XCTAssertLessThan(tsRange.lowerBound.utf16Offset(in: line), msgRange.lowerBound.utf16Offset(in: line))
+        XCTAssertLessThan(msgRange.lowerBound.utf16Offset(in: line), typeRange.lowerBound.utf16Offset(in: line))
+
+        let events = try readEvents(from: fileURL)
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events[0].type, "order_test")
+        XCTAssertEqual(events[0].msg, message)
+    }
+
+    private func readEvents(from fileURL: URL) throws -> [NDJSONLogEvent] {
+        let data = try Data(contentsOf: fileURL)
+        let lines = String(data: data, encoding: .utf8)?
+            .components(separatedBy: "\n")
+            .filter { !$0.isEmpty } ?? []
+
+        return try lines.map { line in
+            let lineData = try XCTUnwrap(line.data(using: .utf8))
+            return try JSONDecoder().decode(NDJSONLogEvent.self, from: lineData)
+        }
+    }
 }

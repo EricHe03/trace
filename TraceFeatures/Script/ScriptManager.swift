@@ -86,6 +86,14 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
         baseManager.toggle(script)
     }
 
+    /// Backward-compatible API used by tests and older call sites.
+    /// Execution counts are still buffered and flushed in batches.
+    public func incrementExecutionCount(for scriptId: UUID) {
+        Task {
+            await executionCountBuffer.recordExecutions([scriptId])
+        }
+    }
+
     @MainActor
     private func applyExecutionCountDeltas(_ deltas: [UUID: Int]) {
         guard !deltas.isEmpty else { return }

@@ -450,7 +450,7 @@ final class RegexMatcherTests: XCTestCase {
 
         let result = RegexMatcher.safeMatch(pattern: pattern, in: value)
 
-        XCTAssertTrue(result) // Empty pattern matches anywhere
+        XCTAssertFalse(result)
     }
 
     func testEmptyValue() {
@@ -468,7 +468,7 @@ final class RegexMatcherTests: XCTestCase {
 
         let result = RegexMatcher.safeMatch(pattern: pattern, in: value)
 
-        XCTAssertTrue(result)
+        XCTAssertFalse(result)
     }
 
     func testWhitespaceOnly() {

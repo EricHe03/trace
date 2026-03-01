@@ -7,11 +7,12 @@
 
 import Foundation
 
-/// Network event that can represent HTTP requests, WebSockets, or SSE connections
+/// Network event that can represent HTTP requests, WebSockets, SSE connections, or transport packets.
 public enum NetworkEvent: Identifiable, @unchecked Sendable {
     case httpRequest(NetworkRequest)
     case webSocket(WebSocketConnection)
     case sse(SSEConnection)
+    case transportRequest(TransportRequest)
 
     public var id: UUID {
         switch self {
@@ -21,6 +22,8 @@ public enum NetworkEvent: Identifiable, @unchecked Sendable {
             connection.id
         case let .sse(connection):
             connection.id
+        case let .transportRequest(request):
+            request.id
         }
     }
 
@@ -32,6 +35,8 @@ public enum NetworkEvent: Identifiable, @unchecked Sendable {
             connection.startTime
         case let .sse(connection):
             connection.startTime
+        case let .transportRequest(request):
+            request.timestamp
         }
     }
 
@@ -43,6 +48,34 @@ public enum NetworkEvent: Identifiable, @unchecked Sendable {
             .webSocket
         case .sse:
             .sse
+        case let .transportRequest(request):
+            switch request.applicationProtocol {
+            case .dns:
+                .dns
+            case .mdns:
+                .mdns
+            case .ntp:
+                .ntp
+            case .dhcpv4:
+                .dhcpv4
+            case .dhcpv6:
+                .dhcpv6
+            case .snmp:
+                .snmp
+            case .quic:
+                .quic
+            case .http, .tls:
+                .tcp
+            case .unknown:
+                switch request.transport {
+                case .tcp:
+                    .tcp
+                case .udp:
+                    .udp
+                case .unknown:
+                    .transport
+                }
+            }
         }
     }
 
@@ -54,6 +87,8 @@ public enum NetworkEvent: Identifiable, @unchecked Sendable {
             connection.isActive
         case let .sse(connection):
             connection.isActive
+        case .transportRequest:
+            false
         }
     }
 
@@ -65,17 +100,29 @@ public enum NetworkEvent: Identifiable, @unchecked Sendable {
             connection.url
         case let .sse(connection):
             connection.url
+        case let .transportRequest(request):
+            request.endpointSummary
         }
     }
 
     public var subtitle: String {
         switch self {
         case let .httpRequest(request):
-            "\(request.method.rawValue) • \(request.statusCode?.description ?? "Pending")"
+            return "\(request.method.rawValue) • \(request.statusCode?.description ?? "Pending")"
         case let .webSocket(connection):
-            "WebSocket • \(connection.messageCount) messages"
+            return "WebSocket • \(connection.messageCount) messages"
         case let .sse(connection):
-            "SSE • \(connection.eventCount) events"
+            return "SSE • \(connection.eventCount) events"
+        case let .transportRequest(request):
+            let proto = request.applicationProtocol.displayName
+            let fallback: String? = switch request.parserOutcome {
+            case .fallbackSignatureOnly:
+                "fallback"
+            case .parsed, .fallbackUnknown:
+                nil
+            }
+            let parts = [request.transport.rawValue.uppercased(), proto, fallback].compactMap(\.self)
+            return parts.joined(separator: " • ")
         }
     }
 
@@ -87,6 +134,8 @@ public enum NetworkEvent: Identifiable, @unchecked Sendable {
             URL(string: connection.url)?.host
         case let .sse(connection):
             URL(string: connection.url)?.host
+        case .transportRequest:
+            nil
         }
     }
 }
@@ -97,6 +146,16 @@ public enum NetworkEventType: String, CaseIterable, Identifiable {
     case http = "HTTP/HTTPS"
     case webSocket = "WebSocket"
     case sse = "SSE"
+    case tcp = "TCP"
+    case udp = "UDP"
+    case dns = "DNS"
+    case mdns = "mDNS"
+    case ntp = "NTP"
+    case dhcpv4 = "DHCPv4"
+    case dhcpv6 = "DHCPv6"
+    case snmp = "SNMP"
+    case quic = "QUIC"
+    case transport = "Transport"
 
     public var id: String {
         rawValue
@@ -110,6 +169,26 @@ public enum NetworkEventType: String, CaseIterable, Identifiable {
             "cable.connector"
         case .sse:
             "antenna.radiowaves.left.and.right"
+        case .tcp:
+            "arrow.left.and.right.square"
+        case .udp:
+            "arrow.triangle.2.circlepath"
+        case .dns:
+            "globe"
+        case .mdns:
+            "dot.radiowaves.left.and.right"
+        case .ntp:
+            "clock"
+        case .dhcpv4:
+            "network.badge.shield.half.filled"
+        case .dhcpv6:
+            "network.badge.shield.half.filled"
+        case .snmp:
+            "waveform.path.ecg"
+        case .quic:
+            "bolt.horizontal.circle"
+        case .transport:
+            "shippingbox"
         }
     }
 
@@ -121,6 +200,26 @@ public enum NetworkEventType: String, CaseIterable, Identifiable {
             "purple"
         case .sse:
             "orange"
+        case .tcp:
+            "teal"
+        case .udp:
+            "cyan"
+        case .dns:
+            "indigo"
+        case .mdns:
+            "mint"
+        case .ntp:
+            "yellow"
+        case .dhcpv4:
+            "brown"
+        case .dhcpv6:
+            "brown"
+        case .snmp:
+            "pink"
+        case .quic:
+            "green"
+        case .transport:
+            "gray"
         }
     }
 }

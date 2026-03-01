@@ -501,6 +501,16 @@ final class BodyStorageTests: XCTestCase {
         }
     }
 
+    func testMaxSizeParameterRetainsCapturedBytesUpToLimit() {
+        let maxSize = 256 * 1024
+        let data = Data(repeating: 0x41, count: maxSize * 3)
+        let storage = BodyStorage.from(data: data, maxSize: maxSize)
+
+        XCTAssertTrue(storage.isTruncated)
+        XCTAssertEqual(storage.totalSize, data.count)
+        XCTAssertEqual(storage.getData()?.count, maxSize)
+    }
+
     func testZipBombProtection() {
         // Simulate a zip bomb scenario with a small compressed payload
         // that claims to expand to a huge size
