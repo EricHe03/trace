@@ -510,7 +510,7 @@ struct NetworkView: View {
             false
         }
 
-        switch searchScope {
+        return switch searchScope {
         case .all:
             basicSearch || bodySearch
         case .url:
