@@ -156,7 +156,6 @@ struct TransportDetailView: View {
         }
     }
 
-    @ViewBuilder
     private var payloadSection: some View {
         Section("Payload") {
             BodyInspectorView(
@@ -243,11 +242,11 @@ struct TransportDetailView: View {
     private func parserOutcomeDescription(_ outcome: TransportParserOutcome) -> String {
         switch outcome {
         case .parsed:
-            return "Parsed"
+            "Parsed"
         case .fallbackSignatureOnly:
-            return "Port Signature Fallback"
+            "Port Signature Fallback"
         case .fallbackUnknown:
-            return "Unknown"
+            "Unknown"
         }
     }
 }

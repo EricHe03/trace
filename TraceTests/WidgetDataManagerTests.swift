@@ -14,6 +14,49 @@ import XCTest
 final class WidgetDataManagerTests: XCTestCase {
     var sut: WidgetDataManager!
 
+    private final class WidgetStateAdapter {
+        private let storage: AppGroupStorage
+
+        init(storage: AppGroupStorage = .shared) {
+            self.storage = storage
+        }
+
+        func bool(forKey key: String) -> Bool {
+            let state = storage.loadWidgetState()
+            switch key {
+            case "widget.isCapturing":
+                return state.isCapturing
+            default:
+                return false
+            }
+        }
+
+        func integer(forKey key: String) -> Int {
+            let state = storage.loadWidgetState()
+            switch key {
+            case "widget.requestCount":
+                return state.requestCount
+            default:
+                return 0
+            }
+        }
+
+        func string(forKey key: String) -> String? {
+            let state = storage.loadWidgetState()
+            switch key {
+            case "widget.dataTransferred":
+                return state.dataTransferred
+            default:
+                return nil
+            }
+        }
+
+        func data(forKey key: String) -> Data? {
+            guard key == "widget.recentRequests" else { return nil }
+            return try? JSONEncoder().encode(storage.loadWidgetState().recentRequests)
+        }
+    }
+
     override func setUp() async throws {
         try await super.setUp()
         sut = WidgetDataManager.shared
@@ -31,16 +74,11 @@ final class WidgetDataManagerTests: XCTestCase {
     // MARK: - Helper Methods
 
     private func clearWidgetData() {
-        guard let defaults = UserDefaults(suiteName: AppGroupConfiguration.appGroupIdentifier) else { return }
-
-        defaults.removeObject(forKey: "widget.isCapturing")
-        defaults.removeObject(forKey: "widget.requestCount")
-        defaults.removeObject(forKey: "widget.dataTransferred")
-        defaults.removeObject(forKey: "widget.recentRequests")
+        try? AppGroupStorage.shared.saveWidgetState(WidgetSharedState())
     }
 
-    private func getWidgetDefaults() -> UserDefaults? {
-        UserDefaults(suiteName: AppGroupConfiguration.appGroupIdentifier)
+    private func getWidgetDefaults() -> WidgetStateAdapter? {
+        WidgetStateAdapter()
     }
 
     // MARK: - Singleton Pattern Tests

@@ -19,11 +19,7 @@ struct CaptureStateProvider: AppIntentControlValueProvider {
     typealias Configuration = CaptureControlConfigurationIntent
 
     func currentValue(configuration: CaptureControlConfigurationIntent) async throws -> Bool {
-        let appGroupIdentifier = AppGroupConfiguration.appGroupIdentifier
-        guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return false
-        }
-        return defaults.bool(forKey: "widget.isCapturing")
+        AppGroupStorage.shared.loadWidgetState().isCapturing
     }
 
     func previewValue(configuration: CaptureControlConfigurationIntent) -> Bool {

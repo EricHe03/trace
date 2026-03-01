@@ -14,10 +14,10 @@ public final class WidgetActionHandler {
     public nonisolated(unsafe) static let shared = WidgetActionHandler()
     private static let maxActionAge: TimeInterval = 5 * 60
 
-    private let defaults: UserDefaults?
+    private let storage: AppGroupStorage
 
     private init() {
-        defaults = UserDefaults(suiteName: AppGroupConfiguration.appGroupIdentifier)
+        storage = AppGroupStorage.shared
     }
 
     @MainActor
@@ -25,23 +25,11 @@ public final class WidgetActionHandler {
         toggleCapture: @escaping () -> Void,
         clearRequests: @escaping () -> Void
     ) {
-        guard let defaults else { return }
-        guard let actionRaw = defaults.string(forKey: WidgetActionKey.action),
-              let action = WidgetAction(rawValue: actionRaw) else {
+        guard let pending = storage.consumeWidgetPendingAction(maxAge: Self.maxActionAge) else {
             return
         }
 
-        defer {
-            defaults.removeObject(forKey: WidgetActionKey.action)
-            defaults.removeObject(forKey: WidgetActionKey.actionDate)
-            defaults.removeObject(forKey: WidgetActionKey.actionView)
-        }
-
-        let actionDate = defaults.object(forKey: WidgetActionKey.actionDate) as? Date
-        guard let actionDate else { return }
-        guard Date().timeIntervalSince(actionDate) <= Self.maxActionAge else { return }
-
-        switch action {
+        switch pending.action {
         case .toggleCapture:
             toggleCapture()
         case .startCapture:
@@ -51,8 +39,7 @@ public final class WidgetActionHandler {
         case .clearRequests:
             clearRequests()
         case .openView:
-            let view = defaults.string(forKey: WidgetActionKey.actionView)
-            openView(view)
+            openView(pending.actionView)
         }
     }
 

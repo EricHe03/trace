@@ -63,11 +63,11 @@ struct TransportEventRow: View {
     private var parserBadge: String? {
         switch request.parserOutcome {
         case .parsed:
-            return nil
+            nil
         case .fallbackSignatureOnly:
-            return "Signature Fallback"
+            "Signature Fallback"
         case .fallbackUnknown:
-            return nil
+            nil
         }
     }
 

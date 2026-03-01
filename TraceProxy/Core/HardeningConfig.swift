@@ -59,7 +59,7 @@ public struct HardeningConfigSnapshot: Sendable {
 public actor HardeningConfig {
     public static let shared = HardeningConfig()
 
-    private let defaults: UserDefaults?
+    private let storage: AppGroupStorage
 
     // MARK: - Configuration Keys
 
@@ -121,8 +121,8 @@ public actor HardeningConfig {
     // MARK: - Initialization
 
     private init() {
-        let defaults = UserDefaults(suiteName: AppGroupConfiguration.appGroupIdentifier)
-        self.defaults = defaults
+        let storage = AppGroupStorage.shared
+        self.storage = storage
 
         func sanitizeDomainPatterns(_ list: [String]) -> [String] {
             list
@@ -131,7 +131,7 @@ public actor HardeningConfig {
         }
 
         func boolValue(_ key: ConfigKey, default defaultValue: Bool) -> Bool {
-            if let stored = defaults?.object(forKey: key.rawValue) as? Bool {
+            if let stored = storage.loadHardeningSetting(Bool.self, forKey: key.rawValue) {
                 return stored
             }
             return defaultValue
@@ -141,7 +141,7 @@ public actor HardeningConfig {
         _enableMetrics = boolValue(.enableMetrics, default: true)
         _enableDebugLogging = boolValue(.enableDebugLogging, default: false)
 
-        if let stageString = defaults?.string(forKey: ConfigKey.rolloutStage.rawValue),
+        if let stageString = storage.loadHardeningSetting(String.self, forKey: ConfigKey.rolloutStage.rawValue),
            let stage = RolloutStage(rawValue: stageString) {
             _rolloutStage = stage
         } else {
@@ -149,31 +149,30 @@ public actor HardeningConfig {
         }
 
         _enableRawCapture = boolValue(.enableRawCapture, default: false)
-        if let stored = defaults?.object(forKey: ConfigKey.maxRawCaptureSize.rawValue) as? NSNumber {
-            _maxRawCaptureSize = stored.uint64Value
+        if let stored = storage.loadHardeningSetting(UInt64.self, forKey: ConfigKey.maxRawCaptureSize.rawValue) {
+            _maxRawCaptureSize = stored
         } else {
             // Default is 10 MB.
             _maxRawCaptureSize = 10_485_760
         }
 
-        if let data = defaults?.data(forKey: ConfigKey.mitmAllowlist.rawValue),
-           let list = try? JSONDecoder().decode([String].self, from: data) {
+        if let list = storage.loadHardeningSetting([String].self, forKey: ConfigKey.mitmAllowlist.rawValue) {
             _mitmAllowlist = sanitizeDomainPatterns(list)
         } else {
             _mitmAllowlist = ["*"]
         }
 
-        if let modeRaw = defaults?.string(forKey: ConfigKey.quicHandlingMode.rawValue),
+        if let modeRaw = storage.loadHardeningSetting(String.self, forKey: ConfigKey.quicHandlingMode.rawValue),
            let mode = QUICHandlingMode(rawValue: modeRaw) {
             _quicHandlingMode = mode
-        } else if let storedBlockQUIC = defaults?.object(forKey: ConfigKey.blockQUIC.rawValue) as? Bool {
+        } else if let storedBlockQUIC = storage.loadHardeningSetting(Bool.self, forKey: ConfigKey.blockQUIC.rawValue) {
             _quicHandlingMode = storedBlockQUIC ? .block : .passThrough
         } else {
             // Default to intercept mode for the new QUIC/H3 path.
             _quicHandlingMode = .intercept
         }
         _blockQUIC = _quicHandlingMode.blocksQUIC
-        if let stored = defaults?.object(forKey: ConfigKey.enableNIOMITM.rawValue) as? Bool {
+        if let stored = storage.loadHardeningSetting(Bool.self, forKey: ConfigKey.enableNIOMITM.rawValue) {
             _enableNIOMITM = stored
         } else {
             _enableNIOMITM = boolValue(.enableNetworkFrameworkMITM, default: true)
@@ -320,7 +319,7 @@ public actor HardeningConfig {
     public func setEnableRobustReassembly(_ enabled: Bool) {
         let allowed = isFeatureToggleAllowed(enabled)
         _enableRobustReassembly = allowed ? enabled : false
-        defaults?.set(_enableRobustReassembly, forKey: ConfigKey.enableRobustReassembly.rawValue)
+        persistHardeningValue(_enableRobustReassembly, for: .enableRobustReassembly)
         if allowed {
             ProxyLog.mitm.info("event=config.reassembly_toggle outcome=success enabled=\(enabled)")
         } else {
@@ -332,7 +331,7 @@ public actor HardeningConfig {
     public func setEnableMetrics(_ enabled: Bool) {
         let allowed = isFeatureToggleAllowed(enabled)
         _enableMetrics = allowed ? enabled : false
-        defaults?.set(_enableMetrics, forKey: ConfigKey.enableMetrics.rawValue)
+        persistHardeningValue(_enableMetrics, for: .enableMetrics)
         if allowed {
             ProxyLog.mitm.info("event=config.metrics_toggle outcome=success enabled=\(enabled)")
         } else {
@@ -344,7 +343,7 @@ public actor HardeningConfig {
     public func setEnableDebugLogging(_ enabled: Bool) {
         let allowed = isFeatureToggleAllowed(enabled)
         _enableDebugLogging = allowed ? enabled : false
-        defaults?.set(_enableDebugLogging, forKey: ConfigKey.enableDebugLogging.rawValue)
+        persistHardeningValue(_enableDebugLogging, for: .enableDebugLogging)
         if allowed {
             ProxyLog.mitm.info("event=config.debug_logging_toggle outcome=success enabled=\(enabled)")
         } else {
@@ -355,7 +354,7 @@ public actor HardeningConfig {
     /// Updates the rollout stage.
     public func setRolloutStage(_ stage: RolloutStage) {
         _rolloutStage = stage
-        defaults?.set(stage.rawValue, forKey: ConfigKey.rolloutStage.rawValue)
+        persistHardeningValue(stage.rawValue, for: .rolloutStage)
         applyRolloutStage()
         ProxyLog.mitm.info("event=config.rollout_stage_set outcome=success stage=\(stage.rawValue, privacy: .public)")
     }
@@ -363,14 +362,14 @@ public actor HardeningConfig {
     /// Updates the raw capture setting.
     public func setEnableRawCapture(_ enabled: Bool) {
         _enableRawCapture = enabled
-        defaults?.set(enabled, forKey: ConfigKey.enableRawCapture.rawValue)
+        persistHardeningValue(enabled, for: .enableRawCapture)
         ProxyLog.mitm.info("event=config.raw_capture_toggle outcome=success enabled=\(enabled)")
     }
 
     /// Updates the maximum raw capture size.
     public func setMaxRawCaptureSize(_ size: UInt64) {
         _maxRawCaptureSize = size
-        defaults?.set(size, forKey: ConfigKey.maxRawCaptureSize.rawValue)
+        persistHardeningValue(size, for: .maxRawCaptureSize)
         ProxyLog.mitm.info("event=config.max_capture_size_set outcome=success size=\(size)")
     }
 
@@ -380,9 +379,7 @@ public actor HardeningConfig {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { !$0.isEmpty }
         _mitmAllowlist = sanitized
-        if let data = try? JSONEncoder().encode(_mitmAllowlist) {
-            defaults?.set(data, forKey: ConfigKey.mitmAllowlist.rawValue)
-        }
+        persistHardeningValue(_mitmAllowlist, for: .mitmAllowlist)
         ProxyLog.mitm.info("event=config.allowlist_update outcome=success count=\(self._mitmAllowlist.count)")
     }
 
@@ -395,9 +392,9 @@ public actor HardeningConfig {
     public func setQUICHandlingMode(_ mode: QUICHandlingMode) {
         _quicHandlingMode = mode
         _blockQUIC = mode.blocksQUIC
-        defaults?.set(mode.rawValue, forKey: ConfigKey.quicHandlingMode.rawValue)
+        persistHardeningValue(mode.rawValue, for: .quicHandlingMode)
         // Keep legacy key in sync for compatibility with older app payloads.
-        defaults?.set(_blockQUIC, forKey: ConfigKey.blockQUIC.rawValue)
+        persistHardeningValue(_blockQUIC, for: .blockQUIC)
         ProxyLog.mitm.info(
             "event=config.quic_mode_set outcome=success mode=\(mode.rawValue, privacy: .public) block_quic=\(self._blockQUIC)"
         )
@@ -406,9 +403,9 @@ public actor HardeningConfig {
     /// Updates MITM enablement for the NIO proxy engine.
     public func setEnableNIOMITM(_ enabled: Bool) {
         _enableNIOMITM = enabled
-        defaults?.set(enabled, forKey: ConfigKey.enableNIOMITM.rawValue)
+        persistHardeningValue(enabled, for: .enableNIOMITM)
         // Maintain compatibility for older consumers still reading the legacy key.
-        defaults?.set(enabled, forKey: ConfigKey.enableNetworkFrameworkMITM.rawValue)
+        persistHardeningValue(enabled, for: .enableNetworkFrameworkMITM)
         ProxyLog.mitm.info("event=config.nio_mitm_toggle outcome=success enabled=\(enabled)")
     }
 
@@ -419,44 +416,54 @@ public actor HardeningConfig {
 
     public func setDualMITMPolicyEngineShadow(_ enabled: Bool) {
         _dualMITMPolicyEngineShadow = enabled
-        defaults?.set(enabled, forKey: ConfigKey.dualMITMPolicyEngineShadow.rawValue)
+        persistHardeningValue(enabled, for: .dualMITMPolicyEngineShadow)
         ProxyLog.mitm.info("event=config.dual_mitm_policy_shadow outcome=success enabled=\(enabled)")
     }
 
     public func setDualMITMPolicyEngineEnforcedTCP(_ enabled: Bool) {
         _dualMITMPolicyEngineEnforcedTCP = enabled
-        defaults?.set(enabled, forKey: ConfigKey.dualMITMPolicyEngineEnforcedTCP.rawValue)
+        persistHardeningValue(enabled, for: .dualMITMPolicyEngineEnforcedTCP)
         ProxyLog.mitm.info("event=config.dual_mitm_policy_tcp_enforced outcome=success enabled=\(enabled)")
     }
 
     public func setDualMITMPolicyEngineEnforcedProxy(_ enabled: Bool) {
         _dualMITMPolicyEngineEnforcedProxy = enabled
-        defaults?.set(enabled, forKey: ConfigKey.dualMITMPolicyEngineEnforcedProxy.rawValue)
+        persistHardeningValue(enabled, for: .dualMITMPolicyEngineEnforcedProxy)
         ProxyLog.mitm.info("event=config.dual_mitm_policy_proxy_enforced outcome=success enabled=\(enabled)")
     }
 
     public func setDualMITMPolicyEngineEnforcedQUIC(_ enabled: Bool) {
         _dualMITMPolicyEngineEnforcedQUIC = enabled
-        defaults?.set(enabled, forKey: ConfigKey.dualMITMPolicyEngineEnforcedQUIC.rawValue)
+        persistHardeningValue(enabled, for: .dualMITMPolicyEngineEnforcedQUIC)
         ProxyLog.mitm.info("event=config.dual_mitm_policy_quic_enforced outcome=success enabled=\(enabled)")
     }
 
     public func setDualMITMMITMEngineV2(_ enabled: Bool) {
         _dualMITMMITMEngineV2 = enabled
-        defaults?.set(enabled, forKey: ConfigKey.dualMITMMITMEngineV2.rawValue)
+        persistHardeningValue(enabled, for: .dualMITMMITMEngineV2)
         ProxyLog.mitm.info("event=config.dual_mitm_engine_v2 outcome=success enabled=\(enabled)")
     }
 
     public func setDualMITMHttp2MITMEnabled(_ enabled: Bool) {
         _dualMITMHttp2MITMEnabled = enabled
-        defaults?.set(enabled, forKey: ConfigKey.dualMITMHttp2MITMEnabled.rawValue)
+        persistHardeningValue(enabled, for: .dualMITMHttp2MITMEnabled)
         ProxyLog.mitm.info("event=config.dual_mitm_http2_mitm outcome=success enabled=\(enabled)")
     }
 
     public func setDualMITMStrictEnforcementHardFail(_ enabled: Bool) {
         _dualMITMStrictEnforcementHardFail = enabled
-        defaults?.set(enabled, forKey: ConfigKey.dualMITMStrictEnforcementHardFail.rawValue)
+        persistHardeningValue(enabled, for: .dualMITMStrictEnforcementHardFail)
         ProxyLog.mitm.info("event=config.dual_mitm_strict_hard_fail outcome=success enabled=\(enabled)")
+    }
+
+    private func persistHardeningValue(_ value: some Encodable, for key: ConfigKey) {
+        do {
+            try storage.saveHardeningSetting(value, forKey: key.rawValue)
+        } catch {
+            ProxyLog.mitm.error(
+                "event=config.persist outcome=failure key=\(key.rawValue, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     /// Applies rollout stage restrictions.
@@ -529,26 +536,24 @@ public actor HardeningConfig {
         _enableRawCapture = false
         _maxRawCaptureSize = 10_485_760
 
-        defaults?.set(_enableRobustReassembly, forKey: ConfigKey.enableRobustReassembly.rawValue)
-        defaults?.set(_enableMetrics, forKey: ConfigKey.enableMetrics.rawValue)
-        defaults?.set(_enableDebugLogging, forKey: ConfigKey.enableDebugLogging.rawValue)
-        defaults?.set(_rolloutStage.rawValue, forKey: ConfigKey.rolloutStage.rawValue)
-        if let data = try? JSONEncoder().encode(_mitmAllowlist) {
-            defaults?.set(data, forKey: ConfigKey.mitmAllowlist.rawValue)
-        }
-        defaults?.set(_quicHandlingMode.rawValue, forKey: ConfigKey.quicHandlingMode.rawValue)
-        defaults?.set(_blockQUIC, forKey: ConfigKey.blockQUIC.rawValue)
-        defaults?.set(_enableNIOMITM, forKey: ConfigKey.enableNIOMITM.rawValue)
-        defaults?.set(_enableNIOMITM, forKey: ConfigKey.enableNetworkFrameworkMITM.rawValue)
-        defaults?.set(_dualMITMPolicyEngineShadow, forKey: ConfigKey.dualMITMPolicyEngineShadow.rawValue)
-        defaults?.set(_dualMITMPolicyEngineEnforcedTCP, forKey: ConfigKey.dualMITMPolicyEngineEnforcedTCP.rawValue)
-        defaults?.set(_dualMITMPolicyEngineEnforcedProxy, forKey: ConfigKey.dualMITMPolicyEngineEnforcedProxy.rawValue)
-        defaults?.set(_dualMITMPolicyEngineEnforcedQUIC, forKey: ConfigKey.dualMITMPolicyEngineEnforcedQUIC.rawValue)
-        defaults?.set(_dualMITMMITMEngineV2, forKey: ConfigKey.dualMITMMITMEngineV2.rawValue)
-        defaults?.set(_dualMITMHttp2MITMEnabled, forKey: ConfigKey.dualMITMHttp2MITMEnabled.rawValue)
-        defaults?.set(_dualMITMStrictEnforcementHardFail, forKey: ConfigKey.dualMITMStrictEnforcementHardFail.rawValue)
-        defaults?.set(_enableRawCapture, forKey: ConfigKey.enableRawCapture.rawValue)
-        defaults?.set(_maxRawCaptureSize, forKey: ConfigKey.maxRawCaptureSize.rawValue)
+        persistHardeningValue(_enableRobustReassembly, for: .enableRobustReassembly)
+        persistHardeningValue(_enableMetrics, for: .enableMetrics)
+        persistHardeningValue(_enableDebugLogging, for: .enableDebugLogging)
+        persistHardeningValue(_rolloutStage.rawValue, for: .rolloutStage)
+        persistHardeningValue(_mitmAllowlist, for: .mitmAllowlist)
+        persistHardeningValue(_quicHandlingMode.rawValue, for: .quicHandlingMode)
+        persistHardeningValue(_blockQUIC, for: .blockQUIC)
+        persistHardeningValue(_enableNIOMITM, for: .enableNIOMITM)
+        persistHardeningValue(_enableNIOMITM, for: .enableNetworkFrameworkMITM)
+        persistHardeningValue(_dualMITMPolicyEngineShadow, for: .dualMITMPolicyEngineShadow)
+        persistHardeningValue(_dualMITMPolicyEngineEnforcedTCP, for: .dualMITMPolicyEngineEnforcedTCP)
+        persistHardeningValue(_dualMITMPolicyEngineEnforcedProxy, for: .dualMITMPolicyEngineEnforcedProxy)
+        persistHardeningValue(_dualMITMPolicyEngineEnforcedQUIC, for: .dualMITMPolicyEngineEnforcedQUIC)
+        persistHardeningValue(_dualMITMMITMEngineV2, for: .dualMITMMITMEngineV2)
+        persistHardeningValue(_dualMITMHttp2MITMEnabled, for: .dualMITMHttp2MITMEnabled)
+        persistHardeningValue(_dualMITMStrictEnforcementHardFail, for: .dualMITMStrictEnforcementHardFail)
+        persistHardeningValue(_enableRawCapture, for: .enableRawCapture)
+        persistHardeningValue(_maxRawCaptureSize, for: .maxRawCaptureSize)
 
         ProxyLog.mitm.info("event=config.reset_defaults outcome=success")
     }

@@ -121,7 +121,7 @@ public enum NetworkEvent: Identifiable, @unchecked Sendable {
             case .parsed, .fallbackUnknown:
                 nil
             }
-            let parts = [request.transport.rawValue.uppercased(), proto, fallback].compactMap { $0 }
+            let parts = [request.transport.rawValue.uppercased(), proto, fallback].compactMap(\.self)
             return parts.joined(separator: " • ")
         }
     }
