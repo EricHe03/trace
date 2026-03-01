@@ -237,7 +237,7 @@ enum UDPProtocolClassifier {
         guard versionValueOffset + versionLength <= payload.count else { return false }
         guard versionLength > 0, versionLength <= 4 else { return false }
 
-        var version: Int = 0
+        var version = 0
         for index in 0 ..< versionLength {
             version = (version << 8) | Int(payload[versionValueOffset + index])
         }

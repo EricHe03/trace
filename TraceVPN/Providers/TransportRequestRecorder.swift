@@ -320,7 +320,7 @@ final class TransportRequestRecorder {
             )
         }
 
-        if !hasPayload, (sourcePort == 443 || destinationPort == 443) {
+        if !hasPayload, sourcePort == 443 || destinationPort == 443 {
             return UDPProtocolClassifier.Classification(
                 applicationProtocol: .tls,
                 parserOutcome: .fallbackSignatureOnly,
@@ -334,18 +334,18 @@ final class TransportRequestRecorder {
     private func isLikelyTLSPort(_ port: UInt16) -> Bool {
         switch port {
         case 443, 465, 853, 993, 995, 8443, 9443:
-            return true
+            true
         default:
-            return false
+            false
         }
     }
 
     private func isLikelyHTTPPort(_ port: UInt16) -> Bool {
         switch port {
         case 80, 81, 3000, 3128, 8000, 8080, 8081, 8888:
-            return true
+            true
         default:
-            return false
+            false
         }
     }
 
@@ -423,7 +423,7 @@ final class TransportRequestRecorder {
 
         let sni = TLSHandler.extractSNI(from: payload)
         let alpn = TLSHandler.extractALPN(from: payload)
-        var parts: [String] = ["TLS"]
+        var parts = ["TLS"]
 
         if let sni, !sni.isEmpty {
             parts.append("sni=\(sni)")

@@ -472,12 +472,11 @@ struct NetworkView: View {
                     let basicSearch = request.endpointSummary.localizedCaseInsensitiveContains(searchText) ||
                         request.applicationProtocol.displayName.localizedCaseInsensitiveContains(searchText) ||
                         (request.summary?.localizedCaseInsensitiveContains(searchText) ?? false)
-                    let bodySearch: Bool
-                    if searchScope == .body || searchScope == .all {
-                        bodySearch = request.payload.getString(maxBytes: 32 * 1024)?
+                    let bodySearch: Bool = if searchScope == .body || searchScope == .all {
+                        request.payload.getString(maxBytes: 32 * 1024)?
                             .localizedCaseInsensitiveContains(searchText) ?? false
                     } else {
-                        bodySearch = false
+                        false
                     }
 
                     switch searchScope {

@@ -462,19 +462,19 @@ private final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Senda
         var logToken: String {
             switch self {
             case .greeting:
-                return "greeting"
+                "greeting"
             case .request:
-                return "request"
+                "request"
             case .connecting:
-                return "connecting"
+                "connecting"
             case .udpAssociating:
-                return "udp_associating"
+                "udp_associating"
             case .relaying:
-                return "relaying"
+                "relaying"
             case .udpAssociated:
-                return "udp_associated"
+                "udp_associated"
             case .closing:
-                return "closing"
+                "closing"
             }
         }
     }

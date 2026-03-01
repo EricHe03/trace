@@ -456,7 +456,7 @@ public actor HardeningConfig {
         ProxyLog.mitm.info("event=config.dual_mitm_strict_hard_fail outcome=success enabled=\(enabled)")
     }
 
-    private func persistHardeningValue<T: Encodable>(_ value: T, for key: ConfigKey) {
+    private func persistHardeningValue(_ value: some Encodable, for key: ConfigKey) {
         do {
             try storage.saveHardeningSetting(value, forKey: key.rawValue)
         } catch {

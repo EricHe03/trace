@@ -546,7 +546,7 @@ public class AppGroupStorage: @unchecked Sendable {
         }
     }
 
-    private func saveSettingValue<T: Encodable>(_ value: T, scope: String, key: String) throws {
+    private func saveSettingValue(_ value: some Encodable, scope: String, key: String) throws {
         let data = try makeEncoder().encode(value)
         try saveSettingData(data, scope: scope, key: key)
     }
@@ -576,7 +576,7 @@ public class AppGroupStorage: @unchecked Sendable {
 
     // MARK: - Typed Shared State
 
-    public func saveHardeningSetting<T: Encodable>(_ value: T, forKey key: String) throws {
+    public func saveHardeningSetting(_ value: some Encodable, forKey key: String) throws {
         try saveSettingValue(value, scope: SettingScope.hardening, key: key)
     }
 
@@ -737,7 +737,7 @@ public class AppGroupStorage: @unchecked Sendable {
                     for row in rows {
                         let payload: Data = row["payload"]
                         do {
-                            requests.append(try decoder.decode(NetworkRequest.self, from: payload))
+                            try requests.append(decoder.decode(NetworkRequest.self, from: payload))
                         } catch {
                             CoreLog.storage.error(
                                 LogEvent.storage("load_request")
@@ -905,7 +905,7 @@ public class AppGroupStorage: @unchecked Sendable {
                     for row in rows {
                         let payload: Data = row["payload"]
                         do {
-                            requests.append(try decoder.decode(TransportRequest.self, from: payload))
+                            try requests.append(decoder.decode(TransportRequest.self, from: payload))
                         } catch {
                             CoreLog.storage.error(
                                 LogEvent.storage("load_transport_request")
@@ -1226,7 +1226,7 @@ public class AppGroupStorage: @unchecked Sendable {
                     for row in rows {
                         let payload: Data = row["payload"]
                         do {
-                            records.append(try decoder.decode(PacketFlowRecord.self, from: payload))
+                            try records.append(decoder.decode(PacketFlowRecord.self, from: payload))
                         } catch {
                             CoreLog.storage.error(
                                 LogEvent.storage("load_packet_flow")
@@ -1311,7 +1311,7 @@ public class AppGroupStorage: @unchecked Sendable {
                     for row in rows {
                         let payload: Data = row["payload"]
                         do {
-                            flows.append(try decoder.decode(UDPFlowMetadata.self, from: payload))
+                            try flows.append(decoder.decode(UDPFlowMetadata.self, from: payload))
                         } catch {
                             CoreLog.storage.error(
                                 LogEvent.storage("load_udp_flow")
