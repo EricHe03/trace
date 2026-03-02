@@ -95,7 +95,15 @@ struct SSEConnectionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
             HStack(spacing: DesignSystem.Spacing.smPlus) {
-                statusBadge(text: connection.status.displayName, background: statusColor)
+                badge(
+                    text: "SSE",
+                    background: DesignSystem.Colors.eventTypeColor(for: .sse)
+                )
+
+                badge(
+                    text: connection.status.displayName,
+                    background: statusColor
+                )
 
                 Text("\(connection.eventCount) events")
                     .font(.caption)
@@ -146,11 +154,11 @@ struct SSEConnectionRow: View {
         DesignSystem.Colors.statusColor(for: connection.status.color)
     }
 
-    private func statusBadge(text: String, background: Color) -> some View {
+    private func badge(text: String, background: Color, foreground: Color = .white) -> some View {
         Text(text)
             .font(DesignSystem.Badge.font)
             .fontWeight(DesignSystem.Badge.fontWeight)
-            .foregroundStyle(.white)
+            .foregroundStyle(foreground)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
             .background(background)

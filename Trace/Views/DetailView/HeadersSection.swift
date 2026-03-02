@@ -31,6 +31,5 @@ struct HeadersSection: View {
                 )
             }
         }
-        .padding()
     }
 }
