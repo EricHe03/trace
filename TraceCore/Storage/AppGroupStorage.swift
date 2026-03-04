@@ -55,6 +55,8 @@ public class AppGroupStorage: @unchecked Sendable {
     private static let transportPruneMinInterval: TimeInterval = 5
     private static let transportPruneWriteThresholdBytes = 8 * 1024 * 1024
     private static let hardCutoverMarkerKey = "storage.grdb_hard_cutover_v1"
+    private static let streamPayloadInlineLimitBytes = 256 * 1024
+    private static let streamPayloadChunkSizeBytes = 64 * 1024
 
     private enum DefaultsKey {
         static let captureConfiguration = "trace.settings.captureConfiguration"
@@ -258,7 +260,8 @@ public class AppGroupStorage: @unchecked Sendable {
             "hardening.dualMitmPolicyEngineEnforcedQUIC",
             "hardening.dualMitmMITMEngineV2",
             "hardening.dualMitmHttp2MITMEnabled",
-            "hardening.dualMitmStrictEnforcementHardFail"
+            "hardening.dualMitmStrictEnforcementHardFail",
+            "hardening.enableStreamInterceptionV2"
         ]
     }
 
@@ -371,6 +374,10 @@ public class AppGroupStorage: @unchecked Sendable {
             try db.execute(sql: "DELETE FROM udp_flows")
             try db.execute(sql: "DELETE FROM websocket_connections")
             try db.execute(sql: "DELETE FROM sse_connections")
+            try db.execute(sql: "DELETE FROM stream_payload_chunks")
+            try db.execute(sql: "DELETE FROM stream_events")
+            try db.execute(sql: "DELETE FROM stream_replays")
+            try db.execute(sql: "DELETE FROM stream_sessions")
             try db.execute(sql: "DELETE FROM config_blobs")
             try db.execute(sql: "DELETE FROM settings_kv")
             try db.execute(sql: "DELETE FROM mitm_auto_bypass_entries")
@@ -525,6 +532,10 @@ public class AppGroupStorage: @unchecked Sendable {
             return storageError
         }
         return .databaseUnavailable
+    }
+
+    private var streamInterceptionV2Enabled: Bool {
+        loadSettingValue(Bool.self, scope: SettingScope.hardening, key: "hardening.enableStreamInterceptionV2") ?? false
     }
 
     // MARK: - Typed Shared State
@@ -1949,6 +1960,13 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Loads all WebSocket connections from the shared container
     public func loadAllWebSocketConnections() throws -> [WebSocketConnection] {
+        if streamInterceptionV2Enabled {
+            let projected = try loadProjectedWebSocketConnections()
+            if !projected.isEmpty {
+                return projected
+            }
+        }
+
         do {
             return try withDatabase { pool in
                 try pool.read { db in
@@ -1984,6 +2002,10 @@ public class AppGroupStorage: @unchecked Sendable {
                 sql: "DELETE FROM websocket_connections WHERE id = ?",
                 arguments: [connectionID.uuidString]
             )
+            try db.execute(
+                sql: "DELETE FROM stream_sessions WHERE id = ? AND protocol_type = ?",
+                arguments: [connectionID.uuidString, StreamProtocolType.websocket.rawValue]
+            )
         }
         if !didWrite {
             throw StorageError.databaseUnavailable
@@ -1994,6 +2016,10 @@ public class AppGroupStorage: @unchecked Sendable {
     public func clearAllWebSocketConnections() throws {
         let didWrite = executeDBWrite { db in
             try db.execute(sql: "DELETE FROM websocket_connections")
+            try db.execute(
+                sql: "DELETE FROM stream_sessions WHERE protocol_type = ?",
+                arguments: [StreamProtocolType.websocket.rawValue]
+            )
         }
         if !didWrite {
             throw StorageError.databaseUnavailable
@@ -2029,6 +2055,13 @@ public class AppGroupStorage: @unchecked Sendable {
 
     /// Loads all SSE connections from the shared container
     public func loadAllSSEConnections() throws -> [SSEConnection] {
+        if streamInterceptionV2Enabled {
+            let projected = try loadProjectedSSEConnections()
+            if !projected.isEmpty {
+                return projected
+            }
+        }
+
         do {
             return try withDatabase { pool in
                 try pool.read { db in
@@ -2073,6 +2106,10 @@ public class AppGroupStorage: @unchecked Sendable {
                 sql: "DELETE FROM sse_connections WHERE id = ?",
                 arguments: [connectionID.uuidString]
             )
+            try db.execute(
+                sql: "DELETE FROM stream_sessions WHERE id = ? AND protocol_type = ?",
+                arguments: [connectionID.uuidString, StreamProtocolType.sse.rawValue]
+            )
         }
         if !didWrite {
             throw StorageError.databaseUnavailable
@@ -2083,10 +2120,851 @@ public class AppGroupStorage: @unchecked Sendable {
     public func clearAllSSEConnections() throws {
         let didWrite = executeDBWrite { db in
             try db.execute(sql: "DELETE FROM sse_connections")
+            try db.execute(
+                sql: "DELETE FROM stream_sessions WHERE protocol_type = ?",
+                arguments: [StreamProtocolType.sse.rawValue]
+            )
         }
         if !didWrite {
             throw StorageError.databaseUnavailable
         }
+    }
+
+    // MARK: - Stream Session/Event Storage
+
+    public func upsertStreamSession(_ session: StreamSession) throws {
+        do {
+            try withDatabase { pool in
+                try pool.write { db in
+                    let encoder = makeEncoder()
+                    let now = Date().timeIntervalSince1970
+                    let sessionID = session.id.uuidString
+
+                    let mergedSession: StreamSession = if let row = try Row.fetchOne(
+                        db,
+                        sql: """
+                        SELECT id, protocol_type, url, start_time, end_time, status,
+                               request_headers, response_headers, metadata,
+                               event_count, bytes_in, bytes_out
+                        FROM stream_sessions
+                        WHERE id = ?
+                        """,
+                        arguments: [sessionID]
+                    ), let existing = decodeStreamSession(row) {
+                        mergeStreamSession(existing: existing, incoming: session)
+                    } else {
+                        session
+                    }
+
+                    let requestHeadersData = try encoder.encode(mergedSession.requestHeaders)
+                    let responseHeadersData = try encoder.encode(mergedSession.responseHeaders)
+                    let metadataData = try encoder.encode(mergedSession.metadata)
+                    try db.execute(
+                        sql: """
+                        INSERT INTO stream_sessions (
+                            id, protocol_type, url, start_time, end_time, status,
+                            request_headers, response_headers, metadata,
+                            event_count, bytes_in, bytes_out, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            protocol_type = excluded.protocol_type,
+                            url = excluded.url,
+                            start_time = excluded.start_time,
+                            end_time = excluded.end_time,
+                            status = excluded.status,
+                            request_headers = excluded.request_headers,
+                            response_headers = excluded.response_headers,
+                            metadata = excluded.metadata,
+                            event_count = excluded.event_count,
+                            bytes_in = excluded.bytes_in,
+                            bytes_out = excluded.bytes_out,
+                            updated_at = excluded.updated_at
+                        """,
+                        arguments: [
+                            sessionID,
+                            mergedSession.protocolType.rawValue,
+                            mergedSession.url,
+                            mergedSession.startTime.timeIntervalSince1970,
+                            mergedSession.endTime?.timeIntervalSince1970,
+                            mergedSession.status.rawValue,
+                            requestHeadersData,
+                            responseHeadersData,
+                            metadataData,
+                            mergedSession.eventCount,
+                            mergedSession.bytesIn,
+                            mergedSession.bytesOut,
+                            now,
+                            now
+                        ]
+                    )
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+
+        notifyStreamUpdated()
+        switch session.protocolType {
+        case .sse:
+            notifyNewSSE()
+        case .websocket:
+            notifyNewWebSocket()
+        }
+    }
+
+    private func mergeStreamSession(existing: StreamSession, incoming: StreamSession) -> StreamSession {
+        guard existing.id == incoming.id else { return incoming }
+
+        let mergedProtocolType = existing.protocolType == incoming.protocolType
+            ? incoming.protocolType
+            : existing.protocolType
+        let mergedURL = incoming.url.isEmpty ? existing.url : incoming.url
+
+        let startTime = min(existing.startTime, incoming.startTime)
+        let endTime: Date? = switch (existing.endTime, incoming.endTime) {
+        case let (lhs?, rhs?):
+            max(lhs, rhs)
+        case let (lhs?, nil):
+            lhs
+        case let (nil, rhs?):
+            rhs
+        case (nil, nil):
+            nil
+        }
+
+        let statusOrder: [StreamSessionStatus: Int] = [
+            .connecting: 0,
+            .open: 1,
+            .streaming: 2,
+            .replaying: 3,
+            .closing: 4,
+            .closed: 5,
+            .failed: 6
+        ]
+        let existingOrder = statusOrder[existing.status] ?? 0
+        let incomingOrder = statusOrder[incoming.status] ?? 0
+        let mergedStatus = existingOrder >= incomingOrder ? existing.status : incoming.status
+
+        var merged = incoming
+        merged.protocolType = mergedProtocolType
+        merged.url = mergedURL
+        merged.startTime = startTime
+        merged.endTime = endTime
+        merged.status = mergedStatus
+        if merged.requestHeaders.isEmpty {
+            merged.requestHeaders = existing.requestHeaders
+        }
+        if merged.responseHeaders.isEmpty {
+            merged.responseHeaders = existing.responseHeaders
+        }
+        merged.metadata = existing.metadata.merging(incoming.metadata) { _, new in new }
+        merged.eventCount = max(existing.eventCount, incoming.eventCount)
+        merged.bytesIn = max(existing.bytesIn, incoming.bytesIn)
+        merged.bytesOut = max(existing.bytesOut, incoming.bytesOut)
+        return merged
+    }
+
+    public func appendStreamEvent(_ event: StreamEvent) throws {
+        let encoder = makeEncoder()
+        var protocolType: StreamProtocolType?
+        var didInsert = false
+
+        do {
+            try withDatabase { pool in
+                try pool.write { db in
+                    guard let protocolRaw = try String.fetchOne(
+                        db,
+                        sql: "SELECT protocol_type FROM stream_sessions WHERE id = ?",
+                        arguments: [event.sessionID.uuidString]
+                    ), let resolvedProtocol = StreamProtocolType(rawValue: protocolRaw)
+                    else {
+                        throw StorageError.fileNotFound
+                    }
+                    protocolType = resolvedProtocol
+
+                    let sequence: Int64 = if event.sequence > 0 {
+                        event.sequence
+                    } else {
+                        let nextSequence = try Int64.fetchOne(
+                            db,
+                            sql: """
+                            SELECT COALESCE(MAX(sequence), 0) + 1
+                            FROM stream_events
+                            WHERE session_id = ?
+                            """,
+                            arguments: [event.sessionID.uuidString]
+                        )
+                        nextSequence ?? 1
+                    }
+
+                    let payloadText = event.payload.text
+                    var payloadInline = event.payload.binary
+                    var payloadChunked = 0
+                    let payloadSize = event.payload.byteCount
+                    if let binaryPayload = payloadInline, binaryPayload.count > Self.streamPayloadInlineLimitBytes {
+                        payloadChunked = 1
+                        payloadInline = nil
+                    }
+
+                    let metadataData = try encoder.encode(event.metadata)
+                    try db.execute(
+                        sql: """
+                        INSERT OR IGNORE INTO stream_events (
+                            id, session_id, sequence, timestamp, direction, kind,
+                            payload_text, payload_inline, payload_chunked,
+                            payload_content_type, payload_encoding, payload_size,
+                            was_modified, was_blocked, metadata, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        arguments: [
+                            event.id.uuidString,
+                            event.sessionID.uuidString,
+                            sequence,
+                            event.timestamp.timeIntervalSince1970,
+                            event.direction.rawValue,
+                            event.kind.rawValue,
+                            payloadText,
+                            payloadInline,
+                            payloadChunked,
+                            event.payload.contentType,
+                            event.payload.encoding,
+                            payloadSize,
+                            event.wasModified ? 1 : 0,
+                            event.wasBlocked ? 1 : 0,
+                            metadataData,
+                            Date().timeIntervalSince1970
+                        ]
+                    )
+                    didInsert = db.changesCount > 0
+                    guard didInsert else { return }
+
+                    try db.execute(
+                        sql: "DELETE FROM stream_payload_chunks WHERE event_id = ?",
+                        arguments: [event.id.uuidString]
+                    )
+                    if payloadChunked == 1, let binaryPayload = event.payload.binary {
+                        var chunkIndex = 0
+                        var cursor = 0
+                        while cursor < binaryPayload.count {
+                            let upperBound = min(cursor + Self.streamPayloadChunkSizeBytes, binaryPayload.count)
+                            let chunk = binaryPayload.subdata(in: cursor ..< upperBound)
+                            try db.execute(
+                                sql: """
+                                INSERT INTO stream_payload_chunks (event_id, chunk_index, chunk, created_at)
+                                VALUES (?, ?, ?, ?)
+                                """,
+                                arguments: [
+                                    event.id.uuidString,
+                                    chunkIndex,
+                                    chunk,
+                                    Date().timeIntervalSince1970
+                                ]
+                            )
+                            chunkIndex += 1
+                            cursor = upperBound
+                        }
+                    }
+
+                    let now = Date().timeIntervalSince1970
+                    let bytesIn = event.direction == .received ? payloadSize : 0
+                    let bytesOut = event.direction == .sent ? payloadSize : 0
+                    try db.execute(
+                        sql: """
+                        UPDATE stream_sessions
+                        SET event_count = COALESCE(event_count, 0) + 1,
+                            bytes_in = COALESCE(bytes_in, 0) + ?,
+                            bytes_out = COALESCE(bytes_out, 0) + ?,
+                            status = CASE
+                                WHEN status IN ('closed', 'failed') THEN status
+                                ELSE ?
+                            END,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        arguments: [
+                            bytesIn,
+                            bytesOut,
+                            StreamSessionStatus.streaming.rawValue,
+                            now,
+                            event.sessionID.uuidString
+                        ]
+                    )
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+
+        guard didInsert else { return }
+
+        notifyStreamUpdated()
+        switch protocolType {
+        case .sse:
+            notifyNewSSE()
+        case .websocket:
+            notifyNewWebSocket()
+        case .none:
+            break
+        }
+    }
+
+    public func loadStreamSession(_ sessionID: UUID) throws -> StreamSession? {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    guard let row = try Row.fetchOne(
+                        db,
+                        sql: """
+                        SELECT id, protocol_type, url, start_time, end_time, status,
+                               request_headers, response_headers, metadata,
+                               event_count, bytes_in, bytes_out
+                        FROM stream_sessions
+                        WHERE id = ?
+                        """,
+                        arguments: [sessionID.uuidString]
+                    ) else {
+                        return nil
+                    }
+
+                    return decodeStreamSession(row)
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    public func loadStreamSessions(
+        protocolType: StreamProtocolType? = nil,
+        limit: Int? = nil
+    ) throws -> [StreamSession] {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows: [Row] = if let protocolType, let limit, limit > 0 {
+                        try Row.fetchAll(
+                            db,
+                            sql: """
+                            SELECT id, protocol_type, url, start_time, end_time, status,
+                                   request_headers, response_headers, metadata,
+                                   event_count, bytes_in, bytes_out
+                            FROM stream_sessions
+                            WHERE protocol_type = ?
+                            ORDER BY start_time DESC, id DESC
+                            LIMIT ?
+                            """,
+                            arguments: [protocolType.rawValue, limit]
+                        )
+                    } else if let protocolType {
+                        try Row.fetchAll(
+                            db,
+                            sql: """
+                            SELECT id, protocol_type, url, start_time, end_time, status,
+                                   request_headers, response_headers, metadata,
+                                   event_count, bytes_in, bytes_out
+                            FROM stream_sessions
+                            WHERE protocol_type = ?
+                            ORDER BY start_time DESC, id DESC
+                            """,
+                            arguments: [protocolType.rawValue]
+                        )
+                    } else if let limit, limit > 0 {
+                        try Row.fetchAll(
+                            db,
+                            sql: """
+                            SELECT id, protocol_type, url, start_time, end_time, status,
+                                   request_headers, response_headers, metadata,
+                                   event_count, bytes_in, bytes_out
+                            FROM stream_sessions
+                            ORDER BY start_time DESC, id DESC
+                            LIMIT ?
+                            """,
+                            arguments: [limit]
+                        )
+                    } else {
+                        try Row.fetchAll(
+                            db,
+                            sql: """
+                            SELECT id, protocol_type, url, start_time, end_time, status,
+                                   request_headers, response_headers, metadata,
+                                   event_count, bytes_in, bytes_out
+                            FROM stream_sessions
+                            ORDER BY start_time DESC, id DESC
+                            """
+                        )
+                    }
+
+                    return rows.compactMap(decodeStreamSession)
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    public func loadStreamEvents(
+        sessionID: UUID,
+        limit: Int? = nil
+    ) throws -> [StreamEvent] {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows: [Row] = if let limit, limit > 0 {
+                        try Row.fetchAll(
+                            db,
+                            sql: """
+                            SELECT id, session_id, sequence, timestamp, direction, kind,
+                                   payload_text, payload_inline, payload_chunked,
+                                   payload_content_type, payload_encoding, payload_size,
+                                   was_modified, was_blocked, metadata
+                            FROM stream_events
+                            WHERE session_id = ?
+                            ORDER BY sequence ASC, id ASC
+                            LIMIT ?
+                            """,
+                            arguments: [sessionID.uuidString, limit]
+                        )
+                    } else {
+                        try Row.fetchAll(
+                            db,
+                            sql: """
+                            SELECT id, session_id, sequence, timestamp, direction, kind,
+                                   payload_text, payload_inline, payload_chunked,
+                                   payload_content_type, payload_encoding, payload_size,
+                                   was_modified, was_blocked, metadata
+                            FROM stream_events
+                            WHERE session_id = ?
+                            ORDER BY sequence ASC, id ASC
+                            """,
+                            arguments: [sessionID.uuidString]
+                        )
+                    }
+
+                    return rows.compactMap { decodeStreamEvent($0, db: db) }
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    public func startStreamReplay(_ spec: StreamReplaySpec) throws -> UUID {
+        let replayID = UUID()
+        let encoder = makeEncoder()
+        let specData = try encoder.encode(spec)
+        let now = Date().timeIntervalSince1970
+
+        do {
+            try withDatabase { pool in
+                try pool.write { db in
+                    try db.execute(
+                        sql: """
+                        INSERT INTO stream_replays (
+                            id, session_id, spec, result, status,
+                            started_at, ended_at, created_at, updated_at
+                        ) VALUES (?, ?, ?, NULL, ?, ?, NULL, ?, ?)
+                        """,
+                        arguments: [
+                            replayID.uuidString,
+                            spec.sessionID.uuidString,
+                            specData,
+                            StreamReplayStatus.running.rawValue,
+                            spec.startedAt.timeIntervalSince1970,
+                            now,
+                            now
+                        ]
+                    )
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+
+        notifyStreamUpdated()
+        return replayID
+    }
+
+    public func completeStreamReplay(_ result: StreamReplayResult) throws {
+        let encoder = makeEncoder()
+        let resultData = try encoder.encode(result)
+        let now = Date().timeIntervalSince1970
+        let status: StreamReplayStatus = result.succeeded ? .succeeded : .failed
+        let endedAt = (result.endedAt ?? Date()).timeIntervalSince1970
+
+        do {
+            try withDatabase { pool in
+                try pool.write { db in
+                    try db.execute(
+                        sql: """
+                        UPDATE stream_replays
+                        SET result = ?,
+                            status = ?,
+                            ended_at = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        arguments: [
+                            resultData,
+                            status.rawValue,
+                            endedAt,
+                            now,
+                            result.replayID.uuidString
+                        ]
+                    )
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+
+        notifyStreamUpdated()
+    }
+
+    public func loadStreamReplayRecords(
+        sessionID: UUID,
+        limit: Int? = nil
+    ) throws -> [StreamReplayRecord] {
+        do {
+            return try withDatabase { pool in
+                try pool.read { db in
+                    let rows: [Row] = if let limit, limit > 0 {
+                        try Row.fetchAll(
+                            db,
+                            sql: """
+                            SELECT id, session_id, spec, result, status, started_at, ended_at
+                            FROM stream_replays
+                            WHERE session_id = ?
+                            ORDER BY started_at DESC, id DESC
+                            LIMIT ?
+                            """,
+                            arguments: [sessionID.uuidString, limit]
+                        )
+                    } else {
+                        try Row.fetchAll(
+                            db,
+                            sql: """
+                            SELECT id, session_id, spec, result, status, started_at, ended_at
+                            FROM stream_replays
+                            WHERE session_id = ?
+                            ORDER BY started_at DESC, id DESC
+                            """,
+                            arguments: [sessionID.uuidString]
+                        )
+                    }
+                    let decoder = makeDecoder()
+                    return rows.compactMap { row in
+                        guard let replayID = UUID(uuidString: row["id"]),
+                              let loadedSessionID = UUID(uuidString: row["session_id"]),
+                              let status = StreamReplayStatus(rawValue: row["status"])
+                        else {
+                            return nil
+                        }
+                        let specData: Data = row["spec"]
+                        guard let spec = try? decoder.decode(StreamReplaySpec.self, from: specData) else {
+                            return nil
+                        }
+                        let resultData: Data? = row["result"]
+                        let result = resultData.flatMap { try? decoder.decode(StreamReplayResult.self, from: $0) }
+                        let startedAtSeconds: Double = row["started_at"]
+                        let endedAtSeconds: Double? = row["ended_at"]
+
+                        return StreamReplayRecord(
+                            replayID: replayID,
+                            sessionID: loadedSessionID,
+                            status: status,
+                            spec: spec,
+                            result: result,
+                            startedAt: Date(timeIntervalSince1970: startedAtSeconds),
+                            endedAt: endedAtSeconds.map(Date.init(timeIntervalSince1970:))
+                        )
+                    }
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    /// Deletes stream sessions that ended before a cutoff (or started before cutoff if still open).
+    /// - Returns: Number of deleted sessions.
+    public func deleteStreamSessions(olderThan cutoffDate: Date) throws -> Int {
+        do {
+            var deleted = 0
+            try withDatabase { pool in
+                try pool.write { db in
+                    try db.execute(
+                        sql: """
+                        DELETE FROM stream_sessions
+                        WHERE COALESCE(end_time, start_time) < ?
+                        """,
+                        arguments: [cutoffDate.timeIntervalSince1970]
+                    )
+                    deleted = db.changesCount
+                }
+            }
+            return deleted
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    private func decodeStreamSession(_ row: Row) -> StreamSession? {
+        guard let id = UUID(uuidString: row["id"]),
+              let protocolType = StreamProtocolType(rawValue: row["protocol_type"]),
+              let status = StreamSessionStatus(rawValue: row["status"])
+        else {
+            return nil
+        }
+
+        let requestHeadersData: Data = row["request_headers"]
+        let responseHeadersData: Data = row["response_headers"]
+        let metadataData: Data = row["metadata"]
+        let decoder = makeDecoder()
+
+        let requestHeaders = (try? decoder.decode([TraceHTTPHeader].self, from: requestHeadersData)) ?? []
+        let responseHeaders = (try? decoder.decode([TraceHTTPHeader].self, from: responseHeadersData)) ?? []
+        let metadata = (try? decoder.decode([String: String].self, from: metadataData)) ?? [:]
+
+        return StreamSession(
+            id: id,
+            protocolType: protocolType,
+            url: row["url"],
+            startTime: Date(timeIntervalSince1970: row["start_time"]),
+            endTime: {
+                let value: Double? = row["end_time"]
+                return value.map(Date.init(timeIntervalSince1970:))
+            }(),
+            status: status,
+            requestHeaders: requestHeaders,
+            responseHeaders: responseHeaders,
+            metadata: metadata,
+            eventCount: row["event_count"],
+            bytesIn: row["bytes_in"],
+            bytesOut: row["bytes_out"]
+        )
+    }
+
+    private func decodeStreamEvent(_ row: Row, db: Database) -> StreamEvent? {
+        guard let id = UUID(uuidString: row["id"]),
+              let sessionID = UUID(uuidString: row["session_id"]),
+              let direction = StreamEventDirection(rawValue: row["direction"]),
+              let kind = StreamEventKind(rawValue: row["kind"])
+        else {
+            return nil
+        }
+
+        let payloadText: String? = row["payload_text"]
+        var payloadBinary: Data? = row["payload_inline"]
+        let payloadChunked: Int = row["payload_chunked"]
+        if payloadChunked != 0 {
+            let chunkRows = (try? Row.fetchAll(
+                db,
+                sql: """
+                SELECT chunk
+                FROM stream_payload_chunks
+                WHERE event_id = ?
+                ORDER BY chunk_index ASC
+                """,
+                arguments: [id.uuidString]
+            )) ?? []
+            if !chunkRows.isEmpty {
+                var data = Data()
+                for chunkRow in chunkRows {
+                    let chunk: Data = chunkRow["chunk"]
+                    data.append(chunk)
+                }
+                payloadBinary = data
+            }
+        }
+
+        let metadataData: Data = row["metadata"]
+        let metadata = (try? makeDecoder().decode([String: String].self, from: metadataData)) ?? [:]
+        let timestamp: Double = row["timestamp"]
+        let wasModified: Int = row["was_modified"]
+        let wasBlocked: Int = row["was_blocked"]
+
+        return StreamEvent(
+            id: id,
+            sessionID: sessionID,
+            sequence: row["sequence"],
+            timestamp: Date(timeIntervalSince1970: timestamp),
+            direction: direction,
+            kind: kind,
+            payload: StreamEventPayload(
+                text: payloadText,
+                binary: payloadBinary,
+                contentType: row["payload_content_type"],
+                encoding: row["payload_encoding"]
+            ),
+            wasModified: wasModified != 0,
+            wasBlocked: wasBlocked != 0,
+            metadata: metadata
+        )
+    }
+
+    private func loadProjectedWebSocketConnections() throws -> [WebSocketConnection] {
+        let sessions = try loadStreamSessions(protocolType: .websocket)
+        guard !sessions.isEmpty else { return [] }
+
+        var connections: [WebSocketConnection] = []
+        connections.reserveCapacity(sessions.count)
+        for session in sessions {
+            let events = try loadStreamEvents(sessionID: session.id)
+            var messages: [WebSocketMessage] = []
+            messages.reserveCapacity(events.count)
+            var closeCode: Int?
+            var closeReason: String?
+
+            for event in events {
+                guard let messageType = websocketMessageType(for: event) else { continue }
+                let direction: WebSocketDirection = event.direction == .sent ? .sent : .received
+                let payloadData = event.payload.binary
+                    ?? event.payload.text?.data(using: .utf8)
+                    ?? Data()
+                let payloadLength = Int(event.metadata["payload_length"] ?? "") ?? payloadData.count
+                let isFinal = event.metadata["is_final"] != "false"
+                let isMasked = event.metadata["is_masked"] == "true"
+                let message = WebSocketMessage(
+                    id: event.id,
+                    direction: direction,
+                    timestamp: event.timestamp,
+                    payload: payloadData,
+                    messageType: messageType,
+                    isFinal: isFinal,
+                    isMasked: isMasked,
+                    payloadLength: payloadLength
+                )
+                messages.append(message)
+
+                if messageType == .close, closeCode == nil {
+                    closeCode = extractWebSocketCloseCode(from: payloadData)
+                    closeReason = extractWebSocketCloseReason(from: payloadData)
+                }
+            }
+
+            connections.append(
+                WebSocketConnection(
+                    id: session.id,
+                    url: session.url,
+                    startTime: session.startTime,
+                    endTime: session.endTime,
+                    messages: messages,
+                    status: webSocketConnectionStatus(for: session.status),
+                    requestHeaders: session.requestHeaders,
+                    responseHeaders: session.responseHeaders,
+                    closeCode: closeCode,
+                    closeReason: closeReason
+                )
+            )
+        }
+        return connections.sorted { $0.startTime > $1.startTime }
+    }
+
+    private func loadProjectedSSEConnections() throws -> [SSEConnection] {
+        let sessions = try loadStreamSessions(protocolType: .sse)
+        guard !sessions.isEmpty else { return [] }
+
+        var connections: [SSEConnection] = []
+        connections.reserveCapacity(sessions.count)
+        for session in sessions {
+            let events = try loadStreamEvents(sessionID: session.id)
+            let sseEvents = events.compactMap { event -> ServerSentEvent? in
+                guard event.kind == .sseEvent || event.kind == .message else { return nil }
+                let data = event.payload.text
+                    ?? event.payload.binary.flatMap { String(data: $0, encoding: .utf8) }
+                    ?? ""
+                guard !data.isEmpty else { return nil }
+
+                let eventID = event.metadata["event_id"]
+                let eventType = event.metadata["event_type"]
+                let retry = Int(event.metadata["retry"] ?? "")
+                return ServerSentEvent(
+                    id: event.id,
+                    eventId: eventID?.isEmpty == true ? nil : eventID,
+                    eventType: eventType?.isEmpty == true ? nil : eventType,
+                    data: data,
+                    retry: retry,
+                    timestamp: event.timestamp
+                )
+            }
+
+            connections.append(
+                SSEConnection(
+                    id: session.id,
+                    url: session.url,
+                    startTime: session.startTime,
+                    endTime: session.endTime,
+                    events: sseEvents,
+                    status: sseConnectionStatus(for: session.status),
+                    requestHeaders: session.requestHeaders,
+                    responseHeaders: session.responseHeaders,
+                    totalBytesReceived: session.bytesIn,
+                    isTruncated: session.metadata["is_truncated"] == "true"
+                )
+            )
+        }
+        return connections.sorted { $0.startTime > $1.startTime }
+    }
+
+    private func webSocketConnectionStatus(for status: StreamSessionStatus) -> WebSocketConnectionStatus {
+        switch status {
+        case .connecting:
+            .connecting
+        case .open, .streaming:
+            .open
+        case .replaying, .closing:
+            .closing
+        case .closed:
+            .closed
+        case .failed:
+            .failed
+        }
+    }
+
+    private func sseConnectionStatus(for status: StreamSessionStatus) -> SSEConnectionStatus {
+        switch status {
+        case .connecting:
+            .connecting
+        case .open, .streaming, .replaying:
+            .streaming
+        case .closing, .closed:
+            .closed
+        case .failed:
+            .failed
+        }
+    }
+
+    private func websocketMessageType(for event: StreamEvent) -> WebSocketMessageType? {
+        if let rawType = event.metadata["message_type"],
+           let parsed = WebSocketMessageType(rawValue: rawType) {
+            return parsed
+        }
+
+        switch event.kind {
+        case .ping:
+            return .ping
+        case .pong:
+            return .pong
+        case .close:
+            return .close
+        case .message:
+            if event.payload.text != nil {
+                return .text
+            }
+            return .binary
+        default:
+            return nil
+        }
+    }
+
+    private func extractWebSocketCloseCode(from payload: Data) -> Int? {
+        guard payload.count >= 2 else { return nil }
+        return Int(payload[0]) << 8 | Int(payload[1])
+    }
+
+    private func extractWebSocketCloseReason(from payload: Data) -> String? {
+        guard payload.count > 2 else { return nil }
+        return String(data: payload.subdata(in: 2 ..< payload.count), encoding: .utf8)
     }
 
     // MARK: - Inter-Process Communication
@@ -2097,6 +2975,7 @@ public class AppGroupStorage: @unchecked Sendable {
     private var transportRequestObservers: [UUID: NotificationObserver] = [:]
     private var webSocketObservers: [UUID: NotificationObserver] = [:]
     private var sseObservers: [UUID: NotificationObserver] = [:]
+    private var streamObservers: [UUID: NotificationObserver] = [:]
     private var udpFlowObservers: [UUID: NotificationObserver] = [:]
 
     /// Notifies the main app that a new request was captured
@@ -2128,6 +3007,12 @@ public class AppGroupStorage: @unchecked Sendable {
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let notificationName = "com.trace.newSSE" as CFString
 
+        CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
+    }
+
+    private func notifyStreamUpdated() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let notificationName = "com.trace.streamUpdated" as CFString
         CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
     }
 
@@ -2244,6 +3129,33 @@ public class AppGroupStorage: @unchecked Sendable {
         notificationObserversLock.lock()
         let observers = Array(sseObservers.values)
         sseObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
+    }
+
+    /// Sets up listener for stream session/event updates.
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeStreamUpdates(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.streamUpdated", handler: handler)
+        notificationObserversLock.lock()
+        streamObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.streamObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingStreamUpdates() {
+        notificationObserversLock.lock()
+        let observers = Array(streamObservers.values)
+        streamObservers.removeAll()
         notificationObserversLock.unlock()
         observers.forEach { $0.stop() }
     }

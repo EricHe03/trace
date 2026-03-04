@@ -22,6 +22,8 @@ final class AppGroupStorageTests: XCTestCase {
         // Clean up any existing test data
         try? storage.clearAllRequests()
         try? storage.clearAllTransportRequests()
+        try? storage.clearAllWebSocketConnections()
+        try? storage.clearAllSSEConnections()
         storage.setTransportStoreBudgetBytesForTesting(nil)
         storage.resetStoredSettings()
     }
@@ -30,6 +32,8 @@ final class AppGroupStorageTests: XCTestCase {
         // Clean up test data
         try? storage.clearAllRequests()
         try? storage.clearAllTransportRequests()
+        try? storage.clearAllWebSocketConnections()
+        try? storage.clearAllSSEConnections()
         storage.setTransportStoreBudgetBytesForTesting(nil)
         storage.resetStoredSettings()
         super.tearDown()
@@ -486,6 +490,240 @@ final class AppGroupStorageTests: XCTestCase {
         try storage.clearAllTransportRequests()
         loaded = try storage.loadAllTransportRequests()
         XCTAssertTrue(loaded.isEmpty)
+    }
+
+    // MARK: - Stream Storage Tests
+
+    func testUpsertAndLoadStreamSessionAndEvents() throws {
+        let sessionID = UUID()
+        let session = StreamSession(
+            id: sessionID,
+            protocolType: .websocket,
+            url: "wss://example.com/socket",
+            status: .open,
+            requestHeaders: [TraceHTTPHeader(key: "Upgrade", value: "websocket")],
+            responseHeaders: [TraceHTTPHeader(key: "Connection", value: "Upgrade")]
+        )
+        try storage.upsertStreamSession(session)
+
+        let sent = StreamEvent(
+            sessionID: sessionID,
+            sequence: 0,
+            direction: .sent,
+            kind: .message,
+            payload: .text("hello", contentType: "text/plain")
+        )
+        try storage.appendStreamEvent(sent)
+
+        let largeBinary = Data(repeating: 0xAB, count: 300_000)
+        let received = StreamEvent(
+            sessionID: sessionID,
+            sequence: 0,
+            direction: .received,
+            kind: .message,
+            payload: .binary(largeBinary, contentType: "application/octet-stream")
+        )
+        try storage.appendStreamEvent(received)
+
+        let loadedSession = try storage.loadStreamSession(sessionID)
+        XCTAssertNotNil(loadedSession)
+        XCTAssertEqual(loadedSession?.protocolType, .websocket)
+        XCTAssertEqual(loadedSession?.eventCount, 2)
+        XCTAssertEqual(loadedSession?.bytesOut, 5)
+        XCTAssertEqual(loadedSession?.bytesIn, largeBinary.count)
+
+        let events = try storage.loadStreamEvents(sessionID: sessionID)
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events[0].payload.text, "hello")
+        XCTAssertEqual(events[1].payload.binary?.count, largeBinary.count)
+    }
+
+    func testUpsertStreamSessionDoesNotClobberCountersOrMetadata() throws {
+        let sessionID = UUID()
+        try storage.upsertStreamSession(
+            StreamSession(
+                id: sessionID,
+                protocolType: .websocket,
+                url: "wss://example.com/socket",
+                status: .open,
+                requestHeaders: [],
+                responseHeaders: [],
+                metadata: ["origin": "initial"],
+                eventCount: 0,
+                bytesIn: 0,
+                bytesOut: 0
+            )
+        )
+
+        try storage.appendStreamEvent(
+            StreamEvent(
+                sessionID: sessionID,
+                sequence: 1,
+                direction: .sent,
+                kind: .message,
+                payload: .text("hi", contentType: "text/plain; charset=utf-8")
+            )
+        )
+
+        try storage.upsertStreamSession(
+            StreamSession(
+                id: sessionID,
+                protocolType: .websocket,
+                url: "wss://example.com/socket",
+                status: .open,
+                requestHeaders: [],
+                responseHeaders: [],
+                metadata: ["other": "value"],
+                eventCount: 0,
+                bytesIn: 0,
+                bytesOut: 0
+            )
+        )
+
+        let loaded = try storage.loadStreamSession(sessionID)
+        XCTAssertEqual(loaded?.eventCount, 1)
+        XCTAssertEqual(loaded?.bytesOut, 2)
+        XCTAssertEqual(loaded?.metadata["origin"], "initial")
+        XCTAssertEqual(loaded?.metadata["other"], "value")
+    }
+
+    func testUpsertStreamSessionDoesNotRevertTerminalStatus() throws {
+        let sessionID = UUID()
+        let endedAt = Date(timeIntervalSince1970: 1_700_000_000)
+
+        try storage.upsertStreamSession(
+            StreamSession(
+                id: sessionID,
+                protocolType: .sse,
+                url: "https://example.com/events",
+                endTime: endedAt,
+                status: .closed,
+                requestHeaders: [],
+                responseHeaders: []
+            )
+        )
+
+        try storage.upsertStreamSession(
+            StreamSession(
+                id: sessionID,
+                protocolType: .sse,
+                url: "https://example.com/events",
+                endTime: nil,
+                status: .streaming,
+                requestHeaders: [],
+                responseHeaders: []
+            )
+        )
+
+        let loaded = try storage.loadStreamSession(sessionID)
+        XCTAssertEqual(loaded?.status, .closed)
+        XCTAssertEqual(loaded?.endTime, endedAt)
+    }
+
+    func testLoadAllWebSocketConnectionsUsesStreamProjectionWhenV2Enabled() throws {
+        try storage.saveHardeningSetting(true, forKey: "hardening.enableStreamInterceptionV2")
+        defer { try? storage.saveHardeningSetting(false, forKey: "hardening.enableStreamInterceptionV2") }
+
+        let sessionID = UUID()
+        try storage.upsertStreamSession(
+            StreamSession(
+                id: sessionID,
+                protocolType: .websocket,
+                url: "wss://echo.example/ws",
+                status: .open,
+                requestHeaders: [],
+                responseHeaders: []
+            )
+        )
+        try storage.appendStreamEvent(
+            StreamEvent(
+                sessionID: sessionID,
+                sequence: 1,
+                direction: .received,
+                kind: .message,
+                payload: .text("from stream", contentType: "text/plain"),
+                metadata: ["message_type": "text"]
+            )
+        )
+
+        let connections = try storage.loadAllWebSocketConnections()
+        XCTAssertEqual(connections.count, 1)
+        XCTAssertEqual(connections[0].id, sessionID)
+        XCTAssertEqual(connections[0].messages.count, 1)
+        XCTAssertEqual(connections[0].messages[0].textPayload, "from stream")
+    }
+
+    func testLoadAllSSEConnectionsUsesStreamProjectionWhenV2Enabled() throws {
+        try storage.saveHardeningSetting(true, forKey: "hardening.enableStreamInterceptionV2")
+        defer { try? storage.saveHardeningSetting(false, forKey: "hardening.enableStreamInterceptionV2") }
+
+        let sessionID = UUID()
+        try storage.upsertStreamSession(
+            StreamSession(
+                id: sessionID,
+                protocolType: .sse,
+                url: "https://example.com/events",
+                status: .streaming,
+                requestHeaders: [],
+                responseHeaders: []
+            )
+        )
+        try storage.appendStreamEvent(
+            StreamEvent(
+                sessionID: sessionID,
+                sequence: 1,
+                direction: .received,
+                kind: .sseEvent,
+                payload: .text("{\"ok\":true}", contentType: "text/event-stream"),
+                metadata: ["event_id": "1", "event_type": "message", "retry": "5000"]
+            )
+        )
+
+        let connections = try storage.loadAllSSEConnections()
+        XCTAssertEqual(connections.count, 1)
+        XCTAssertEqual(connections[0].id, sessionID)
+        XCTAssertEqual(connections[0].events.count, 1)
+        XCTAssertEqual(connections[0].events[0].eventId, "1")
+        XCTAssertEqual(connections[0].events[0].eventType, "message")
+        XCTAssertEqual(connections[0].events[0].retry, 5000)
+    }
+
+    func testStreamReplayRecordsRoundTrip() throws {
+        let sessionID = UUID()
+        try storage.upsertStreamSession(
+            StreamSession(
+                id: sessionID,
+                protocolType: .websocket,
+                url: "wss://echo.example/ws",
+                status: .open,
+                requestHeaders: [],
+                responseHeaders: []
+            )
+        )
+
+        let spec = StreamReplaySpec(sessionID: sessionID, eventIDs: [UUID(), UUID()], timingMode: .step)
+        let replayID = try storage.startStreamReplay(spec)
+        let recordsAfterStart = try storage.loadStreamReplayRecords(sessionID: sessionID)
+        XCTAssertEqual(recordsAfterStart.count, 1)
+        XCTAssertEqual(recordsAfterStart[0].replayID, replayID)
+        XCTAssertEqual(recordsAfterStart[0].status, .running)
+        XCTAssertNil(recordsAfterStart[0].result)
+
+        let result = StreamReplayResult(
+            replayID: replayID,
+            sessionID: sessionID,
+            succeeded: true,
+            replayedEvents: 2,
+            startedAt: spec.startedAt,
+            endedAt: Date()
+        )
+        try storage.completeStreamReplay(result)
+
+        let recordsAfterCompletion = try storage.loadStreamReplayRecords(sessionID: sessionID)
+        XCTAssertEqual(recordsAfterCompletion.count, 1)
+        XCTAssertEqual(recordsAfterCompletion[0].status, .succeeded)
+        XCTAssertEqual(recordsAfterCompletion[0].result?.replayedEvents, 2)
+        XCTAssertEqual(recordsAfterCompletion[0].result?.succeeded, true)
     }
 
     // MARK: - Configuration Tests
