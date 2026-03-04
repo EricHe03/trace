@@ -32,6 +32,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
     static let tunneledHTTP2MetricsName = "nioTunneledHTTP2Metrics"
     static let tunneledHTTP2HandlerName = "nioTunneledHTTP2Handler"
     static let upstreamHTTPDecoderName = "nioUpstreamHTTPDecoder"
+    static let upstreamHTTPEncoderName = "nioUpstreamHTTPEncoder"
     static let upstreamHTTPHandlerName = "nioUpstreamHTTPHandler"
     static let upstreamWSDecoderName = "nioUpstreamWSDecoder"
     static let upstreamWSEncoderName = "nioUpstreamWSEncoder"

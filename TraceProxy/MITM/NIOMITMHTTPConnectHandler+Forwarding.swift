@@ -312,17 +312,18 @@ extension NIOMITMHTTPConnectHandler {
             return
         }
 
-        let targetPort = targetURL.port ?? ((targetURL.scheme?.lowercased() == "https") ? 443 : 80)
+        let targetPort = targetURL.port ?? ((targetURL.scheme?.lowercased() == "https" || targetURL.scheme?.lowercased() == "wss") ? 443 : 80)
         var requestHeaders = sanitizedStreamingRequestHeaders(from: outboundHeaders)
         requestHeaders.remove(name: "Accept-Encoding")
         requestHeaders.replaceOrAdd(name: "Accept-Encoding", value: "identity")
-        let requestBuffer = makeRawStreamingRequestBuffer(
+        guard let streamingRequestHead = makeStreamingUpstreamRequestHead(
             url: targetURL,
-            method: outboundContext.methodToken,
-            headers: requestHeaders,
-            body: outboundContext.body,
-            allocator: context.channel.allocator
-        )
+            methodToken: outboundContext.methodToken,
+            headers: requestHeaders
+        ) else {
+            sendResponse(status: .badRequest, body: "Invalid SSE request headers", closeAfterSend: true, context: context)
+            return
+        }
         let sseCapture = NIOMITMSSECaptureState(
             baseRequest: outboundContext.requestSnapshot,
             sessionID: streamRuntime?.snapshot().id
@@ -517,9 +518,22 @@ extension NIOMITMHTTPConnectHandler {
                         onResponsePart: onPart,
                         onError: onError,
                         onInactive: onInactive
-                    ).flatMap {
-                        self.writeAndFlush(requestBuffer, to: upstream)
-                    }.whenComplete { [weak self] pipelineResult in
+                    )
+                    .flatMap {
+                        self.installStreamingUpstreamTLSIfNeeded(
+                            on: upstream,
+                            url: targetURL,
+                            serverHostname: targetHost
+                        )
+                    }
+                    .flatMap {
+                        self.writeAndFlushStreamingUpstreamRequest(
+                            head: streamingRequestHead,
+                            body: outboundContext.body,
+                            to: upstream
+                        )
+                    }
+                    .whenComplete { [weak self] pipelineResult in
                         guard let self else { return }
                         if case let .failure(error) = pipelineResult {
                             self.reportMITMFailure(reason: self.classifyMITMFailure(error))
@@ -585,15 +599,16 @@ extension NIOMITMHTTPConnectHandler {
             return
         }
 
-        let targetPort = targetURL.port ?? ((targetURL.scheme?.lowercased() == "https") ? 443 : 80)
+        let targetPort = targetURL.port ?? ((targetURL.scheme?.lowercased() == "https" || targetURL.scheme?.lowercased() == "wss") ? 443 : 80)
         let requestHeaders = sanitizedStreamingRequestHeaders(from: outboundHeaders)
-        let requestBuffer = makeRawStreamingRequestBuffer(
+        guard let streamingRequestHead = makeStreamingUpstreamRequestHead(
             url: targetURL,
-            method: outboundContext.methodToken,
-            headers: requestHeaders,
-            body: outboundContext.body,
-            allocator: context.channel.allocator
-        )
+            methodToken: outboundContext.methodToken,
+            headers: requestHeaders
+        ) else {
+            sendResponse(status: .badRequest, body: "Invalid WebSocket request headers", closeAfterSend: true, context: context)
+            return
+        }
         let wsCapture = NIOMITMWebSocketCaptureState(
             url: normalizedWebSocketURL(from: outboundContext.url),
             requestHeaders: traceHeaders(from: requestHeaders),
@@ -789,9 +804,22 @@ extension NIOMITMHTTPConnectHandler {
                         onResponsePart: onPart,
                         onError: onError,
                         onInactive: onInactive
-                    ).flatMap {
-                        self.writeAndFlush(requestBuffer, to: upstream)
-                    }.whenComplete { [weak self] pipelineResult in
+                    )
+                    .flatMap {
+                        self.installStreamingUpstreamTLSIfNeeded(
+                            on: upstream,
+                            url: targetURL,
+                            serverHostname: targetHost
+                        )
+                    }
+                    .flatMap {
+                        self.writeAndFlushStreamingUpstreamRequest(
+                            head: streamingRequestHead,
+                            body: outboundContext.body,
+                            to: upstream
+                        )
+                    }
+                    .whenComplete { [weak self] pipelineResult in
                         guard let self else { return }
                         if case let .failure(error) = pipelineResult {
                             self.reportMITMFailure(reason: self.classifyMITMFailure(error))
@@ -850,7 +878,7 @@ extension NIOMITMHTTPConnectHandler {
 
         if requestHeaders.first(name: "Host") == nil, let host = url.host {
             let scheme = (url.scheme ?? "http").lowercased()
-            let defaultPort = scheme == "https" ? 443 : 80
+            let defaultPort = scheme == "https" || scheme == "wss" ? 443 : 80
             let hostValue: String = if let port = url.port, port != defaultPort {
                 "\(host):\(port)"
             } else {
@@ -885,9 +913,80 @@ extension NIOMITMHTTPConnectHandler {
         return buffer
     }
 
-    func writeAndFlush(_ buffer: ByteBuffer, to channel: Channel) -> EventLoopFuture<Void> {
+    func makeStreamingUpstreamRequestHead(
+        url: URL,
+        methodToken: String,
+        headers: HTTPHeaders
+    ) -> HTTPRequestHead? {
+        guard let host = url.host else { return nil }
+
+        var requestHeaders = headers
+        requestHeaders.remove(name: "Proxy-Connection")
+
+        if requestHeaders.first(name: "Host") == nil {
+            let scheme = (url.scheme ?? "http").lowercased()
+            let defaultPort = scheme == "https" || scheme == "wss" ? 443 : 80
+            let hostValue: String = if let port = url.port, port != defaultPort {
+                "\(host):\(port)"
+            } else {
+                host
+            }
+            requestHeaders.add(name: "Host", value: hostValue)
+        }
+
+        var path = url.path
+        if path.isEmpty {
+            path = "/"
+        }
+        if let query = url.query, !query.isEmpty {
+            path += "?\(query)"
+        }
+
+        let method = NIOHTTP1.HTTPMethod(rawValue: methodToken) ?? .RAW(value: methodToken)
+        var head = HTTPRequestHead(version: .http1_1, method: method, uri: path)
+        head.headers = requestHeaders
+        return head
+    }
+
+    func installStreamingUpstreamTLSIfNeeded(
+        on channel: Channel,
+        url: URL,
+        serverHostname: String
+    ) -> EventLoopFuture<Void> {
+        let scheme = (url.scheme ?? "http").lowercased()
+        guard scheme == "https" || scheme == "wss" else {
+            return channel.eventLoop.makeSucceededVoidFuture()
+        }
+
+        do {
+            var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
+            tlsConfiguration.applicationProtocols = ["http/1.1"]
+            if RuntimeEnvironment.isRunningUnitTests {
+                tlsConfiguration.certificateVerification = .none
+            }
+
+            let tlsContext = try NIOSSLContext(configuration: tlsConfiguration)
+            let tlsHandler = try NIOSSLClientHandler(context: tlsContext, serverHostname: serverHostname)
+            return channel.pipeline.addHandler(tlsHandler, position: .first)
+        } catch {
+            return channel.eventLoop.makeFailedFuture(error)
+        }
+    }
+
+    func writeAndFlushStreamingUpstreamRequest(
+        head: HTTPRequestHead,
+        body: Data,
+        to channel: Channel
+    ) -> EventLoopFuture<Void> {
+        channel.write(NIOAny(HTTPClientRequestPart.head(head)), promise: nil)
+
+        if !body.isEmpty {
+            let buffer = byteBuffer(from: body, allocator: channel.allocator)
+            channel.write(NIOAny(HTTPClientRequestPart.body(.byteBuffer(buffer))), promise: nil)
+        }
+
         let promise = channel.eventLoop.makePromise(of: Void.self)
-        channel.writeAndFlush(buffer, promise: promise)
+        channel.writeAndFlush(NIOAny(HTTPClientRequestPart.end(nil)), promise: promise)
         return promise.futureResult
     }
 

@@ -275,13 +275,25 @@ extension NIOMITMHTTPConnectHandler {
         onError: @escaping @Sendable (Error) -> Void,
         onInactive: @escaping @Sendable () -> Void
     ) -> EventLoopFuture<Void> {
-        upstream.pipeline
-            .addHandler(
-                ByteToMessageHandler(
-                    HTTPResponseDecoder(leftOverBytesStrategy: .dropBytes)
-                ),
-                name: Self.upstreamHTTPDecoderName
-            )
+        let ensureRequestEncoder = upstream.pipeline
+            .containsHandler(type: HTTPRequestEncoder.self)
+            .map { _ in () }
+            .flatMapError { _ in
+                upstream.pipeline.addHandler(
+                    HTTPRequestEncoder(),
+                    name: Self.upstreamHTTPEncoderName
+                )
+            }
+
+        return ensureRequestEncoder
+            .flatMap {
+                upstream.pipeline.addHandler(
+                    ByteToMessageHandler(
+                        HTTPResponseDecoder(leftOverBytesStrategy: .dropBytes)
+                    ),
+                    name: Self.upstreamHTTPDecoderName
+                )
+            }
             .flatMap {
                 upstream.pipeline.addHandler(
                     NIOMITMHTTPClientResponseRelayHandler(
@@ -327,6 +339,9 @@ extension NIOMITMHTTPConnectHandler {
         removeHandlerIfPresent(name: Self.upstreamHTTPHandlerName, from: upstream)
             .flatMap {
                 self.removeHandlerIfPresent(name: Self.upstreamHTTPDecoderName, from: upstream)
+            }
+            .flatMap {
+                self.removeHandlerIfPresent(name: Self.upstreamHTTPEncoderName, from: upstream)
             }
             .flatMap {
                 self.removeCurrentHTTPPipelineHandlers(from: clientChannel)
