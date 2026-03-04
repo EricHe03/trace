@@ -229,7 +229,7 @@ extension NIOMITMHTTPConnectHandler {
         if isWebSocketUpgrade(headers: headers) {
             return .webSocket
         }
-        if isSSERequest(headers: headers) {
+        if Self.isSSERequest(headers: headers) {
             return .sse
         }
         return .none
@@ -324,8 +324,10 @@ extension NIOMITMHTTPConnectHandler {
             sendResponse(status: .badRequest, body: "Invalid SSE request headers", closeAfterSend: true, context: context)
             return
         }
+        var sseBaseRequest = outboundContext.requestSnapshot
+        annotateCaptureMetadata(&sseBaseRequest)
         let sseCapture = NIOMITMSSECaptureState(
-            baseRequest: outboundContext.requestSnapshot,
+            baseRequest: sseBaseRequest,
             sessionID: streamRuntime?.snapshot().id
         )
         let sendableContext = NIOMITMUncheckedSendableBox(value: context)
@@ -359,7 +361,8 @@ extension NIOMITMHTTPConnectHandler {
                                 closeAfterSend = self.shouldCloseConnection(requestHead: requestHead, responseHeaders: head.headers)
                                 sseCapture.beginResponse(
                                     head: head,
-                                    captureConfig: self.captureConfigProvider()
+                                    captureConfig: self.captureConfigProvider(),
+                                    onRequestCaptured: self.onRequestCaptured
                                 )
                                 if let streamRuntime {
                                     streamRuntime.updateResponseHeaders(
@@ -1106,6 +1109,7 @@ extension NIOMITMHTTPConnectHandler {
         var responseHead: HTTPResponseHead?
         var responseHeadersTrace: [TraceHTTPHeader] = []
         var responseContentEncoding: String?
+        var sseCapture: NIOMITMSSECaptureState?
         var closeAfterSend = false
         var responseHeadSent = false
         var terminalStateReached = false
@@ -1142,6 +1146,23 @@ extension NIOMITMHTTPConnectHandler {
                 closeAfterSend = self.shouldCloseConnection(requestHead: requestHead, responseHeaders: forwardedHeaders)
                 responseHeadersTrace = self.traceHeaders(from: forwardedHeaders)
                 responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
+                let responseContentType = self.responseHeaderValue(name: "content-type", in: responseHeadersTrace)
+                if sseCapture == nil,
+                   let responseContentType,
+                   responseContentType.lowercased().contains("text/event-stream")
+                {
+                    self.annotateCaptureMetadata(&capturedRequest)
+                    sseCapture = NIOMITMSSECaptureState(
+                        baseRequest: capturedRequest,
+                        sessionID: UUID(),
+                        persistStreamEvents: captureConfig.captureBody
+                    )
+                    sseCapture?.beginResponse(
+                        head: head,
+                        captureConfig: captureConfig,
+                        onRequestCaptured: self.onRequestCaptured
+                    )
+                }
 
                 if head.status.code >= 400 {
                     self.logConnectStage(
@@ -1182,7 +1203,14 @@ extension NIOMITMHTTPConnectHandler {
                     receivedBodyBytes += chunkBytes
                 }
 
-                if maxCapturedBodyBytes > 0, chunkBytes > 0 {
+                if let sseCapture, chunkBytes > 0 {
+                    let chunkData = self.byteBufferToData(buffer)
+                    sseCapture.consume(
+                        bodyChunk: chunkData,
+                        captureConfig: captureConfig,
+                        onRequestCaptured: self.onRequestCaptured
+                    )
+                } else if maxCapturedBodyBytes > 0, chunkBytes > 0 {
                     let remaining = maxCapturedBodyBytes - capturedBodyData.count
                     if remaining > 0 {
                         let chunkData = self.byteBufferToData(buffer)
@@ -1220,6 +1248,26 @@ extension NIOMITMHTTPConnectHandler {
             context.eventLoop.execute {
                 guard self.state == .forwardingHTTPRequest, !terminalStateReached else { return }
                 terminalStateReached = true
+
+                if let sseCapture {
+                    sseCapture.finish(
+                        succeeded: responseHeadSent,
+                        captureConfig: captureConfig,
+                        onRequestCaptured: self.onRequestCaptured
+                    )
+                    let endPromise = context.eventLoop.makePromise(of: Void.self)
+                    endPromise.futureResult.whenComplete { _ in
+                        if metricsAsParsedResponse {
+                            Task {
+                                await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
+                                await ProxyNetworkMetrics.shared.recordHTTPTransactionCompleted()
+                            }
+                        }
+                        self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
+                    }
+                    context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: endPromise)
+                    return
+                }
 
                 let finalStatus = responseHead?.status ?? .ok
                 capturedRequest.statusCode = Int(finalStatus.code)
@@ -1289,6 +1337,14 @@ extension NIOMITMHTTPConnectHandler {
             context.eventLoop.execute {
                 guard self.state == .forwardingHTTPRequest, !terminalStateReached else { return }
                 terminalStateReached = true
+
+                if let sseCapture {
+                    sseCapture.finish(
+                        succeeded: responseHeadSent,
+                        captureConfig: captureConfig,
+                        onRequestCaptured: self.onRequestCaptured
+                    )
+                }
 
                 self.logUpstreamHTTPFailure(
                     error: error,
@@ -1441,12 +1497,28 @@ extension NIOMITMHTTPConnectHandler {
     }
 
     func isSSERequest(headers: HTTPHeaders) -> Bool {
-        headers[canonicalForm: "Accept"].contains {
-            $0
-                .split(separator: ",")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-                .contains("text/event-stream")
+        Self.isSSERequest(headers: headers)
+    }
+
+    static func isSSERequest(headers: HTTPHeaders) -> Bool {
+        for acceptHeaderValue in headers[canonicalForm: "Accept"] {
+            for rawToken in acceptHeaderValue.split(separator: ",", omittingEmptySubsequences: true) {
+                let token = String(rawToken)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                guard !token.isEmpty else { continue }
+                let mimeType = token
+                    .split(separator: ";", maxSplits: 1, omittingEmptySubsequences: true)
+                    .first
+                    .map(String.init)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased() ?? token
+                if mimeType == "text/event-stream" {
+                    return true
+                }
+            }
         }
+        return false
     }
 
     func normalizedWebSocketURL(from url: String) -> String {

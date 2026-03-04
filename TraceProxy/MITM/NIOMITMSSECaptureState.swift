@@ -8,6 +8,7 @@
 import Foundation
 import NIOCore
 import NIOHTTP1
+import TraceCompression
 import TraceCore
 
 final class NIOMITMSSECaptureState: @unchecked Sendable {
@@ -29,6 +30,9 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
     var streamSequence: Int64 = 0
     let persistStreamEvents: Bool
     let sessionID: UUID?
+    private var contentDecoder: (any StreamingDecoderProtocol)?
+    private var didFailContentDecoding = false
+    private var didEmitInitialRequestSnapshot = false
 
     let maxInMemoryEvents = 1000
 
@@ -38,7 +42,11 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
         self.persistStreamEvents = persistStreamEvents
     }
 
-    func beginResponse(head: HTTPResponseHead, captureConfig: CaptureConfiguration) {
+    func beginResponse(
+        head: HTTPResponseHead,
+        captureConfig: CaptureConfiguration,
+        onRequestCaptured: ((NetworkRequest) -> Void)? = nil
+    ) {
         lock.lock()
         defer { lock.unlock() }
         guard !finished else { return }
@@ -48,6 +56,7 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
         responseHeaders = captureConfig.captureHeaders
             ? head.headers.map { TraceHTTPHeader(key: $0.name, value: $0.value) }
             : []
+        configureContentDecoderIfNeededLocked(head: head, captureConfig: captureConfig)
 
         if connection == nil {
             connection = SSEConnection(
@@ -98,6 +107,15 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
                 )
             }
         }
+
+        if !didEmitInitialRequestSnapshot, let snapshot = connection {
+            didEmitInitialRequestSnapshot = true
+            emitRequestSnapshotLocked(
+                connection: snapshot,
+                captureConfig: captureConfig,
+                onRequestCaptured: onRequestCaptured
+            )
+        }
     }
 
     func consume(
@@ -114,7 +132,29 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
 
         snapshot.totalBytesReceived += bodyChunk.count
 
-        guard let decoded = decodeUTF8ChunkLocked(bodyChunk), !decoded.isEmpty else {
+        let parseChunk = decompressedChunkForParsingLocked(bodyChunk, snapshot: &snapshot)
+        guard !parseChunk.isEmpty else {
+            connection = snapshot
+            persistStreamSession(
+                StreamSession(
+                    id: snapshot.id,
+                    protocolType: .sse,
+                    url: snapshot.url,
+                    startTime: snapshot.startTime,
+                    endTime: snapshot.endTime,
+                    status: .streaming,
+                    requestHeaders: snapshot.requestHeaders,
+                    responseHeaders: snapshot.responseHeaders,
+                    metadata: [:],
+                    eventCount: Int(streamSequence),
+                    bytesIn: snapshot.totalBytesReceived,
+                    bytesOut: 0
+                )
+            )
+            return
+        }
+
+        guard let decoded = decodeUTF8ChunkLocked(parseChunk), !decoded.isEmpty else {
             connection = snapshot
             persistStreamSession(
                 StreamSession(
@@ -209,6 +249,44 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
             requestHeaders: captureConfig.captureHeaders ? baseRequest.requestHeaders : [],
             responseHeaders: responseHeaders
         )
+        if let decoder = contentDecoder {
+            do {
+                let tail = try decoder.finalize()
+                if !tail.isEmpty {
+                    let decoded = decodeUTF8ChunkLocked(tail) ?? ""
+                    let events = parser.parse(decoded)
+                    if !events.isEmpty {
+                        for event in events {
+                            streamSequence += 1
+                            if persistStreamEvents {
+                                persistStreamEvent(
+                                    StreamEvent(
+                                        sessionID: snapshot.id,
+                                        sequence: streamSequence,
+                                        timestamp: event.timestamp,
+                                        direction: .received,
+                                        kind: .sseEvent,
+                                        payload: .text(event.data, contentType: "text/event-stream; charset=utf-8"),
+                                        metadata: [
+                                            "event_id": event.eventId ?? "",
+                                            "event_type": event.eventType ?? "",
+                                            "retry": event.retry.map(String.init) ?? ""
+                                        ]
+                                    )
+                                )
+                            }
+                            snapshot.addEvent(event)
+                            if snapshot.events.count > maxInMemoryEvents {
+                                snapshot.events.removeFirst(snapshot.events.count - maxInMemoryEvents)
+                            }
+                        }
+                    }
+                }
+            } catch {
+                snapshot.isTruncated = true
+            }
+            contentDecoder = nil
+        }
         snapshot.status = succeeded ? .closed : .failed
         snapshot.endTime = Date()
         connection = snapshot
@@ -234,6 +312,64 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
             captureConfig: captureConfig,
             onRequestCaptured: onRequestCaptured
         )
+    }
+
+    private func configureContentDecoderIfNeededLocked(head: HTTPResponseHead, captureConfig: CaptureConfiguration) {
+        guard contentDecoder == nil, !didFailContentDecoding else { return }
+
+        let encoding = head.headers[canonicalForm: "Content-Encoding"]
+            .flatMap { $0.split(separator: ",", omittingEmptySubsequences: true) }
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .first(where: { !$0.isEmpty && $0 != "identity" })
+
+        guard let encoding else { return }
+
+        let maxOutputSize = max(
+            StreamingDecoderConfig.default.maxOutputSize,
+            max(0, captureConfig.maxBodySize)
+        )
+        let config = StreamingDecoderConfig(
+            chunkSize: StreamingDecoderConfig.default.chunkSize,
+            maxOutputSize: maxOutputSize
+        )
+
+        let decoder: (any StreamingDecoderProtocol)? = switch encoding {
+        case "deflate", "gzip", "zlib":
+            StreamingDeflateDecoder(config: config)
+        case "br", "brotli":
+            StreamingBrotliDecoder(config: config)
+        case "zstd", "zst":
+            StreamingZstdDecoder(config: config)
+        default:
+            nil
+        }
+
+        guard let decoder else { return }
+
+        do {
+            try decoder.initialize()
+            contentDecoder = decoder
+        } catch {
+            didFailContentDecoding = true
+            contentDecoder = nil
+        }
+    }
+
+    private func decompressedChunkForParsingLocked(_ bodyChunk: Data, snapshot: inout SSEConnection) -> Data {
+        guard !bodyChunk.isEmpty else { return Data() }
+        guard let decoder = contentDecoder else {
+            return bodyChunk
+        }
+
+        do {
+            return try decoder.decompress(chunk: bodyChunk)
+        } catch {
+            snapshot.isTruncated = true
+            didFailContentDecoding = true
+            contentDecoder = nil
+            persist(snapshot)
+            return Data()
+        }
     }
 
     func decodeUTF8ChunkLocked(_ data: Data) -> String? {
