@@ -8,6 +8,9 @@
 import SwiftUI
 import TraceCore
 import TraceUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct SSEDetailView: View {
     let connection: SSEConnection
@@ -16,6 +19,11 @@ struct SSEDetailView: View {
     @State private var filterEventType: String?
     @State private var selectedEvent: ServerSentEvent?
     @State private var showingFilters = false
+    @State private var replayRecords: [StreamReplayRecord] = []
+    @State private var replayCopyFeedback = false
+    @State private var replayLoadFailed = false
+
+    private let storage = AppGroupStorage.shared
 
     var body: some View {
         List {
@@ -50,6 +58,45 @@ struct SSEDetailView: View {
                 LabeledContent("Total Events", value: String(connection.eventCount))
                 LabeledContent("Bytes Received", value: connection.totalBytesString)
                 LabeledContent("Event Types", value: String(uniqueEventTypes.count))
+            }
+
+            Section("Replay Audit") {
+                Button {
+                    copyReplaySpec()
+                } label: {
+                    Label("Copy Replay Spec", systemImage: "doc.on.doc")
+                }
+
+                if replayCopyFeedback {
+                    Text("Replay spec copied")
+                        .font(.caption)
+                        .foregroundStyle(DesignSystem.Colors.success)
+                }
+
+                if replayLoadFailed {
+                    Text("Failed to load replay audit records")
+                        .font(.caption)
+                        .foregroundStyle(DesignSystem.Colors.warning)
+                } else if replayRecords.isEmpty {
+                    Text("No replay records")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(replayRecords.prefix(8), id: \.replayID) { record in
+                        HStack {
+                            Text(record.status.rawValue.capitalized)
+                                .font(.caption)
+                                .padding(.horizontal, DesignSystem.Spacing.sm)
+                                .padding(.vertical, DesignSystem.Spacing.xs)
+                                .background(replayStatusColor(record.status).opacity(0.2))
+                                .foregroundStyle(replayStatusColor(record.status))
+                                .clipShape(Capsule())
+                            Spacer()
+                            Text(record.startedAt, style: .time)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
 
             // Events Section
@@ -103,6 +150,9 @@ struct SSEDetailView: View {
                 hasActiveFilters: hasActiveFilters,
                 onClear: clearFilters
             )
+        }
+        .task(id: connection.id) {
+            await loadReplayRecords()
         }
     }
 
@@ -161,6 +211,49 @@ struct SSEDetailView: View {
     private func formattedDuration(_ duration: TimeInterval) -> String {
         DesignSystem.formattedDuration(duration)
     }
+
+    private func replayStatusColor(_ status: StreamReplayStatus) -> Color {
+        switch status {
+        case .running:
+            DesignSystem.Colors.warning
+        case .succeeded:
+            DesignSystem.Colors.success
+        case .failed:
+            DesignSystem.Colors.danger
+        }
+    }
+
+    @MainActor
+    private func loadReplayRecords() async {
+        do {
+            replayRecords = try storage.loadStreamReplayRecords(sessionID: connection.id, limit: 20)
+            replayLoadFailed = false
+        } catch {
+            replayRecords = []
+            replayLoadFailed = true
+        }
+    }
+
+    private func copyReplaySpec() {
+        let spec = StreamReplaySpec(
+            sessionID: connection.id,
+            eventIDs: filteredEvents.map(\.id),
+            timingMode: .originalTiming
+        )
+        let encoder = JSONCoding.makeEncoder()
+        guard let data = try? encoder.encode(spec),
+              let text = String(data: data, encoding: .utf8)
+        else {
+            return
+        }
+        #if canImport(UIKit)
+        UIPasteboard.general.string = text
+        #endif
+        replayCopyFeedback = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            replayCopyFeedback = false
+        }
+    }
 }
 
 /// Resolves a live SSE connection snapshot from the shared view model to avoid stale detail data.
@@ -170,7 +263,7 @@ struct LiveSSEDetailView: View {
     @ObservedObject var viewModel: SSEViewModel
 
     private var resolvedConnection: SSEConnection {
-        viewModel.connections.first(where: { $0.id == connectionID }) ?? fallbackConnection
+        viewModel.connections.first { $0.id == connectionID } ?? fallbackConnection
     }
 
     var body: some View {
