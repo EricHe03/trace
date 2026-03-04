@@ -429,7 +429,7 @@ final class BreakpointPresetManagerTests: XCTestCase {
     func testSavePresetWithAllBreakpointTypes() {
         // Arrange
         let manager = BreakpointPresetManager.shared
-        let breakpointTypes: [BreakpointType] = [.request, .response, .both]
+        let breakpointTypes: [BreakpointType] = [.request, .response, .stream, .both]
         var presets: [BreakpointPreset] = []
 
         // Act

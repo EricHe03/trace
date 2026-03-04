@@ -1468,6 +1468,191 @@ public actor RequestInterceptor {
             ? .bufferAndIntercept
             : .streamAndCapture
     }
+
+    public func interceptStreamOpen(session: StreamSession) async -> StreamInterceptionDecision {
+        await refreshConfigSnapshotIfNeeded()
+
+        let pseudoRequest = NetworkRequest(
+            url: session.url,
+            method: .get,
+            duration: 0,
+            requestHeaders: session.requestHeaders
+        )
+        if shouldBlock(request: pseudoRequest) {
+            return .block
+        }
+
+        return .forward
+    }
+
+    public func interceptStreamEvent(session: StreamSession, event: StreamEvent) async -> StreamInterceptionDecision {
+        await refreshConfigSnapshotIfNeeded()
+
+        var payloadData = event.payload.binary
+            ?? event.payload.text?.data(using: .utf8)
+            ?? Data()
+        var expectsTextPayload = event.payload.text != nil ||
+            event.kind == .sseEvent ||
+            event.metadata["message_type"] == "text"
+        var payloadContentType = event.payload.contentType
+        var payloadEncoding = event.payload.encoding
+        var metadata = event.metadata
+        var didModify = false
+
+        var didPauseForStreamBreakpoint = false
+        if await breakpointManager.shouldBreakOnStream(
+            url: session.url,
+            headers: session.requestHeaders,
+            body: payloadData
+        ) {
+            didPauseForStreamBreakpoint = true
+            let action = await breakpointManager.pauseStreamEvent(
+                id: event.id.uuidString,
+                url: session.url,
+                headers: session.requestHeaders,
+                body: payloadData
+            )
+
+            switch action {
+            case .drop:
+                return .block
+            case .continueAndDisable:
+                await breakpointManager.setEnabled(false)
+            case .continue:
+                break
+            }
+
+            if let pausedEvent = await breakpointManager.getPausedRequest(id: event.id.uuidString),
+               let modifiedBody = pausedEvent.effectiveBody {
+                payloadData = modifiedBody
+                metadata["breakpoint"] = "modified"
+                didModify = true
+            }
+        }
+
+        if !didPauseForStreamBreakpoint {
+            var storedPayload: Data? = payloadData
+            if await breakpointManager.applyStoredStreamModifications(to: &storedPayload),
+               let storedPayload {
+                payloadData = storedPayload
+                metadata["breakpoint"] = "stored_modifications_applied"
+                didModify = true
+            }
+        }
+
+        let matchingStreamScripts = configSnapshot.scripts.filter { script in
+            script.enabled &&
+                script.scriptType == .stream &&
+                scriptMatchesUrl(script: script, url: session.url)
+        }
+
+        if !matchingStreamScripts.isEmpty {
+            let scriptEvent = StreamEvent(
+                id: event.id,
+                sessionID: event.sessionID,
+                sequence: event.sequence,
+                timestamp: event.timestamp,
+                direction: event.direction,
+                kind: event.kind,
+                payload: StreamEventPayload(
+                    text: expectsTextPayload ? String(data: payloadData, encoding: .utf8) : nil,
+                    binary: payloadData,
+                    contentType: payloadContentType,
+                    encoding: payloadEncoding
+                ),
+                wasModified: event.wasModified || didModify,
+                wasBlocked: event.wasBlocked,
+                metadata: metadata
+            )
+            let scriptResult = await scriptManager.executeStreamScriptsAsync(
+                matchingStreamScripts,
+                context: StreamScriptContext(session: session, event: scriptEvent)
+            )
+
+            switch scriptResult.action {
+            case .block:
+                return .block
+            case .drop:
+                return .drop
+            case .forward:
+                break
+            }
+
+            let scriptPayload = scriptResult.event.payload.binary
+                ?? scriptResult.event.payload.text?.data(using: .utf8)
+                ?? Data()
+            if scriptPayload != payloadData || scriptResult.event.metadata != metadata {
+                didModify = true
+            }
+            payloadData = scriptPayload
+            metadata = scriptResult.event.metadata
+            payloadContentType = scriptResult.event.payload.contentType ?? payloadContentType
+            payloadEncoding = scriptResult.event.payload.encoding ?? payloadEncoding
+
+            if scriptResult.event.payload.text != nil {
+                expectsTextPayload = true
+            }
+            metadata["applied_stream_scripts"] = matchingStreamScripts.map(\.name).joined(separator: ",")
+        }
+
+        var modifiedText = expectsTextPayload
+            ? (String(data: payloadData, encoding: .utf8) ?? event.payload.text ?? "")
+            : ""
+        var appliedRuleNames: [String] = []
+
+        if expectsTextPayload {
+            for rule in configSnapshot.rewriteRules where rule.enabled {
+                guard matchesPattern(url: session.url, pattern: rule.matchPattern, matchType: rule.matchType) else { continue }
+                guard rule.ruleType == .modifyResponse || rule.ruleType == .modifyRequest else { continue }
+
+                for action in rule.actions where action.actionType == .replaceBody {
+                    guard let pattern = action.bodyPattern, let replacement = action.bodyReplacement else { continue }
+                    guard pattern.count <= RegexMatcher.maxPatternLength else { continue }
+                    guard modifiedText.count <= RegexMatcher.maxInputLength else { continue }
+                    guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+
+                    let range = NSRange(modifiedText.startIndex..., in: modifiedText)
+                    let replaced = regex.stringByReplacingMatches(
+                        in: modifiedText,
+                        range: range,
+                        withTemplate: replacement
+                    )
+                    if replaced != modifiedText {
+                        modifiedText = replaced
+                        didModify = true
+                        appliedRuleNames.append(rule.name)
+                    }
+                }
+            }
+        }
+
+        guard didModify else { return .forward }
+
+        if !appliedRuleNames.isEmpty {
+            metadata["applied_rules"] = appliedRuleNames.joined(separator: ",")
+        }
+        metadata["interceptor"] = "request_interceptor"
+
+        if expectsTextPayload {
+            payloadData = Data(modifiedText.utf8)
+        }
+
+        return .modify(
+            StreamMutation(
+                payload: StreamEventPayload(
+                    text: expectsTextPayload ? modifiedText : nil,
+                    binary: expectsTextPayload ? nil : payloadData,
+                    contentType: payloadContentType,
+                    encoding: payloadEncoding
+                ),
+                metadata: metadata
+            )
+        )
+    }
+
+    public func interceptStreamClose(session _: StreamSession, reason _: String?) async -> StreamInterceptionDecision {
+        .forward
+    }
 }
 
 // MARK: - Dirty Flags (Thread-Safe)

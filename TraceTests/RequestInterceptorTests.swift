@@ -460,6 +460,97 @@ final class RequestInterceptorTests: XCTestCase {
         // Then
         XCTAssertNotNil(result)
     }
+
+    func testInterceptStreamEventAppliesStreamScriptPayloadMutation() async {
+        let scriptManager = ScriptManager.shared
+        scriptManager.clearAllScripts()
+        await MainActor.run {
+            RewriteManager.shared.clearAllRules()
+        }
+        await BreakpointManager.shared.setEnabled(false)
+
+        let streamScript = Script(
+            name: "Stream Mutator",
+            enabled: true,
+            scriptType: .stream,
+            matchType: .contains,
+            matchPattern: "example.com",
+            code: """
+            stream.event.payload.text = 'patched-stream';
+            stream.event.metadata['scripted'] = 'true';
+            stream.action = 'forward';
+            """
+        )
+        scriptManager.addScript(streamScript)
+        await sut.forceConfigRefresh()
+
+        let session = StreamSession(
+            protocolType: .websocket,
+            url: "wss://api.example.com/socket",
+            status: .open
+        )
+        let event = StreamEvent(
+            sessionID: session.id,
+            sequence: 1,
+            direction: .received,
+            kind: .message,
+            payload: .text("original", contentType: "text/plain"),
+            metadata: ["message_type": "text"]
+        )
+
+        let decision = await sut.interceptStreamEvent(session: session, event: event)
+
+        switch decision {
+        case let .modify(mutation):
+            XCTAssertEqual(mutation.payload?.text, "patched-stream")
+            XCTAssertEqual(mutation.metadata["scripted"], "true")
+            XCTAssertEqual(mutation.metadata["applied_stream_scripts"], "Stream Mutator")
+        default:
+            XCTFail("Expected stream script to produce modify decision")
+        }
+
+        scriptManager.clearAllScripts()
+        await sut.forceConfigRefresh()
+    }
+
+    func testInterceptStreamEventSupportsStreamScriptDropAction() async {
+        let scriptManager = ScriptManager.shared
+        scriptManager.clearAllScripts()
+        await MainActor.run {
+            RewriteManager.shared.clearAllRules()
+        }
+        await BreakpointManager.shared.setEnabled(false)
+
+        let streamScript = Script(
+            name: "Stream Dropper",
+            enabled: true,
+            scriptType: .stream,
+            matchType: .contains,
+            matchPattern: "example.com",
+            code: "stream.action = 'drop';"
+        )
+        scriptManager.addScript(streamScript)
+        await sut.forceConfigRefresh()
+
+        let session = StreamSession(
+            protocolType: .sse,
+            url: "https://events.example.com/feed",
+            status: .streaming
+        )
+        let event = StreamEvent(
+            sessionID: session.id,
+            sequence: 1,
+            direction: .received,
+            kind: .sseEvent,
+            payload: .text("data", contentType: "text/event-stream")
+        )
+
+        let decision = await sut.interceptStreamEvent(session: session, event: event)
+        XCTAssertEqual(decision, .drop)
+
+        scriptManager.clearAllScripts()
+        await sut.forceConfigRefresh()
+    }
 }
 
 // MARK: - Helper Factory Functions
