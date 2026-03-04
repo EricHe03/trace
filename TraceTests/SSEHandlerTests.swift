@@ -58,6 +58,47 @@ final class SSEHandlerTests: XCTestCase {
         XCTAssertEqual(events.first?.data, "hello")
     }
 
+    func testSSEParserHandlesBOMAndIDCarryForward() {
+        let parser = SSEParser()
+        let events = parser.parse(
+            "\u{FEFF}id: abc\n" +
+                "data: first\n\n" +
+                "data: second\n\n"
+        )
+
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events[0].eventId, "abc")
+        XCTAssertEqual(events[1].eventId, "abc")
+    }
+
+    func testSSEParserParsesRetryOnlyWhenStrictlyNumeric() {
+        let parser = SSEParser()
+        let events = parser.parse(
+            "retry: 1500\n" +
+                "data: valid\n\n" +
+                "retry: 15s\n" +
+                "data: invalid\n\n"
+        )
+
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events[0].retry, 1500)
+        XCTAssertNil(events[1].retry)
+    }
+
+    func testSSEParserIgnoresIDContainingNullCharacter() {
+        let parser = SSEParser()
+        let events = parser.parse(
+            "id: stable\n" +
+                "data: one\n\n" +
+                "id: bad\u{0000}id\n" +
+                "data: two\n\n"
+        )
+
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events[0].eventId, "stable")
+        XCTAssertEqual(events[1].eventId, "stable")
+    }
+
     func testSSEConnectionTracksEventsAndLifecycle() {
         var connection = SSEConnection(
             id: UUID(),

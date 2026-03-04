@@ -26,12 +26,16 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
     var utf8Remainder = Data()
     var publishThrottle = SSECapturePublishThrottle()
     var finished = false
+    var streamSequence: Int64 = 0
+    let persistStreamEvents: Bool
+    let sessionID: UUID?
 
-    let maxEvents = 1000
-    let maxTotalBytes = 10 * 1024 * 1024
+    let maxInMemoryEvents = 1000
 
-    init(baseRequest: NetworkRequest) {
+    init(baseRequest: NetworkRequest, sessionID: UUID? = nil, persistStreamEvents: Bool = true) {
         self.baseRequest = baseRequest
+        self.sessionID = sessionID
+        self.persistStreamEvents = persistStreamEvents
     }
 
     func beginResponse(head: HTTPResponseHead, captureConfig: CaptureConfiguration) {
@@ -47,7 +51,7 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
 
         if connection == nil {
             connection = SSEConnection(
-                id: UUID(),
+                id: sessionID ?? UUID(),
                 url: baseRequest.url,
                 startTime: Date(),
                 status: .streaming,
@@ -56,9 +60,43 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
             )
             if let snapshot = connection {
                 persist(snapshot)
+                persistStreamSession(
+                    StreamSession(
+                        id: snapshot.id,
+                        protocolType: .sse,
+                        url: snapshot.url,
+                        startTime: snapshot.startTime,
+                        endTime: snapshot.endTime,
+                        status: .streaming,
+                        requestHeaders: snapshot.requestHeaders,
+                        responseHeaders: snapshot.responseHeaders,
+                        metadata: [:],
+                        eventCount: 0,
+                        bytesIn: snapshot.totalBytesReceived,
+                        bytesOut: 0
+                    )
+                )
             }
         } else {
             connection?.responseHeaders = responseHeaders
+            if let snapshot = connection {
+                persistStreamSession(
+                    StreamSession(
+                        id: snapshot.id,
+                        protocolType: .sse,
+                        url: snapshot.url,
+                        startTime: snapshot.startTime,
+                        endTime: snapshot.endTime,
+                        status: .streaming,
+                        requestHeaders: snapshot.requestHeaders,
+                        responseHeaders: snapshot.responseHeaders,
+                        metadata: [:],
+                        eventCount: Int(streamSequence),
+                        bytesIn: snapshot.totalBytesReceived,
+                        bytesOut: 0
+                    )
+                )
+            }
         }
     }
 
@@ -75,31 +113,71 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
         guard var snapshot = connection else { return }
 
         snapshot.totalBytesReceived += bodyChunk.count
-        if snapshot.events.count >= maxEvents || snapshot.totalBytesReceived >= maxTotalBytes {
-            if !snapshot.isTruncated {
-                snapshot.isTruncated = true
-                connection = snapshot
-                persist(snapshot)
-                emitRequestSnapshotLocked(
-                    connection: snapshot,
-                    captureConfig: captureConfig,
-                    onRequestCaptured: onRequestCaptured
-                )
-            }
-            return
-        }
 
         guard let decoded = decodeUTF8ChunkLocked(bodyChunk), !decoded.isEmpty else {
             connection = snapshot
+            persistStreamSession(
+                StreamSession(
+                    id: snapshot.id,
+                    protocolType: .sse,
+                    url: snapshot.url,
+                    startTime: snapshot.startTime,
+                    endTime: snapshot.endTime,
+                    status: .streaming,
+                    requestHeaders: snapshot.requestHeaders,
+                    responseHeaders: snapshot.responseHeaders,
+                    metadata: [:],
+                    eventCount: Int(streamSequence),
+                    bytesIn: snapshot.totalBytesReceived,
+                    bytesOut: 0
+                )
+            )
             return
         }
 
         let events = parser.parse(decoded)
         if !events.isEmpty {
             for event in events {
+                streamSequence += 1
+                if persistStreamEvents {
+                    persistStreamEvent(
+                        StreamEvent(
+                            sessionID: snapshot.id,
+                            sequence: streamSequence,
+                            timestamp: event.timestamp,
+                            direction: .received,
+                            kind: .sseEvent,
+                            payload: .text(event.data, contentType: "text/event-stream; charset=utf-8"),
+                            metadata: [
+                                "event_id": event.eventId ?? "",
+                                "event_type": event.eventType ?? "",
+                                "retry": event.retry.map(String.init) ?? ""
+                            ]
+                        )
+                    )
+                }
                 snapshot.addEvent(event)
+                if snapshot.events.count > maxInMemoryEvents {
+                    snapshot.events.removeFirst(snapshot.events.count - maxInMemoryEvents)
+                }
             }
             connection = snapshot
+            persistStreamSession(
+                StreamSession(
+                    id: snapshot.id,
+                    protocolType: .sse,
+                    url: snapshot.url,
+                    startTime: snapshot.startTime,
+                    endTime: snapshot.endTime,
+                    status: .streaming,
+                    requestHeaders: snapshot.requestHeaders,
+                    responseHeaders: snapshot.responseHeaders,
+                    metadata: [:],
+                    eventCount: Int(streamSequence),
+                    bytesIn: snapshot.totalBytesReceived,
+                    bytesOut: 0
+                )
+            )
             if publishThrottle.shouldPublish(connection: snapshot) {
                 persist(snapshot)
                 emitRequestSnapshotLocked(
@@ -124,7 +202,7 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
         finished = true
 
         var snapshot = connection ?? SSEConnection(
-            id: UUID(),
+            id: sessionID ?? UUID(),
             url: baseRequest.url,
             startTime: Date(),
             status: .streaming,
@@ -135,6 +213,22 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
         snapshot.endTime = Date()
         connection = snapshot
         persist(snapshot)
+        persistStreamSession(
+            StreamSession(
+                id: snapshot.id,
+                protocolType: .sse,
+                url: snapshot.url,
+                startTime: snapshot.startTime,
+                endTime: snapshot.endTime,
+                status: succeeded ? .closed : .failed,
+                requestHeaders: snapshot.requestHeaders,
+                responseHeaders: snapshot.responseHeaders,
+                metadata: [:],
+                eventCount: Int(streamSequence),
+                bytesIn: snapshot.totalBytesReceived,
+                bytesOut: 0
+            )
+        )
         emitRequestSnapshotLocked(
             connection: snapshot,
             captureConfig: captureConfig,
@@ -210,6 +304,30 @@ final class NIOMITMSSECaptureState: @unchecked Sendable {
             } catch {
                 ProxyLog.mitm.warning(
                     "event=proxy.nio_sse_capture_persist outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+    }
+
+    func persistStreamSession(_ session: StreamSession) {
+        Self.persistenceQueue.async {
+            do {
+                try AppGroupStorage.shared.upsertStreamSession(session)
+            } catch {
+                ProxyLog.mitm.warning(
+                    "event=proxy.nio_sse_stream_session_persist outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+    }
+
+    func persistStreamEvent(_ event: StreamEvent) {
+        Self.persistenceQueue.async {
+            do {
+                try AppGroupStorage.shared.appendStreamEvent(event)
+            } catch {
+                ProxyLog.mitm.warning(
+                    "event=proxy.nio_sse_stream_event_persist outcome=failure error=\(error.localizedDescription, privacy: .public)"
                 )
             }
         }

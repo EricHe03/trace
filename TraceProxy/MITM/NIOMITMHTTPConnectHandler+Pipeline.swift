@@ -297,9 +297,33 @@ extension NIOMITMHTTPConnectHandler {
     func installWebSocketRelay(
         clientContext: ChannelHandlerContext,
         upstream: Channel,
-        captureState: NIOMITMWebSocketCaptureState
+        captureState: NIOMITMWebSocketCaptureState,
+        streamRuntime: StreamSessionRuntime? = nil,
+        perMessageDeflateEnabled: Bool = false
     ) {
         let clientChannel = clientContext.channel
+        let decisionProvider: (@Sendable (StreamSession, StreamEvent, EventLoop) -> EventLoopFuture<StreamInterceptionDecision>)? = if streamRuntime == nil {
+            nil
+        } else {
+            { [weak self] session, event, eventLoop in
+                guard let self else {
+                    return eventLoop.makeSucceededFuture(.forward)
+                }
+                return self.streamEventInterceptionFuture(session: session, event: event, eventLoop: eventLoop)
+            }
+        }
+        let closeNotifier: (@Sendable (StreamSessionStatus, String?, EventLoop) -> Void)? = if let streamRuntime {
+            { [weak self] status, reason, eventLoop in
+                self?.completeStreamRuntime(
+                    streamRuntime,
+                    status: status,
+                    reason: reason,
+                    eventLoop: eventLoop
+                )
+            }
+        } else {
+            nil
+        }
         removeHandlerIfPresent(name: Self.upstreamHTTPHandlerName, from: upstream)
             .flatMap {
                 self.removeHandlerIfPresent(name: Self.upstreamHTTPDecoderName, from: upstream)
@@ -318,7 +342,11 @@ extension NIOMITMHTTPConnectHandler {
                     NIOMITMWebSocketRelayHandler(
                         peerChannel: clientChannel,
                         direction: .received,
-                        captureState: captureState
+                        captureState: captureState,
+                        streamRuntime: streamRuntime,
+                        interceptDecisionProvider: decisionProvider,
+                        closeNotifier: closeNotifier,
+                        perMessageDeflateEnabled: perMessageDeflateEnabled
                     ),
                     name: Self.upstreamWSRelayName
                 )
@@ -337,7 +365,11 @@ extension NIOMITMHTTPConnectHandler {
                     NIOMITMWebSocketRelayHandler(
                         peerChannel: upstream,
                         direction: .sent,
-                        captureState: captureState
+                        captureState: captureState,
+                        streamRuntime: streamRuntime,
+                        interceptDecisionProvider: decisionProvider,
+                        closeNotifier: closeNotifier,
+                        perMessageDeflateEnabled: perMessageDeflateEnabled
                     ),
                     name: Self.clientWSRelayName
                 )
