@@ -2282,8 +2282,9 @@ public class AppGroupStorage: @unchecked Sendable {
                     }
                     protocolType = resolvedProtocol
 
-                    let sequence: Int64 = if event.sequence > 0 {
-                        event.sequence
+                    let sequence: Int64
+                    if event.sequence > 0 {
+                        sequence = event.sequence
                     } else {
                         let nextSequence = try Int64.fetchOne(
                             db,
@@ -2294,7 +2295,7 @@ public class AppGroupStorage: @unchecked Sendable {
                             """,
                             arguments: [event.sessionID.uuidString]
                         )
-                        nextSequence ?? 1
+                        sequence = nextSequence ?? 1
                     }
 
                     let payloadText = event.payload.text

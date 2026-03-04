@@ -331,7 +331,7 @@ final class CaptureViewModel: ObservableObject {
 
     // Advanced filters
     @Published var filterContentTypes: Set<ContentTypeFilter> = []
-    @Published var filterNetworkEventTypes: Set<NetworkEventType> = Self.defaultVisibleNetworkEventTypes {
+    @Published var filterNetworkEventTypes: Set<NetworkEventType> = CaptureViewModel.defaultVisibleNetworkEventTypes {
         didSet {
             // Affects both `filteredRequests` and whether grouping is allowed (HTTP-only).
             filteredRequestsCache = nil
