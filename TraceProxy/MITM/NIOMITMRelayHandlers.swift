@@ -15,7 +15,7 @@ import NIOTLS
 import NIOWebSocket
 import TraceCore
 
-final class NIOMITMHTTPClientResponseRelayHandler: ChannelInboundHandler, @unchecked Sendable {
+final class NIOMITMHTTPClientResponseRelayHandler: ChannelInboundHandler, RemovableChannelHandler, @unchecked Sendable {
     typealias InboundIn = HTTPClientResponsePart
 
     let onPart: @Sendable (HTTPClientResponsePart) -> Void
