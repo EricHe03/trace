@@ -274,7 +274,7 @@ struct WebSocketMessageRow: View {
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
-                    .padding(.horizontal, DesignSystem.Spacing.smPlus)
+                    .padding(.horizontal, DesignSystem.Spacing.sm)
                     .padding(.vertical, DesignSystem.Spacing.xs)
                     .background(directionColor(message.direction.color))
                     .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.sm))
@@ -350,7 +350,7 @@ struct WebSocketMessageDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.lg) {
                     // Metadata
-                    GroupBox("Metadata") {
+                    SectionCard(title: "Metadata", systemImage: "info.circle") {
                         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
                             HStack {
                                 Text("Direction:")
@@ -416,7 +416,7 @@ struct WebSocketMessageDetailView: View {
                     }
 
                     // Payload
-                    GroupBox("Payload") {
+                    SectionCard(title: "Payload", systemImage: "text.justify.left") {
                         VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
                             // View mode picker
                             Picker("View Mode", selection: $viewMode) {

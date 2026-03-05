@@ -110,14 +110,11 @@ struct SSEConnectionRow: View {
                     .foregroundStyle(.secondary)
 
                 if connection.isTruncated {
-                    Text("TRUNCATED")
-                        .font(DesignSystem.Badge.font)
-                        .fontWeight(DesignSystem.Badge.fontWeight)
-                        .foregroundStyle(.primary)
-                        .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
-                        .padding(.vertical, DesignSystem.Badge.verticalPadding)
-                        .background(DesignSystem.Colors.warning.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
+                    badge(
+                        text: "TRUNCATED",
+                        background: DesignSystem.Colors.warning.opacity(0.15),
+                        foreground: DesignSystem.Colors.warning
+                    )
                 }
 
                 Spacer()
@@ -147,7 +144,7 @@ struct SSEConnectionRow: View {
         }
         .padding(.vertical, DesignSystem.Spacing.rowVertical)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("SSE connection, \(connection.status.displayName), \(connection.eventCount) events\(connection.isTruncated ? ", truncated" : ""), \(connection.totalBytesString), \(connection.url)")
+        .accessibilityLabel("SSE connection to \(connection.url), \(connection.status.displayName), \(connection.eventCount) events\(connection.isTruncated ? ", truncated" : ""), \(connection.totalBytesString)")
     }
 
     private var statusColor: Color {
