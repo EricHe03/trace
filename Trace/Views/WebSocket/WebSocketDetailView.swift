@@ -13,7 +13,7 @@ import UIKit
 #endif
 
 struct WebSocketDetailView: View {
-    let connection: WebSocketConnection
+    @StateObject private var viewModel: WebSocketDetailViewModel
 
     @State private var searchText = ""
     @State private var filterDirection: WebSocketDirection?
@@ -26,7 +26,13 @@ struct WebSocketDetailView: View {
 
     private let storage = AppGroupStorage.shared
 
+    init(connection: WebSocketConnection) {
+        _viewModel = StateObject(wrappedValue: WebSocketDetailViewModel(connection: connection))
+    }
+
     var body: some View {
+        let connection = viewModel.connection
+
         List {
             // Connection Info Section
             Section("Connection") {
@@ -155,7 +161,7 @@ struct WebSocketDetailView: View {
     }
 
     private var filteredMessages: [WebSocketMessage] {
-        var filtered = connection.messages
+        var filtered = viewModel.connection.messages
 
         // Apply direction filter
         if let direction = filterDirection {
@@ -186,7 +192,7 @@ struct WebSocketDetailView: View {
 
     @ViewBuilder
     private var messagesEmptyState: some View {
-        if connection.messages.isEmpty {
+        if viewModel.connection.messages.isEmpty {
             TraceContentUnavailableView(
                 "No Messages",
                 systemImage: "message",
@@ -227,7 +233,7 @@ struct WebSocketDetailView: View {
     @MainActor
     private func loadReplayRecords() async {
         do {
-            replayRecords = try storage.loadStreamReplayRecords(sessionID: connection.id, limit: 20)
+            replayRecords = try storage.loadStreamReplayRecords(sessionID: viewModel.connection.id, limit: 20)
             replayLoadFailed = false
         } catch {
             replayRecords = []
@@ -237,7 +243,7 @@ struct WebSocketDetailView: View {
 
     private func copyReplaySpec() {
         let spec = StreamReplaySpec(
-            sessionID: connection.id,
+            sessionID: viewModel.connection.id,
             eventIDs: filteredMessages.map(\.id),
             timingMode: .originalTiming
         )

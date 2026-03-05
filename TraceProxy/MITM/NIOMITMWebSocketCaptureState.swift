@@ -16,9 +16,12 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
     )
 
     let lock = NSLock()
+    let connectionID: UUID
     var connection: WebSocketConnection
     var finalized = false
     var streamSequence: Int64 = 0
+    var didLogFirstFrame = false
+    var didLogFirstMessage = false
 
     var sentContinuationType: WebSocketMessageType?
     var sentContinuationPayload = Data()
@@ -28,8 +31,10 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
     let maxContinuationPayloadBytes = 5 * 1024 * 1024
 
     init(url: String, requestHeaders: [TraceHTTPHeader], sessionID: UUID? = nil) {
+        let resolvedID = sessionID ?? UUID()
+        connectionID = resolvedID
         connection = WebSocketConnection(
-            id: sessionID ?? UUID(),
+            id: resolvedID,
             url: url,
             startTime: Date(),
             status: .connecting,
@@ -68,6 +73,13 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard !finalized else { return }
+        if !didLogFirstFrame {
+            didLogFirstFrame = true
+            let payloadBytes = (frame.extensionData?.readableBytes ?? 0) + frame.data.readableBytes
+            ProxyLog.mitm.info(
+                "event=proxy.nio_ws_first_frame outcome=received ws_id=\(self.connection.id.uuidString, privacy: .public) direction=\(direction.rawValue, privacy: .public) opcode=\(frame.opcode.description, privacy: .public) fin=\(frame.fin, privacy: .public) masked=\(frame.maskKey != nil, privacy: .public) payload_bytes=\(payloadBytes, privacy: .public) url=\(self.connection.url, privacy: .private(mask: .hash))"
+            )
+        }
         guard let frameType = websocketMessageType(for: frame.opcode) else { return }
 
         var continuationType = continuationType(for: direction)
@@ -225,6 +237,12 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
                 payloadLength: payload.count
             )
         )
+        if !didLogFirstMessage {
+            didLogFirstMessage = true
+            ProxyLog.mitm.info(
+                "event=proxy.nio_ws_first_message outcome=captured ws_id=\(self.connection.id.uuidString, privacy: .public) direction=\(direction.rawValue, privacy: .public) type=\(type.rawValue, privacy: .public) payload_bytes=\(payload.count, privacy: .public) url=\(self.connection.url, privacy: .private(mask: .hash))"
+            )
+        }
         streamSequence += 1
         let payloadText = type == .text ? String(data: payload, encoding: .utf8) : nil
         let streamEvent = StreamEvent(

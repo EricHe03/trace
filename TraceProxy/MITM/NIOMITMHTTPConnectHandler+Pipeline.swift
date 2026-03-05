@@ -395,11 +395,22 @@ extension NIOMITMHTTPConnectHandler {
             .whenComplete { [weak self] result in
                 switch result {
                 case .success:
+                    ProxyLog.mitm.info(
+                        "event=proxy.nio_ws_relay_install outcome=success ws_id=\(captureState.connectionID.uuidString, privacy: .public)"
+                    )
+                    self?.eventLog?.append(
+                        type: "proxy_nio_ws_relay_install",
+                        msg: "outcome=success mode=\(self?.ingressModeLabel ?? "unknown") id=\(self?.connectionID ?? "unknown") ws_id=\(captureState.connectionID.uuidString)"
+                    )
                     self?.state = .tunnelEstablished
                 case let .failure(error):
                     captureState.markFailed()
                     ProxyLog.mitm.warning(
-                        "event=proxy.nio_ws_relay_install outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                        "event=proxy.nio_ws_relay_install outcome=failure ws_id=\(captureState.connectionID.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                    )
+                    self?.eventLog?.append(
+                        type: "proxy_nio_ws_relay_install",
+                        msg: "outcome=failure mode=\(self?.ingressModeLabel ?? "unknown") id=\(self?.connectionID ?? "unknown") ws_id=\(captureState.connectionID.uuidString) error=\(error.localizedDescription)"
                     )
                     self?.state = .closed
                     upstream.close(promise: nil)

@@ -612,8 +612,9 @@ extension NIOMITMHTTPConnectHandler {
             sendResponse(status: .badRequest, body: "Invalid WebSocket request headers", closeAfterSend: true, context: context)
             return
         }
+        let normalizedURL = normalizedWebSocketURL(from: outboundContext.url)
         let wsCapture = NIOMITMWebSocketCaptureState(
-            url: normalizedWebSocketURL(from: outboundContext.url),
+            url: normalizedURL,
             requestHeaders: traceHeaders(from: requestHeaders),
             sessionID: streamRuntime?.snapshot().id
         )
@@ -683,6 +684,13 @@ extension NIOMITMHTTPConnectHandler {
                                     self.isWebSocketUpgrade(headers: head.headers)
                                 if isUpgrade {
                                     let perMessageDeflateEnabled = self.webSocketPerMessageDeflateEnabled(headers: head.headers)
+                                    ProxyLog.mitm.info(
+                                        "event=proxy.nio_ws_upgrade outcome=accepted ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) permessage_deflate=\(perMessageDeflateEnabled, privacy: .public)"
+                                    )
+                                    self.eventLog?.append(
+                                        type: "proxy_nio_ws_upgrade",
+                                        msg: "outcome=accepted mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(normalizedURL)) permessage_deflate=\(perMessageDeflateEnabled)"
+                                    )
                                     wsCapture.markOpen(
                                         responseHeaders: self.captureConfigProvider().captureHeaders
                                             ? self.traceHeaders(from: head.headers)
@@ -707,6 +715,13 @@ extension NIOMITMHTTPConnectHandler {
                                     return
                                 }
 
+                                ProxyLog.mitm.info(
+                                    "event=proxy.nio_ws_upgrade outcome=rejected ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) status=\(Int(head.status.code), privacy: .public)"
+                                )
+                                self.eventLog?.append(
+                                    type: "proxy_nio_ws_upgrade",
+                                    msg: "outcome=rejected mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(normalizedURL)) status=\(head.status.code)"
+                                )
                                 let responseBodyData = self.byteBufferToData(responseBody)
                                 let captureConfig = self.captureConfigProvider()
                                 let responseHeadersTrace = self.traceHeaders(from: head.headers)
