@@ -136,7 +136,7 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         let frame = unwrapInboundIn(data)
         guard let streamRuntime, let interceptDecisionProvider else {
             captureState.recordFrame(frame, direction: direction)
-            forward(frame, context: context)
+            forward(prepareInboundFrameForForwarding(frame), context: context)
             return
         }
 
@@ -188,7 +188,7 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
 
         guard let messageType = websocketMessageType(for: frame.opcode) else {
             captureState.recordFrame(frame, direction: direction)
-            forward(frame, context: context)
+            forward(prepareInboundFrameForForwarding(frame), context: context)
             return context.eventLoop.makeSucceededVoidFuture()
         }
 
@@ -246,7 +246,7 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
 
         guard let messageType = websocketMessageType(for: frame.opcode) else {
             captureState.recordFrame(frame, direction: direction)
-            forward(frame, context: context)
+            forward(prepareInboundFrameForForwarding(frame), context: context)
             return context.eventLoop.makeSucceededVoidFuture()
         }
 
@@ -366,7 +366,7 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
     ) -> EventLoopFuture<Void> {
         guard let messageType = websocketMessageType(for: frame.opcode) else {
             captureState.recordFrame(frame, direction: direction)
-            forward(frame, context: context)
+            forward(prepareInboundFrameForForwarding(frame), context: context)
             return context.eventLoop.makeSucceededVoidFuture()
         }
 
@@ -448,7 +448,7 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         switch decision {
         case .forward:
             captureState.recordFrame(originalFrame, direction: direction)
-            forward(originalFrame, context: context)
+            forward(prepareInboundFrameForForwarding(originalFrame), context: context)
             return context.eventLoop.makeSucceededVoidFuture()
 
         case let .modify(mutation):
@@ -493,7 +493,7 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
 
         case let .inject(mutations):
             captureState.recordFrame(originalFrame, direction: direction)
-            let baseFuture = forwardFuture(originalFrame, context: context)
+            let baseFuture = forwardFuture(prepareInboundFrameForForwarding(originalFrame), context: context)
             return mutations.reduce(baseFuture) { partial, mutation in
                 partial.flatMap {
                     let injectedType: WebSocketMessageType = mutation.payload?.text != nil ? .text : .binary
@@ -527,7 +527,7 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
 
         case let .replay(spec):
             captureState.recordFrame(originalFrame, direction: direction)
-            let baseFuture = forwardFuture(originalFrame, context: context)
+            let baseFuture = forwardFuture(prepareInboundFrameForForwarding(originalFrame), context: context)
             let maskKey = direction == .sent ? originalFrame.maskKey : nil
             return applyReplayDecision(
                 spec: spec,
@@ -652,7 +652,7 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         frames.reduce(context.eventLoop.makeSucceededVoidFuture()) { partial, frame in
             partial.flatMap {
                 self.captureState.recordFrame(frame, direction: self.direction)
-                return self.forwardFuture(frame, context: context)
+                return self.forwardFuture(self.prepareInboundFrameForForwarding(frame), context: context)
             }
         }
     }
@@ -738,6 +738,16 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         let promise = peerChannel.eventLoop.makePromise(of: Void.self)
         peerChannel.writeAndFlush(frame, promise: promise)
         return promise.futureResult.hop(to: context.eventLoop)
+    }
+
+    private func prepareInboundFrameForForwarding(_ frame: WebSocketFrame) -> WebSocketFrame {
+        guard direction == .sent, frame.maskKey != nil else {
+            return frame
+        }
+        var forwarded = frame
+        forwarded.extensionData = frame.unmaskedExtensionData
+        forwarded.data = frame.unmaskedData
+        return forwarded
     }
 
     private func payloadData(from frame: WebSocketFrame) -> Data {
