@@ -1515,7 +1515,7 @@ public actor RequestInterceptor {
 
             switch action {
             case .drop:
-                return .block
+                return .drop
             case .continueAndDisable:
                 await breakpointManager.setEnabled(false)
             case .continue:

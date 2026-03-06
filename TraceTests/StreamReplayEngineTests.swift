@@ -141,6 +141,44 @@ final class StreamReplayEngineTests: XCTestCase {
         XCTAssertEqual(decoded, input)
     }
 
+    func testReplayWebSocketFramesEncodePerMessageDeflateWhenMetadataIsTrue() throws {
+        let original = Data("hello".utf8)
+        guard WebSocketPerMessageDeflateCodec.encode(original) != nil else {
+            throw XCTSkip("zlib/permessage-deflate codec unavailable in this environment")
+        }
+
+        let sessionID = UUID()
+        try seedWebSocketSession(sessionID: sessionID)
+
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        var event = makeWebSocketEvent(
+            sessionID: sessionID,
+            sequence: 1,
+            timestamp: timestamp,
+            text: "hello"
+        )
+        event.metadata["permessage_deflate"] = "true"
+        try storage.appendStreamEvent(event)
+
+        let spec = StreamReplaySpec(
+            sessionID: sessionID,
+            eventIDs: [event.id],
+            timingMode: .step
+        )
+        let frames = try loadFrames(spec: spec, direction: .sent)
+        XCTAssertEqual(frames.count, 1)
+
+        let frame = frames[0].frame
+        XCTAssertEqual(frame.opcode, .text)
+        XCTAssertTrue(frame.rsv1)
+
+        let wirePayload = framePayloadData(frame)
+        guard let decoded = WebSocketPerMessageDeflateCodec.decode(wirePayload) else {
+            return XCTFail("Expected replay payload to decode")
+        }
+        XCTAssertEqual(decoded, original)
+    }
+
     private func loadFrames(
         spec: StreamReplaySpec,
         direction: StreamEventDirection
@@ -157,6 +195,11 @@ final class StreamReplayEngineTests: XCTestCase {
                 eventLoop: resources.eventLoopGroup.next()
             )
             .wait()
+    }
+
+    private func framePayloadData(_ frame: WebSocketFrame) -> Data {
+        var payload = frame.unmaskedData
+        return payload.readData(length: payload.readableBytes) ?? Data()
     }
 
     private func seedWebSocketSession(sessionID: UUID) throws {

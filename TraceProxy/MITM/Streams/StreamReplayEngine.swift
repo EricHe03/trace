@@ -105,12 +105,22 @@ final class StreamReplayEngine: @unchecked Sendable {
                 let payload = event.payload.binary
                     ?? event.payload.text?.data(using: .utf8)
                     ?? Data()
-                var buffer = allocator.buffer(capacity: payload.count)
-                if !payload.isEmpty {
-                    buffer.writeBytes(payload)
+
+                let wantsPerMessageDeflate = event.metadata["permessage_deflate"] == "true"
+                let canPerMessageDeflate = opcode == .text || opcode == .binary
+                var useRSV1 = wantsPerMessageDeflate && canPerMessageDeflate
+                var wirePayload = payload
+                if useRSV1, let encoded = WebSocketPerMessageDeflateCodec.encode(payload) {
+                    wirePayload = encoded
+                } else {
+                    useRSV1 = false
                 }
 
-                let useRSV1 = event.metadata["permessage_deflate"] == "true"
+                var buffer = allocator.buffer(capacity: wirePayload.count)
+                if !wirePayload.isEmpty {
+                    buffer.writeBytes(wirePayload)
+                }
+
                 let frame = WebSocketFrame(
                     fin: true,
                     rsv1: useRSV1,
