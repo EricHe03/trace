@@ -746,7 +746,7 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
     ) -> EventLoopFuture<Void> {
         frames.reduce(context.eventLoop.makeSucceededVoidFuture()) { partial, frame in
             partial.flatMap {
-                return self.forwardFuture(self.prepareInboundFrameForForwarding(frame), context: context)
+                self.forwardFuture(self.prepareInboundFrameForForwarding(frame), context: context)
             }
         }
     }

@@ -1164,8 +1164,7 @@ extension NIOMITMHTTPConnectHandler {
                 let responseContentType = self.responseHeaderValue(name: "content-type", in: responseHeadersTrace)
                 if sseCapture == nil,
                    let responseContentType,
-                   responseContentType.lowercased().contains("text/event-stream")
-                {
+                   responseContentType.lowercased().contains("text/event-stream") {
                     self.annotateCaptureMetadata(&capturedRequest)
                     sseCapture = NIOMITMSSECaptureState(
                         baseRequest: capturedRequest,
