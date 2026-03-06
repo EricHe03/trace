@@ -397,11 +397,13 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
         shouldCloseAfterForwardingResponse = false
         state = .forwardingHTTPRequest
         requestInterceptionFuture(
-            flowID: flowID,
-            requestURL: resolvedURL,
-            methodToken: head.method.rawValue,
-            requestHeaders: dictionary(from: head.headers),
-            requestBodyData: requestBodyData,
+            RequestInterceptionContext(
+                flowID: flowID,
+                requestURL: resolvedURL,
+                methodToken: head.method.rawValue,
+                requestHeaders: dictionary(from: head.headers),
+                requestBodyData: requestBodyData
+            ),
             fallbackRequest: baseRequest,
             eventLoop: context.eventLoop
         ).whenComplete { [weak self] result in
