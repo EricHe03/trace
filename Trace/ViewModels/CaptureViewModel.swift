@@ -258,6 +258,13 @@ struct SavedFilterPreset: Codable, Identifiable, Equatable {
 final class CaptureViewModel: ObservableObject {
     // Use App Group storage for VPN-captured requests
     private let storage = AppGroupStorage.shared
+    private static let defaultVisibleNetworkEventTypes: Set<NetworkEventType> = {
+        var defaults = Set(NetworkEventType.allCases)
+        defaults.remove(.tcp)
+        defaults.remove(.udp)
+        return defaults
+    }()
+
     private struct FilterCacheKey: Hashable {
         let requestsVersion: Int
         let favoritesVersion: Int
@@ -324,7 +331,7 @@ final class CaptureViewModel: ObservableObject {
 
     // Advanced filters
     @Published var filterContentTypes: Set<ContentTypeFilter> = []
-    @Published var filterNetworkEventTypes: Set<NetworkEventType> = Set(NetworkEventType.allCases) {
+    @Published var filterNetworkEventTypes: Set<NetworkEventType> = CaptureViewModel.defaultVisibleNetworkEventTypes {
         didSet {
             // Affects both `filteredRequests` and whether grouping is allowed (HTTP-only).
             filteredRequestsCache = nil
@@ -1060,8 +1067,8 @@ final class CaptureViewModel: ObservableObject {
         if groupingMode != .none && filterNetworkEventTypes == Set([.http]) {
             return false
         }
-        // Otherwise, if it's not all types, it's user-set
-        return filterNetworkEventTypes.count != NetworkEventType.allCases.count
+        // Otherwise, if it differs from the default visible set, it's user-set.
+        return filterNetworkEventTypes != Self.defaultVisibleNetworkEventTypes
     }
 
     var hasActiveFilters: Bool {
@@ -1090,7 +1097,7 @@ final class CaptureViewModel: ObservableObject {
     }
 
     var hasAdvancedFilters: Bool {
-        !filterContentTypes.isEmpty || filterNetworkEventTypes.count != NetworkEventType.allCases.count ||
+        !filterContentTypes.isEmpty || filterNetworkEventTypes != Self.defaultVisibleNetworkEventTypes ||
             filterMinSize != nil || filterMaxSize != nil ||
             filterMinDuration != nil || filterMaxDuration != nil || filterRegexPattern != nil ||
             filterResponseTime != nil || filterShowDuplicatesOnly || filterShowErrorsOnly
@@ -1427,7 +1434,7 @@ final class CaptureViewModel: ObservableObject {
         filterFavoritesOnly = false
         // Clear advanced filters
         filterContentTypes = []
-        filterNetworkEventTypes = Set(NetworkEventType.allCases)
+        filterNetworkEventTypes = Self.defaultVisibleNetworkEventTypes
         filterMinSize = nil
         filterMaxSize = nil
         filterMinDuration = nil
@@ -1443,7 +1450,7 @@ final class CaptureViewModel: ObservableObject {
 
     func clearAdvancedFilters() {
         filterContentTypes = []
-        filterNetworkEventTypes = Set(NetworkEventType.allCases)
+        filterNetworkEventTypes = Self.defaultVisibleNetworkEventTypes
         filterMinSize = nil
         filterMaxSize = nil
         filterMinDuration = nil
@@ -1491,7 +1498,7 @@ final class CaptureViewModel: ObservableObject {
         filterDomains = preset.filterDomains
         filterFavoritesOnly = preset.filterFavoritesOnly
         filterContentTypes = Set(preset.filterContentTypes.compactMap { ContentTypeFilter(rawValue: $0) })
-        filterNetworkEventTypes = preset.filterNetworkEventTypes.map { Set($0.compactMap { NetworkEventType(rawValue: $0) }) } ?? Set(NetworkEventType.allCases)
+        filterNetworkEventTypes = preset.filterNetworkEventTypes.map { Set($0.compactMap { NetworkEventType(rawValue: $0) }) } ?? Self.defaultVisibleNetworkEventTypes
         filterMinSize = preset.filterMinSize
         filterMaxSize = preset.filterMaxSize
         filterMinDuration = preset.filterMinDuration

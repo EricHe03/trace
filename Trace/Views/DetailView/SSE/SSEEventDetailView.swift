@@ -12,6 +12,13 @@ import TraceUI
 struct SSEEventDetailView: View {
     let event: ServerSentEvent
     @Environment(\.dismiss) private var dismiss
+    @State private var viewMode: ViewMode = .text
+
+    enum ViewMode: String, CaseIterable {
+        case text = "Text"
+        case hex = "Hex"
+        case raw = "Raw"
+    }
 
     var body: some View {
         NavigationStack {
@@ -75,10 +82,30 @@ struct SSEEventDetailView: View {
                     }
 
                     SectionCard(title: "Data", systemImage: "text.justify.left") {
-                        Text(event.data)
-                            .font(.system(.body, design: .monospaced))
+                        VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
+                            Picker("View Mode", selection: $viewMode) {
+                                ForEach(ViewMode.allCases, id: \.self) { mode in
+                                    Text(mode.rawValue).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+
+                            Group {
+                                switch viewMode {
+                                case .text:
+                                    Text(event.data)
+                                        .font(.system(.body, design: .monospaced))
+                                case .hex:
+                                    Text(eventDataHex)
+                                        .font(.system(.caption, design: .monospaced))
+                                case .raw:
+                                    Text(String(bytes: eventData, encoding: .utf8) ?? "")
+                                        .font(.system(.caption, design: .monospaced))
+                                }
+                            }
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
                 .padding()
@@ -93,5 +120,13 @@ struct SSEEventDetailView: View {
                 }
             }
         }
+    }
+
+    private var eventData: Data {
+        Data(event.data.utf8)
+    }
+
+    private var eventDataHex: String {
+        eventData.map { String(format: "%02x", $0) }.joined(separator: " ")
     }
 }

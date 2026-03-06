@@ -833,6 +833,7 @@ extension MockResponse: Equatable {}
 public enum ScriptType: String, Codable, CaseIterable, Sendable {
     case request = "Request"
     case response = "Response"
+    case stream = "Stream"
     case both = "Both"
 
     public var displayName: String {
@@ -843,6 +844,7 @@ public enum ScriptType: String, Codable, CaseIterable, Sendable {
         switch self {
         case .request: "Runs on outgoing requests"
         case .response: "Runs on incoming responses"
+        case .stream: "Runs on stream events (SSE/WebSocket)"
         case .both: "Runs on both requests and responses"
         }
     }
@@ -998,12 +1000,14 @@ extension Script: Equatable {
 public enum BreakpointType: String, Codable, CaseIterable, Equatable, Sendable {
     case request
     case response
+    case stream
     case both
 
     public var displayName: String {
         switch self {
         case .request: "Request"
         case .response: "Response"
+        case .stream: "Stream Event"
         case .both: "Request & Response"
         }
     }
@@ -1067,6 +1071,12 @@ public struct BreakpointConfiguration: Codable, Equatable, Sendable {
         guard enabled else { return false }
         guard breakpointType == .response || breakpointType == .both else { return false }
         if !statusCodes.isEmpty && !statusCodes.contains(statusCode) { return false }
+        return matchesUrl(url)
+    }
+
+    public func shouldBreakOnStream(url: String) -> Bool {
+        guard enabled else { return false }
+        guard breakpointType == .stream else { return false }
         return matchesUrl(url)
     }
 

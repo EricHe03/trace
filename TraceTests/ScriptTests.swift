@@ -65,20 +65,23 @@ final class ScriptTests: XCTestCase {
     func testScriptTypeDisplayName() {
         XCTAssertEqual(ScriptType.request.displayName, "Request")
         XCTAssertEqual(ScriptType.response.displayName, "Response")
+        XCTAssertEqual(ScriptType.stream.displayName, "Stream")
         XCTAssertEqual(ScriptType.both.displayName, "Both")
     }
 
     func testScriptTypeDescription() {
         XCTAssertEqual(ScriptType.request.description, "Runs on outgoing requests")
         XCTAssertEqual(ScriptType.response.description, "Runs on incoming responses")
+        XCTAssertEqual(ScriptType.stream.description, "Runs on stream events (SSE/WebSocket)")
         XCTAssertEqual(ScriptType.both.description, "Runs on both requests and responses")
     }
 
     func testScriptTypeCaseIterable() {
         let allTypes = ScriptType.allCases
-        XCTAssertEqual(allTypes.count, 3)
+        XCTAssertEqual(allTypes.count, 4)
         XCTAssertTrue(allTypes.contains(.request))
         XCTAssertTrue(allTypes.contains(.response))
+        XCTAssertTrue(allTypes.contains(.stream))
         XCTAssertTrue(allTypes.contains(.both))
     }
 

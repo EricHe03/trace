@@ -61,6 +61,15 @@ final class CaptureViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.hasActiveFilters)
     }
 
+    func testNetworkEventTypeDefaultsHideTCPAndUDP() {
+        XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.tcp))
+        XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.udp))
+        XCTAssertTrue(viewModel.filterNetworkEventTypes.contains(.http))
+        XCTAssertTrue(viewModel.filterNetworkEventTypes.contains(.webSocket))
+        XCTAssertTrue(viewModel.filterNetworkEventTypes.contains(.sse))
+        XCTAssertFalse(viewModel.hasAdvancedFilters)
+    }
+
     func testHasActiveFiltersWithMethod() {
         viewModel.filterMethod = .get
         XCTAssertTrue(viewModel.hasActiveFilters)
@@ -102,6 +111,7 @@ final class CaptureViewModelTests: XCTestCase {
         viewModel.filterStatusCode = 200
         viewModel.filterDomains = ["example.com"]
         viewModel.filterFavoritesOnly = true
+        viewModel.filterNetworkEventTypes = [.http, .tcp]
 
         viewModel.clearFilters()
 
@@ -109,6 +119,21 @@ final class CaptureViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.filterStatusCode)
         XCTAssertTrue(viewModel.filterDomains.isEmpty)
         XCTAssertFalse(viewModel.filterFavoritesOnly)
+        XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.tcp))
+        XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.udp))
+        XCTAssertTrue(viewModel.filterNetworkEventTypes.contains(.http))
+    }
+
+    func testClearAdvancedFiltersResetsNetworkEventTypeDefaults() {
+        viewModel.filterNetworkEventTypes = [.http, .tcp, .udp]
+        viewModel.filterContentTypes = [.json]
+
+        viewModel.clearAdvancedFilters()
+
+        XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.tcp))
+        XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.udp))
+        XCTAssertTrue(viewModel.filterNetworkEventTypes.contains(.http))
+        XCTAssertTrue(viewModel.filterContentTypes.isEmpty)
     }
 
     // MARK: - Domain Filter Tests

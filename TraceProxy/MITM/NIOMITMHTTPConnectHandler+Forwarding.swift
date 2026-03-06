@@ -229,7 +229,7 @@ extension NIOMITMHTTPConnectHandler {
         if isWebSocketUpgrade(headers: headers) {
             return .webSocket
         }
-        if isSSERequest(headers: headers) {
+        if Self.isSSERequest(headers: headers) {
             return .sse
         }
         return .none
@@ -241,6 +241,70 @@ extension NIOMITMHTTPConnectHandler {
         outboundHeaders: HTTPHeaders,
         context: ChannelHandlerContext
     ) {
+        streamInterceptionV2EnabledFuture(eventLoop: context.eventLoop).whenComplete { [weak self] result in
+            context.eventLoop.execute {
+                guard let self else { return }
+                let useV2 = (try? result.get()) ?? false
+                guard useV2 else {
+                    self.forwardSSEStreamLegacy(
+                        outboundContext,
+                        requestHead: requestHead,
+                        outboundHeaders: outboundHeaders,
+                        context: context
+                    )
+                    return
+                }
+
+                let flowController = StreamFlowController(connectHandler: self)
+                flowController.forwardSSE(
+                    outboundContext,
+                    requestHead: requestHead,
+                    outboundHeaders: outboundHeaders,
+                    context: context
+                )
+            }
+        }
+    }
+
+    func forwardWebSocketStream(
+        _ outboundContext: OutboundRequestContext,
+        requestHead: HTTPRequestHead,
+        outboundHeaders: HTTPHeaders,
+        context: ChannelHandlerContext
+    ) {
+        streamInterceptionV2EnabledFuture(eventLoop: context.eventLoop).whenComplete { [weak self] result in
+            context.eventLoop.execute {
+                guard let self else { return }
+                let useV2 = (try? result.get()) ?? false
+                guard useV2 else {
+                    self.forwardWebSocketStreamLegacy(
+                        outboundContext,
+                        requestHead: requestHead,
+                        outboundHeaders: outboundHeaders,
+                        context: context
+                    )
+                    return
+                }
+
+                let flowController = StreamFlowController(connectHandler: self)
+                flowController.forwardWebSocket(
+                    outboundContext,
+                    requestHead: requestHead,
+                    outboundHeaders: outboundHeaders,
+                    context: context
+                )
+            }
+        }
+    }
+
+    func forwardSSEStreamLegacy(
+        _ outboundContext: OutboundRequestContext,
+        requestHead: HTTPRequestHead,
+        outboundHeaders: HTTPHeaders,
+        context: ChannelHandlerContext,
+        streamRuntime: StreamSessionRuntime? = nil,
+        openDecision _: StreamInterceptionDecision? = nil
+    ) {
         guard let targetURL = URL(string: outboundContext.url),
               let targetHost = targetURL.host
         else {
@@ -248,18 +312,24 @@ extension NIOMITMHTTPConnectHandler {
             return
         }
 
-        let targetPort = targetURL.port ?? ((targetURL.scheme?.lowercased() == "https") ? 443 : 80)
+        let targetPort = targetURL.port ?? ((targetURL.scheme?.lowercased() == "https" || targetURL.scheme?.lowercased() == "wss") ? 443 : 80)
         var requestHeaders = sanitizedStreamingRequestHeaders(from: outboundHeaders)
         requestHeaders.remove(name: "Accept-Encoding")
         requestHeaders.replaceOrAdd(name: "Accept-Encoding", value: "identity")
-        let requestBuffer = makeRawStreamingRequestBuffer(
+        guard let streamingRequestHead = makeStreamingUpstreamRequestHead(
             url: targetURL,
-            method: outboundContext.methodToken,
-            headers: requestHeaders,
-            body: outboundContext.body,
-            allocator: context.channel.allocator
+            methodToken: outboundContext.methodToken,
+            headers: requestHeaders
+        ) else {
+            sendResponse(status: .badRequest, body: "Invalid SSE request headers", closeAfterSend: true, context: context)
+            return
+        }
+        var sseBaseRequest = outboundContext.requestSnapshot
+        annotateCaptureMetadata(&sseBaseRequest)
+        let sseCapture = NIOMITMSSECaptureState(
+            baseRequest: sseBaseRequest,
+            sessionID: streamRuntime?.snapshot().id
         )
-        let sseCapture = NIOMITMSSECaptureState(baseRequest: outboundContext.requestSnapshot)
         let sendableContext = NIOMITMUncheckedSendableBox(value: context)
 
         let bootstrap = NIOTSConnectionBootstrap(group: group)
@@ -277,6 +347,8 @@ extension NIOMITMHTTPConnectHandler {
                     self.upstreamChannel = upstream
                     var closeAfterSend = false
                     var responseHeadSeen = false
+                    let sseInterceptionRuntime = SSEInterceptionRuntime()
+                    var bodyRelayChain = context.eventLoop.makeSucceededVoidFuture()
 
                     let onPart: @Sendable (HTTPClientResponsePart) -> Void = { [weak self, weak upstream] part in
                         let context = sendableContext.value
@@ -289,32 +361,107 @@ extension NIOMITMHTTPConnectHandler {
                                 closeAfterSend = self.shouldCloseConnection(requestHead: requestHead, responseHeaders: head.headers)
                                 sseCapture.beginResponse(
                                     head: head,
-                                    captureConfig: self.captureConfigProvider()
+                                    captureConfig: self.captureConfigProvider(),
+                                    onRequestCaptured: self.onRequestCaptured
                                 )
+                                if let streamRuntime {
+                                    streamRuntime.updateResponseHeaders(
+                                        self.captureConfigProvider().captureHeaders
+                                            ? self.traceHeaders(from: head.headers)
+                                            : []
+                                    )
+                                    streamRuntime.setStatus(.streaming)
+                                    self.persistStreamRuntimeSnapshot(streamRuntime)
+                                }
                                 var forwardedHead = head
                                 forwardedHead.headers.remove(name: "Proxy-Connection")
                                 context.write(self.wrapOutboundOut(.head(forwardedHead)), promise: nil)
                             case let .body(buffer):
                                 let chunkData = self.byteBufferToData(buffer)
-                                sseCapture.consume(
-                                    bodyChunk: chunkData,
-                                    captureConfig: self.captureConfigProvider(),
-                                    onRequestCaptured: self.onRequestCaptured
-                                )
-                                context.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
-                            case let .end(trailers):
-                                sseCapture.finish(
-                                    succeeded: true,
-                                    captureConfig: self.captureConfigProvider(),
-                                    onRequestCaptured: self.onRequestCaptured
-                                )
-                                let promise = context.eventLoop.makePromise(of: Void.self)
-                                promise.futureResult.whenComplete { _ in
-                                    self.upstreamChannel = nil
-                                    upstream.close(promise: nil)
-                                    self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
+                                guard let streamRuntime else {
+                                    sseCapture.consume(
+                                        bodyChunk: chunkData,
+                                        captureConfig: self.captureConfigProvider(),
+                                        onRequestCaptured: self.onRequestCaptured
+                                    )
+                                    context.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+                                    return
                                 }
-                                context.writeAndFlush(self.wrapOutboundOut(.end(trailers)), promise: promise)
+
+                                bodyRelayChain = bodyRelayChain.flatMap {
+                                    sseInterceptionRuntime.interceptChunk(
+                                        chunkData,
+                                        runtime: streamRuntime,
+                                        decisionProvider: { [weak self] session, event, eventLoop in
+                                            guard let self else {
+                                                return eventLoop.makeSucceededFuture(.forward)
+                                            }
+                                            return self.streamEventInterceptionFuture(
+                                                session: session,
+                                                event: event,
+                                                eventLoop: eventLoop
+                                            )
+                                        },
+                                        replayEngine: .shared,
+                                        eventLoop: context.eventLoop
+                                    )
+                                }.flatMap { forwardedChunk in
+                                    sseCapture.consume(
+                                        bodyChunk: forwardedChunk,
+                                        captureConfig: self.captureConfigProvider(),
+                                        onRequestCaptured: self.onRequestCaptured
+                                    )
+                                    guard !forwardedChunk.isEmpty else {
+                                        return context.eventLoop.makeSucceededVoidFuture()
+                                    }
+                                    let forwardedBuffer = self.byteBuffer(
+                                        from: forwardedChunk,
+                                        allocator: context.channel.allocator
+                                    )
+                                    let promise = context.eventLoop.makePromise(of: Void.self)
+                                    context.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(forwardedBuffer))), promise: promise)
+                                    return promise.futureResult
+                                }
+                                bodyRelayChain.whenFailure { [weak self] error in
+                                    guard let self else { return }
+                                    self.reportMITMFailure(reason: self.classifyMITMFailure(error))
+                                    self.completeStreamRuntime(
+                                        streamRuntime,
+                                        status: .failed,
+                                        reason: error.localizedDescription,
+                                        eventLoop: context.eventLoop
+                                    )
+                                }
+                            case let .end(trailers):
+                                bodyRelayChain.flatMap {
+                                    sseCapture.finish(
+                                        succeeded: true,
+                                        captureConfig: self.captureConfigProvider(),
+                                        onRequestCaptured: self.onRequestCaptured
+                                    )
+                                    self.completeStreamRuntime(
+                                        streamRuntime,
+                                        status: .closed,
+                                        reason: nil,
+                                        eventLoop: context.eventLoop
+                                    )
+                                    let promise = context.eventLoop.makePromise(of: Void.self)
+                                    promise.futureResult.whenComplete { _ in
+                                        self.upstreamChannel = nil
+                                        upstream.close(promise: nil)
+                                        self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
+                                    }
+                                    context.writeAndFlush(self.wrapOutboundOut(.end(trailers)), promise: promise)
+                                    return promise.futureResult
+                                }.whenFailure { error in
+                                    self.reportMITMFailure(reason: self.classifyMITMFailure(error))
+                                    self.completeStreamRuntime(
+                                        streamRuntime,
+                                        status: .failed,
+                                        reason: error.localizedDescription,
+                                        eventLoop: context.eventLoop
+                                    )
+                                }
                             }
                         }
                     }
@@ -331,6 +478,12 @@ extension NIOMITMHTTPConnectHandler {
                                 succeeded: false,
                                 captureConfig: self.captureConfigProvider(),
                                 onRequestCaptured: self.onRequestCaptured
+                            )
+                            self.completeStreamRuntime(
+                                streamRuntime,
+                                status: .failed,
+                                reason: error.localizedDescription,
+                                eventLoop: context.eventLoop
                             )
                             self.sendResponse(
                                 status: .badGateway,
@@ -352,6 +505,12 @@ extension NIOMITMHTTPConnectHandler {
                                 captureConfig: self.captureConfigProvider(),
                                 onRequestCaptured: self.onRequestCaptured
                             )
+                            self.completeStreamRuntime(
+                                streamRuntime,
+                                status: responseHeadSeen ? .closed : .failed,
+                                reason: responseHeadSeen ? nil : "upstream_inactive",
+                                eventLoop: context.eventLoop
+                            )
                             self.state = .closed
                             context.close(promise: nil)
                         }
@@ -362,9 +521,22 @@ extension NIOMITMHTTPConnectHandler {
                         onResponsePart: onPart,
                         onError: onError,
                         onInactive: onInactive
-                    ).flatMap {
-                        self.writeAndFlush(requestBuffer, to: upstream)
-                    }.whenComplete { [weak self] pipelineResult in
+                    )
+                    .flatMap {
+                        self.installStreamingUpstreamTLSIfNeeded(
+                            on: upstream,
+                            url: targetURL,
+                            serverHostname: targetHost
+                        )
+                    }
+                    .flatMap {
+                        self.writeAndFlushStreamingUpstreamRequest(
+                            head: streamingRequestHead,
+                            body: outboundContext.body,
+                            to: upstream
+                        )
+                    }
+                    .whenComplete { [weak self] pipelineResult in
                         guard let self else { return }
                         if case let .failure(error) = pipelineResult {
                             self.reportMITMFailure(reason: self.classifyMITMFailure(error))
@@ -375,6 +547,12 @@ extension NIOMITMHTTPConnectHandler {
                                 succeeded: false,
                                 captureConfig: self.captureConfigProvider(),
                                 onRequestCaptured: self.onRequestCaptured
+                            )
+                            self.completeStreamRuntime(
+                                streamRuntime,
+                                status: .failed,
+                                reason: error.localizedDescription,
+                                eventLoop: context.eventLoop
                             )
                             self.sendResponse(
                                 status: .badGateway,
@@ -392,6 +570,12 @@ extension NIOMITMHTTPConnectHandler {
                     ProxyLog.mitm.warning(
                         "event=proxy.nio_sse_connect outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                     )
+                    self.completeStreamRuntime(
+                        streamRuntime,
+                        status: .failed,
+                        reason: error.localizedDescription,
+                        eventLoop: context.eventLoop
+                    )
                     self.sendResponse(
                         status: .badGateway,
                         body: "Failed to establish SSE upstream",
@@ -403,11 +587,13 @@ extension NIOMITMHTTPConnectHandler {
         }
     }
 
-    func forwardWebSocketStream(
+    func forwardWebSocketStreamLegacy(
         _ outboundContext: OutboundRequestContext,
         requestHead: HTTPRequestHead,
         outboundHeaders: HTTPHeaders,
-        context: ChannelHandlerContext
+        context: ChannelHandlerContext,
+        streamRuntime: StreamSessionRuntime? = nil,
+        openDecision _: StreamInterceptionDecision? = nil
     ) {
         guard let targetURL = URL(string: outboundContext.url),
               let targetHost = targetURL.host
@@ -416,18 +602,21 @@ extension NIOMITMHTTPConnectHandler {
             return
         }
 
-        let targetPort = targetURL.port ?? ((targetURL.scheme?.lowercased() == "https") ? 443 : 80)
+        let targetPort = targetURL.port ?? ((targetURL.scheme?.lowercased() == "https" || targetURL.scheme?.lowercased() == "wss") ? 443 : 80)
         let requestHeaders = sanitizedStreamingRequestHeaders(from: outboundHeaders)
-        let requestBuffer = makeRawStreamingRequestBuffer(
+        guard let streamingRequestHead = makeStreamingUpstreamRequestHead(
             url: targetURL,
-            method: outboundContext.methodToken,
-            headers: requestHeaders,
-            body: outboundContext.body,
-            allocator: context.channel.allocator
-        )
+            methodToken: outboundContext.methodToken,
+            headers: requestHeaders
+        ) else {
+            sendResponse(status: .badRequest, body: "Invalid WebSocket request headers", closeAfterSend: true, context: context)
+            return
+        }
+        let normalizedURL = normalizedWebSocketURL(from: outboundContext.url)
         let wsCapture = NIOMITMWebSocketCaptureState(
-            url: normalizedWebSocketURL(from: outboundContext.url),
-            requestHeaders: traceHeaders(from: requestHeaders)
+            url: normalizedURL,
+            requestHeaders: traceHeaders(from: requestHeaders),
+            sessionID: streamRuntime?.snapshot().id
         )
         let sendableContext = NIOMITMUncheckedSendableBox(value: context)
 
@@ -460,6 +649,14 @@ extension NIOMITMHTTPConnectHandler {
                                     requestHead: requestHead,
                                     responseHeaders: head.headers
                                 )
+                                if let streamRuntime {
+                                    streamRuntime.updateResponseHeaders(
+                                        self.captureConfigProvider().captureHeaders
+                                            ? self.traceHeaders(from: head.headers)
+                                            : []
+                                    )
+                                    self.persistStreamRuntimeSnapshot(streamRuntime)
+                                }
                                 var forwardedHead = head
                                 forwardedHead.headers.remove(name: "Proxy-Connection")
                                 context.write(self.wrapOutboundOut(.head(forwardedHead)), promise: nil)
@@ -486,28 +683,55 @@ extension NIOMITMHTTPConnectHandler {
                                 let isUpgrade = head.status == .switchingProtocols &&
                                     self.isWebSocketUpgrade(headers: head.headers)
                                 if isUpgrade {
+                                    let perMessageDeflateEnabled = self.webSocketPerMessageDeflateEnabled(headers: head.headers)
+                                    ProxyLog.mitm.info(
+                                        "event=proxy.nio_ws_upgrade outcome=accepted ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) permessage_deflate=\(perMessageDeflateEnabled, privacy: .public)"
+                                    )
+                                    self.eventLog?.append(
+                                        type: "proxy_nio_ws_upgrade",
+                                        msg: "outcome=accepted mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(normalizedURL)) permessage_deflate=\(perMessageDeflateEnabled)"
+                                    )
                                     wsCapture.markOpen(
                                         responseHeaders: self.captureConfigProvider().captureHeaders
                                             ? self.traceHeaders(from: head.headers)
                                             : []
                                     )
+                                    if let streamRuntime {
+                                        streamRuntime.setStatus(.open)
+                                        self.persistStreamRuntimeSnapshot(streamRuntime)
+                                    }
                                     let promise = context.eventLoop.makePromise(of: Void.self)
                                     promise.futureResult.whenComplete { [weak self] _ in
                                         guard let self else { return }
                                         self.installWebSocketRelay(
                                             clientContext: context,
                                             upstream: upstream,
-                                            captureState: wsCapture
+                                            captureState: wsCapture,
+                                            streamRuntime: streamRuntime,
+                                            perMessageDeflateEnabled: perMessageDeflateEnabled
                                         )
                                     }
                                     context.writeAndFlush(self.wrapOutboundOut(.end(trailers)), promise: promise)
                                     return
                                 }
 
+                                ProxyLog.mitm.info(
+                                    "event=proxy.nio_ws_upgrade outcome=rejected ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) status=\(Int(head.status.code), privacy: .public)"
+                                )
+                                self.eventLog?.append(
+                                    type: "proxy_nio_ws_upgrade",
+                                    msg: "outcome=rejected mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(normalizedURL)) status=\(head.status.code)"
+                                )
                                 let responseBodyData = self.byteBufferToData(responseBody)
                                 let captureConfig = self.captureConfigProvider()
                                 let responseHeadersTrace = self.traceHeaders(from: head.headers)
                                 let declaredContentLength = self.contentLength(from: head.headers)
+                                self.completeStreamRuntime(
+                                    streamRuntime,
+                                    status: .failed,
+                                    reason: "websocket_upgrade_rejected",
+                                    eventLoop: context.eventLoop
+                                )
                                 var captured = outboundContext.requestSnapshot
                                 captured.protocolVersion = self.httpProtocolVersion(from: head.version)
                                 captured.statusCode = Int(head.status.code)
@@ -560,6 +784,12 @@ extension NIOMITMHTTPConnectHandler {
                                 "event=proxy.nio_ws_upstream_error outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                             )
                             wsCapture.markFailed()
+                            self.completeStreamRuntime(
+                                streamRuntime,
+                                status: .failed,
+                                reason: error.localizedDescription,
+                                eventLoop: context.eventLoop
+                            )
                             self.sendResponse(
                                 status: .badGateway,
                                 body: "Upstream WebSocket request failed",
@@ -576,6 +806,12 @@ extension NIOMITMHTTPConnectHandler {
                         context.eventLoop.execute {
                             guard let self, self.state == .forwardingHTTPRequest else { return }
                             wsCapture.markClosed(code: nil, reason: nil)
+                            self.completeStreamRuntime(
+                                streamRuntime,
+                                status: .closed,
+                                reason: nil,
+                                eventLoop: context.eventLoop
+                            )
                             self.state = .closed
                             context.close(promise: nil)
                         }
@@ -586,9 +822,22 @@ extension NIOMITMHTTPConnectHandler {
                         onResponsePart: onPart,
                         onError: onError,
                         onInactive: onInactive
-                    ).flatMap {
-                        self.writeAndFlush(requestBuffer, to: upstream)
-                    }.whenComplete { [weak self] pipelineResult in
+                    )
+                    .flatMap {
+                        self.installStreamingUpstreamTLSIfNeeded(
+                            on: upstream,
+                            url: targetURL,
+                            serverHostname: targetHost
+                        )
+                    }
+                    .flatMap {
+                        self.writeAndFlushStreamingUpstreamRequest(
+                            head: streamingRequestHead,
+                            body: outboundContext.body,
+                            to: upstream
+                        )
+                    }
+                    .whenComplete { [weak self] pipelineResult in
                         guard let self else { return }
                         if case let .failure(error) = pipelineResult {
                             self.reportMITMFailure(reason: self.classifyMITMFailure(error))
@@ -596,6 +845,12 @@ extension NIOMITMHTTPConnectHandler {
                                 "event=proxy.nio_ws_setup outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                             )
                             wsCapture.markFailed()
+                            self.completeStreamRuntime(
+                                streamRuntime,
+                                status: .failed,
+                                reason: error.localizedDescription,
+                                eventLoop: context.eventLoop
+                            )
                             self.sendResponse(
                                 status: .badGateway,
                                 body: "Failed to establish WebSocket upstream",
@@ -611,6 +866,12 @@ extension NIOMITMHTTPConnectHandler {
                     self.reportMITMFailure(reason: self.classifyMITMFailure(error))
                     ProxyLog.mitm.warning(
                         "event=proxy.nio_ws_connect outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                    )
+                    self.completeStreamRuntime(
+                        streamRuntime,
+                        status: .failed,
+                        reason: error.localizedDescription,
+                        eventLoop: context.eventLoop
                     )
                     self.sendResponse(
                         status: .badGateway,
@@ -635,7 +896,7 @@ extension NIOMITMHTTPConnectHandler {
 
         if requestHeaders.first(name: "Host") == nil, let host = url.host {
             let scheme = (url.scheme ?? "http").lowercased()
-            let defaultPort = scheme == "https" ? 443 : 80
+            let defaultPort = scheme == "https" || scheme == "wss" ? 443 : 80
             let hostValue: String = if let port = url.port, port != defaultPort {
                 "\(host):\(port)"
             } else {
@@ -670,9 +931,80 @@ extension NIOMITMHTTPConnectHandler {
         return buffer
     }
 
-    func writeAndFlush(_ buffer: ByteBuffer, to channel: Channel) -> EventLoopFuture<Void> {
+    func makeStreamingUpstreamRequestHead(
+        url: URL,
+        methodToken: String,
+        headers: HTTPHeaders
+    ) -> HTTPRequestHead? {
+        guard let host = url.host else { return nil }
+
+        var requestHeaders = headers
+        requestHeaders.remove(name: "Proxy-Connection")
+
+        if requestHeaders.first(name: "Host") == nil {
+            let scheme = (url.scheme ?? "http").lowercased()
+            let defaultPort = scheme == "https" || scheme == "wss" ? 443 : 80
+            let hostValue: String = if let port = url.port, port != defaultPort {
+                "\(host):\(port)"
+            } else {
+                host
+            }
+            requestHeaders.add(name: "Host", value: hostValue)
+        }
+
+        var path = url.path
+        if path.isEmpty {
+            path = "/"
+        }
+        if let query = url.query, !query.isEmpty {
+            path += "?\(query)"
+        }
+
+        let method = NIOHTTP1.HTTPMethod(rawValue: methodToken) ?? .RAW(value: methodToken)
+        var head = HTTPRequestHead(version: .http1_1, method: method, uri: path)
+        head.headers = requestHeaders
+        return head
+    }
+
+    func installStreamingUpstreamTLSIfNeeded(
+        on channel: Channel,
+        url: URL,
+        serverHostname: String
+    ) -> EventLoopFuture<Void> {
+        let scheme = (url.scheme ?? "http").lowercased()
+        guard scheme == "https" || scheme == "wss" else {
+            return channel.eventLoop.makeSucceededVoidFuture()
+        }
+
+        do {
+            var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
+            tlsConfiguration.applicationProtocols = ["http/1.1"]
+            if RuntimeEnvironment.isRunningUnitTests {
+                tlsConfiguration.certificateVerification = .none
+            }
+
+            let tlsContext = try NIOSSLContext(configuration: tlsConfiguration)
+            let tlsHandler = try NIOSSLClientHandler(context: tlsContext, serverHostname: serverHostname)
+            return channel.pipeline.addHandler(tlsHandler, position: .first)
+        } catch {
+            return channel.eventLoop.makeFailedFuture(error)
+        }
+    }
+
+    func writeAndFlushStreamingUpstreamRequest(
+        head: HTTPRequestHead,
+        body: Data,
+        to channel: Channel
+    ) -> EventLoopFuture<Void> {
+        channel.write(NIOAny(HTTPClientRequestPart.head(head)), promise: nil)
+
+        if !body.isEmpty {
+            let buffer = byteBuffer(from: body, allocator: channel.allocator)
+            channel.write(NIOAny(HTTPClientRequestPart.body(.byteBuffer(buffer))), promise: nil)
+        }
+
         let promise = channel.eventLoop.makePromise(of: Void.self)
-        channel.writeAndFlush(buffer, promise: promise)
+        channel.writeAndFlush(NIOAny(HTTPClientRequestPart.end(nil)), promise: promise)
         return promise.futureResult
     }
 
@@ -792,6 +1124,7 @@ extension NIOMITMHTTPConnectHandler {
         var responseHead: HTTPResponseHead?
         var responseHeadersTrace: [TraceHTTPHeader] = []
         var responseContentEncoding: String?
+        var sseCapture: NIOMITMSSECaptureState?
         var closeAfterSend = false
         var responseHeadSent = false
         var terminalStateReached = false
@@ -828,6 +1161,22 @@ extension NIOMITMHTTPConnectHandler {
                 closeAfterSend = self.shouldCloseConnection(requestHead: requestHead, responseHeaders: forwardedHeaders)
                 responseHeadersTrace = self.traceHeaders(from: forwardedHeaders)
                 responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
+                let responseContentType = self.responseHeaderValue(name: "content-type", in: responseHeadersTrace)
+                if sseCapture == nil,
+                   let responseContentType,
+                   responseContentType.lowercased().contains("text/event-stream") {
+                    self.annotateCaptureMetadata(&capturedRequest)
+                    sseCapture = NIOMITMSSECaptureState(
+                        baseRequest: capturedRequest,
+                        sessionID: UUID(),
+                        persistStreamEvents: captureConfig.captureBody
+                    )
+                    sseCapture?.beginResponse(
+                        head: head,
+                        captureConfig: captureConfig,
+                        onRequestCaptured: self.onRequestCaptured
+                    )
+                }
 
                 if head.status.code >= 400 {
                     self.logConnectStage(
@@ -868,7 +1217,14 @@ extension NIOMITMHTTPConnectHandler {
                     receivedBodyBytes += chunkBytes
                 }
 
-                if maxCapturedBodyBytes > 0, chunkBytes > 0 {
+                if let sseCapture, chunkBytes > 0 {
+                    let chunkData = self.byteBufferToData(buffer)
+                    sseCapture.consume(
+                        bodyChunk: chunkData,
+                        captureConfig: captureConfig,
+                        onRequestCaptured: self.onRequestCaptured
+                    )
+                } else if maxCapturedBodyBytes > 0, chunkBytes > 0 {
                     let remaining = maxCapturedBodyBytes - capturedBodyData.count
                     if remaining > 0 {
                         let chunkData = self.byteBufferToData(buffer)
@@ -906,6 +1262,26 @@ extension NIOMITMHTTPConnectHandler {
             context.eventLoop.execute {
                 guard self.state == .forwardingHTTPRequest, !terminalStateReached else { return }
                 terminalStateReached = true
+
+                if let sseCapture {
+                    sseCapture.finish(
+                        succeeded: responseHeadSent,
+                        captureConfig: captureConfig,
+                        onRequestCaptured: self.onRequestCaptured
+                    )
+                    let endPromise = context.eventLoop.makePromise(of: Void.self)
+                    endPromise.futureResult.whenComplete { _ in
+                        if metricsAsParsedResponse {
+                            Task {
+                                await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
+                                await ProxyNetworkMetrics.shared.recordHTTPTransactionCompleted()
+                            }
+                        }
+                        self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
+                    }
+                    context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: endPromise)
+                    return
+                }
 
                 let finalStatus = responseHead?.status ?? .ok
                 capturedRequest.statusCode = Int(finalStatus.code)
@@ -975,6 +1351,14 @@ extension NIOMITMHTTPConnectHandler {
             context.eventLoop.execute {
                 guard self.state == .forwardingHTTPRequest, !terminalStateReached else { return }
                 terminalStateReached = true
+
+                if let sseCapture {
+                    sseCapture.finish(
+                        succeeded: responseHeadSent,
+                        captureConfig: captureConfig,
+                        onRequestCaptured: self.onRequestCaptured
+                    )
+                }
 
                 self.logUpstreamHTTPFailure(
                     error: error,
@@ -1117,13 +1501,38 @@ extension NIOMITMHTTPConnectHandler {
             headers[canonicalForm: "Upgrade"].contains(where: { $0.lowercased().contains("websocket") })
     }
 
-    func isSSERequest(headers: HTTPHeaders) -> Bool {
-        headers[canonicalForm: "Accept"].contains {
-            $0
+    func webSocketPerMessageDeflateEnabled(headers: HTTPHeaders) -> Bool {
+        headers[canonicalForm: "Sec-WebSocket-Extensions"].contains { value in
+            value
                 .split(separator: ",")
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-                .contains("text/event-stream")
+                .contains(where: { $0.contains("permessage-deflate") })
         }
+    }
+
+    func isSSERequest(headers: HTTPHeaders) -> Bool {
+        Self.isSSERequest(headers: headers)
+    }
+
+    static func isSSERequest(headers: HTTPHeaders) -> Bool {
+        for acceptHeaderValue in headers[canonicalForm: "Accept"] {
+            for rawToken in acceptHeaderValue.split(separator: ",", omittingEmptySubsequences: true) {
+                let token = String(rawToken)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                guard !token.isEmpty else { continue }
+                let mimeType = token
+                    .split(separator: ";", maxSplits: 1, omittingEmptySubsequences: true)
+                    .first
+                    .map(String.init)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased() ?? token
+                if mimeType == "text/event-stream" {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     func normalizedWebSocketURL(from url: String) -> String {
@@ -1264,6 +1673,34 @@ extension NIOMITMHTTPConnectHandler {
         }
     }
 
+    func persistStreamRuntimeSnapshot(_ runtime: StreamSessionRuntime) {
+        let snapshot = runtime.snapshot()
+        DispatchQueue.global(qos: .utility).async {
+            try? AppGroupStorage.shared.upsertStreamSession(snapshot)
+        }
+    }
+
+    func completeStreamRuntime(
+        _ runtime: StreamSessionRuntime?,
+        status: StreamSessionStatus,
+        reason: String?,
+        eventLoop: EventLoop
+    ) {
+        guard let runtime else { return }
+        runtime.setStatus(status, endTime: status == .closed || status == .failed ? Date() : nil)
+        let session = runtime.snapshot()
+        persistStreamRuntimeSnapshot(runtime)
+        streamCloseInterceptionFuture(
+            session: session,
+            reason: reason,
+            eventLoop: eventLoop
+        ).whenFailure { error in
+            ProxyLog.mitm.warning(
+                "event=proxy.stream_close_interception outcome=failure session_id=\(session.id.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
     func requestInterceptionFuture(
         flowID: UUID,
         requestURL: String,
@@ -1348,6 +1785,61 @@ extension NIOMITMHTTPConnectHandler {
         let promise = eventLoop.makePromise(of: Bool.self)
         promise.completeWithTask {
             await HardeningConfig.shared.blockQUIC
+        }
+        return promise.futureResult
+    }
+
+    func streamInterceptionV2EnabledFuture(eventLoop: EventLoop) -> EventLoopFuture<Bool> {
+        let promise = eventLoop.makePromise(of: Bool.self)
+        promise.completeWithTask {
+            await HardeningConfig.shared.enableStreamInterceptionV2
+        }
+        return promise.futureResult
+    }
+
+    func streamOpenInterceptionFuture(
+        session: StreamSession,
+        eventLoop: EventLoop
+    ) -> EventLoopFuture<StreamInterceptionDecision> {
+        guard let interceptor else {
+            return eventLoop.makeSucceededFuture(.forward)
+        }
+
+        let promise = eventLoop.makePromise(of: StreamInterceptionDecision.self)
+        promise.completeWithTask {
+            await interceptor.interceptStreamOpen(session: session)
+        }
+        return promise.futureResult
+    }
+
+    func streamEventInterceptionFuture(
+        session: StreamSession,
+        event: StreamEvent,
+        eventLoop: EventLoop
+    ) -> EventLoopFuture<StreamInterceptionDecision> {
+        guard let interceptor else {
+            return eventLoop.makeSucceededFuture(.forward)
+        }
+
+        let promise = eventLoop.makePromise(of: StreamInterceptionDecision.self)
+        promise.completeWithTask {
+            await interceptor.interceptStreamEvent(session: session, event: event)
+        }
+        return promise.futureResult
+    }
+
+    func streamCloseInterceptionFuture(
+        session: StreamSession,
+        reason: String?,
+        eventLoop: EventLoop
+    ) -> EventLoopFuture<StreamInterceptionDecision> {
+        guard let interceptor else {
+            return eventLoop.makeSucceededFuture(.forward)
+        }
+
+        let promise = eventLoop.makePromise(of: StreamInterceptionDecision.self)
+        promise.completeWithTask {
+            await interceptor.interceptStreamClose(session: session, reason: reason)
         }
         return promise.futureResult
     }

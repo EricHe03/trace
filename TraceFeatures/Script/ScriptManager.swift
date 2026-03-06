@@ -128,6 +128,12 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
             .filter { $0.scriptType == .response || $0.scriptType == .both }
     }
 
+    /// Find all enabled scripts that match a URL for stream events.
+    public func matchingStreamScripts(for url: String) -> [Script] {
+        baseManager.matchingItems(for: url)
+            .filter { $0.scriptType == .stream }
+    }
+
     /// Execute request scripts on a NetworkRequest
     public func executeRequestScripts(on request: NetworkRequest) -> NetworkRequest {
         guard let scriptEngine else {
@@ -344,6 +350,54 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Execute stream scripts asynchronously (supports await).
+    public func executeStreamScriptsAsync(
+        _ scripts: [Script],
+        context: StreamScriptContext
+    ) async -> StreamScriptExecutionResult {
+        guard let scriptEngine else {
+            FeatureLog.script.debug("event=script.execute outcome=skipped reason=engine_unavailable type=stream")
+            return StreamScriptExecutionResult(action: .forward, event: context.event)
+        }
+
+        return await withExecutionLock {
+            guard !scripts.isEmpty else {
+                return StreamScriptExecutionResult(action: .forward, event: context.event)
+            }
+
+            var executedScriptIds: [UUID] = []
+            var workingContext = context
+            var finalAction = StreamScriptAction.forward
+
+            for script in scripts {
+                do {
+                    let executionResult = try await scriptEngine.executeStreamScriptAsync(
+                        script.code,
+                        context: workingContext,
+                        timeout: asyncScriptTimeout
+                    )
+                    executedScriptIds.append(script.id)
+                    workingContext.event = executionResult.event
+                    finalAction = executionResult.action
+                    FeatureLog.script.debug("event=script.execute outcome=success type=stream script=\(script.name, privacy: .private(mask: .hash)) action=\(finalAction.rawValue, privacy: .public)")
+                    if finalAction == .block || finalAction == .drop {
+                        break
+                    }
+                } catch {
+                    FeatureLog.script.error(
+                        "event=script.execute outcome=failure type=stream script=\(script.name, privacy: .private(mask: .hash)) error=\(error.localizedDescription, privacy: .private(mask: .hash))"
+                    )
+                }
+            }
+
+            if !executedScriptIds.isEmpty {
+                await executionCountBuffer.recordExecutions(executedScriptIds)
+            }
+
+            return StreamScriptExecutionResult(action: finalAction, event: workingContext.event)
+        }
+    }
+
     /// Validate a script
     public func validateScript(_ code: String) -> ScriptValidationResult {
         guard let scriptEngine else {
@@ -408,7 +462,7 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
     }
 
     public func scriptsCount(for type: ScriptType) -> Int {
-        scripts.count(where: { $0.scriptType == type })
+        scripts.count { $0.scriptType == type }
     }
 
     /// Get most used scripts (by execution count)

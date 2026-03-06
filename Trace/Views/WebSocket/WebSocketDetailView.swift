@@ -8,17 +8,31 @@
 import SwiftUI
 import TraceCore
 import TraceUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct WebSocketDetailView: View {
-    let connection: WebSocketConnection
+    @StateObject private var viewModel: WebSocketDetailViewModel
 
     @State private var searchText = ""
     @State private var filterDirection: WebSocketDirection?
     @State private var filterMessageType: WebSocketMessageType?
     @State private var selectedMessage: WebSocketMessage?
     @State private var showingFilters = false
+    @State private var replayRecords: [StreamReplayRecord] = []
+    @State private var replayCopyFeedback = false
+    @State private var replayLoadFailed = false
+
+    private let storage = AppGroupStorage.shared
+
+    init(connection: WebSocketConnection) {
+        _viewModel = StateObject(wrappedValue: WebSocketDetailViewModel(connection: connection))
+    }
 
     var body: some View {
+        let connection = viewModel.connection
+
         List {
             // Connection Info Section
             Section("Connection") {
@@ -48,6 +62,45 @@ struct WebSocketDetailView: View {
                 LabeledContent("Total Messages", value: String(connection.messageCount))
                 LabeledContent("Sent", value: String(connection.sentMessageCount))
                 LabeledContent("Received", value: String(connection.receivedMessageCount))
+            }
+
+            Section("Replay Audit") {
+                Button {
+                    copyReplaySpec()
+                } label: {
+                    Label("Copy Replay Spec", systemImage: "doc.on.doc")
+                }
+
+                if replayCopyFeedback {
+                    Text("Replay spec copied")
+                        .font(.caption)
+                        .foregroundStyle(DesignSystem.Colors.success)
+                }
+
+                if replayLoadFailed {
+                    Text("Failed to load replay audit records")
+                        .font(.caption)
+                        .foregroundStyle(DesignSystem.Colors.warning)
+                } else if replayRecords.isEmpty {
+                    Text("No replay records")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(replayRecords.prefix(8), id: \.replayID) { record in
+                        HStack {
+                            Text(record.status.rawValue.capitalized)
+                                .font(.caption)
+                                .padding(.horizontal, DesignSystem.Spacing.sm)
+                                .padding(.vertical, DesignSystem.Spacing.xs)
+                                .background(replayStatusColor(record.status).opacity(0.2))
+                                .foregroundStyle(replayStatusColor(record.status))
+                                .clipShape(Capsule())
+                            Spacer()
+                            Text(record.startedAt, style: .time)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
 
             // Messages Section
@@ -102,10 +155,13 @@ struct WebSocketDetailView: View {
                 onClear: clearFilters
             )
         }
+        .task(id: connection.id) {
+            await loadReplayRecords()
+        }
     }
 
     private var filteredMessages: [WebSocketMessage] {
-        var filtered = connection.messages
+        var filtered = viewModel.connection.messages
 
         // Apply direction filter
         if let direction = filterDirection {
@@ -136,7 +192,7 @@ struct WebSocketDetailView: View {
 
     @ViewBuilder
     private var messagesEmptyState: some View {
-        if connection.messages.isEmpty {
+        if viewModel.connection.messages.isEmpty {
             TraceContentUnavailableView(
                 "No Messages",
                 systemImage: "message",
@@ -162,6 +218,49 @@ struct WebSocketDetailView: View {
     private func formattedDuration(_ duration: TimeInterval) -> String {
         DesignSystem.formattedDuration(duration)
     }
+
+    private func replayStatusColor(_ status: StreamReplayStatus) -> Color {
+        switch status {
+        case .running:
+            DesignSystem.Colors.warning
+        case .succeeded:
+            DesignSystem.Colors.success
+        case .failed:
+            DesignSystem.Colors.danger
+        }
+    }
+
+    @MainActor
+    private func loadReplayRecords() async {
+        do {
+            replayRecords = try storage.loadStreamReplayRecords(sessionID: viewModel.connection.id, limit: 20)
+            replayLoadFailed = false
+        } catch {
+            replayRecords = []
+            replayLoadFailed = true
+        }
+    }
+
+    private func copyReplaySpec() {
+        let spec = StreamReplaySpec(
+            sessionID: viewModel.connection.id,
+            eventIDs: filteredMessages.map(\.id),
+            timingMode: .originalTiming
+        )
+        let encoder = JSONCoding.makeEncoder()
+        guard let data = try? encoder.encode(spec),
+              let text = String(data: data, encoding: .utf8)
+        else {
+            return
+        }
+        #if canImport(UIKit)
+        UIPasteboard.general.string = text
+        #endif
+        replayCopyFeedback = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            replayCopyFeedback = false
+        }
+    }
 }
 
 struct WebSocketMessageRow: View {
@@ -175,7 +274,7 @@ struct WebSocketMessageRow: View {
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
-                    .padding(.horizontal, DesignSystem.Spacing.smPlus)
+                    .padding(.horizontal, DesignSystem.Spacing.sm)
                     .padding(.vertical, DesignSystem.Spacing.xs)
                     .background(directionColor(message.direction.color))
                     .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.sm))
@@ -251,7 +350,7 @@ struct WebSocketMessageDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.lg) {
                     // Metadata
-                    GroupBox("Metadata") {
+                    SectionCard(title: "Metadata", systemImage: "info.circle") {
                         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
                             HStack {
                                 Text("Direction:")
@@ -317,7 +416,7 @@ struct WebSocketMessageDetailView: View {
                     }
 
                     // Payload
-                    GroupBox("Payload") {
+                    SectionCard(title: "Payload", systemImage: "text.justify.left") {
                         VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
                             // View mode picker
                             Picker("View Mode", selection: $viewMode) {
@@ -429,12 +528,12 @@ struct WebSocketMessageFiltersView: View {
                 messages: [
                     WebSocketMessage(
                         direction: .sent,
-                        payload: "Hello, WebSocket!".data(using: .utf8)!,
+                        payload: Data("Hello, WebSocket!".utf8),
                         messageType: .text
                     ),
                     WebSocketMessage(
                         direction: .received,
-                        payload: "Hello, Client!".data(using: .utf8)!,
+                        payload: Data("Hello, Client!".utf8),
                         messageType: .text
                     )
                 ],

@@ -116,7 +116,7 @@ struct BreakpointEditorView: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: DesignSystem.Spacing.xxs) {
-                Text(pausedRequest.breakpointType == .request ? "Request Paused" : "Response Paused")
+                Text(breakpointTitle)
                     .font(.headline)
 
                 Text("Waiting for your action")
@@ -135,7 +135,7 @@ struct BreakpointEditorView: View {
         .padding()
         .background(DesignSystem.Colors.warning.opacity(0.1))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(pausedRequest.breakpointType == .request ? "Request paused" : "Response paused")
+        .accessibilityLabel("\(breakpointTitle)".lowercased())
         .accessibilityValue(hasModifications ? "Edits made" : "No edits")
         .accessibilityHint("Review details and choose an action at the bottom")
     }
@@ -320,6 +320,19 @@ struct BreakpointEditorView: View {
         formatter.countStyle = .file
         return formatter.string(fromByteCount: Int64(bytes))
     }
+
+    private var breakpointTitle: String {
+        switch pausedRequest.breakpointType {
+        case .request:
+            "Request Paused"
+        case .response:
+            "Response Paused"
+        case .stream:
+            "Stream Event Paused"
+        case .both:
+            "Breakpoint Paused"
+        }
+    }
 }
 
 // MARK: - Breakpoint Configuration View
@@ -456,7 +469,7 @@ struct BreakpointConfigView: View {
             TraceHTTPHeader(key: "Content-Type", value: "application/json"),
             TraceHTTPHeader(key: "Authorization", value: "Bearer token123")
         ],
-        body: "{\"test\": \"data\"}".data(using: .utf8),
+        body: Data("{\"test\": \"data\"}".utf8),
         breakpointType: .request
     )
 

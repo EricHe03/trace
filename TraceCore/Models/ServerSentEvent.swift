@@ -54,20 +54,31 @@ public struct ServerSentEvent: Identifiable, Codable, Equatable {
 
 /// Parser for Server-Sent Events (SSE) streams
 public class SSEParser {
-    private var buffer = ""
-    /// If the previous parse ended with a lone `\r`, the next chunk may start with `\n`
-    /// as part of a CRLF sequence. We track this so we don't treat `\r\n` as two line breaks.
+    private var lineBuffer = ""
+    private var bufferedRemainder = ""
+    private var atStartOfStream = true
     private var pendingCRLF = false
-    private var currentEvent = SSEEventBuilder()
+    private var lastEventID = ""
+    private var currentEventType: String?
+    private var currentDataLines: [String] = []
+    private var currentRetry: Int?
 
     public init() {}
+
+    /// Returns the buffered (not-yet-finalized) raw text following the last complete event delimiter.
+    ///
+    /// This is useful for streaming interception pipelines that need to preserve any tail bytes that were
+    /// parsed into in-flight state but did not yield a complete event in the current chunk.
+    public var bufferedRawRemainder: String {
+        bufferedRemainder
+    }
 
     /// Parse incoming SSE data and return complete events
     /// - Parameter data: Raw SSE stream data
     /// - Returns: Array of parsed events
     public func parse(_ data: String) -> [ServerSentEvent] {
-        var combined = buffer + data
-        buffer = ""
+        var combined = lineBuffer + data
+        lineBuffer = ""
 
         // If the previous chunk ended with '\r' and this chunk starts with '\n', treat it as CRLF.
         if pendingCRLF {
@@ -77,13 +88,33 @@ public class SSEParser {
             pendingCRLF = false
         }
 
+        if atStartOfStream, combined.first == "\u{FEFF}" {
+            combined.removeFirst()
+        }
+        if !combined.isEmpty {
+            atStartOfStream = false
+        }
+
         var events: [ServerSentEvent] = []
+        var remainderStartIndex = combined.startIndex
 
         func finalizeEventIfNeeded() {
-            if let event = currentEvent.build() {
-                events.append(event)
+            guard !currentDataLines.isEmpty else {
+                currentEventType = nil
+                currentRetry = nil
+                return
             }
-            currentEvent.reset()
+
+            let event = ServerSentEvent(
+                eventId: lastEventID.isEmpty ? nil : lastEventID,
+                eventType: currentEventType?.isEmpty == true ? nil : currentEventType,
+                data: currentDataLines.joined(separator: "\n"),
+                retry: currentRetry
+            )
+            events.append(event)
+            currentEventType = nil
+            currentDataLines.removeAll(keepingCapacity: true)
+            currentRetry = nil
         }
 
         func processLine(_ line: Substring) {
@@ -108,10 +139,30 @@ public class SSEParser {
                     value = value.dropFirst()
                 }
 
-                currentEvent.addField(field, value: String(value))
+                processField(field: field, value: String(value))
             } else {
                 // Field with no colon (field name only)
-                currentEvent.addField(String(line), value: "")
+                processField(field: String(line), value: "")
+            }
+        }
+
+        func processField(field: String, value: String) {
+            switch field {
+            case "data":
+                currentDataLines.append(value)
+            case "event":
+                currentEventType = value
+            case "id":
+                if !value.contains("\u{0000}") {
+                    lastEventID = value
+                }
+            case "retry":
+                if value.unicodeScalars.allSatisfy({ $0.value >= 0x30 && $0.value <= 0x39 }),
+                   let parsed = Int(value) {
+                    currentRetry = parsed
+                }
+            default:
+                break
             }
         }
 
@@ -121,7 +172,7 @@ public class SSEParser {
         var index = combined.startIndex
         while index < combined.endIndex {
             let ch = combined[index]
-            if ch.isNewline {
+            if ch == "\r" || ch == "\n" {
                 let line = combined[lineStart ..< index]
                 processLine(line)
 
@@ -139,6 +190,9 @@ public class SSEParser {
 
                 index = combined.index(after: index)
                 lineStart = index
+                if line.isEmpty {
+                    remainderStartIndex = lineStart
+                }
                 continue
             }
             index = combined.index(after: index)
@@ -146,69 +200,28 @@ public class SSEParser {
 
         // If there's a trailing unterminated line, keep it for the next chunk.
         if lineStart < combined.endIndex {
-            buffer = String(combined[lineStart ..< combined.endIndex])
+            lineBuffer = String(combined[lineStart ..< combined.endIndex])
         }
 
+        bufferedRemainder = String(combined[remainderStartIndex ..< combined.endIndex])
         return events
     }
 
     /// Reset the parser state
     public func reset() {
-        buffer = ""
+        lineBuffer = ""
+        bufferedRemainder = ""
+        atStartOfStream = true
         pendingCRLF = false
-        currentEvent.reset()
+        lastEventID = ""
+        currentEventType = nil
+        currentDataLines.removeAll(keepingCapacity: false)
+        currentRetry = nil
     }
 
     /// Check if the content type indicates SSE
     public static func isSSEContentType(_ contentType: String) -> Bool {
         contentType.lowercased().contains("text/event-stream")
-    }
-}
-
-/// Builder for constructing ServerSentEvent objects
-private class SSEEventBuilder {
-    private var eventId: String?
-    private var eventType: String?
-    private var dataLines: [String] = []
-    private var retry: Int?
-
-    func addField(_ field: String, value: String) {
-        switch field {
-        case "id":
-            eventId = value
-        case "event":
-            eventType = value
-        case "data":
-            dataLines.append(value)
-        case "retry":
-            retry = Int(value)
-        default:
-            // Unknown field, ignore
-            break
-        }
-    }
-
-    func build() -> ServerSentEvent? {
-        // SSE spec: data field is required
-        guard !dataLines.isEmpty else {
-            return nil
-        }
-
-        let data = dataLines.joined(separator: "\n")
-
-        return ServerSentEvent(
-            eventId: eventId,
-            eventType: eventType,
-            data: data,
-            retry: retry
-        )
-    }
-
-    func reset() {
-        eventId = nil
-        eventType = nil
-        dataLines.removeAll()
-        retry = nil
     }
 }
 

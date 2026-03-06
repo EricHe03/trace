@@ -95,21 +95,26 @@ struct SSEConnectionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
             HStack(spacing: DesignSystem.Spacing.smPlus) {
-                statusBadge(text: connection.status.displayName, background: statusColor)
+                badge(
+                    text: "SSE",
+                    background: DesignSystem.Colors.eventTypeColor(for: .sse)
+                )
+
+                badge(
+                    text: connection.status.displayName,
+                    background: statusColor
+                )
 
                 Text("\(connection.eventCount) events")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 if connection.isTruncated {
-                    Text("TRUNCATED")
-                        .font(DesignSystem.Badge.font)
-                        .fontWeight(DesignSystem.Badge.fontWeight)
-                        .foregroundStyle(.primary)
-                        .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
-                        .padding(.vertical, DesignSystem.Badge.verticalPadding)
-                        .background(DesignSystem.Colors.warning.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
+                    badge(
+                        text: "TRUNCATED",
+                        background: DesignSystem.Colors.warning.opacity(0.15),
+                        foreground: DesignSystem.Colors.warning
+                    )
                 }
 
                 Spacer()
@@ -139,18 +144,18 @@ struct SSEConnectionRow: View {
         }
         .padding(.vertical, DesignSystem.Spacing.rowVertical)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("SSE connection, \(connection.status.displayName), \(connection.eventCount) events\(connection.isTruncated ? ", truncated" : ""), \(connection.totalBytesString), \(connection.url)")
+        .accessibilityLabel("SSE connection to \(connection.url), \(connection.status.displayName), \(connection.eventCount) events\(connection.isTruncated ? ", truncated" : ""), \(connection.totalBytesString)")
     }
 
     private var statusColor: Color {
         DesignSystem.Colors.statusColor(for: connection.status.color)
     }
 
-    private func statusBadge(text: String, background: Color) -> some View {
+    private func badge(text: String, background: Color, foreground: Color = .white) -> some View {
         Text(text)
             .font(DesignSystem.Badge.font)
             .fontWeight(DesignSystem.Badge.fontWeight)
-            .foregroundStyle(.white)
+            .foregroundStyle(foreground)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
             .background(background)

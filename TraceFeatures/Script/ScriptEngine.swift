@@ -160,6 +160,54 @@ public class ScriptEngine {
         return try createNetworkRequest(from: modifiedResponseObj, original: request, isResponse: true)
     }
 
+    /// Execute a script on a stream session/event context.
+    public func executeStreamScript(_ script: String, context streamContext: StreamScriptContext) throws -> StreamScriptExecutionResult {
+        lastError = nil
+
+        let streamObject = createJSStreamContext(from: streamContext)
+        context.setObject(streamObject, forKeyedSubscript: "stream" as NSString)
+
+        context.evaluateScript(script)
+
+        if let error = lastError {
+            throw ScriptError.executionFailed(error)
+        }
+
+        let modifiedStreamObject = context.objectForKeyedSubscript("stream")
+        return try createStreamScriptExecutionResult(
+            from: modifiedStreamObject,
+            original: streamContext
+        )
+    }
+
+    /// Execute an async script on a stream session/event context.
+    public func executeStreamScriptAsync(
+        _ script: String,
+        context streamContext: StreamScriptContext,
+        timeout: TimeInterval
+    ) async throws -> StreamScriptExecutionResult {
+        lastError = nil
+
+        let streamObject = createJSStreamContext(from: streamContext)
+        context.setObject(streamObject, forKeyedSubscript: "stream" as NSString)
+
+        let wrapped = "(async function(){ \(script) })()"
+        guard let result = context.evaluateScript(wrapped) else {
+            throw ScriptError.invalidScript
+        }
+        _ = try await resolveIfNeeded(result, timeout: timeout)
+
+        if let error = lastError {
+            throw ScriptError.executionFailed(error)
+        }
+
+        let modifiedStreamObject = context.objectForKeyedSubscript("stream")
+        return try createStreamScriptExecutionResult(
+            from: modifiedStreamObject,
+            original: streamContext
+        )
+    }
+
     /// Validate a script without executing it
     public func validateScript(_ script: String) -> ScriptValidationResult {
         var validationError: String?
@@ -521,6 +569,152 @@ public class ScriptEngine {
         updatedRequest.appliedRuleIds = original.appliedRuleIds
 
         return updatedRequest
+    }
+
+    private func createJSStreamContext(from context: StreamScriptContext) -> [String: Any] {
+        var payloadObject: [String: Any] = [:]
+        if let text = context.event.payload.text {
+            payloadObject["text"] = text
+        }
+        if let binary = context.event.payload.binary {
+            payloadObject["base64"] = binary.base64EncodedString()
+        }
+        if let contentType = context.event.payload.contentType {
+            payloadObject["contentType"] = contentType
+        }
+        if let encoding = context.event.payload.encoding {
+            payloadObject["encoding"] = encoding
+        }
+
+        let eventObject: [String: Any] = [
+            "id": context.event.id.uuidString,
+            "sessionId": context.event.sessionID.uuidString,
+            "sequence": context.event.sequence,
+            "timestamp": context.event.timestamp.timeIntervalSince1970,
+            "direction": context.event.direction.rawValue,
+            "kind": context.event.kind.rawValue,
+            "metadata": context.event.metadata,
+            "payload": payloadObject
+        ]
+
+        let sessionObject: [String: Any] = [
+            "id": context.session.id.uuidString,
+            "protocol": context.session.protocolType.rawValue,
+            "url": context.session.url,
+            "status": context.session.status.rawValue,
+            "metadata": context.session.metadata,
+            "requestHeaders": headersDictionary(from: context.session.requestHeaders),
+            "responseHeaders": headersDictionary(from: context.session.responseHeaders)
+        ]
+
+        return [
+            "session": sessionObject,
+            "event": eventObject,
+            "action": StreamScriptAction.forward.rawValue
+        ]
+    }
+
+    // swiftlint:disable:next cyclomatic_complexity
+    private func createStreamScriptExecutionResult(
+        from jsObject: JSValue?,
+        original context: StreamScriptContext
+    ) throws -> StreamScriptExecutionResult {
+        guard let jsObject, !jsObject.isUndefined else {
+            throw ScriptError.invalidReturn
+        }
+
+        var action = StreamScriptAction.forward
+        if let rawAction = jsString(from: jsObject.forProperty("action"))?.lowercased(),
+           let parsedAction = StreamScriptAction(rawValue: rawAction) {
+            action = parsedAction
+        }
+
+        guard let eventObject = jsObject.forProperty("event"), !eventObject.isUndefined else {
+            throw ScriptError.invalidReturn
+        }
+
+        var event = context.event
+        if let sequenceNumber = eventObject.forProperty("sequence")?.toNumber() {
+            event.sequence = sequenceNumber.int64Value
+        }
+        if let timestampNumber = eventObject.forProperty("timestamp")?.toNumber() {
+            event.timestamp = Date(timeIntervalSince1970: timestampNumber.doubleValue)
+        }
+        if let directionRaw = jsString(from: eventObject.forProperty("direction")),
+           let direction = StreamEventDirection(rawValue: directionRaw) {
+            event.direction = direction
+        }
+        if let kindRaw = jsString(from: eventObject.forProperty("kind")),
+           let kind = StreamEventKind(rawValue: kindRaw) {
+            event.kind = kind
+        }
+        if let metadata = stringDictionary(from: eventObject.forProperty("metadata")) {
+            event.metadata = metadata
+        }
+
+        if let payloadObject = eventObject.forProperty("payload"), !payloadObject.isUndefined {
+            var payload = event.payload
+            let textValue = payloadObject.forProperty("text")
+            let textProvided = textValue != nil && !(textValue?.isUndefined ?? true)
+            if textProvided {
+                payload.text = jsString(from: textValue)
+                if payload.text != nil {
+                    payload.binary = nil
+                }
+            }
+
+            let base64Value = payloadObject.forProperty("base64")
+            let base64Provided = base64Value != nil && !(base64Value?.isUndefined ?? true)
+            if base64Provided {
+                if let base64String = jsString(from: base64Value),
+                   let decoded = Data(base64Encoded: base64String) {
+                    payload.binary = decoded
+                    if !textProvided {
+                        payload.text = nil
+                    }
+                } else {
+                    payload.binary = nil
+                }
+            }
+
+            if let contentTypeValue = payloadObject.forProperty("contentType"),
+               !contentTypeValue.isUndefined {
+                payload.contentType = jsString(from: contentTypeValue)
+            }
+
+            if let encodingValue = payloadObject.forProperty("encoding"),
+               !encodingValue.isUndefined {
+                payload.encoding = jsString(from: encodingValue)
+            }
+
+            event.payload = payload
+        }
+
+        return StreamScriptExecutionResult(action: action, event: event)
+    }
+
+    private func headersDictionary(from headers: [TraceHTTPHeader]) -> [String: String] {
+        var dictionary: [String: String] = [:]
+        for header in headers {
+            dictionary[header.key] = header.value
+        }
+        return dictionary
+    }
+
+    private func jsString(from value: JSValue?) -> String? {
+        guard let value, !value.isUndefined, !value.isNull else { return nil }
+        return value.toString()
+    }
+
+    private func stringDictionary(from value: JSValue?) -> [String: String]? {
+        guard let value, !value.isUndefined, !value.isNull,
+              let dictionary = value.toDictionary() as? [String: Any] else {
+            return nil
+        }
+
+        return dictionary.reduce(into: [String: String]()) { partialResult, pair in
+            partialResult[pair.key] = String(describing: pair.value)
+        }
     }
 }
 

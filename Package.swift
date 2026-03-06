@@ -134,6 +134,7 @@ let traceQUICDependencies: [Target.Dependency] = [
 
 let traceProxyDependencies: [Target.Dependency] = [
     "TraceCore",
+    "TraceCompression",
     "TraceSecurity",
     "TraceFeatures",
     "TraceQUIC",

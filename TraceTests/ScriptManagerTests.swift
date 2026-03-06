@@ -214,6 +214,31 @@ final class ScriptManagerTests: XCTestCase {
         XCTAssertFalse(matches.contains { $0.name == "Request Script" })
     }
 
+    func testMatchingStreamScripts() {
+        let streamScript = Script(
+            name: "Stream Script",
+            enabled: true,
+            scriptType: .stream,
+            matchPattern: "*example.com*",
+            code: "stream.action = 'forward';"
+        )
+
+        let requestScript = Script(
+            name: "Request Script",
+            enabled: true,
+            scriptType: .request,
+            matchPattern: "*example.com*",
+            code: "request.url = request.url;"
+        )
+
+        manager.addScript(streamScript)
+        manager.addScript(requestScript)
+
+        let matches = manager.matchingStreamScripts(for: "wss://api.example.com/socket")
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(matches.first?.name, "Stream Script")
+    }
+
     func testMatchingScriptsIgnoresDisabled() {
         let script = Script(
             name: "Disabled Script",
@@ -242,6 +267,44 @@ final class ScriptManagerTests: XCTestCase {
 
         let matches = manager.matchingRequestScripts(for: "https://any-url.com/path")
         XCTAssertEqual(matches.count, 1)
+    }
+
+    func testExecuteStreamScriptsAsyncAppliesMutationsAndAction() async {
+        let streamScript = Script(
+            name: "Mutate Stream",
+            enabled: true,
+            scriptType: .stream,
+            matchPattern: "*example.com*",
+            code: """
+            stream.event.payload.text = 'patched';
+            stream.event.metadata['source'] = 'stream-script';
+            stream.action = 'forward';
+            """
+        )
+        manager.addScript(streamScript)
+
+        let session = StreamSession(
+            protocolType: .websocket,
+            url: "wss://api.example.com/socket",
+            status: .open
+        )
+        let event = StreamEvent(
+            sessionID: session.id,
+            sequence: 1,
+            direction: .received,
+            kind: .message,
+            payload: .text("original", contentType: "text/plain"),
+            metadata: ["message_type": "text"]
+        )
+
+        let result = await manager.executeStreamScriptsAsync(
+            [streamScript],
+            context: StreamScriptContext(session: session, event: event)
+        )
+
+        XCTAssertEqual(result.action, .forward)
+        XCTAssertEqual(result.event.payload.text, "patched")
+        XCTAssertEqual(result.event.metadata["source"], "stream-script")
     }
 
     // MARK: - Statistics Tests

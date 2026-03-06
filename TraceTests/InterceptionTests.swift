@@ -9,6 +9,27 @@ import XCTest
 @testable import TraceCore
 
 final class InterceptionTests: XCTestCase {
+    private struct TestInterceptor: InterceptionProviding {
+        func interceptRequest(
+            flowId _: UUID,
+            url _: String,
+            method _: String,
+            headers _: [String: String],
+            body _: Data?
+        ) async -> InterceptionResult {
+            .blocked
+        }
+
+        func interceptResponse(
+            request: NetworkRequest,
+            statusCode _: Int,
+            statusMessage _: String,
+            headers _: [TraceHTTPHeader],
+            body _: Data?
+        ) async -> NetworkRequest {
+            request
+        }
+    }
 
     // MARK: - InterceptionResult Tests
 
@@ -187,6 +208,56 @@ final class InterceptionTests: XCTestCase {
         }
 
         XCTAssertTrue(true, "ResponsePipeline is Sendable")
+    }
+
+    // MARK: - Stream Interception Tests
+
+    func testStreamInterceptionDecisionModify() {
+        let mutation = StreamMutation(payload: .text("patched"))
+        let decision = StreamInterceptionDecision.modify(mutation)
+
+        switch decision {
+        case .modify(let extracted):
+            XCTAssertEqual(extracted.payload?.text, "patched")
+        default:
+            XCTFail("Expected modify decision")
+        }
+    }
+
+    func testStreamInterceptionDecisionReplay() {
+        let spec = StreamReplaySpec(sessionID: UUID(), eventIDs: [UUID()])
+        let decision = StreamInterceptionDecision.replay(spec)
+
+        switch decision {
+        case .replay(let extracted):
+            XCTAssertEqual(extracted.sessionID, spec.sessionID)
+            XCTAssertEqual(extracted.eventIDs, spec.eventIDs)
+        default:
+            XCTFail("Expected replay decision")
+        }
+    }
+
+    func testInterceptionProvidingDefaultStreamHooksForward() async {
+        let interceptor = TestInterceptor()
+        let session = StreamSession(
+            protocolType: .sse,
+            url: "https://example.com/events"
+        )
+        let event = StreamEvent(
+            sessionID: session.id,
+            sequence: 1,
+            direction: .received,
+            kind: .sseEvent,
+            payload: .text("hello")
+        )
+
+        let openDecision = await interceptor.interceptStreamOpen(session: session)
+        let eventDecision = await interceptor.interceptStreamEvent(session: session, event: event)
+        let closeDecision = await interceptor.interceptStreamClose(session: session, reason: nil)
+
+        XCTAssertEqual(openDecision, .forward)
+        XCTAssertEqual(eventDecision, .forward)
+        XCTAssertEqual(closeDecision, .forward)
     }
 
     // MARK: - Edge Cases Tests
