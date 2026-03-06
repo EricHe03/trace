@@ -9,6 +9,7 @@ import Combine
 import Foundation
 import TraceCore
 
+@available(*, deprecated, message: "Use RewriteManager.shared group APIs instead.")
 @MainActor
 public final class RuleGroupManager: ObservableObject {
     public static let shared = RuleGroupManager()
@@ -59,7 +60,7 @@ public final class RuleGroupManager: ObservableObject {
     public func moveGroups(from source: IndexSet, to destination: Int) {
         var current = groups
         let itemsToMove = source.sorted().reversed().map { current.remove(at: $0) }.reversed()
-        let adjustedDestination = destination - source.count(where: { $0 < destination })
+        let adjustedDestination = destination - source.filter { $0 < destination }.count
         for (offset, item) in itemsToMove.enumerated() {
             current.insert(item, at: adjustedDestination + offset)
         }
@@ -69,7 +70,7 @@ public final class RuleGroupManager: ObservableObject {
 
     public func updatePriorities() {
         var updated = groups
-        for (index, _) in updated.enumerated() {
+        for index in updated.indices {
             updated[index].priority = index
         }
         baseManager.importItems(updated, merge: false)

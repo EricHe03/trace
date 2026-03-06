@@ -21,79 +21,47 @@ protocol SessionRepository {
 /// Implementation of SessionRepository using AppGroupStorage
 @MainActor
 class SessionRepositoryImpl: SessionRepository {
-    // MARK: - Dependencies
-
-    private let storage: AppGroupStorage
-
-    // MARK: - Cache
-
-    private var cachedSessions: [CaptureSession]?
-    private var lastCacheTime: Date?
-    private let cacheValidityDuration: TimeInterval = 5.0 // 5 seconds
+    private let store: CaptureDataStore
 
     // MARK: - Initialization
 
     init(storage: AppGroupStorage = .shared) {
-        self.storage = storage
+        self.store = AppGroupCaptureStore(storage: storage)
+    }
+
+    init(store: CaptureDataStore) {
+        self.store = store
     }
 
     // MARK: - Public Methods
 
     func getAll() async throws -> [CaptureSession] {
-        // Return cached data if valid
-        if let cached = cachedSessions,
-           let cacheTime = lastCacheTime,
-           Date().timeIntervalSince(cacheTime) < cacheValidityDuration {
-            return cached
-        }
-
-        // Load from storage
-        let sessions = try await storage.loadSessions()
-        cachedSessions = sessions
-        lastCacheTime = Date()
-
-        return sessions
+        try await store.loadSessions()
     }
 
     func getById(_ id: UUID) async throws -> CaptureSession? {
-        let sessions = try await getAll()
-        return sessions.first { $0.id == id }
+        try await store.loadSession(id)
     }
 
     func save(_ session: CaptureSession) async throws {
-        var sessions = try await getAll()
-
-        if let index = sessions.firstIndex(where: { $0.id == session.id }) {
-            sessions[index] = session
-        } else {
-            sessions.insert(session, at: 0) // Insert at beginning
-        }
-
-        try await saveAll(sessions)
+        try await store.saveSession(session)
     }
 
     func saveAll(_ sessions: [CaptureSession]) async throws {
-        try await storage.saveSessions(sessions)
-
-        // Update cache
-        cachedSessions = sessions
-        lastCacheTime = Date()
+        try await store.saveSessions(sessions)
     }
 
     func delete(_ id: UUID) async throws {
-        var sessions = try await getAll()
-        sessions.removeAll { $0.id == id }
-        try await saveAll(sessions)
+        try await store.deleteSession(id)
     }
 
     func deleteAll() async throws {
-        try await saveAll([])
+        try await store.deleteAllSessions()
     }
 
     // MARK: - Cache Management
 
     func invalidateCache() {
-        cachedSessions = nil
-        lastCacheTime = nil
+        store.invalidateSessionCache()
     }
 }

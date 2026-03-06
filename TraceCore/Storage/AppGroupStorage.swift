@@ -58,7 +58,7 @@ public class AppGroupStorage: @unchecked Sendable {
     private static let streamPayloadInlineLimitBytes = 256 * 1024
     private static let streamPayloadChunkSizeBytes = 64 * 1024
 
-    private enum DefaultsKey {
+    enum DefaultsKey {
         static let captureConfiguration = "trace.settings.captureConfiguration"
         static let captureOptions = "trace.settings.captureOptions"
         static let bodyStorageConfig = "trace.settings.bodyStorageConfig"
@@ -128,11 +128,11 @@ public class AppGroupStorage: @unchecked Sendable {
         logStorageConfiguration()
     }
 
-    private func makeEncoder() -> JSONEncoder {
+    func makeEncoder() -> JSONEncoder {
         JSONCoding.makeEncoder()
     }
 
-    private func makeDecoder() -> JSONDecoder {
+    func makeDecoder() -> JSONDecoder {
         JSONCoding.makeDecoder()
     }
 
@@ -233,7 +233,7 @@ public class AppGroupStorage: @unchecked Sendable {
 
     // MARK: - Database
 
-    private enum SettingScope {
+    enum SettingScope {
         static let capture = "capture_settings"
         static let hardening = "hardening"
         static let widget = "widget"
@@ -311,7 +311,7 @@ public class AppGroupStorage: @unchecked Sendable {
         }
     }
 
-    private func withDatabase<T>(_ body: (DatabasePool) throws -> T) throws -> T {
+    func withDatabase<T>(_ body: (DatabasePool) throws -> T) throws -> T {
         databaseLock.lock()
         let pool = database?.pool
         databaseLock.unlock()
@@ -322,7 +322,7 @@ public class AppGroupStorage: @unchecked Sendable {
     }
 
     @discardableResult
-    private func executeDBWrite(_ body: (Database) throws -> Void) -> Bool {
+    func executeDBWrite(_ body: (Database) throws -> Void) -> Bool {
         do {
             try withDatabase { pool in
                 try pool.write { db in
@@ -468,7 +468,7 @@ public class AppGroupStorage: @unchecked Sendable {
         }
     }
 
-    private func settingData(for scope: String, key: String) -> Data? {
+    func settingData(for scope: String, key: String) -> Data? {
         do {
             return try withDatabase { pool in
                 try pool.read { db in
@@ -491,7 +491,7 @@ public class AppGroupStorage: @unchecked Sendable {
         }
     }
 
-    private func saveSettingData(_ data: Data, scope: String, key: String) throws {
+    func saveSettingData(_ data: Data, scope: String, key: String) throws {
         try withDatabase { pool in
             try pool.write { db in
                 let now = Date().timeIntervalSince1970
@@ -506,17 +506,17 @@ public class AppGroupStorage: @unchecked Sendable {
         }
     }
 
-    private func saveSettingValue(_ value: some Encodable, scope: String, key: String) throws {
+    func saveSettingValue(_ value: some Encodable, scope: String, key: String) throws {
         let data = try makeEncoder().encode(value)
         try saveSettingData(data, scope: scope, key: key)
     }
 
-    private func loadSettingValue<T: Decodable>(_ type: T.Type, scope: String, key: String) -> T? {
+    func loadSettingValue<T: Decodable>(_ type: T.Type, scope: String, key: String) -> T? {
         guard let data = settingData(for: scope, key: key) else { return nil }
         return try? makeDecoder().decode(T.self, from: data)
     }
 
-    private func removeSetting(scope: String, key: String) throws {
+    func removeSetting(scope: String, key: String) throws {
         try withDatabase { pool in
             try pool.write { db in
                 try db.execute(
@@ -527,7 +527,7 @@ public class AppGroupStorage: @unchecked Sendable {
         }
     }
 
-    private func mapDatabaseError(_ error: Error) -> StorageError {
+    func mapDatabaseError(_ error: Error) -> StorageError {
         if let storageError = error as? StorageError {
             return storageError
         }
@@ -536,111 +536,6 @@ public class AppGroupStorage: @unchecked Sendable {
 
     private var streamInterceptionV2Enabled: Bool {
         loadSettingValue(Bool.self, scope: SettingScope.hardening, key: "hardening.enableStreamInterceptionV2") ?? false
-    }
-
-    // MARK: - Typed Shared State
-
-    public func saveHardeningSetting(_ value: some Encodable, forKey key: String) throws {
-        try saveSettingValue(value, scope: SettingScope.hardening, key: key)
-    }
-
-    public func loadHardeningSetting<T: Decodable>(_ type: T.Type, forKey key: String) -> T? {
-        loadSettingValue(type, scope: SettingScope.hardening, key: key)
-    }
-
-    public func saveWidgetState(_ state: WidgetSharedState) throws {
-        try saveSettingValue(state, scope: SettingScope.widget, key: "state")
-    }
-
-    public func loadWidgetState() -> WidgetSharedState {
-        loadSettingValue(WidgetSharedState.self, scope: SettingScope.widget, key: "state") ?? WidgetSharedState()
-    }
-
-    public func saveWidgetPendingAction(_ action: WidgetPendingAction) throws {
-        try saveSettingValue(action, scope: SettingScope.widgetAction, key: "pending_action")
-    }
-
-    public func loadWidgetPendingAction() -> WidgetPendingAction? {
-        loadSettingValue(WidgetPendingAction.self, scope: SettingScope.widgetAction, key: "pending_action")
-    }
-
-    public func clearWidgetPendingAction() throws {
-        try removeSetting(scope: SettingScope.widgetAction, key: "pending_action")
-    }
-
-    public func consumeWidgetPendingAction(maxAge: TimeInterval) -> WidgetPendingAction? {
-        guard let action = loadWidgetPendingAction() else { return nil }
-        if Date().timeIntervalSince(action.actionDate) > maxAge {
-            try? clearWidgetPendingAction()
-            return nil
-        }
-        try? clearWidgetPendingAction()
-        return action
-    }
-
-    public func saveMITMAutoBypassMetadataFlag(_ value: Bool, forKey key: String) throws {
-        try saveSettingValue(value, scope: SettingScope.mitmAutoBypassMeta, key: key)
-    }
-
-    public func loadMITMAutoBypassMetadataFlag(forKey key: String) -> Bool {
-        loadSettingValue(Bool.self, scope: SettingScope.mitmAutoBypassMeta, key: key) ?? false
-    }
-
-    public func replaceMITMAutoBypassEntries(_ entries: [MITMAutoBypassStoredEntry]) throws {
-        try withDatabase { pool in
-            try pool.write { db in
-                try db.execute(sql: "DELETE FROM mitm_auto_bypass_entries")
-                for entry in entries {
-                    try db.execute(
-                        sql: """
-                        INSERT INTO mitm_auto_bypass_entries (host, reason, created_at, expires_at, is_alias)
-                        VALUES (?, ?, ?, ?, ?)
-                        """,
-                        arguments: [
-                            entry.host,
-                            entry.reason,
-                            entry.createdAt.timeIntervalSince1970,
-                            entry.expiresAt.timeIntervalSince1970,
-                            entry.isAlias ? 1 : 0
-                        ]
-                    )
-                }
-            }
-        }
-    }
-
-    public func loadMITMAutoBypassEntries() -> [MITMAutoBypassStoredEntry] {
-        do {
-            return try withDatabase { pool in
-                try pool.read { db in
-                    let rows = try Row.fetchAll(
-                        db,
-                        sql: """
-                        SELECT host, reason, created_at, expires_at, is_alias
-                        FROM mitm_auto_bypass_entries
-                        ORDER BY created_at DESC, host ASC
-                        """
-                    )
-                    return rows.map { row in
-                        let isAliasInt: Int = row["is_alias"]
-                        return MITMAutoBypassStoredEntry(
-                            host: row["host"],
-                            reason: row["reason"],
-                            createdAt: Date(timeIntervalSince1970: row["created_at"]),
-                            expiresAt: Date(timeIntervalSince1970: row["expires_at"]),
-                            isAlias: isAliasInt != 0
-                        )
-                    }
-                }
-            }
-        } catch {
-            CoreLog.storage.error(
-                LogEvent.storage("mitm_auto_bypass_entries_load")
-                    .failure()
-                    .error(error)
-            )
-            return []
-        }
     }
 
     // MARK: - Request Storage
@@ -1537,398 +1432,6 @@ public class AppGroupStorage: @unchecked Sendable {
         } catch {
             throw mapDatabaseError(error)
         }
-    }
-
-    // MARK: - Generic Storage
-
-    private func canonicalConfigBlobName(for fileName: String) -> String {
-        switch fileName.lowercased() {
-        case "rewrite_rules.json", "rewriterules.json":
-            "RewriteRules.json"
-        case "request_maps.json", "requestmaps.json":
-            "RequestMaps.json"
-        case "host_entries.json", "hostentries.json":
-            "HostEntries.json"
-        case "scripts.json":
-            "Scripts.json"
-        case "favorites.json":
-            "Favorites.json"
-        case "rulegroups.json":
-            "RuleGroups.json"
-        case "profiles.json":
-            "Profiles.json"
-        default:
-            fileName
-        }
-    }
-
-    /// Load data from a file in the config directory
-    public func loadData(from fileName: String) throws -> Data {
-        let key = canonicalConfigBlobName(for: fileName)
-        do {
-            return try withDatabase { pool in
-                try pool.read { db in
-                    guard let data = try Data.fetchOne(
-                        db,
-                        sql: "SELECT data FROM config_blobs WHERE name = ?",
-                        arguments: [key]
-                    ) else {
-                        throw StorageError.fileNotFound
-                    }
-                    return data
-                }
-            }
-        } catch let error as StorageError {
-            throw error
-        } catch {
-            throw mapDatabaseError(error)
-        }
-    }
-
-    /// Save data to a file in the config directory
-    public func saveData(_ data: Data, to fileName: String) throws {
-        let key = canonicalConfigBlobName(for: fileName)
-        let now = Date().timeIntervalSince1970
-        do {
-            try withDatabase { pool in
-                try pool.write { db in
-                    try db.execute(
-                        sql: """
-                        INSERT INTO config_blobs (name, data, updated_at)
-                        VALUES (?, ?, ?)
-                        ON CONFLICT(name) DO UPDATE SET
-                            data = excluded.data,
-                            updated_at = excluded.updated_at
-                        """,
-                        arguments: [key, data, now]
-                    )
-                }
-            }
-        } catch {
-            throw mapDatabaseError(error)
-        }
-    }
-
-    /// Get the URL for a config file in the shared container.
-    public func configFileURL(for fileName: String) -> URL? {
-        guard let container = containerURL else {
-            return nil
-        }
-
-        return container
-            .appendingPathComponent(configDirectory)
-            .appendingPathComponent(fileName)
-    }
-
-    /// Get a direct file URL in the app group container root.
-    public func appGroupFileURL(for fileName: String) -> URL? {
-        guard let container = containerURL else {
-            return nil
-        }
-        return container.appendingPathComponent(fileName)
-    }
-
-    /// Returns packet capture files in the app group container.
-    public func packetCaptureFiles(prefixes: [String] = ["capture_raw_packets", "capture_http2_proxy", "packet_capture", "capture"]) -> [URL] {
-        guard let container = containerURL else { return [] }
-        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
-            at: container,
-            includingPropertiesForKeys: [.contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return []
-        }
-
-        let matching = fileURLs.filter { url in
-            let name = url.lastPathComponent
-            guard name.hasSuffix(".pcap") else { return false }
-            return prefixes.contains { name.hasPrefix($0) }
-        }
-
-        return matching.sorted { lhs, rhs in
-            let left = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-            let right = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-            return left > right
-        }
-    }
-
-    /// Get the last modification date for a config file, if it exists.
-    public func configFileModificationDate(for fileName: String) -> Date? {
-        let key = canonicalConfigBlobName(for: fileName)
-        do {
-            return try withDatabase { pool in
-                try pool.read { db in
-                    guard let updatedAt = try Double.fetchOne(
-                        db,
-                        sql: "SELECT updated_at FROM config_blobs WHERE name = ?",
-                        arguments: [key]
-                    ) else {
-                        return nil
-                    }
-                    return Date(timeIntervalSince1970: updatedAt)
-                }
-            }
-        } catch {
-            CoreLog.storage.error(
-                LogEvent.storage("config_blob_modification_date")
-                    .failure()
-                    .with("file", value: fileName, privacy: .public)
-                    .error(error)
-            )
-            return nil
-        }
-    }
-
-    // MARK: - Configuration Storage
-
-    /// Saves capture configuration (filters, settings, etc.)
-    public func saveConfiguration(_ config: CaptureConfiguration) throws {
-        let normalized = config.normalized()
-        try saveSettingValue(normalized, scope: SettingScope.capture, key: DefaultsKey.captureConfiguration)
-    }
-
-    /// Loads capture configuration
-    public func loadConfiguration() -> CaptureConfiguration {
-        if let config = loadSettingValue(
-            CaptureConfiguration.self,
-            scope: SettingScope.capture,
-            key: DefaultsKey.captureConfiguration
-        ) {
-            return config.normalized()
-        }
-        return CaptureConfiguration.default.normalized()
-    }
-
-    // MARK: - Capture Options
-
-    public func saveCaptureOptions(_ options: CaptureOptions) throws {
-        let normalized = options.normalized()
-        try saveSettingValue(normalized, scope: SettingScope.capture, key: DefaultsKey.captureOptions)
-    }
-
-    public func loadCaptureOptions() -> CaptureOptions {
-        if let options = loadSettingValue(
-            CaptureOptions.self,
-            scope: SettingScope.capture,
-            key: DefaultsKey.captureOptions
-        ) {
-            return options.normalized()
-        }
-
-        try? saveCaptureOptions(.default)
-        return CaptureOptions.default
-    }
-
-    // MARK: - Body Storage Configuration
-
-    public func saveBodyStorageConfig(_ config: BodyStorageConfig) throws {
-        let normalized = config.normalized()
-        try saveSettingValue(normalized, scope: SettingScope.capture, key: DefaultsKey.bodyStorageConfig)
-    }
-
-    public func loadBodyStorageConfig() -> BodyStorageConfig {
-        if let config = loadSettingValue(
-            BodyStorageConfig.self,
-            scope: SettingScope.capture,
-            key: DefaultsKey.bodyStorageConfig
-        ) {
-            return config.normalized()
-        }
-
-        try? saveBodyStorageConfig(.default)
-        return BodyStorageConfig.default
-    }
-
-    // MARK: - Sampling Configuration
-
-    public func saveSamplingConfig(_ config: SamplingConfig) throws {
-        let normalized = config.normalized()
-        try saveSettingValue(normalized, scope: SettingScope.capture, key: DefaultsKey.samplingConfig)
-    }
-
-    public func loadSamplingConfig() -> SamplingConfig {
-        if let config = loadSettingValue(
-            SamplingConfig.self,
-            scope: SettingScope.capture,
-            key: DefaultsKey.samplingConfig
-        ) {
-            return config.normalized()
-        }
-
-        try? saveSamplingConfig(.default)
-        return SamplingConfig.default
-    }
-
-    // MARK: - MITM Allowlist
-
-    public func saveMITMAllowlist(_ allowlist: [String]) throws {
-        let sanitized = sanitizeDomainList(allowlist)
-        try saveSettingValue(sanitized, scope: SettingScope.capture, key: DefaultsKey.mitmAllowlist)
-    }
-
-    public func loadMITMAllowlist() -> [String] {
-        if let list = loadSettingValue(
-            [String].self,
-            scope: SettingScope.capture,
-            key: DefaultsKey.mitmAllowlist
-        ) {
-            return sanitizeDomainList(list)
-        }
-
-        try? saveMITMAllowlist(["*"])
-        return ["*"]
-    }
-
-    // MARK: - Rewrite Rules Storage
-
-    /// Saves rewrite rules to the shared container
-    public func saveRewriteRules(_ rules: [RewriteRule]) async throws {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(rules)
-        try saveData(data, to: "rewrite_rules.json")
-    }
-
-    /// Loads rewrite rules from the shared container
-    public func loadRewriteRules() async throws -> [RewriteRule] {
-        do {
-            let data = try loadData(from: "rewrite_rules.json")
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode([RewriteRule].self, from: data)
-        } catch StorageError.fileNotFound {
-            return []
-        }
-    }
-
-    // MARK: - Request Maps Storage
-
-    /// Saves request maps to the shared container
-    public func saveRequestMaps(_ maps: [RequestMap]) async throws {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(maps)
-        try saveData(data, to: "request_maps.json")
-    }
-
-    /// Loads request maps from the shared container
-    public func loadRequestMaps() async throws -> [RequestMap] {
-        do {
-            let data = try loadData(from: "request_maps.json")
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode([RequestMap].self, from: data)
-        } catch StorageError.fileNotFound {
-            return []
-        }
-    }
-
-    // MARK: - Host Entries Storage
-
-    /// Saves host entries to the shared container
-    public func saveHostEntries(_ entries: [HostEntry]) async throws {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(entries)
-        try saveData(data, to: "host_entries.json")
-    }
-
-    /// Loads host entries from the shared container
-    public func loadHostEntries() async throws -> [HostEntry] {
-        do {
-            let data = try loadData(from: "host_entries.json")
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode([HostEntry].self, from: data)
-        } catch StorageError.fileNotFound {
-            return []
-        }
-    }
-
-    // MARK: - Scripts Storage
-
-    /// Saves scripts to the shared container
-    public func saveScripts(_ scripts: [Script]) async throws {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(scripts)
-        try saveData(data, to: "scripts.json")
-    }
-
-    /// Loads scripts from the shared container
-    public func loadScripts() async throws -> [Script] {
-        do {
-            let data = try loadData(from: "scripts.json")
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode([Script].self, from: data)
-        } catch StorageError.fileNotFound {
-            return []
-        }
-    }
-
-    // MARK: - Breakpoints Storage
-
-    /// Saves breakpoints to the shared container
-    public func saveBreakpoints(_ breakpoints: [Breakpoint]) async throws {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(breakpoints)
-        try saveData(data, to: "breakpoints.json")
-    }
-
-    /// Loads breakpoints from the shared container
-    public func loadBreakpoints() async throws -> [Breakpoint] {
-        do {
-            let data = try loadData(from: "breakpoints.json")
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode([Breakpoint].self, from: data)
-        } catch StorageError.fileNotFound {
-            return []
-        }
-    }
-
-    // MARK: - Favorites Storage
-
-    /// Saves favorites to the shared container
-    public func saveFavorites(_ favorites: [Favorite]) async throws {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(favorites)
-        try saveData(data, to: "favorites.json")
-    }
-
-    /// Loads favorites from the shared container
-    public func loadFavorites() async throws -> [Favorite] {
-        do {
-            let data = try loadData(from: "favorites.json")
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode([Favorite].self, from: data)
-        } catch StorageError.fileNotFound {
-            return []
-        }
-    }
-
-    // MARK: - Throttling Configuration
-
-    /// Saves network throttling state for the tunnel provider.
-    public func saveThrottlingState(_ state: NetworkThrottlingState) throws {
-        try saveSettingValue(state, scope: SettingScope.capture, key: DefaultsKey.throttlingState)
-    }
-
-    /// Loads network throttling state.
-    public func loadThrottlingState() -> NetworkThrottlingState {
-        if let state = loadSettingValue(
-            NetworkThrottlingState.self,
-            scope: SettingScope.capture,
-            key: DefaultsKey.throttlingState
-        ) {
-            return state
-        }
-
-        return .disabled
     }
 
     // MARK: - WebSocket Storage
@@ -3271,125 +2774,16 @@ public class AppGroupStorage: @unchecked Sendable {
             URL(fileURLWithPath: databaseURL.path + "-shm")
         ]
         return sqliteFiles.reduce(into: Int64(0)) { partialResult, url in
-            let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? nil
+            let fileSize = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
             partialResult += Int64(fileSize ?? 0)
         }
     }
 
-    private func sanitizeDomainList(_ list: [String]) -> [String] {
+    func sanitizeDomainList(_ list: [String]) -> [String] {
         let cleaned = list
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { !$0.isEmpty }
         return cleaned.isEmpty ? ["*"] : cleaned
     }
 
-    // MARK: - Session Storage
-
-    /// Saves multiple sessions to the shared container (async)
-    public func saveSessions(_ sessions: [CaptureSession]) async throws {
-        guard !sessions.isEmpty else { return }
-        let encoder = makeEncoder()
-        do {
-            try withDatabase { pool in
-                try pool.write { db in
-                    let now = Date().timeIntervalSince1970
-                    for session in sessions {
-                        let payload = try encoder.encode(session)
-                        try db.execute(
-                            sql: """
-                            INSERT INTO capture_sessions (id, start_time, payload, updated_at)
-                            VALUES (?, ?, ?, ?)
-                            ON CONFLICT(id) DO UPDATE SET
-                                start_time = excluded.start_time,
-                                payload = excluded.payload,
-                                updated_at = excluded.updated_at
-                            """,
-                            arguments: [session.id.uuidString, session.startTime.timeIntervalSince1970, payload, now]
-                        )
-                    }
-                }
-            }
-        } catch {
-            throw mapDatabaseError(error)
-        }
-    }
-
-    /// Loads all sessions from storage (async)
-    public func loadSessions() async throws -> [CaptureSession] {
-        try loadAllSessions()
-    }
-
-    /// Saves a capture session to the shared container
-    public func saveSession(_ session: CaptureSession) throws {
-        guard let data = try? makeEncoder().encode(session) else {
-            throw StorageError.encodingFailed
-        }
-        let now = Date().timeIntervalSince1970
-        let didWrite = executeDBWrite { db in
-            try db.execute(
-                sql: """
-                INSERT INTO capture_sessions (id, start_time, payload, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    start_time = excluded.start_time,
-                    payload = excluded.payload,
-                    updated_at = excluded.updated_at
-                """,
-                arguments: [session.id.uuidString, session.startTime.timeIntervalSince1970, data, now]
-            )
-        }
-        if !didWrite {
-            throw StorageError.databaseUnavailable
-        }
-        CoreLog.storage.debug("event=storage.session_save outcome=success session_id=\(session.id.uuidString, privacy: .public)")
-    }
-
-    /// Loads all capture sessions from storage
-    public func loadAllSessions() throws -> [CaptureSession] {
-        do {
-            return try withDatabase { pool in
-                try pool.read { db in
-                    let rows = try Row.fetchAll(
-                        db,
-                        sql: """
-                        SELECT payload
-                        FROM capture_sessions
-                        ORDER BY start_time DESC, id DESC
-                        """
-                    )
-                    let decoder = makeDecoder()
-                    var sessions: [CaptureSession] = []
-                    sessions.reserveCapacity(rows.count)
-                    for row in rows {
-                        let payload: Data = row["payload"]
-                        if let session = try? decoder.decode(CaptureSession.self, from: payload) {
-                            sessions.append(session)
-                        }
-                    }
-                    return sessions
-                }
-            }
-        } catch {
-            throw mapDatabaseError(error)
-        }
-    }
-
-    /// Deletes a specific session from storage
-    public func deleteSession(_ sessionID: UUID) throws {
-        let didWrite = executeDBWrite { db in
-            try db.execute(
-                sql: "DELETE FROM capture_sessions WHERE id = ?",
-                arguments: [sessionID.uuidString]
-            )
-        }
-        if !didWrite {
-            throw StorageError.databaseUnavailable
-        }
-        CoreLog.storage.debug("event=storage.session_delete outcome=success session_id=\(sessionID.uuidString, privacy: .public)")
-    }
-
-    /// Updates an existing session (same as save, but with explicit semantics)
-    public func updateSession(_ session: CaptureSession) throws {
-        try saveSession(session)
-    }
 }

@@ -38,73 +38,75 @@ protocol ConfigurationRepository {
 /// Implementation of ConfigurationRepository using AppGroupStorage
 @MainActor
 class ConfigurationRepositoryImpl: ConfigurationRepository {
-    // MARK: - Dependencies
-
-    private let storage: AppGroupStorage
+    private let store: ConfigurationDataStore
 
     // MARK: - Initialization
 
     init(storage: AppGroupStorage = .shared) {
-        self.storage = storage
+        self.store = AppGroupConfigurationStore(storage: storage)
+    }
+
+    init(store: ConfigurationDataStore) {
+        self.store = store
     }
 
     // MARK: - Rewrite Rules
 
     func getRewriteRules() async throws -> [RewriteRule] {
-        try await storage.loadRewriteRules()
+        try await store.loadRewriteRules()
     }
 
     func saveRewriteRules(_ rules: [RewriteRule]) async throws {
-        try await storage.saveRewriteRules(rules)
+        try await store.saveRewriteRules(rules)
     }
 
     // MARK: - Request Maps
 
     func getRequestMaps() async throws -> [RequestMap] {
-        try await storage.loadRequestMaps()
+        try await store.loadRequestMaps()
     }
 
     func saveRequestMaps(_ maps: [RequestMap]) async throws {
-        try await storage.saveRequestMaps(maps)
+        try await store.saveRequestMaps(maps)
     }
 
     // MARK: - Host Entries
 
     func getHostEntries() async throws -> [HostEntry] {
-        try await storage.loadHostEntries()
+        try await store.loadHostEntries()
     }
 
     func saveHostEntries(_ entries: [HostEntry]) async throws {
-        try await storage.saveHostEntries(entries)
+        try await store.saveHostEntries(entries)
     }
 
     // MARK: - Scripts
 
     func getScripts() async throws -> [Script] {
-        try await storage.loadScripts()
+        try await store.loadScripts()
     }
 
     func saveScripts(_ scripts: [Script]) async throws {
-        try await storage.saveScripts(scripts)
+        try await store.saveScripts(scripts)
     }
 
     // MARK: - Breakpoints
 
     func getBreakpoints() async throws -> [Breakpoint] {
-        try await storage.loadBreakpoints()
+        try await store.loadBreakpoints()
     }
 
     func saveBreakpoints(_ breakpoints: [Breakpoint]) async throws {
-        try await storage.saveBreakpoints(breakpoints)
+        try await store.saveBreakpoints(breakpoints)
     }
 
     // MARK: - Favorites
 
     func getFavorites() async throws -> [Favorite] {
-        try await storage.loadFavorites()
+        try await store.loadFavorites()
     }
 
     func saveFavorites(_ favorites: [Favorite]) async throws {
-        try await storage.saveFavorites(favorites)
+        try await store.saveFavorites(favorites)
     }
 }
