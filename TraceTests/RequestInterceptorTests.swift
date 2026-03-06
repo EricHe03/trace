@@ -461,6 +461,70 @@ final class RequestInterceptorTests: XCTestCase {
         XCTAssertNotNil(result)
     }
 
+    func testInterceptResponseDoesNotApplySetQueryParamAction() async {
+        await resetResponseRewriteTestState()
+
+        let originalURL = "https://trace-review-regression.example.com/items?foo=1"
+        let rule = makeRewriteRule(
+            name: "Ignore Response Query Set",
+            ruleType: .modifyResponse,
+            matchType: .exact,
+            matchPattern: originalURL,
+            actions: [
+                RewriteAction(
+                    actionType: .setQueryParam,
+                    parameters: ["name": "foo", "value": "2"]
+                )
+            ]
+        )
+        RewriteManager.shared.addRule(rule)
+        await sut.forceConfigRefresh()
+
+        let response = await sut.interceptResponse(
+            request: makeNetworkRequest(url: originalURL),
+            statusCode: 200,
+            statusMessage: "OK",
+            headers: [],
+            body: nil
+        )
+
+        XCTAssertEqual(response.url, originalURL)
+
+        await resetResponseRewriteTestState()
+    }
+
+    func testInterceptResponseDoesNotApplyRemoveQueryParamAction() async {
+        await resetResponseRewriteTestState()
+
+        let originalURL = "https://trace-review-regression.example.com/items?foo=1&bar=2"
+        let rule = makeRewriteRule(
+            name: "Ignore Response Query Removal",
+            ruleType: .modifyResponse,
+            matchType: .exact,
+            matchPattern: originalURL,
+            actions: [
+                RewriteAction(
+                    actionType: .removeQueryParam,
+                    parameters: ["name": "foo"]
+                )
+            ]
+        )
+        RewriteManager.shared.addRule(rule)
+        await sut.forceConfigRefresh()
+
+        let response = await sut.interceptResponse(
+            request: makeNetworkRequest(url: originalURL),
+            statusCode: 200,
+            statusMessage: "OK",
+            headers: [],
+            body: nil
+        )
+
+        XCTAssertEqual(response.url, originalURL)
+
+        await resetResponseRewriteTestState()
+    }
+
     func testInterceptStreamEventAppliesStreamScriptPayloadMutation() async {
         let scriptManager = ScriptManager.shared
         scriptManager.clearAllScripts()
@@ -551,6 +615,13 @@ final class RequestInterceptorTests: XCTestCase {
         scriptManager.clearAllScripts()
         await sut.forceConfigRefresh()
     }
+
+    private func resetResponseRewriteTestState() async {
+        ScriptManager.shared.clearAllScripts()
+        RewriteManager.shared.clearAllRules()
+        await BreakpointManager.shared.setEnabled(false)
+        await sut.forceConfigRefresh()
+    }
 }
 
 // MARK: - Helper Factory Functions
@@ -558,16 +629,20 @@ final class RequestInterceptorTests: XCTestCase {
 private func makeRewriteRule(
     id: UUID = UUID(),
     name: String = "Test Rule",
-    enabled: Bool = true
+    enabled: Bool = true,
+    ruleType: RuleType = .modifyRequest,
+    matchType: MatchType = .wildcard,
+    matchPattern: String = "*.example.com",
+    actions: [RewriteAction] = []
 ) -> RewriteRule {
     RewriteRule(
         id: id,
         name: name,
         enabled: enabled,
-        ruleType: .modifyRequest,
-        matchType: .wildcard,
-        matchPattern: "*.example.com",
-        actions: []
+        ruleType: ruleType,
+        matchType: matchType,
+        matchPattern: matchPattern,
+        actions: actions
     )
 }
 
