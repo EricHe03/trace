@@ -471,8 +471,21 @@ extension QUICFlowRouter {
             let establishResult = await session.establish()
 
             if establishResult.outcome == .intercepted {
-                if self.dualMITMCircuitBreakerEnabled, self.dualMITMPolicy == .adaptiveFailOpen {
-                    DualMITMCircuitBreaker.shared.recordQUICInterceptSample(failed: false)
+                if let dualMITMPolicyEngine = self.dualMITMPolicyEngine {
+                    let hostPort: (String, Int)? = self.stateQueue.sync {
+                        guard let state = self.flowStates[flowKey], state.flowID == flowID else { return nil }
+                        return (state.host, state.port)
+                    }
+                    if let (host, port) = hostPort {
+                        let startPlan = dualMITMPolicyEngine.planNewFlow(
+                            protocolName: .quic,
+                            destination: HostPort(host: host, port: port)
+                        )
+                        dualMITMPolicyEngine.recordSuccess(
+                            profile: startPlan.profile,
+                            details: SuccessDetails(establishedMITM: true)
+                        )
+                    }
                 }
                 self.stateQueue.sync {
                     guard var state = self.flowStates[flowKey], state.flowID == flowID else { return }
