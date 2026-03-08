@@ -1,5 +1,5 @@
 # SwiftNIO Full E2E Capture Test Plan (iOS WebKit, No Custom Scripts)
-Date: 2026-02-16  
+Date: 2026-02-16 (last updated: 2026-03-08)
 Repository: `/Users/lujuncheng/Trace-iOS/Trace`
 
 ## 1) Goal
@@ -10,6 +10,8 @@ Validate that the SwiftNIO/NIOTS proxy path captures browser traffic correctly, 
 - Stream path behavior (`stream_and_capture`) and interception path behavior (`buffer_and_intercept`)
 - Special semantics (`304`, `204`, `HEAD` no-body behavior)
 - WebSocket and SSE capture
+- QUIC/HTTP3 flow routing and capture (block/passThrough/intercept modes)
+- DualMITMPolicyEngine routing consistency
 - Stability (no restart loops, no unexpected `502`/upstream failures)
 
 ---
@@ -77,7 +79,13 @@ Note:
 - Interception phase: `response_pipeline = buffer_and_intercept`
 - HTTP/2 observed (`detail=h2` in protocol select)
 
-### F. Stability
+### F. QUIC/HTTP3
+- QUIC handling mode set to `intercept`: verify HTTP/3 requests are captured with correct method/URL/headers/status/body
+- QUIC handling mode set to `passThrough`: verify QUIC traffic flows without interception
+- QUIC handling mode set to `block`: verify QUIC traffic is blocked and client falls back to TCP/TLS
+- DualMITMPolicyEngine enforcement: verify consistent routing decisions across TCP and QUIC flows for the same host
+
+### G. Stability
 - 10+ minutes mixed browsing
 - Clean tunnel stop/start, no restart loop behavior
 
@@ -183,7 +191,36 @@ Expected:
 
 ---
 
-## Phase 5: Interception path verification
+## Phase 5: QUIC/HTTP3 verification
+
+Goal: verify QUIC flow routing and HTTP/3 capture under each handling mode.
+
+### 5a. Intercept mode (default)
+1. Confirm `quicHandlingMode = intercept` in hardening config.
+2. Browse to an HTTP/3-capable site (e.g., `https://www.google.com`, `https://www.cloudflare.com`).
+3. In Trace, verify captured requests show HTTP/3 protocol where negotiated.
+4. Verify request/response headers and body are captured correctly.
+
+### 5b. Block mode
+1. Set `quicHandlingMode = block`.
+2. Browse to the same HTTP/3-capable sites.
+3. Verify QUIC traffic is blocked and browser falls back to HTTP/2 over TCP.
+4. Confirm requests still appear in Trace captured via TCP/TLS path.
+
+### 5c. Pass-through mode
+1. Set `quicHandlingMode = passThrough`.
+2. Browse to the same HTTP/3-capable sites.
+3. Verify QUIC traffic flows without interception (no HTTP/3 captures in Trace).
+4. TCP/TLS requests to non-QUIC sites should still be captured normally.
+
+### 5d. Policy engine consistency
+1. Set `quicHandlingMode = intercept`.
+2. Browse a site that uses both TCP and QUIC connections.
+3. Verify DualMITMPolicyEngine makes consistent routing decisions (both paths either MITM or bypass for the same host based on allowlist/bypass state).
+
+---
+
+## Phase 6: Interception path verification
 
 Goal: prove interception still forces buffered path after stream optimizations.
 
@@ -198,7 +235,7 @@ Goal: prove interception still forces buffered path after stream optimizations.
 
 ---
 
-## Phase 6: Stability run
+## Phase 7: Stability run
 
 1. Browse mixed websites for 10 minutes.
 2. Repeated-refresh one page 20+ times.
@@ -240,6 +277,10 @@ echo "error_responses $(rg '\"type\":\"proxy_nio_error_response\"' vpn_events.nd
 echo "mitm_pipeline_failures $(rg 'stage=mitm_pipeline_install outcome=failure' vpn_events.ndjson | wc -l | tr -d ' ')"
 echo "ws_persist_failures $(rg 'proxy\\.nio_ws_capture_persist outcome=failure' log.txt vpn_events.ndjson | wc -l | tr -d ' ')"
 echo "sse_persist_failures $(rg 'proxy\\.nio_sse_capture_persist outcome=failure' log.txt vpn_events.ndjson | wc -l | tr -d ' ')"
+echo "quic_intercept_count $(rg 'quic.*intercept' vpn_events.ndjson | wc -l | tr -d ' ')"
+echo "quic_passthrough_count $(rg 'quic.*passthrough' vpn_events.ndjson | wc -l | tr -d ' ')"
+echo "quic_block_count $(rg 'quic.*block' vpn_events.ndjson | wc -l | tr -d ' ')"
+echo "policy_engine_failures $(rg 'dual_mitm_policy.*failure' vpn_events.ndjson | wc -l | tr -d ' ')"
 ```
 
 Baseline expected:
@@ -252,6 +293,8 @@ Baseline expected:
 6. `ws_persist_failures = 0`
 7. `sse_persist_failures = 0`
 8. `buffer_pipeline = 0` in baseline; `>0` only in interception phase.
+9. `quic_intercept_count > 0` when `quicHandlingMode = intercept` and HTTP/3-capable sites browsed.
+10. `policy_engine_failures = 0`
 
 ---
 
@@ -262,6 +305,8 @@ Baseline expected:
 3. `HEAD` responses (if tested) have no response body.
 4. `CONNECT 200` tunnel-establishment rows can appear alongside normal decrypted HTTP entries.
 5. Some shutdown-window `client_handler_error` entries can occur during tunnel stop; separate shutdown noise from active-browsing failures.
+6. QUIC flows may show adaptive fail-open behavior: initial MITM attempt failures trigger pass-through fallback with TTL-based bypass records in `HostBypassStore`.
+7. DualMITMPolicyEngine shadow-mode log entries may appear when `dualMITMPolicyEngineShadow = true`; these are observational and do not affect routing.
 
 ---
 
@@ -276,6 +321,9 @@ Fail the run if any occurs:
 5. Missing body for normal body-bearing `200` responses.
 6. Missing WS/SSE capture when Phase 3/4 actions were successful in browser UI.
 7. Interception phase cannot force `buffer_and_intercept`.
+8. QUIC intercept mode fails to capture HTTP/3 requests from HTTP/3-capable sites.
+9. QUIC block mode fails to force TCP/TLS fallback.
+10. DualMITMPolicyEngine produces inconsistent routing for the same host across TCP and QUIC flows.
 
 ---
 
@@ -286,3 +334,5 @@ Run this full plan:
 1. Before merging major proxy/TLS/HTTP pipeline changes.
 2. After `NIOMITMProxyEngine.swift` behavior changes.
 3. Before release branch cut.
+4. After `QUICFlowRouter` or `DualMITMPolicyEngine` behavior changes.
+5. After `HardeningConfig` flag default changes.
