@@ -2785,5 +2785,4 @@ public class AppGroupStorage: @unchecked Sendable {
             .filter { !$0.isEmpty }
         return cleaned.isEmpty ? ["*"] : cleaned
     }
-
 }

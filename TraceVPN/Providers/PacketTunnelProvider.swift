@@ -534,5 +534,4 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             AppMessageCompletion.call(handler: completionHandler, queue: completionQueue, data: nil)
         }
     }
-
 }

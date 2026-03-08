@@ -174,7 +174,6 @@ public struct RewriteRule: Codable, Identifiable, Sendable {
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(modifiedAt, forKey: .modifiedAt)
     }
-
 }
 
 /// Action to perform when a rule matches.
@@ -419,7 +418,6 @@ public struct HostEntry: Codable, Identifiable, Equatable {
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
     }
-
 }
 
 extension HostEntry: Toggleable {}
@@ -475,7 +473,6 @@ public struct MockResponse: Codable, Sendable {
         self.scriptContent = scriptContent
         self.delay = delay
     }
-
 }
 
 /// Request mapping rule to return mock responses.
@@ -511,7 +508,6 @@ public struct RequestMap: Codable, Identifiable, Sendable {
         self.modifiedAt = modifiedAt
         self.hitCount = hitCount
     }
-
 }
 
 public enum RequestMapError: LocalizedError {
@@ -605,7 +601,6 @@ public struct Script: Codable, Identifiable, Sendable {
         self.modifiedAt = modifiedAt
         self.executionCount = executionCount
     }
-
 }
 
 extension Script: Toggleable {}
@@ -682,7 +677,6 @@ public struct BreakpointConfiguration: Codable, Equatable, Sendable {
         self.maxHits = maxHits
         self.conditions = conditions
     }
-
 }
 
 public enum BreakpointExecutionMode: String, Codable, Equatable, Sendable {
@@ -769,7 +763,6 @@ public struct PausedRequest: Identifiable, Sendable {
         self.statusCode = statusCode
         self.statusMessage = statusMessage
     }
-
 }
 
 public extension Notification.Name {

@@ -2,7 +2,7 @@
 //  TraceWidgetViews.swift
 //  TraceWidget
 //
-//  Created by AI Assistant on 2026/03/06.
+//  Created by Justin on 2026/03/06.
 //
 
 import SwiftUI

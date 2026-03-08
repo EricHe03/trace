@@ -34,7 +34,7 @@ let appProducts: [Product] = []
 #endif
 
 let externalDependencies: [Package.Dependency] = [
-    .package(url: "https://github.com/apple/swift-certificates.git", exact: "1.17.1"),
+    .package(url: "https://github.com/apple/swift-certificates.git", exact: "1.18.0"),
     .package(url: "https://github.com/apple/swift-asn1.git", exact: "1.5.1"),
     .package(url: "https://github.com/facebook/zstd.git", exact: "1.5.7"),
     .package(url: "https://github.com/groue/GRDB.swift.git", from: "6.0.0"),
