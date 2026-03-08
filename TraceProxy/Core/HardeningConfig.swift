@@ -26,7 +26,6 @@ public struct HardeningConfigSnapshot: Sendable {
     public let dualMITMPolicyEngineEnforcedTCP: Bool
     public let dualMITMPolicyEngineEnforcedProxy: Bool
     public let dualMITMPolicyEngineEnforcedQUIC: Bool
-    public let dualMITMMITMEngineV2: Bool
     public let dualMITMHttp2MITMEnabled: Bool
     public let dualMITMStrictEnforcementHardFail: Bool
     public let enableStreamInterceptionV2: Bool
@@ -48,7 +47,6 @@ public struct HardeningConfigSnapshot: Sendable {
             "dualMitmPolicyEngineEnforcedTCP": dualMITMPolicyEngineEnforcedTCP,
             "dualMitmPolicyEngineEnforcedProxy": dualMITMPolicyEngineEnforcedProxy,
             "dualMitmPolicyEngineEnforcedQUIC": dualMITMPolicyEngineEnforcedQUIC,
-            "dualMitmMITMEngineV2": dualMITMMITMEngineV2,
             "dualMitmHttp2MITMEnabled": dualMITMHttp2MITMEnabled,
             "dualMitmStrictEnforcementHardFail": dualMITMStrictEnforcementHardFail,
             "enableStreamInterceptionV2": enableStreamInterceptionV2
@@ -82,10 +80,10 @@ public actor HardeningConfig {
         case dualMITMPolicyEngineEnforcedTCP = "hardening.dualMitmPolicyEngineEnforcedTCP"
         case dualMITMPolicyEngineEnforcedProxy = "hardening.dualMitmPolicyEngineEnforcedProxy"
         case dualMITMPolicyEngineEnforcedQUIC = "hardening.dualMitmPolicyEngineEnforcedQUIC"
-        case dualMITMMITMEngineV2 = "hardening.dualMitmMITMEngineV2"
         case dualMITMHttp2MITMEnabled = "hardening.dualMitmHttp2MITMEnabled"
         case dualMITMStrictEnforcementHardFail = "hardening.dualMitmStrictEnforcementHardFail"
         case enableStreamInterceptionV2 = "hardening.enableStreamInterceptionV2"
+        case dualMITMMigrationVersion = "hardening.dualMitmMigrationVersion"
     }
 
     // MARK: - Rollout Stages
@@ -117,7 +115,6 @@ public actor HardeningConfig {
     private var _dualMITMPolicyEngineEnforcedTCP: Bool
     private var _dualMITMPolicyEngineEnforcedProxy: Bool
     private var _dualMITMPolicyEngineEnforcedQUIC: Bool
-    private var _dualMITMMITMEngineV2: Bool
     private var _dualMITMHttp2MITMEnabled: Bool
     private var _dualMITMStrictEnforcementHardFail: Bool
     private var _enableStreamInterceptionV2: Bool
@@ -182,17 +179,11 @@ public actor HardeningConfig {
             _enableNIOMITM = boolValue(.enableNetworkFrameworkMITM, default: true)
         }
 
-        #if DEBUG
-        let defaultPolicyEngineShadow = true
-        #else
-        let defaultPolicyEngineShadow = false
-        #endif
-        _dualMITMPolicyEngineShadow = boolValue(.dualMITMPolicyEngineShadow, default: defaultPolicyEngineShadow)
-        _dualMITMPolicyEngineEnforcedTCP = boolValue(.dualMITMPolicyEngineEnforcedTCP, default: false)
-        _dualMITMPolicyEngineEnforcedProxy = boolValue(.dualMITMPolicyEngineEnforcedProxy, default: false)
-        _dualMITMPolicyEngineEnforcedQUIC = boolValue(.dualMITMPolicyEngineEnforcedQUIC, default: false)
-        _dualMITMMITMEngineV2 = boolValue(.dualMITMMITMEngineV2, default: false)
-        _dualMITMHttp2MITMEnabled = boolValue(.dualMITMHttp2MITMEnabled, default: false)
+        _dualMITMPolicyEngineShadow = boolValue(.dualMITMPolicyEngineShadow, default: true)
+        _dualMITMPolicyEngineEnforcedTCP = boolValue(.dualMITMPolicyEngineEnforcedTCP, default: true)
+        _dualMITMPolicyEngineEnforcedProxy = boolValue(.dualMITMPolicyEngineEnforcedProxy, default: true)
+        _dualMITMPolicyEngineEnforcedQUIC = boolValue(.dualMITMPolicyEngineEnforcedQUIC, default: true)
+        _dualMITMHttp2MITMEnabled = boolValue(.dualMITMHttp2MITMEnabled, default: true)
         _dualMITMStrictEnforcementHardFail = boolValue(.dualMITMStrictEnforcementHardFail, default: true)
         _enableStreamInterceptionV2 = boolValue(.enableStreamInterceptionV2, default: false)
 
@@ -223,6 +214,56 @@ public actor HardeningConfig {
             _enableRobustReassembly = true
             _enableMetrics = true
             _enableDebugLogging = false
+        }
+
+        // Migrate enforcement defaults for existing users upgrading from older versions.
+        let currentMigrationVersion = storage.loadHardeningSetting(Int.self, forKey: ConfigKey.dualMITMMigrationVersion.rawValue) ?? 0
+        if currentMigrationVersion < 1 {
+            // Version 1: Enable shadow, enforcement, and h2 MITM by default.
+            // Adopt new defaults only when the corresponding keys were never explicitly
+            // persisted. This preserves intentional overrides from UI/remote config while
+            // still upgrading users who were previously on old in-code defaults.
+            let shadowStored = storage.loadHardeningSetting(Bool.self, forKey: ConfigKey.dualMITMPolicyEngineShadow.rawValue) != nil
+            let tcpEnforcedStored = storage.loadHardeningSetting(Bool.self, forKey: ConfigKey.dualMITMPolicyEngineEnforcedTCP.rawValue) != nil
+            let proxyEnforcedStored = storage.loadHardeningSetting(Bool.self, forKey: ConfigKey.dualMITMPolicyEngineEnforcedProxy.rawValue) != nil
+            let quicEnforcedStored = storage.loadHardeningSetting(Bool.self, forKey: ConfigKey.dualMITMPolicyEngineEnforcedQUIC.rawValue) != nil
+            let http2Stored = storage.loadHardeningSetting(Bool.self, forKey: ConfigKey.dualMITMHttp2MITMEnabled.rawValue) != nil
+
+            if !shadowStored {
+                _dualMITMPolicyEngineShadow = true
+            }
+            if !tcpEnforcedStored {
+                _dualMITMPolicyEngineEnforcedTCP = true
+            }
+            if !proxyEnforcedStored {
+                _dualMITMPolicyEngineEnforcedProxy = true
+            }
+            if !quicEnforcedStored {
+                _dualMITMPolicyEngineEnforcedQUIC = true
+            }
+            if !http2Stored {
+                _dualMITMHttp2MITMEnabled = true
+            }
+
+            func persistMigration(_ value: some Encodable, forKey key: String) {
+                try? storage.saveHardeningSetting(value, forKey: key)
+            }
+            if !shadowStored {
+                persistMigration(true, forKey: ConfigKey.dualMITMPolicyEngineShadow.rawValue)
+            }
+            if !tcpEnforcedStored {
+                persistMigration(true, forKey: ConfigKey.dualMITMPolicyEngineEnforcedTCP.rawValue)
+            }
+            if !proxyEnforcedStored {
+                persistMigration(true, forKey: ConfigKey.dualMITMPolicyEngineEnforcedProxy.rawValue)
+            }
+            if !quicEnforcedStored {
+                persistMigration(true, forKey: ConfigKey.dualMITMPolicyEngineEnforcedQUIC.rawValue)
+            }
+            if !http2Stored {
+                persistMigration(true, forKey: ConfigKey.dualMITMHttp2MITMEnabled.rawValue)
+            }
+            persistMigration(1, forKey: ConfigKey.dualMITMMigrationVersion.rawValue)
         }
     }
 
@@ -301,11 +342,6 @@ public actor HardeningConfig {
     /// Returns whether policy-engine routing is enforced for QUIC intercept failover.
     public var dualMITMPolicyEngineEnforcedQUIC: Bool {
         _dualMITMPolicyEngineEnforcedQUIC
-    }
-
-    /// Returns whether MITM engine v2 scaffolding path is enabled.
-    public var dualMITMMITMEngineV2: Bool {
-        _dualMITMMITMEngineV2
     }
 
     /// Returns whether HTTP/2 MITM is enabled for dual MITM mode.
@@ -448,12 +484,6 @@ public actor HardeningConfig {
         ProxyLog.mitm.info("event=config.dual_mitm_policy_quic_enforced outcome=success enabled=\(enabled)")
     }
 
-    public func setDualMITMMITMEngineV2(_ enabled: Bool) {
-        _dualMITMMITMEngineV2 = enabled
-        persistHardeningValue(enabled, for: .dualMITMMITMEngineV2)
-        ProxyLog.mitm.info("event=config.dual_mitm_engine_v2 outcome=success enabled=\(enabled)")
-    }
-
     public func setDualMITMHttp2MITMEnabled(_ enabled: Bool) {
         _dualMITMHttp2MITMEnabled = enabled
         persistHardeningValue(enabled, for: .dualMITMHttp2MITMEnabled)
@@ -538,16 +568,11 @@ public actor HardeningConfig {
         _quicHandlingMode = .intercept
         _blockQUIC = _quicHandlingMode.blocksQUIC
         _enableNIOMITM = true
-        #if DEBUG
         _dualMITMPolicyEngineShadow = true
-        #else
-        _dualMITMPolicyEngineShadow = false
-        #endif
-        _dualMITMPolicyEngineEnforcedTCP = false
-        _dualMITMPolicyEngineEnforcedProxy = false
-        _dualMITMPolicyEngineEnforcedQUIC = false
-        _dualMITMMITMEngineV2 = false
-        _dualMITMHttp2MITMEnabled = false
+        _dualMITMPolicyEngineEnforcedTCP = true
+        _dualMITMPolicyEngineEnforcedProxy = true
+        _dualMITMPolicyEngineEnforcedQUIC = true
+        _dualMITMHttp2MITMEnabled = true
         _dualMITMStrictEnforcementHardFail = true
         _enableStreamInterceptionV2 = false
         _enableRawCapture = false
@@ -566,7 +591,6 @@ public actor HardeningConfig {
         persistHardeningValue(_dualMITMPolicyEngineEnforcedTCP, for: .dualMITMPolicyEngineEnforcedTCP)
         persistHardeningValue(_dualMITMPolicyEngineEnforcedProxy, for: .dualMITMPolicyEngineEnforcedProxy)
         persistHardeningValue(_dualMITMPolicyEngineEnforcedQUIC, for: .dualMITMPolicyEngineEnforcedQUIC)
-        persistHardeningValue(_dualMITMMITMEngineV2, for: .dualMITMMITMEngineV2)
         persistHardeningValue(_dualMITMHttp2MITMEnabled, for: .dualMITMHttp2MITMEnabled)
         persistHardeningValue(_dualMITMStrictEnforcementHardFail, for: .dualMITMStrictEnforcementHardFail)
         persistHardeningValue(_enableStreamInterceptionV2, for: .enableStreamInterceptionV2)
@@ -594,7 +618,6 @@ public actor HardeningConfig {
             dualMITMPolicyEngineEnforcedTCP: _dualMITMPolicyEngineEnforcedTCP,
             dualMITMPolicyEngineEnforcedProxy: _dualMITMPolicyEngineEnforcedProxy,
             dualMITMPolicyEngineEnforcedQUIC: _dualMITMPolicyEngineEnforcedQUIC,
-            dualMITMMITMEngineV2: _dualMITMMITMEngineV2,
             dualMITMHttp2MITMEnabled: _dualMITMHttp2MITMEnabled,
             dualMITMStrictEnforcementHardFail: _dualMITMStrictEnforcementHardFail,
             enableStreamInterceptionV2: _enableStreamInterceptionV2
@@ -604,7 +627,7 @@ public actor HardeningConfig {
     /// Logs the current configuration.
     public func logCurrentConfig() {
         ProxyLog.mitm.info(
-            "event=config.current stage=\(self._rolloutStage.rawValue, privacy: .public) reassembly=\(self._enableRobustReassembly) metrics=\(self._enableMetrics) debug=\(self._enableDebugLogging) raw_capture=\(self._enableRawCapture) max_size=\(self._maxRawCaptureSize) allowlist_count=\(self._mitmAllowlist.count) quic_mode=\(self._quicHandlingMode.rawValue, privacy: .public) block_quic=\(self._quicHandlingMode.blocksQUIC) nio_mitm=\(self._enableNIOMITM) dual_mitm_policy_shadow=\(self._dualMITMPolicyEngineShadow) dual_mitm_policy_tcp_enforced=\(self._dualMITMPolicyEngineEnforcedTCP) dual_mitm_policy_proxy_enforced=\(self._dualMITMPolicyEngineEnforcedProxy) dual_mitm_policy_quic_enforced=\(self._dualMITMPolicyEngineEnforcedQUIC) dual_mitm_engine_v2=\(self._dualMITMMITMEngineV2) dual_mitm_http2_mitm=\(self._dualMITMHttp2MITMEnabled) dual_mitm_strict_hard_fail=\(self._dualMITMStrictEnforcementHardFail) stream_interception_v2=\(self._enableStreamInterceptionV2)"
+            "event=config.current stage=\(self._rolloutStage.rawValue, privacy: .public) reassembly=\(self._enableRobustReassembly) metrics=\(self._enableMetrics) debug=\(self._enableDebugLogging) raw_capture=\(self._enableRawCapture) max_size=\(self._maxRawCaptureSize) allowlist_count=\(self._mitmAllowlist.count) quic_mode=\(self._quicHandlingMode.rawValue, privacy: .public) block_quic=\(self._quicHandlingMode.blocksQUIC) nio_mitm=\(self._enableNIOMITM) dual_mitm_policy_shadow=\(self._dualMITMPolicyEngineShadow) dual_mitm_policy_tcp_enforced=\(self._dualMITMPolicyEngineEnforcedTCP) dual_mitm_policy_proxy_enforced=\(self._dualMITMPolicyEngineEnforcedProxy) dual_mitm_policy_quic_enforced=\(self._dualMITMPolicyEngineEnforcedQUIC) dual_mitm_http2_mitm=\(self._dualMITMHttp2MITMEnabled) dual_mitm_strict_hard_fail=\(self._dualMITMStrictEnforcementHardFail) stream_interception_v2=\(self._enableStreamInterceptionV2)"
         )
     }
 }

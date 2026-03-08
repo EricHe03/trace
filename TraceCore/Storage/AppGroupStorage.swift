@@ -258,7 +258,6 @@ public class AppGroupStorage: @unchecked Sendable {
             "hardening.dualMitmPolicyEngineEnforcedTCP",
             "hardening.dualMitmPolicyEngineEnforcedProxy",
             "hardening.dualMitmPolicyEngineEnforcedQUIC",
-            "hardening.dualMitmMITMEngineV2",
             "hardening.dualMitmHttp2MITMEnabled",
             "hardening.dualMitmStrictEnforcementHardFail",
             "hardening.enableStreamInterceptionV2"

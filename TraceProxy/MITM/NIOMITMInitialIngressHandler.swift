@@ -40,6 +40,7 @@ final class NIOMITMInitialIngressHandler: ChannelInboundHandler, RemovableChanne
     let onRequestCaptured: ((NetworkRequest) -> Void)?
     let shouldMitmConnect: (String, UInt16) -> Bool
     let shouldEnableTransparentTLS: () -> Bool
+    let http2MITMEnabledProvider: () -> Bool
     let shouldFailOpenAfterMITMFailure: (String, UInt16, String, MITMFailoverContext) -> Bool
     let onMITMFailure: ((String, String) -> Void)?
     let flowID = UUID().uuidString
@@ -53,9 +54,8 @@ final class NIOMITMInitialIngressHandler: ChannelInboundHandler, RemovableChanne
     var sniHash = "unknown"
     var upstreamHash = "unknown"
     let maxTLSProbeBytes = 4096
-    // Transparent MITM remains HTTP/1.1-only for stability; h2 negotiation here has
-    // produced intermittent early-close failures under Dual MITM load.
-    static let transparentRelayALPNProtocols: [String] = ["http/1.1"]
+    /// Transparent MITM ALPN protocols offered during the upstream TLS handshake.
+    static let transparentRelayALPNProtocols: [String] = ["h2", "http/1.1"]
     static let transparentTLSHandshakeTimeout: TimeAmount = .seconds(5)
     static let transparentTLSConnectTimeout: TimeAmount = .seconds(6)
 
@@ -84,6 +84,7 @@ final class NIOMITMInitialIngressHandler: ChannelInboundHandler, RemovableChanne
         onRequestCaptured: ((NetworkRequest) -> Void)?,
         shouldMitmConnect: @escaping (String, UInt16) -> Bool,
         shouldEnableTransparentTLS: @escaping () -> Bool,
+        http2MITMEnabledProvider: @escaping () -> Bool,
         shouldFailOpenAfterMITMFailure: @escaping (String, UInt16, String, MITMFailoverContext) -> Bool,
         onMITMFailure: ((String, String) -> Void)?
     ) {
@@ -95,6 +96,7 @@ final class NIOMITMInitialIngressHandler: ChannelInboundHandler, RemovableChanne
         self.onRequestCaptured = onRequestCaptured
         self.shouldMitmConnect = shouldMitmConnect
         self.shouldEnableTransparentTLS = shouldEnableTransparentTLS
+        self.http2MITMEnabledProvider = http2MITMEnabledProvider
         self.shouldFailOpenAfterMITMFailure = shouldFailOpenAfterMITMFailure
         self.onMITMFailure = onMITMFailure
     }
@@ -721,7 +723,10 @@ extension NIOMITMInitialIngressHandler {
             return []
         }
 
-        return Self.transparentRelayALPNProtocols.filter { candidate in
+        let relayProtocols = http2MITMEnabledProvider()
+            ? Self.transparentRelayALPNProtocols
+            : ["http/1.1"]
+        return relayProtocols.filter { candidate in
             normalizedOffer.contains(candidate.lowercased())
         }
     }
@@ -858,6 +863,7 @@ extension NIOMITMInitialIngressHandler {
             captureConfigProvider: captureConfigProvider,
             onRequestCaptured: onRequestCaptured,
             shouldMitmConnect: shouldMitmConnect,
+            http2MITMEnabledProvider: http2MITMEnabledProvider,
             shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
             onMITMFailure: onMITMFailure,
             ingressMode: ingressMode,

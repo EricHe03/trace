@@ -116,6 +116,7 @@ public struct InterceptionEvent: Codable, Sendable {
     public var protocolName: String
 
     public var destinationHost: String?
+    public var destinationHostHash: String?
     public var destinationPort: Int?
 
     public var action: InterceptionAction?
@@ -142,6 +143,7 @@ public struct InterceptionEvent: Codable, Sendable {
         dualMITMPolicy: String,
         protocolName: String,
         destinationHost: String? = nil,
+        destinationHostHash: String? = nil,
         destinationPort: Int? = nil,
         action: InterceptionAction? = nil,
         decisionReason: String? = nil,
@@ -163,6 +165,7 @@ public struct InterceptionEvent: Codable, Sendable {
         self.dualMITMPolicy = dualMITMPolicy
         self.protocolName = protocolName
         self.destinationHost = destinationHost
+        self.destinationHostHash = destinationHostHash
         self.destinationPort = destinationPort
         self.action = action
         self.decisionReason = decisionReason

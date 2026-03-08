@@ -79,8 +79,7 @@ final class QUICFlowRouterTests: XCTestCase {
                     shadowEnabled: true,
                     enforceTCPRouting: false,
                     enforceProxyRouting: false,
-                    enforceQUICRouting: true,
-                    mitmEngineV2Enabled: false
+                    enforceQUICRouting: true
                 )
             )
         )
@@ -124,8 +123,7 @@ final class QUICFlowRouterTests: XCTestCase {
                     shadowEnabled: true,
                     enforceTCPRouting: false,
                     enforceProxyRouting: false,
-                    enforceQUICRouting: true,
-                    mitmEngineV2Enabled: false
+                    enforceQUICRouting: true
                 )
             )
         )

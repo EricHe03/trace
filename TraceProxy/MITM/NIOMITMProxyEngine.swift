@@ -110,6 +110,7 @@ final class NIOMITMProxyEngine: @unchecked Sendable {
     private let onRequestCaptured: ((NetworkRequest) -> Void)?
     private let shouldMitmConnect: (String, UInt16) -> Bool
     private let isTransparentTLSEnabled: () -> Bool
+    private let http2MITMEnabledProvider: () -> Bool
     private let shouldFailOpenAfterMITMFailure: (String, UInt16, String, MITMFailoverContext) -> Bool
     private let onMITMFailure: ((String, String) -> Void)?
 
@@ -126,6 +127,7 @@ final class NIOMITMProxyEngine: @unchecked Sendable {
         onRequestCaptured: ((NetworkRequest) -> Void)? = nil,
         shouldMitmConnect: @escaping (String, UInt16) -> Bool = { _, _ in false },
         isTransparentTLSEnabled: @escaping () -> Bool = { false },
+        http2MITMEnabledProvider: @escaping () -> Bool = { true },
         shouldFailOpenAfterMITMFailure: @escaping (String, UInt16, String, MITMFailoverContext) -> Bool = { _, _, reason, context in
             switch context {
             case .transparentTLS:
@@ -144,6 +146,7 @@ final class NIOMITMProxyEngine: @unchecked Sendable {
         self.onRequestCaptured = onRequestCaptured
         self.shouldMitmConnect = shouldMitmConnect
         self.isTransparentTLSEnabled = isTransparentTLSEnabled
+        self.http2MITMEnabledProvider = http2MITMEnabledProvider
         self.shouldFailOpenAfterMITMFailure = shouldFailOpenAfterMITMFailure
         self.onMITMFailure = onMITMFailure
     }
@@ -188,6 +191,7 @@ final class NIOMITMProxyEngine: @unchecked Sendable {
                     onRequestCaptured: self.onRequestCaptured,
                     shouldMitmConnect: self.shouldMitmConnect,
                     shouldEnableTransparentTLS: self.isTransparentTLSEnabled,
+                    http2MITMEnabledProvider: self.http2MITMEnabledProvider,
                     shouldFailOpenAfterMITMFailure: self.shouldFailOpenAfterMITMFailure,
                     onMITMFailure: self.onMITMFailure
                 )

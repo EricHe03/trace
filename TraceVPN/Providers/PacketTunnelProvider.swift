@@ -277,7 +277,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let dualMITMPolicyEngineEnforcedTCP = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedTCP
         let dualMITMPolicyEngineEnforcedProxy = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedProxy
         let dualMITMPolicyEngineEnforcedQUIC = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedQUIC
-        let dualMITMMITMEngineV2 = await HardeningConfig.shared.dualMITMMITMEngineV2
         let dualMITMHttp2MITMEnabled = await HardeningConfig.shared.dualMITMHttp2MITMEnabled
         let dualMITMStrictEnforcementHardFail = await HardeningConfig.shared.dualMITMStrictEnforcementHardFail
         let packetCaptureWriter = createPacketCaptureWriterIfNeeded(
@@ -314,7 +313,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             dualMITMPolicyEngineEnforcedTCP: dualMITMPolicyEngineEnforcedTCP,
             dualMITMPolicyEngineEnforcedProxy: dualMITMPolicyEngineEnforcedProxy,
             dualMITMPolicyEngineEnforcedQUIC: dualMITMPolicyEngineEnforcedQUIC,
-            dualMITMMITMEngineV2: dualMITMMITMEngineV2,
             dualMITMHttp2MITMEnabled: dualMITMHttp2MITMEnabled,
             dualMITMStrictEnforcementHardFail: dualMITMStrictEnforcementHardFail
         )

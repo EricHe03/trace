@@ -193,6 +193,7 @@ extension NIOMITMHTTPConnectHandler {
             captureConfigProvider: captureConfigProvider,
             onRequestCaptured: onRequestCaptured,
             shouldMitmConnect: shouldMitmConnect,
+            http2MITMEnabledProvider: http2MITMEnabledProvider,
             shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
             onMITMFailure: onMITMFailure,
             ingressMode: .tunneledHTTPS(host: host, port: UInt16(port)),

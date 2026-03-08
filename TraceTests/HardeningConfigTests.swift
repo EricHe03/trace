@@ -111,34 +111,28 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertTrue(enabled)
     }
 
-    func testDefaultDualMITMPolicyEngineTCPEnforcedDisabled() async {
+    func testDefaultDualMITMPolicyEngineTCPEnforcedEnabled() async {
         let enabled = await sut.dualMITMPolicyEngineEnforcedTCP
 
-        XCTAssertFalse(enabled)
+        XCTAssertTrue(enabled)
     }
 
-    func testDefaultDualMITMPolicyEngineProxyEnforcedDisabled() async {
+    func testDefaultDualMITMPolicyEngineProxyEnforcedEnabled() async {
         let enabled = await sut.dualMITMPolicyEngineEnforcedProxy
 
-        XCTAssertFalse(enabled)
+        XCTAssertTrue(enabled)
     }
 
-    func testDefaultDualMITMPolicyEngineQUICEnforcedDisabled() async {
+    func testDefaultDualMITMPolicyEngineQUICEnforcedEnabled() async {
         let enabled = await sut.dualMITMPolicyEngineEnforcedQUIC
 
-        XCTAssertFalse(enabled)
+        XCTAssertTrue(enabled)
     }
 
-    func testDefaultDualMITMMITMEngineV2Disabled() async {
-        let enabled = await sut.dualMITMMITMEngineV2
-
-        XCTAssertFalse(enabled)
-    }
-
-    func testDefaultDualMITMHttp2MITMDisabled() async {
+    func testDefaultDualMITMHttp2MITMEnabled() async {
         let enabled = await sut.dualMITMHttp2MITMEnabled
 
-        XCTAssertFalse(enabled)
+        XCTAssertTrue(enabled)
     }
 
     func testDefaultDualMITMStrictEnforcementHardFailEnabled() async {
@@ -579,13 +573,6 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertTrue(result)
     }
 
-    func testSetDualMITMMITMEngineV2() async {
-        await sut.setDualMITMMITMEngineV2(true)
-        let result = await sut.dualMITMMITMEngineV2
-
-        XCTAssertTrue(result)
-    }
-
     func testSetDualMITMHttp2MITMEnabled() async {
         await sut.setDualMITMHttp2MITMEnabled(true)
         let result = await sut.dualMITMHttp2MITMEnabled
@@ -613,11 +600,10 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertEqual(snapshot.quicHandlingMode, QUICHandlingMode.intercept.rawValue)
         XCTAssertFalse(snapshot.blockQUIC)
         XCTAssertTrue(snapshot.enableNetworkFrameworkMITM)
-        XCTAssertFalse(snapshot.dualMITMPolicyEngineEnforcedTCP)
-        XCTAssertFalse(snapshot.dualMITMPolicyEngineEnforcedProxy)
-        XCTAssertFalse(snapshot.dualMITMPolicyEngineEnforcedQUIC)
-        XCTAssertFalse(snapshot.dualMITMMITMEngineV2)
-        XCTAssertFalse(snapshot.dualMITMHttp2MITMEnabled)
+        XCTAssertTrue(snapshot.dualMITMPolicyEngineEnforcedTCP)
+        XCTAssertTrue(snapshot.dualMITMPolicyEngineEnforcedProxy)
+        XCTAssertTrue(snapshot.dualMITMPolicyEngineEnforcedQUIC)
+        XCTAssertTrue(snapshot.dualMITMHttp2MITMEnabled)
         XCTAssertTrue(snapshot.dualMITMStrictEnforcementHardFail)
     }
 
@@ -662,7 +648,6 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertNotNil(dict["dualMitmPolicyEngineEnforcedTCP"])
         XCTAssertNotNil(dict["dualMitmPolicyEngineEnforcedProxy"])
         XCTAssertNotNil(dict["dualMitmPolicyEngineEnforcedQUIC"])
-        XCTAssertNotNil(dict["dualMitmMITMEngineV2"])
         XCTAssertNotNil(dict["dualMitmHttp2MITMEnabled"])
         XCTAssertNotNil(dict["dualMitmStrictEnforcementHardFail"])
     }

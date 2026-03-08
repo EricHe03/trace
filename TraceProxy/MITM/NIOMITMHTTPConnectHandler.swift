@@ -43,8 +43,8 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
     static let tunnelPipelineVersion = "connect-relay-2026-02-20-v4"
     static let upstreamHTTPResponseDeadlineSeconds: Int64 = 600
     static let transparentTLSUpgradeTimeout: TimeAmount = .seconds(3)
-    /// Keep MITM ALPN on HTTP/1.1 until tunneled HTTP/2 request stalls are fully resolved.
-    static let mitmALPNProtocols: [String] = ["http/1.1"]
+    /// MITM ALPN protocols offered during the client-facing TLS handshake.
+    static let mitmALPNProtocols: [String] = ["h2", "http/1.1"]
 
     enum State {
         case waitingForRequest
@@ -81,6 +81,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
     let captureConfigProvider: () -> CaptureConfiguration
     let onRequestCaptured: ((NetworkRequest) -> Void)?
     let shouldMitmConnect: (String, UInt16) -> Bool
+    let http2MITMEnabledProvider: () -> Bool
     let shouldFailOpenAfterMITMFailure: (String, UInt16, String, MITMFailoverContext) -> Bool
     let onMITMFailure: ((String, String) -> Void)?
     let ingressMode: IngressMode
@@ -109,6 +110,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
         captureConfigProvider: @escaping () -> CaptureConfiguration,
         onRequestCaptured: ((NetworkRequest) -> Void)?,
         shouldMitmConnect: @escaping (String, UInt16) -> Bool,
+        http2MITMEnabledProvider: @escaping () -> Bool = { true },
         shouldFailOpenAfterMITMFailure: @escaping (String, UInt16, String, MITMFailoverContext) -> Bool,
         onMITMFailure: ((String, String) -> Void)?,
         ingressMode: IngressMode,
@@ -122,6 +124,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
         self.captureConfigProvider = captureConfigProvider
         self.onRequestCaptured = onRequestCaptured
         self.shouldMitmConnect = shouldMitmConnect
+        self.http2MITMEnabledProvider = http2MITMEnabledProvider
         self.shouldFailOpenAfterMITMFailure = shouldFailOpenAfterMITMFailure
         self.onMITMFailure = onMITMFailure
         self.ingressMode = ingressMode
@@ -528,7 +531,13 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
     func beginCONNECTMITM(host: String, port: Int, context: ChannelHandlerContext) {
         logConnectStage(stage: "mitm_prepare", outcome: "begin")
         do {
-            let tlsContext = try Self.makeServerTLSContext(for: host)
+            let applicationProtocols = http2MITMEnabledProvider()
+                ? Self.mitmALPNProtocols
+                : ["http/1.1"]
+            let tlsContext = try Self.makeServerTLSContext(
+                for: host,
+                applicationProtocols: applicationProtocols
+            )
             context.channel.setOption(ChannelOptions.autoRead, value: false).whenComplete { [weak self] _ in
                 guard let self else { return }
                 self.logConnectStage(stage: "connect_response", outcome: "writing", detail: "mitm")

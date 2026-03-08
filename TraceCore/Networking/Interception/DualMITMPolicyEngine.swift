@@ -45,8 +45,10 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
     }
 
     public func updateSnapshot(_ snapshot: DualMITMPolicySnapshot) {
+        var sanitized = snapshot
+        sanitized.allowlist = Self.sanitizeAllowlist(snapshot.allowlist)
         lock.lock()
-        self.snapshot = snapshot
+        self.snapshot = sanitized
         lock.unlock()
     }
 
@@ -181,7 +183,7 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
     ) -> DualMITMProxyFlowStartPlan {
         var current = currentSnapshot()
         current.mitmEnabled = mitmEnabled
-        current.allowlist = allowlist
+        current.allowlist = Self.sanitizeAllowlist(allowlist)
 
         let flowPlan = planNewFlow(
             snapshot: current,
@@ -215,7 +217,7 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
     ) -> DualMITMProxyFailurePlan {
         var snapshot = currentSnapshot()
         snapshot.mitmEnabled = mitmEnabled
-        snapshot.allowlist = allowlist
+        snapshot.allowlist = Self.sanitizeAllowlist(allowlist)
 
         let startPlan = planNewFlow(
             snapshot: snapshot,
@@ -628,6 +630,7 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
                 dualMITMPolicy: profile.snapshot.policyMode.rawValue,
                 protocolName: profile.protocolName.rawValue,
                 destinationHost: profile.destination.host,
+                destinationHostHash: LogRedaction.hash(profile.destination.host),
                 destinationPort: profile.destination.port,
                 action: action,
                 decisionReason: decisionReason,
@@ -698,14 +701,16 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         }
     }
 
-    private static func hostIsAllowlisted(_ host: String, allowlist: [String]) -> Bool {
-        let sanitized = allowlist
+    private static func sanitizeAllowlist(_ allowlist: [String]) -> [String] {
+        allowlist
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { !$0.isEmpty }
+    }
 
-        guard !sanitized.isEmpty else { return false }
-        if sanitized.contains("*") { return true }
-        return sanitized.contains { pattern in
+    private static func hostIsAllowlisted(_ host: String, allowlist: [String]) -> Bool {
+        guard !allowlist.isEmpty else { return false }
+        if allowlist.contains("*") { return true }
+        return allowlist.contains { pattern in
             if pattern.contains("*") {
                 return StringMatcher(
                     matchType: .wildcard,

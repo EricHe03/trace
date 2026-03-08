@@ -12,7 +12,6 @@ public struct DualMITMPolicyFeatureFlags: Sendable, Codable, Equatable {
     public var enforceTCPRouting: Bool
     public var enforceProxyRouting: Bool
     public var enforceQUICRouting: Bool
-    public var mitmEngineV2Enabled: Bool
     public var http2MITMEnabled: Bool
     public var strictEnforcementHardFail: Bool
 
@@ -21,7 +20,6 @@ public struct DualMITMPolicyFeatureFlags: Sendable, Codable, Equatable {
         enforceTCPRouting: Bool,
         enforceProxyRouting: Bool = false,
         enforceQUICRouting: Bool = false,
-        mitmEngineV2Enabled: Bool = false,
         http2MITMEnabled: Bool = false,
         strictEnforcementHardFail: Bool = true
     ) {
@@ -29,33 +27,19 @@ public struct DualMITMPolicyFeatureFlags: Sendable, Codable, Equatable {
         self.enforceTCPRouting = enforceTCPRouting
         self.enforceProxyRouting = enforceProxyRouting
         self.enforceQUICRouting = enforceQUICRouting
-        self.mitmEngineV2Enabled = mitmEngineV2Enabled
         self.http2MITMEnabled = http2MITMEnabled
         self.strictEnforcementHardFail = strictEnforcementHardFail
     }
 
     public static var defaults: DualMITMPolicyFeatureFlags {
-        #if DEBUG
-        return DualMITMPolicyFeatureFlags(
+        DualMITMPolicyFeatureFlags(
             shadowEnabled: true,
-            enforceTCPRouting: false,
-            enforceProxyRouting: false,
-            enforceQUICRouting: false,
-            mitmEngineV2Enabled: false,
-            http2MITMEnabled: false,
+            enforceTCPRouting: true,
+            enforceProxyRouting: true,
+            enforceQUICRouting: true,
+            http2MITMEnabled: true,
             strictEnforcementHardFail: true
         )
-        #else
-        return DualMITMPolicyFeatureFlags(
-            shadowEnabled: false,
-            enforceTCPRouting: false,
-            enforceProxyRouting: false,
-            enforceQUICRouting: false,
-            mitmEngineV2Enabled: false,
-            http2MITMEnabled: false,
-            strictEnforcementHardFail: true
-        )
-        #endif
     }
 }
 
