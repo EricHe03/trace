@@ -1442,5 +1442,4 @@ extension NIOMITMHTTPConnectHandler {
         }
         context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: flushPromise)
     }
-
 }
