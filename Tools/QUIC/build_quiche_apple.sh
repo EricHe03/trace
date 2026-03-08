@@ -71,6 +71,69 @@ for target in "${TARGETS[@]}"; do
   cp "${source_lib}" "${target_out_dir}/libquiche.a"
 done
 
+# BoringSSL's hand-written assembly files are compiled with platform=IOS (2)
+# even when building for iOS simulator targets. Xcode 15+ (and Xcode 26
+# strictly) reject xcframeworks containing libraries with mixed platform
+# markers. vtool cannot fix these files because the compact assembly object
+# files leave no room in the header for load command replacement, so we patch
+# the LC_BUILD_VERSION platform field directly in the binary (IOS=2 → IOSSIMULATOR=7).
+fix_simulator_platform() {
+  local lib="$1"
+  local tmpdir
+  tmpdir=$(mktemp -d)
+
+  (cd "$tmpdir" && ar x "$lib")
+
+  local fixed
+  fixed=$(python3 - "$tmpdir"/*.o << 'PYEOF'
+import struct, sys, os
+
+LC_BUILD_VERSION = 0x32
+IOS, IOS_SIM = 2, 7
+fixed = 0
+
+for path in sys.argv[1:]:
+    if not os.path.isfile(path):
+        continue
+    with open(path, 'rb') as f:
+        data = bytearray(f.read())
+    magic = struct.unpack_from('<I', data, 0)[0]
+    endian = '<' if magic == 0xFEEDFACF else ('>' if magic == 0xCFFAEDFE else None)
+    if endian is None:
+        continue
+    ncmds = struct.unpack_from(endian + 'I', data, 16)[0]
+    offset = 32
+    changed = False
+    for _ in range(ncmds):
+        cmd     = struct.unpack_from(endian + 'I', data, offset)[0]
+        cmdsize = struct.unpack_from(endian + 'I', data, offset + 4)[0]
+        if cmd == LC_BUILD_VERSION:
+            if struct.unpack_from(endian + 'I', data, offset + 8)[0] == IOS:
+                struct.pack_into(endian + 'I', data, offset + 8, IOS_SIM)
+                changed = True
+        offset += cmdsize
+    if changed:
+        with open(path, 'wb') as f:
+            f.write(data)
+        fixed += 1
+
+print(fixed)
+PYEOF
+)
+
+  if [ "${fixed}" -gt 0 ]; then
+    echo "    Fixed ${fixed} object file(s) with wrong platform marker in $(basename "$lib")"
+    (cd "$tmpdir" && ar rcs libquiche_fixed.a ./*.o)
+    cp "$tmpdir/libquiche_fixed.a" "$lib"
+  fi
+
+  rm -rf "$tmpdir"
+}
+
+echo "==> Fixing simulator platform markers"
+fix_simulator_platform "${OUT_DIR}/lib/${TARGET_SIM_ARM64}/libquiche.a"
+fix_simulator_platform "${OUT_DIR}/lib/${TARGET_SIM_X64}/libquiche.a"
+
 headers_dir="${OUT_DIR}/include"
 rm -rf "${headers_dir}"
 mkdir -p "${headers_dir}"
