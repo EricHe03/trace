@@ -33,6 +33,69 @@ let appProducts: [Product] = [
 let appProducts: [Product] = []
 #endif
 
+func candidatePackageRoots() -> [String] {
+    var candidates: [String] = []
+
+    let environment = ProcessInfo.processInfo.environment
+    let environmentKeys = [
+        "PACKAGE_ROOT",
+        "SRCROOT",
+        "PROJECT_DIR",
+        "PWD"
+    ]
+    for key in environmentKeys {
+        if let value = environment[key], !value.isEmpty {
+            candidates.append(value)
+        }
+    }
+
+    candidates.append(FileManager.default.currentDirectoryPath)
+    candidates.append(URL(fileURLWithPath: #filePath).deletingLastPathComponent().path)
+
+    return candidates
+}
+
+func canonicalPath(_ path: String) -> String {
+    URL(fileURLWithPath: path).standardizedFileURL.path
+}
+
+func looksLikePackageRoot(_ path: String) -> Bool {
+    let packageSwift = URL(fileURLWithPath: path).appendingPathComponent("Package.swift").path
+    let cquicheHeaders = URL(fileURLWithPath: path)
+        .appendingPathComponent("ThirdParty/CQuicheFFI/include/cquiche_ffi.h")
+        .path
+    return FileManager.default.fileExists(atPath: packageSwift) &&
+        FileManager.default.fileExists(atPath: cquicheHeaders)
+}
+
+func resolvedPackageRootPath() -> String {
+    var seen = Set<String>()
+    let candidates = candidatePackageRoots()
+        .map(canonicalPath)
+        .filter { seen.insert($0).inserted }
+
+    if let exactMatch = candidates.first(where: looksLikePackageRoot) {
+        return exactMatch
+    }
+
+    for candidate in candidates {
+        var searchURL = URL(fileURLWithPath: candidate)
+        for _ in 0..<6 {
+            let path = searchURL.path
+            if looksLikePackageRoot(path) {
+                return path
+            }
+            let parent = searchURL.deletingLastPathComponent()
+            if parent.path == path {
+                break
+            }
+            searchURL = parent
+        }
+    }
+
+    return URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
+}
+
 let externalDependencies: [Package.Dependency] = [
     .package(url: "https://github.com/apple/swift-certificates.git", exact: "1.18.0"),
     .package(url: "https://github.com/apple/swift-asn1.git", exact: "1.5.1"),
@@ -45,63 +108,49 @@ let externalDependencies: [Package.Dependency] = [
     .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.0.0")
 ]
 
-let packageRootPath = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
+let packageRootPath = resolvedPackageRootPath()
 let quicheBuildRoot = "\(packageRootPath)/build/quiche"
 let quicheIncludePath = "\(quicheBuildRoot)/include"
 let quicheXCFrameworkRelativePath = "build/quiche/quiche.xcframework"
 let quicheXCFrameworkPath = "\(packageRootPath)/\(quicheXCFrameworkRelativePath)"
-let quicheDeviceLibraryPath = "\(quicheBuildRoot)/lib/aarch64-apple-ios/libquiche.a"
-let quicheSimulatorLibraryPath = "\(quicheBuildRoot)/lib/ios-simulator-universal/libquiche.a"
-let quicheStaticLibrariesAvailable = FileManager.default.fileExists(atPath: quicheDeviceLibraryPath) &&
-    FileManager.default.fileExists(atPath: quicheSimulatorLibraryPath)
-let quicheXCFrameworkAvailable = FileManager.default.fileExists(atPath: quicheXCFrameworkPath)
 let quicheHeadersAvailable = FileManager.default.fileExists(atPath: quicheIncludePath)
-let quicheArtifactsAvailable = quicheHeadersAvailable && (quicheXCFrameworkAvailable || quicheStaticLibrariesAvailable)
-let quicheSDKName = ProcessInfo.processInfo.environment["SDK_NAME"]?.lowercased() ?? ""
-let quichePlatformName = ProcessInfo.processInfo.environment["PLATFORM_NAME"]?.lowercased() ?? ""
-let quicheEffectivePlatformName = ProcessInfo.processInfo.environment["EFFECTIVE_PLATFORM_NAME"]?.lowercased() ?? ""
-let quichePreferredLibraryPath: String = if quicheSDKName.contains("iphonesimulator") ||
-    quichePlatformName.contains("iphonesimulator") ||
-    quicheEffectivePlatformName.contains("iphonesimulator") {
-    quicheSimulatorLibraryPath
-} else if quicheSDKName.contains("iphoneos") ||
-    quichePlatformName == "iphoneos" ||
-    quicheEffectivePlatformName == "-iphoneos" {
-    quicheDeviceLibraryPath
-} else {
-    // Default to simulator archive when platform context is unavailable (for indexing/resolution).
-    quicheSimulatorLibraryPath
+let quicheXCFrameworkAvailable = FileManager.default.fileExists(atPath: quicheXCFrameworkPath)
+
+guard quicheHeadersAvailable else {
+    fatalError(
+        """
+        Missing quiche headers at \(quicheIncludePath).
+        Run: ./Tools/QUIC/build_quiche_apple.sh
+        """
+    )
 }
 
-let quicheLinkerFlags = [quichePreferredLibraryPath]
+guard quicheXCFrameworkAvailable else {
+    fatalError(
+        """
+        Missing quiche XCFramework at \(quicheXCFrameworkPath).
+        Run: ./Tools/QUIC/build_quiche_apple.sh
+        """
+    )
+}
 
-let cquicheFFICSettings: [CSetting] = quicheArtifactsAvailable
-    ? [
-        .headerSearchPath("../../build/quiche/include"),
-        .define("CQUICHE_WITH_QUICHE")
-    ]
-    : []
+let cquicheFFICSettings: [CSetting] = [
+    .headerSearchPath("../../build/quiche/include"),
+    .define("CQUICHE_WITH_QUICHE")
+]
 
-let cquicheFFIDependencies: [Target.Dependency] = quicheXCFrameworkAvailable
-    ? [
-        "QuicheBinary"
-    ]
-    : []
+let cquicheFFIDependencies: [Target.Dependency] = [
+    "QuicheBinary"
+]
 
-let cquicheFFILinkerSettings: [LinkerSetting] = (!quicheXCFrameworkAvailable && quicheStaticLibrariesAvailable)
-    ? [
-        .unsafeFlags(quicheLinkerFlags)
-    ]
-    : []
+let cquicheFFILinkerSettings: [LinkerSetting] = []
 
-let quicheBinaryTargets: [Target] = quicheXCFrameworkAvailable
-    ? [
-        .binaryTarget(
-            name: "QuicheBinary",
-            path: quicheXCFrameworkRelativePath
-        )
-    ]
-    : []
+let quicheBinaryTargets: [Target] = [
+    .binaryTarget(
+        name: "QuicheBinary",
+        path: quicheXCFrameworkRelativePath
+    )
+]
 
 let traceCompressionDependencies: [Target.Dependency] = [
     .product(name: "libzstd", package: "zstd")
