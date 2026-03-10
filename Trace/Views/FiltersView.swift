@@ -214,7 +214,7 @@ struct FiltersView: View {
                 } header: {
                     Text("Network Event Type")
                 } footer: {
-                    Text("Filter by network event type. TCP and UDP are hidden by default to keep Requests focused; enable them for packet-level debugging.")
+                    Text("Filter by network event type. TCP, UDP, DNS, and QUIC are hidden by default to keep Requests focused; enable them for packet-level debugging.")
                 }
 
                 // Response Time Filter

@@ -495,8 +495,6 @@ extension QUICFlowRouter {
                     state.lastFailureReason = nil
                     state.lastFailureAt = nil
                     state.negotiatedALPN = "h3"
-                    state.authorityRetryCount = 0
-                    state.lastAuthorityRetry = nil
                     state.establishedAt = now
                     state.lastProgressAt = now
                     if state.noProgressBudgetStartAt == nil {
@@ -707,10 +705,25 @@ extension QUICFlowRouter {
             state.isEstablishing = true
             state.isEstablished = false
             state.queuedIngests = 0
+            let bufferedClientReplay = state.recentClientDatagrams +
+                state.pendingDatagrams
+                .filter(\.fromClient)
+                .map(\.payload)
             state.pendingDatagrams.removeAll(keepingCapacity: false)
-            if let replayDatagram, !replayDatagram.isEmpty, state.pendingDatagrams.count < maxBufferedDatagramsPerFlow {
-                recordRecentClientDatagramLocked(replayDatagram, state: &state)
-                state.pendingDatagrams.append(QueuedDatagram(payload: replayDatagram, fromClient: true))
+            var replayQueue = Array(
+                bufferedClientReplay
+                    .suffix(maxBufferedDatagramsPerFlow)
+                    .filter { !$0.isEmpty }
+            )
+            if let replayDatagram, !replayDatagram.isEmpty,
+               replayQueue.last != replayDatagram {
+                replayQueue.append(replayDatagram)
+            }
+            if replayQueue.count > maxBufferedDatagramsPerFlow {
+                replayQueue = Array(replayQueue.suffix(maxBufferedDatagramsPerFlow))
+            }
+            for payload in replayQueue {
+                state.pendingDatagrams.append(QueuedDatagram(payload: payload, fromClient: true))
             }
             state.negotiatedALPN = nil
             state.sniHash = LogRedaction.hash(normalizedAuthority)

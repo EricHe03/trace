@@ -22,6 +22,8 @@ final class CaptureViewModel: ObservableObject {
         var defaults = Set(NetworkEventType.allCases)
         defaults.remove(.tcp)
         defaults.remove(.udp)
+        defaults.remove(.dns)
+        defaults.remove(.quic)
         return defaults
     }()
 
