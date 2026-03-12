@@ -119,7 +119,8 @@ extension QUICFlowRouter {
         let failure = Self.quicFailure(from: reason)
         let plan = dualMITMPolicyEngine.handleFailure(
             profile: startPlan.profile,
-            failure: failure
+            failure: failure,
+            applySideEffects: startPlan.enforced
         )
         let policyDecision: Bool
         let policyReason: String
@@ -384,9 +385,6 @@ extension QUICFlowRouter {
         }
         tickTask?.cancel()
         if shouldClose {
-            if dualMITMCircuitBreakerEnabled, dualMITMPolicy == .adaptiveFailOpen {
-                DualMITMCircuitBreaker.shared.recordQUICInterceptSample(failed: true)
-            }
             eventLogHandler?(
                 "quic_mitm_session",
                 "outcome=failed flow_id=\(flowID.uuidString) host_hash=\(hostHash ?? "unknown") reason=\(reason) failure_detail=\(failureDetail) route_decision=pass_through fallback_applied=true bypass_reason=\(reason) policy=\(dualMITMPolicy.rawValue)"

@@ -124,11 +124,14 @@ actor DataCleanupManager {
         var deletedRequests = 0
         var deletedBodies = 0
         var deletedLogs = 0
+        var deletedStreamSessions = 0
         var bytesFreed: Int64 = 0
 
         let requestResult = await cleanupOldRequests()
         deletedRequests = requestResult.count
         bytesFreed += requestResult.bytes
+
+        deletedStreamSessions = await cleanupOldStreamSessions()
 
         let bodyResult = await cleanupOldBodyFiles()
         deletedBodies = bodyResult.count
@@ -153,7 +156,7 @@ actor DataCleanupManager {
         stats.bytesFreed += bytesFreed
         persistStats()
 
-        FeatureLog.storage.info("event=storage.cleanup_complete outcome=success requests_deleted=\(deletedRequests) bodies_deleted=\(deletedBodies) logs_deleted=\(deletedLogs) bytes_freed=\(bytesFreed)")
+        FeatureLog.storage.info("event=storage.cleanup_complete outcome=success requests_deleted=\(deletedRequests) stream_sessions_deleted=\(deletedStreamSessions) bodies_deleted=\(deletedBodies) logs_deleted=\(deletedLogs) bytes_freed=\(bytesFreed)")
     }
 
     private func cleanupOldPacketFlows() async -> (count: Int, bytes: Int64) {
@@ -235,6 +238,16 @@ actor DataCleanupManager {
         }
 
         return (deletedCount, bytesFreed)
+    }
+
+    private func cleanupOldStreamSessions() async -> Int {
+        let cutoffDate = Date().addingTimeInterval(-Double(config.requestRetentionDays) * 24 * 60 * 60)
+        do {
+            return try AppGroupStorage.shared.deleteStreamSessions(olderThan: cutoffDate)
+        } catch {
+            FeatureLog.storage.error("event=storage.cleanup_stream_sessions outcome=failure error=\(error.localizedDescription, privacy: .public)")
+            return 0
+        }
     }
 
     // MARK: - Body File Cleanup

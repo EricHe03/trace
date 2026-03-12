@@ -8,6 +8,7 @@
 import Foundation
 import TraceCore
 
+@available(*, deprecated, message: "Use RewriteManager.shared metadata APIs instead.")
 @MainActor
 public final class TagManager {
     public static let shared = TagManager()
@@ -15,22 +16,18 @@ public final class TagManager {
     private init() {}
 
     public func getAllTags() -> Set<String> {
-        Set(RewriteManager.shared.rules.flatMap(\.tags))
+        RewriteManager.shared.allTags
     }
 
     public func getRules(withTag tag: String) -> [RewriteRule] {
-        RewriteManager.shared.rules.filter { $0.tags.contains(tag) }
+        RewriteManager.shared.rules(withTag: tag)
     }
 
     public func addTag(_ tag: String, to ruleId: UUID) {
-        guard var rule = RewriteManager.shared.rules.first(where: { $0.id == ruleId }) else { return }
-        rule.tags.insert(tag)
-        RewriteManager.shared.updateRule(rule)
+        RewriteManager.shared.addTag(tag, to: ruleId)
     }
 
     public func removeTag(_ tag: String, from ruleId: UUID) {
-        guard var rule = RewriteManager.shared.rules.first(where: { $0.id == ruleId }) else { return }
-        rule.tags.remove(tag)
-        RewriteManager.shared.updateRule(rule)
+        RewriteManager.shared.removeTag(tag, from: ruleId)
     }
 }

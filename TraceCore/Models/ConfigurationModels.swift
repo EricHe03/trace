@@ -7,29 +7,6 @@
 
 import Foundation
 
-private func matchSubject(for url: String, pattern: String, matchType: MatchType) -> (subject: String, isHostMatch: Bool) {
-    if pattern.contains("://") || pattern.contains("/") {
-        return (url, false)
-    }
-
-    // Heuristic:
-    // - Treat host-only patterns like "*.example.com" and "example.com" as host matches.
-    // - Treat extension patterns like "*.png" / "*.js" as URL matches.
-    if matchType == .wildcard, pattern.hasPrefix("*.") {
-        let dotCount = pattern.count(where: { $0 == "." })
-        if dotCount == 1 {
-            return (url, false)
-        }
-    }
-
-    if let host = URL(string: url)?.host {
-        return (host, true)
-    }
-
-    // If URL parsing fails, fall back to matching against the full URL string.
-    return (url, false)
-}
-
 // MARK: - Shared Matching
 
 /// Pattern matching type for rules/maps/scripts/breakpoints.
@@ -196,47 +173,6 @@ public struct RewriteRule: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(averageExecutionTimeMs, forKey: .averageExecutionTimeMs)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(modifiedAt, forKey: .modifiedAt)
-    }
-
-    /// Check if this rule matches the given URL.
-    public func matches(_ url: String) -> Bool {
-        guard enabled else { return false }
-
-        if let criteria = matchCriteria, let urlMatcher = criteria.url {
-            return urlMatcher.matches(url)
-        }
-
-        let pattern = matchPattern.trimmingCharacters(in: .whitespacesAndNewlines)
-        if pattern.isEmpty {
-            return url.isEmpty
-        }
-
-        let (subject, isHostMatch) = matchSubject(for: url, pattern: pattern, matchType: matchType)
-
-        switch matchType {
-        case .exact:
-            if isHostMatch {
-                return subject.lowercased() == pattern.lowercased()
-            }
-            return subject == pattern
-        case .contains:
-            if isHostMatch {
-                let lowerPattern = pattern.lowercased()
-                return subject.lowercased().contains(lowerPattern) || url.lowercased().contains(lowerPattern)
-            }
-            return subject.contains(pattern) || url.contains(pattern)
-        case .wildcard:
-            return matchesWildcard(subject, pattern: pattern)
-        case .regex:
-            return RegexMatcher.safeMatch(pattern: pattern, in: subject, caseSensitive: !isHostMatch)
-        }
-    }
-
-    private func matchesWildcard(_ url: String, pattern: String) -> Bool {
-        var regexPattern = NSRegularExpression.escapedPattern(for: pattern)
-        regexPattern = regexPattern.replacingOccurrences(of: "\\*", with: ".*")
-        regexPattern = "^" + regexPattern + "$"
-        return RegexMatcher.safeMatch(pattern: regexPattern, in: url, caseSensitive: false)
     }
 }
 
@@ -482,104 +418,11 @@ public struct HostEntry: Codable, Identifiable, Equatable {
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
     }
-
-    /// Checks if this host entry matches the given URL or hostname.
-    public func matches(_ url: String) -> Bool {
-        guard enabled else { return false }
-
-        let targetHostname: String = if let urlObj = URL(string: url), let host = urlObj.host {
-            host
-        } else {
-            url
-        }
-
-        if hostname.caseInsensitiveCompare(targetHostname) == .orderedSame {
-            return true
-        }
-
-        if hostname.contains("*") {
-            let pattern = hostname
-                .replacingOccurrences(of: ".", with: "\\.")
-                .replacingOccurrences(of: "*", with: ".*")
-            return RegexMatcher.safeMatch(pattern: "^\(pattern)$", in: targetHostname, caseSensitive: false)
-        }
-
-        return false
-    }
-
-    public var isValidHostname: Bool {
-        guard !hostname.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
-        let validCharacterSet = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-*")
-        let hostnameSet = CharacterSet(charactersIn: hostname)
-        return hostnameSet.isSubset(of: validCharacterSet)
-    }
-
-    public var isValidTargetIP: Bool {
-        Validation.isValidIPAddress(targetIP)
-    }
-
-    public var validationErrors: [String] {
-        var errors: [String] = []
-
-        if name.trimmingCharacters(in: .whitespaces).isEmpty {
-            errors.append("Name cannot be empty")
-        }
-        if !isValidHostname {
-            errors.append("Invalid hostname pattern")
-        }
-        if !isValidTargetIP {
-            errors.append("Invalid target IP address")
-        }
-        if let port = targetPort, port < 1 || port > 65535 {
-            errors.append("Port must be between 1 and 65535")
-        }
-
-        return errors
-    }
-
-    public var isValid: Bool {
-        validationErrors.isEmpty
-    }
 }
 
 extension HostEntry: Toggleable {}
 extension HostEntry: URLMatchable {}
 extension HostEntry: ModificationTrackable {}
-
-public extension HostEntry {
-    static var sample: HostEntry {
-        HostEntry(
-            name: "Local API Server",
-            hostname: "api.example.com",
-            targetIP: "192.168.1.100",
-            targetPort: 8080
-        )
-    }
-
-    static var samples: [HostEntry] {
-        [
-            HostEntry(
-                name: "Local API Server",
-                hostname: "api.example.com",
-                targetIP: "192.168.1.100",
-                targetPort: 8080
-            ),
-            HostEntry(
-                name: "Development Server",
-                hostname: "*.dev.example.com",
-                targetIP: "10.0.0.50",
-                targetPort: nil
-            ),
-            HostEntry(
-                name: "Staging Environment",
-                enabled: false,
-                hostname: "staging.example.com",
-                targetIP: "172.16.0.10",
-                targetPort: 443
-            )
-        ]
-    }
-}
 
 // MARK: - Request Maps
 
@@ -630,99 +473,6 @@ public struct MockResponse: Codable, Sendable {
         self.scriptContent = scriptContent
         self.delay = delay
     }
-
-    /// Resolves the file path to an absolute URL, checking both absolute paths and app group relative paths.
-    private func resolveFilePath(_ filePath: String) throws -> URL {
-        // If it's an absolute path, use it directly
-        if filePath.hasPrefix("/") {
-            let url = URL(fileURLWithPath: filePath)
-            if FileManager.default.fileExists(atPath: url.path) {
-                return url
-            }
-            throw RequestMapError.fileNotFound(filePath)
-        }
-
-        // Check if it's a relative path in the app group container
-        if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: AppGroupConfiguration.appGroupIdentifier) {
-            let mockFilesDir = containerURL.appendingPathComponent("MockFiles", isDirectory: true)
-            let fileURL = mockFilesDir.appendingPathComponent(filePath)
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                return fileURL
-            }
-
-            // Also check directly in the container
-            let directURL = containerURL.appendingPathComponent(filePath)
-            if FileManager.default.fileExists(atPath: directURL.path) {
-                return directURL
-            }
-        }
-
-        // Check Documents directory as fallback
-        if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let mockFilesDir = documentsURL.appendingPathComponent("MockFiles", isDirectory: true)
-            let fileURL = mockFilesDir.appendingPathComponent(filePath)
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                return fileURL
-            }
-        }
-
-        throw RequestMapError.fileNotFound(filePath)
-    }
-
-    public func getBody() throws -> Data {
-        switch bodySource {
-        case .inline:
-            return bodyContent ?? Data()
-        case .file:
-            guard let filePath = bodyFilePath, !filePath.isEmpty else {
-                throw RequestMapError.missingFilePath
-            }
-            let url = try resolveFilePath(filePath)
-            return try Data(contentsOf: url)
-        case .script:
-            // Script execution requires ScriptEngine which is in TraceFeatures
-            // Return scriptContent as data if available, otherwise throw
-            guard let scriptContent, !scriptContent.isEmpty else {
-                throw RequestMapError.scriptExecutionNotSupported
-            }
-            // The actual script execution is handled by RequestMapManager
-            // Here we just return empty data as the caller should use executeScript instead
-            throw RequestMapError.scriptExecutionNotSupported
-        case .template:
-            return bodyContent ?? Data()
-        }
-    }
-
-    /// Executes the script to generate the body content.
-    /// - Parameters:
-    ///   - scriptEngine: The JavaScript engine to execute the script
-    ///   - request: Optional request context for the script
-    /// - Returns: Generated body data
-    public func executeScript(with context: [String: Any] = [:]) throws -> Data {
-        guard bodySource == .script else {
-            throw RequestMapError.invalidBodyData
-        }
-        guard let scriptContent, !scriptContent.isEmpty else {
-            throw RequestMapError.scriptExecutionNotSupported
-        }
-
-        // Script execution is delegated to the caller which has access to ScriptEngine
-        // This method serves as a validation that script content exists
-        // The actual execution happens in RequestMapManager
-        throw RequestMapError.scriptExecutionNotSupported
-    }
-
-    public static func from(request: NetworkRequest) -> MockResponse {
-        let bodyData = request.responseBody.getData()
-        return MockResponse(
-            statusCode: request.statusCode ?? 200,
-            statusMessage: HTTPURLResponse.localizedString(forStatusCode: request.statusCode ?? 200),
-            headers: request.responseHeaders,
-            bodySource: .inline,
-            bodyContent: bodyData,
-            delay: 0
-        )
-    }
 }
 
 /// Request mapping rule to return mock responses.
@@ -757,41 +507,6 @@ public struct RequestMap: Codable, Identifiable, Sendable {
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
         self.hitCount = hitCount
-    }
-
-    public func matches(_ url: String) -> Bool {
-        guard enabled else { return false }
-
-        switch matchType {
-        case .exact:
-            return url == matchPattern
-        case .contains:
-            return url.contains(matchPattern)
-        case .wildcard:
-            return matchesWildcard(url, pattern: matchPattern)
-        case .regex:
-            return RegexMatcher.safeMatch(pattern: matchPattern, in: url, caseSensitive: true)
-        }
-    }
-
-    private func matchesWildcard(_ url: String, pattern: String) -> Bool {
-        var regexPattern = NSRegularExpression.escapedPattern(for: pattern)
-        regexPattern = regexPattern.replacingOccurrences(of: "\\*", with: ".*")
-        regexPattern = "^" + regexPattern + "$"
-        return RegexMatcher.safeMatch(pattern: regexPattern, in: url, caseSensitive: false)
-    }
-
-    public static func fromRequest(_ request: NetworkRequest, name: String? = nil) -> RequestMap {
-        let mapName = name ?? "Mock for \(request.url)"
-        let mockResponse = MockResponse.from(request: request)
-
-        return RequestMap(
-            name: mapName,
-            enabled: true,
-            matchType: .exact,
-            matchPattern: request.url,
-            mockResponse: mockResponse
-        )
     }
 }
 
@@ -833,6 +548,7 @@ extension MockResponse: Equatable {}
 public enum ScriptType: String, Codable, CaseIterable, Sendable {
     case request = "Request"
     case response = "Response"
+    case stream = "Stream"
     case both = "Both"
 
     public var displayName: String {
@@ -843,6 +559,7 @@ public enum ScriptType: String, Codable, CaseIterable, Sendable {
         switch self {
         case .request: "Runs on outgoing requests"
         case .response: "Runs on incoming responses"
+        case .stream: "Runs on stream events (SSE/WebSocket)"
         case .both: "Runs on both requests and responses"
         }
     }
@@ -884,103 +601,6 @@ public struct Script: Codable, Identifiable, Sendable {
         self.modifiedAt = modifiedAt
         self.executionCount = executionCount
     }
-
-    public func matches(_ url: String) -> Bool {
-        guard enabled else { return false }
-        guard let rawPattern = matchPattern else { return true }
-        let pattern = rawPattern.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !pattern.isEmpty else { return true }
-
-        let (subject, isHostMatch) = matchSubject(for: url, pattern: pattern, matchType: matchType)
-
-        switch matchType {
-        case .exact:
-            if isHostMatch {
-                return subject.lowercased() == pattern.lowercased()
-            }
-            return subject == pattern
-        case .contains:
-            if isHostMatch {
-                let lowerPattern = pattern.lowercased()
-                return subject.lowercased().contains(lowerPattern) || url.lowercased().contains(lowerPattern)
-            }
-            return subject.contains(pattern) || url.contains(pattern)
-        case .wildcard:
-            return matchesWildcard(subject, pattern: pattern)
-        case .regex:
-            return RegexMatcher.safeMatch(pattern: pattern, in: subject, caseSensitive: !isHostMatch)
-        }
-    }
-
-    private func matchesWildcard(_ url: String, pattern: String) -> Bool {
-        var regexPattern = NSRegularExpression.escapedPattern(for: pattern)
-        regexPattern = regexPattern.replacingOccurrences(of: "\\*", with: ".*")
-        regexPattern = "^" + regexPattern + "$"
-        return RegexMatcher.safeMatch(pattern: regexPattern, in: url, caseSensitive: false)
-    }
-
-    public static var templates: [Script] {
-        [
-            Script(
-                name: "Add Custom Header",
-                scriptType: .request,
-                code: """
-                // Add a custom header to the request
-                request.headers['X-Custom-Header'] = 'Custom Value';
-                """
-            ),
-            Script(
-                name: "Modify JSON Response",
-                scriptType: .response,
-                code: """
-                // Parse and modify JSON response
-                if (response.headers['Content-Type']?.includes('application/json')) {
-                    var data = parseJSON(response.body);
-                    if (data) {
-                        // Modify the data
-                        data.modified = true;
-                        response.body = stringifyJSON(data);
-                    }
-                }
-                """
-            ),
-            Script(
-                name: "Log Request Details",
-                scriptType: .request,
-                code: """
-                // Log request information
-                console.log('Request to: ' + request.url);
-                console.log('Method: ' + request.method);
-                console.log('Headers: ' + stringifyJSON(request.headers));
-                """
-            ),
-            Script(
-                name: "Add CORS Headers",
-                scriptType: .response,
-                code: """
-                // Add CORS headers to response
-                response.headers['Access-Control-Allow-Origin'] = '*';
-                response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE';
-                response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization';
-                """
-            ),
-            Script(
-                name: "Inject Data into Response",
-                scriptType: .response,
-                code: """
-                // Inject additional data into JSON response
-                if (response.headers['Content-Type']?.includes('application/json')) {
-                    var data = parseJSON(response.body);
-                    if (data) {
-                        data.injectedField = 'Injected by script';
-                        data.timestamp = new Date().toISOString();
-                        response.body = stringifyJSON(data);
-                    }
-                }
-                """
-            )
-        ]
-    }
 }
 
 extension Script: Toggleable {}
@@ -998,12 +618,14 @@ extension Script: Equatable {
 public enum BreakpointType: String, Codable, CaseIterable, Equatable, Sendable {
     case request
     case response
+    case stream
     case both
 
     public var displayName: String {
         switch self {
         case .request: "Request"
         case .response: "Response"
+        case .stream: "Stream Event"
         case .both: "Request & Response"
         }
     }
@@ -1054,42 +676,6 @@ public struct BreakpointConfiguration: Codable, Equatable, Sendable {
         self.executionMode = executionMode
         self.maxHits = maxHits
         self.conditions = conditions
-    }
-
-    public func shouldBreakOnRequest(url: String, method: HTTPMethod) -> Bool {
-        guard enabled else { return false }
-        guard breakpointType == .request || breakpointType == .both else { return false }
-        if !methods.isEmpty && !methods.contains(method) { return false }
-        return matchesUrl(url)
-    }
-
-    public func shouldBreakOnResponse(url: String, statusCode: Int) -> Bool {
-        guard enabled else { return false }
-        guard breakpointType == .response || breakpointType == .both else { return false }
-        if !statusCodes.isEmpty && !statusCodes.contains(statusCode) { return false }
-        return matchesUrl(url)
-    }
-
-    private func matchesUrl(_ url: String) -> Bool {
-        guard let pattern = matchPattern, !pattern.isEmpty else { return true }
-
-        switch matchType {
-        case .exact:
-            return url == pattern
-        case .contains:
-            return url.contains(pattern)
-        case .wildcard:
-            return matchesWildcard(url, pattern: pattern)
-        case .regex:
-            return RegexMatcher.safeMatch(pattern: pattern, in: url, caseSensitive: true)
-        }
-    }
-
-    private func matchesWildcard(_ url: String, pattern: String) -> Bool {
-        var regexPattern = NSRegularExpression.escapedPattern(for: pattern)
-        regexPattern = regexPattern.replacingOccurrences(of: "\\*", with: ".*")
-        regexPattern = "^" + regexPattern + "$"
-        return RegexMatcher.safeMatch(pattern: regexPattern, in: url, caseSensitive: false)
     }
 }
 
@@ -1177,39 +763,6 @@ public struct PausedRequest: Identifiable, Sendable {
         self.statusCode = statusCode
         self.statusMessage = statusMessage
     }
-
-    public var hasModifications: Bool {
-        modifiedUrl != nil ||
-            modifiedMethod != nil ||
-            modifiedHeaders != nil ||
-            modifiedBody != nil ||
-            modifiedStatusCode != nil ||
-            modifiedStatusMessage != nil
-    }
-
-    public var effectiveUrl: String {
-        modifiedUrl ?? url
-    }
-
-    public var effectiveMethod: HTTPMethod {
-        modifiedMethod ?? method
-    }
-
-    public var effectiveHeaders: [TraceHTTPHeader] {
-        modifiedHeaders ?? headers
-    }
-
-    public var effectiveBody: Data? {
-        modifiedBody ?? body
-    }
-
-    public var effectiveStatusCode: Int? {
-        modifiedStatusCode ?? statusCode
-    }
-
-    public var effectiveStatusMessage: String? {
-        modifiedStatusMessage ?? statusMessage
-    }
 }
 
 public extension Notification.Name {
@@ -1253,13 +806,3 @@ public struct Favorite: Codable, Identifiable, Equatable {
 }
 
 extension Favorite: ModificationTrackable {}
-
-public extension Favorite {
-    static var sample: Favorite {
-        Favorite(
-            requestId: UUID(),
-            name: "Login API Call",
-            notes: "Important: This shows the authentication flow"
-        )
-    }
-}

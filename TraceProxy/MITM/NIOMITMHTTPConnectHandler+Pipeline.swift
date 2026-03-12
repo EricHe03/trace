@@ -17,6 +17,70 @@ import NIOWebSocket
 import TraceCore
 import TraceSecurity
 
+final class NIOMITMTunneledHTTP2StreamHandlerFactory: @unchecked Sendable {
+    let group: NIOTSEventLoopGroup
+    weak var eventLog: NDJSONLogWriter?
+    let throttler: PacketThrottler?
+    let interceptor: (any InterceptionProviding)?
+    let captureConfigProvider: () -> CaptureConfiguration
+    let onRequestCaptured: ((NetworkRequest) -> Void)?
+    let shouldMitmConnect: (String, UInt16) -> Bool
+    let http2MITMEnabledProvider: () -> Bool
+    let shouldFailOpenAfterMITMFailure: (String, UInt16, String, MITMFailoverContext) -> Bool
+    let onMITMFailure: ((String, String) -> Void)?
+    let upstreamHint: TransparentProxyMetadata.UpstreamHint?
+    let host: String
+    let port: Int
+
+    init(
+        group: NIOTSEventLoopGroup,
+        eventLog: NDJSONLogWriter?,
+        throttler: PacketThrottler?,
+        interceptor: (any InterceptionProviding)?,
+        captureConfigProvider: @escaping () -> CaptureConfiguration,
+        onRequestCaptured: ((NetworkRequest) -> Void)?,
+        shouldMitmConnect: @escaping (String, UInt16) -> Bool,
+        http2MITMEnabledProvider: @escaping () -> Bool,
+        shouldFailOpenAfterMITMFailure: @escaping (String, UInt16, String, MITMFailoverContext) -> Bool,
+        onMITMFailure: ((String, String) -> Void)?,
+        upstreamHint: TransparentProxyMetadata.UpstreamHint?,
+        host: String,
+        port: Int
+    ) {
+        self.group = group
+        self.eventLog = eventLog
+        self.throttler = throttler
+        self.interceptor = interceptor
+        self.captureConfigProvider = captureConfigProvider
+        self.onRequestCaptured = onRequestCaptured
+        self.shouldMitmConnect = shouldMitmConnect
+        self.http2MITMEnabledProvider = http2MITMEnabledProvider
+        self.shouldFailOpenAfterMITMFailure = shouldFailOpenAfterMITMFailure
+        self.onMITMFailure = onMITMFailure
+        self.upstreamHint = upstreamHint
+        self.host = host
+        self.port = port
+    }
+
+    func makeHandler() -> NIOMITMHTTPConnectHandler {
+        NIOMITMHTTPConnectHandler(
+            group: group,
+            eventLog: eventLog,
+            throttler: throttler,
+            interceptor: interceptor,
+            captureConfigProvider: captureConfigProvider,
+            onRequestCaptured: onRequestCaptured,
+            shouldMitmConnect: shouldMitmConnect,
+            http2MITMEnabledProvider: http2MITMEnabledProvider,
+            shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
+            onMITMFailure: onMITMFailure,
+            ingressMode: .tunneledHTTPS(host: host, port: UInt16(port)),
+            upstreamHint: upstreamHint,
+            usesHTTP2StreamSemantics: true
+        )
+    }
+}
+
 extension NIOMITMHTTPConnectHandler {
     func attemptMITMFallbackToPassthrough(
         host: String,
@@ -146,11 +210,12 @@ extension NIOMITMHTTPConnectHandler {
             "event=proxy.nio_connect_mitm_protocol outcome=selected protocol=h2 host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public)"
         )
 
-        return channel.configureHTTP2Pipeline(mode: .server) { [weak self] streamChannel in
-            guard let self else {
-                return streamChannel.eventLoop.makeSucceededVoidFuture()
-            }
+        // Important: transparent dual-MITM installs HTTP/2 using a temporary setup handler.
+        // Stream channels can be created long after setup completes, so they must not depend
+        // on that temporary handler still being alive.
+        let streamHandlerFactory = makeTunneledHTTP2StreamHandlerFactory(host: host, port: port)
 
+        return channel.configureHTTP2Pipeline(mode: .server) { streamChannel in
             Task { await ProxyNetworkMetrics.shared.recordHTTP2StreamCreated() }
             streamChannel.closeFuture.whenComplete { _ in
                 Task { await ProxyNetworkMetrics.shared.recordHTTP2StreamClosed() }
@@ -169,11 +234,7 @@ extension NIOMITMHTTPConnectHandler {
                 }
                 .flatMap {
                     streamChannel.pipeline.addHandler(
-                        self.makeTunneledHTTPHandler(
-                            host: host,
-                            port: port,
-                            usesHTTP2StreamSemantics: true
-                        ),
+                        streamHandlerFactory.makeHandler(),
                         name: Self.tunneledHTTP2HandlerName
                     )
                 }
@@ -193,11 +254,33 @@ extension NIOMITMHTTPConnectHandler {
             captureConfigProvider: captureConfigProvider,
             onRequestCaptured: onRequestCaptured,
             shouldMitmConnect: shouldMitmConnect,
+            http2MITMEnabledProvider: http2MITMEnabledProvider,
             shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
             onMITMFailure: onMITMFailure,
             ingressMode: .tunneledHTTPS(host: host, port: UInt16(port)),
             upstreamHint: upstreamHint,
             usesHTTP2StreamSemantics: usesHTTP2StreamSemantics
+        )
+    }
+
+    func makeTunneledHTTP2StreamHandlerFactory(
+        host: String,
+        port: Int
+    ) -> NIOMITMTunneledHTTP2StreamHandlerFactory {
+        NIOMITMTunneledHTTP2StreamHandlerFactory(
+            group: group,
+            eventLog: eventLog,
+            throttler: throttler,
+            interceptor: interceptor,
+            captureConfigProvider: captureConfigProvider,
+            onRequestCaptured: onRequestCaptured,
+            shouldMitmConnect: shouldMitmConnect,
+            http2MITMEnabledProvider: http2MITMEnabledProvider,
+            shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
+            onMITMFailure: onMITMFailure,
+            upstreamHint: upstreamHint,
+            host: host,
+            port: port
         )
     }
 
@@ -275,13 +358,25 @@ extension NIOMITMHTTPConnectHandler {
         onError: @escaping @Sendable (Error) -> Void,
         onInactive: @escaping @Sendable () -> Void
     ) -> EventLoopFuture<Void> {
-        upstream.pipeline
-            .addHandler(
-                ByteToMessageHandler(
-                    HTTPResponseDecoder(leftOverBytesStrategy: .dropBytes)
-                ),
-                name: Self.upstreamHTTPDecoderName
-            )
+        let ensureRequestEncoder = upstream.pipeline
+            .containsHandler(type: HTTPRequestEncoder.self)
+            .map { _ in () }
+            .flatMapError { _ in
+                upstream.pipeline.addHandler(
+                    HTTPRequestEncoder(),
+                    name: Self.upstreamHTTPEncoderName
+                )
+            }
+
+        return ensureRequestEncoder
+            .flatMap {
+                upstream.pipeline.addHandler(
+                    ByteToMessageHandler(
+                        HTTPResponseDecoder(leftOverBytesStrategy: .dropBytes)
+                    ),
+                    name: Self.upstreamHTTPDecoderName
+                )
+            }
             .flatMap {
                 upstream.pipeline.addHandler(
                     NIOMITMHTTPClientResponseRelayHandler(
@@ -297,12 +392,39 @@ extension NIOMITMHTTPConnectHandler {
     func installWebSocketRelay(
         clientContext: ChannelHandlerContext,
         upstream: Channel,
-        captureState: NIOMITMWebSocketCaptureState
+        captureState: NIOMITMWebSocketCaptureState,
+        streamRuntime: StreamSessionRuntime? = nil,
+        perMessageDeflateEnabled: Bool = false
     ) {
         let clientChannel = clientContext.channel
+        let decisionProvider: (@Sendable (StreamSession, StreamEvent, EventLoop) -> EventLoopFuture<StreamInterceptionDecision>)? = if streamRuntime == nil {
+            nil
+        } else {
+            { [weak self] session, event, eventLoop in
+                guard let self else {
+                    return eventLoop.makeSucceededFuture(.forward)
+                }
+                return self.streamEventInterceptionFuture(session: session, event: event, eventLoop: eventLoop)
+            }
+        }
+        let closeNotifier: (@Sendable (StreamSessionStatus, String?, EventLoop) -> Void)? = if let streamRuntime {
+            { [weak self] status, reason, eventLoop in
+                self?.completeStreamRuntime(
+                    streamRuntime,
+                    status: status,
+                    reason: reason,
+                    eventLoop: eventLoop
+                )
+            }
+        } else {
+            nil
+        }
         removeHandlerIfPresent(name: Self.upstreamHTTPHandlerName, from: upstream)
             .flatMap {
                 self.removeHandlerIfPresent(name: Self.upstreamHTTPDecoderName, from: upstream)
+            }
+            .flatMap {
+                self.removeHandlerIfPresent(name: Self.upstreamHTTPEncoderName, from: upstream)
             }
             .flatMap {
                 self.removeCurrentHTTPPipelineHandlers(from: clientChannel)
@@ -318,7 +440,11 @@ extension NIOMITMHTTPConnectHandler {
                     NIOMITMWebSocketRelayHandler(
                         peerChannel: clientChannel,
                         direction: .received,
-                        captureState: captureState
+                        captureState: captureState,
+                        streamRuntime: streamRuntime,
+                        interceptDecisionProvider: decisionProvider,
+                        closeNotifier: closeNotifier,
+                        perMessageDeflateEnabled: perMessageDeflateEnabled
                     ),
                     name: Self.upstreamWSRelayName
                 )
@@ -337,7 +463,11 @@ extension NIOMITMHTTPConnectHandler {
                     NIOMITMWebSocketRelayHandler(
                         peerChannel: upstream,
                         direction: .sent,
-                        captureState: captureState
+                        captureState: captureState,
+                        streamRuntime: streamRuntime,
+                        interceptDecisionProvider: decisionProvider,
+                        closeNotifier: closeNotifier,
+                        perMessageDeflateEnabled: perMessageDeflateEnabled
                     ),
                     name: Self.clientWSRelayName
                 )
@@ -348,11 +478,22 @@ extension NIOMITMHTTPConnectHandler {
             .whenComplete { [weak self] result in
                 switch result {
                 case .success:
+                    ProxyLog.mitm.info(
+                        "event=proxy.nio_ws_relay_install outcome=success ws_id=\(captureState.connectionID.uuidString, privacy: .public)"
+                    )
+                    self?.eventLog?.append(
+                        type: "proxy_nio_ws_relay_install",
+                        msg: "outcome=success mode=\(self?.ingressModeLabel ?? "unknown") id=\(self?.connectionID ?? "unknown") ws_id=\(captureState.connectionID.uuidString)"
+                    )
                     self?.state = .tunnelEstablished
                 case let .failure(error):
                     captureState.markFailed()
                     ProxyLog.mitm.warning(
-                        "event=proxy.nio_ws_relay_install outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                        "event=proxy.nio_ws_relay_install outcome=failure ws_id=\(captureState.connectionID.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                    )
+                    self?.eventLog?.append(
+                        type: "proxy_nio_ws_relay_install",
+                        msg: "outcome=failure mode=\(self?.ingressModeLabel ?? "unknown") id=\(self?.connectionID ?? "unknown") ws_id=\(captureState.connectionID.uuidString) error=\(error.localizedDescription)"
                     )
                     self?.state = .closed
                     upstream.close(promise: nil)

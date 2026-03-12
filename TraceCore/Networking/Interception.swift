@@ -40,7 +40,8 @@ public enum ResponsePipeline: Sendable {
     case streamAndCapture
 }
 
-/// A provider that can intercept HTTP requests/responses (rewrite, scripts, breakpoints, mocks, etc).
+/// A provider that can intercept HTTP requests/responses and stream events
+/// (rewrite, scripts, breakpoints, mocks, replay, etc).
 ///
 /// Implementations are expected to be concurrency-safe (`Sendable`). The primary implementation is
 /// `RequestInterceptor` (in `TraceProxy`).
@@ -67,6 +68,15 @@ public protocol InterceptionProviding: Sendable {
     /// or streamed (for performance).
     func responsePipeline(for url: String) async -> ResponsePipeline
 
+    /// Intercept a stream session open lifecycle event.
+    func interceptStreamOpen(session: StreamSession) async -> StreamInterceptionDecision
+
+    /// Intercept a stream event (SSE/WebSocket).
+    func interceptStreamEvent(session: StreamSession, event: StreamEvent) async -> StreamInterceptionDecision
+
+    /// Intercept a stream close lifecycle event.
+    func interceptStreamClose(session: StreamSession, reason: String?) async -> StreamInterceptionDecision
+
     /// Returns `true` when interception features are active and the TLS MITM layer should prefer
     /// negotiating HTTP/1.1 (to ensure request/response modification feature parity).
     ///
@@ -78,6 +88,18 @@ public protocol InterceptionProviding: Sendable {
 public extension InterceptionProviding {
     func responsePipeline(for _: String) async -> ResponsePipeline {
         .bufferAndIntercept
+    }
+
+    func interceptStreamOpen(session _: StreamSession) async -> StreamInterceptionDecision {
+        .forward
+    }
+
+    func interceptStreamEvent(session _: StreamSession, event _: StreamEvent) async -> StreamInterceptionDecision {
+        .forward
+    }
+
+    func interceptStreamClose(session _: StreamSession, reason _: String?) async -> StreamInterceptionDecision {
+        .forward
     }
 
     func requiresHTTP1Interception() async -> Bool {

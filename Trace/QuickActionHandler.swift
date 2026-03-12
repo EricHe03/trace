@@ -5,6 +5,7 @@
 //  Created by Justin on 2026/01/10.
 //
 
+import Combine
 import os
 import SwiftUI
 import TraceCore

@@ -116,6 +116,70 @@ final class BreakpointManagerTests: XCTestCase {
         XCTAssertTrue(shouldBreak)
     }
 
+    func testShouldBreakOnStream() async {
+        var config = BreakpointConfiguration()
+        config.enabled = true
+        config.breakpointType = .stream
+        await manager.updateConfiguration(config)
+
+        let shouldBreak = await manager.shouldBreakOnStream(
+            url: "wss://echo.example/ws",
+            headers: [],
+            body: Data("hello".utf8)
+        )
+
+        XCTAssertTrue(shouldBreak)
+    }
+
+    func testShouldNotBreakOnStreamWhenLogOnly() async {
+        var config = BreakpointConfiguration()
+        config.enabled = true
+        config.breakpointType = .stream
+        config.executionMode = .logOnly
+        await manager.updateConfiguration(config)
+
+        let shouldBreak = await manager.shouldBreakOnStream(
+            url: "wss://echo.example/ws",
+            headers: [],
+            body: Data("hello".utf8)
+        )
+
+        XCTAssertFalse(shouldBreak)
+    }
+
+    func testShouldBreakOnStreamRespectsAlwaysApplyStoredModifications() async {
+        var config = BreakpointConfiguration()
+        config.enabled = true
+        config.breakpointType = .stream
+        config.executionMode = .alwaysApply
+        await manager.updateConfiguration(config)
+
+        let eventId = UUID().uuidString
+        let pauseTask = Task {
+            await self.manager.pauseStreamEvent(
+                id: eventId,
+                url: "wss://echo.example/ws",
+                headers: [],
+                body: Data("hello".utf8)
+            )
+        }
+
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.updatePausedRequest(
+            id: eventId,
+            modifications: PausedRequestModifications(body: Data("patched".utf8))
+        )
+        await manager.resumeRequest(id: eventId, action: .continue)
+        _ = await pauseTask.value
+
+        let shouldBreakAgain = await manager.shouldBreakOnStream(
+            url: "wss://echo.example/ws",
+            headers: [],
+            body: Data("hello".utf8)
+        )
+        XCTAssertFalse(shouldBreakAgain)
+    }
+
     // MARK: - Request Pausing Tests
 
     func testPauseAndResumeRequest() async {
@@ -178,6 +242,29 @@ final class BreakpointManagerTests: XCTestCase {
         await manager.resumeRequest(id: requestId, action: .continue)
 
         // Wait for completion
+        let action = await pauseTask.value
+        XCTAssertEqual(action, .continue)
+    }
+
+    func testPauseStreamEvent() async {
+        let eventId = UUID().uuidString
+
+        let pauseTask = Task {
+            await manager.pauseStreamEvent(
+                id: eventId,
+                url: "wss://echo.example/ws",
+                headers: [],
+                body: Data("hello".utf8)
+            )
+        }
+
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        let count = await manager.pausedRequestsCount()
+        XCTAssertEqual(count, 1)
+
+        await manager.resumeRequest(id: eventId, action: .continue)
+
         let action = await pauseTask.value
         XCTAssertEqual(action, .continue)
     }

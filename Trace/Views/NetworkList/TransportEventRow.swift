@@ -83,6 +83,16 @@ struct TransportEventRow: View {
                     Text(request.applicationProtocol.displayName)
                         .font(.subheadline)
                         .fontWeight(.semibold)
+                    if let protocolBadge = request.protocolBadgeText {
+                        Text(protocolBadge)
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(DesignSystem.Colors.success.opacity(0.16))
+                            .foregroundStyle(DesignSystem.Colors.success)
+                            .clipShape(Capsule())
+                    }
                     Text(request.transport.rawValue.uppercased())
                         .font(.caption)
                         .foregroundStyle(.secondary)

@@ -9,6 +9,7 @@ import Combine
 import Foundation
 import TraceCore
 
+@available(*, deprecated, message: "Use BreakpointManager.shared preset APIs instead.")
 @MainActor
 public final class BreakpointPresetManager: ObservableObject {
     public static let shared = BreakpointPresetManager()
@@ -42,7 +43,7 @@ public final class BreakpointPresetManager: ObservableObject {
     }
 
     public func loadPreset(_ presetId: UUID) -> BreakpointPreset? {
-        presets.first(where: { $0.id == presetId })
+        presets.first { $0.id == presetId }
     }
 
     public func applyPreset(_ presetId: UUID) {

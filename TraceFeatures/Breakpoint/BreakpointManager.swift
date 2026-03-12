@@ -20,6 +20,7 @@ public actor BreakpointManager {
     private var totalHitCount: Int = 0
     private var storedRequestModifications: PausedRequest?
     private var storedResponseModifications: PausedRequest?
+    private var storedStreamModifications: PausedRequest?
     private var editOnceApplied: Bool = false
     private nonisolated(unsafe) let storage: AppGroupStorage
     private nonisolated(unsafe) let configFileName = "BreakpointConfiguration.json"
@@ -55,6 +56,13 @@ public actor BreakpointManager {
 
         // Rule: Resume all paused requests when breakpoints are disabled.
         if !enabled {
+            // Disabling should also clear any stored modifications/hit state to avoid applying
+            // breakpoint edits when the feature is turned off.
+            storedRequestModifications = nil
+            storedResponseModifications = nil
+            storedStreamModifications = nil
+            editOnceApplied = false
+            totalHitCount = 0
             Task {
                 await resumeAllRequests(action: .continue)
             }
@@ -115,6 +123,32 @@ public actor BreakpointManager {
             return false
         }
         guard configuration.shouldBreakOnResponse(url: url, statusCode: statusCode) else { return false }
+        guard conditionsPass(url: url, headers: headers, body: body) else { return false }
+        totalHitCount += 1
+        return true
+    }
+
+    /// Returns whether a stream event should be paused.
+    /// - Parameters:
+    ///   - url: The stream URL.
+    ///   - headers: Stream request headers.
+    ///   - body: Stream payload bytes.
+    public func shouldBreakOnStream(
+        url: String,
+        headers: [TraceHTTPHeader],
+        body: Data?
+    ) -> Bool {
+        guard configuration.executionMode != .logOnly else { return false }
+        if configuration.executionMode == .editOnce, editOnceApplied {
+            return false
+        }
+        if configuration.executionMode == .alwaysApply, storedStreamModifications != nil {
+            return false
+        }
+        if let maxHits = configuration.maxHits, totalHitCount >= maxHits {
+            return false
+        }
+        guard configuration.shouldBreakOnStream(url: url) else { return false }
         guard conditionsPass(url: url, headers: headers, body: body) else { return false }
         totalHitCount += 1
         return true
@@ -222,6 +256,47 @@ public actor BreakpointManager {
         }
     }
 
+    /// Pauses a stream event and waits for user action.
+    /// - Parameters:
+    ///   - id: The stream event identifier.
+    ///   - url: The stream URL.
+    ///   - headers: Stream request headers.
+    ///   - body: Stream payload bytes.
+    public func pauseStreamEvent(
+        id: String,
+        url: String,
+        headers: [TraceHTTPHeader],
+        body: Data?
+    ) async -> BreakpointAction {
+        let pausedRequest = PausedRequest(
+            id: id,
+            url: url,
+            method: .get,
+            headers: headers,
+            body: body,
+            breakpointType: .stream
+        )
+
+        pausedRequests[id] = pausedRequest
+
+        return await withCheckedContinuation { continuation in
+            continuations[id] = continuation
+
+            Task { @MainActor in
+                NotificationCenter.default.post(
+                    name: .breakpointTriggered,
+                    object: nil,
+                    userInfo: [
+                        BreakpointNotificationKey.requestId.rawValue: id,
+                        BreakpointNotificationKey.url.rawValue: url,
+                        BreakpointNotificationKey.method.rawValue: HTTPMethod.get.rawValue,
+                        BreakpointNotificationKey.breakpointType.rawValue: BreakpointType.stream.rawValue
+                    ]
+                )
+            }
+        }
+    }
+
     // MARK: - Request Resuming
 
     /// Resumes a paused request with the given action.
@@ -237,9 +312,12 @@ public actor BreakpointManager {
             pausedRequests[id] = pausedRequest
             if action == .continue, pausedRequest.hasModifications {
                 if configuration.executionMode == .editOnce || configuration.executionMode == .alwaysApply {
-                    if pausedRequest.breakpointType == .response {
+                    switch pausedRequest.breakpointType {
+                    case .response:
                         storedResponseModifications = pausedRequest
-                    } else {
+                    case .stream:
+                        storedStreamModifications = pausedRequest
+                    case .request, .both:
                         storedRequestModifications = pausedRequest
                     }
                     if configuration.executionMode == .editOnce {
@@ -296,6 +374,12 @@ public actor BreakpointManager {
             request.statusMessage = message
         }
         return true
+    }
+
+    public func applyStoredStreamModifications(to body: inout Data?) -> Bool {
+        guard let stored = storedStreamModifications else { return false }
+        body = stored.effectiveBody
+        return stored.effectiveBody != nil
     }
 
     private func conditionsPass(url: String, headers: [TraceHTTPHeader], body: Data?) -> Bool {

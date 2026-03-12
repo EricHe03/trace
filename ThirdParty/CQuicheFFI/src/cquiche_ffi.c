@@ -1733,10 +1733,10 @@ cquiche_mitm_session_t *cquiche_mitm_session_open_with_config(const cquiche_mitm
     session->last_failure_reason = CQUICHE_FAILURE_ENGINE_UNAVAILABLE;
     clear_last_failure_detail(session);
     session->next_stream_id = 0;
-    session->authority_retry_emitted = false;
     memset(&session->stats, 0, sizeof(cquiche_mitm_stats_t));
 
 #if defined(CQUICHE_WITH_QUICHE)
+    session->authority_retry_emitted = false;
     if (!initialize_downstream_runtime(session, config))
     {
         close_downstream_runtime(session);

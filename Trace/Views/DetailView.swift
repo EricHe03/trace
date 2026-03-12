@@ -102,6 +102,7 @@ struct DetailView: View {
                     HeadersSection(headers: request.requestHeaders)
                     requestBodySection
                 }
+                .padding()
             }
 
         case .responseHeaders:
@@ -111,6 +112,7 @@ struct DetailView: View {
                     responseBodySection
                     compressionInfoSection
                 }
+                .padding()
             }
 
         case .body:

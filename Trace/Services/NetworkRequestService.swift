@@ -33,7 +33,11 @@ class NetworkRequestService: NetworkRequestServiceProtocol {
     }
 
     convenience init() {
-        self.init(repository: NetworkRequestRepositoryImpl())
+        self.init(store: AppGroupCaptureStore())
+    }
+
+    convenience init(store: CaptureDataStore) {
+        self.init(repository: NetworkRequestRepositoryImpl(store: store))
     }
 
     // MARK: - Public Methods

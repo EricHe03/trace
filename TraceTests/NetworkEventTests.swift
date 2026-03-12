@@ -180,6 +180,63 @@ final class NetworkEventTests: XCTestCase {
         XCTAssertTrue(event.subtitle.contains("TLS"))
     }
 
+    func testQUICTransportEventShowsH3BadgeInSubtitle() {
+        let request = TransportRequest(
+            timestamp: Date(),
+            sourceIP: "192.168.1.10",
+            destinationIP: "203.0.113.10",
+            sourcePort: 53004,
+            destinationPort: 443,
+            transport: .udp,
+            applicationProtocol: .quic,
+            parserOutcome: .parsed,
+            payload: .inline(Data([0x01, 0x02, 0x03])),
+            payloadBytes: 3,
+            ipVersion: 4,
+            protocolNumber: 17,
+            hopLimit: 64,
+            ipHeaderLength: 20,
+            totalLength: 63,
+            fragmentOffset: 0,
+            moreFragments: false,
+            udpDatagramLength: 43,
+            flowKey: "udp|192.168.1.10:53004|203.0.113.10:443",
+            applicationProtocolHint: "h3"
+        )
+        let event = NetworkEvent.transportRequest(request)
+
+        XCTAssertEqual(request.protocolBadgeText, "H3")
+        XCTAssertTrue(event.subtitle.contains("QUIC"))
+        XCTAssertTrue(event.subtitle.contains("H3"))
+    }
+
+    func testQUICTransportRequestIgnoresNonHTTP3ALPNBadge() {
+        let request = TransportRequest(
+            timestamp: Date(),
+            sourceIP: "192.168.1.10",
+            destinationIP: "203.0.113.20",
+            sourcePort: 53005,
+            destinationPort: 443,
+            transport: .udp,
+            applicationProtocol: .quic,
+            parserOutcome: .parsed,
+            payload: .inline(Data([0x01])),
+            payloadBytes: 1,
+            ipVersion: 4,
+            protocolNumber: 17,
+            hopLimit: 64,
+            ipHeaderLength: 20,
+            totalLength: 61,
+            fragmentOffset: 0,
+            moreFragments: false,
+            udpDatagramLength: 41,
+            flowKey: "udp|192.168.1.10:53005|203.0.113.20:443",
+            applicationProtocolHint: "doq"
+        )
+
+        XCTAssertNil(request.protocolBadgeText)
+    }
+
     func testDomain() {
         let request = NetworkRequest.sample
         let event = NetworkEvent.httpRequest(request)

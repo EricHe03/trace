@@ -14,250 +14,19 @@ import TraceCore
 import TraceFeatures
 import TraceProxy
 
-// MARK: - Search Scope
-
-enum SearchScope: String, CaseIterable, Sendable {
-    case all = "All"
-    case url = "URL"
-    case headers = "Headers"
-    case body = "Body"
-}
-
-// MARK: - Response Time Filter
-
-enum ResponseTimeFilter: String, CaseIterable, Sendable {
-    case fast = "Fast"
-    case normal = "Normal"
-    case slow = "Slow"
-
-    var range: ClosedRange<TimeInterval> {
-        switch self {
-        case .fast: 0 ... 0.1 // < 100ms
-        case .normal: 0.1 ... 1.0 // 100ms - 1s
-        case .slow: 1.0 ... Double.infinity // > 1s
-        }
-    }
-
-    var displayName: String {
-        switch self {
-        case .fast: "Fast (< 100ms)"
-        case .normal: "Normal (100ms - 1s)"
-        case .slow: "Slow (> 1s)"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .fast: "hare.fill"
-        case .normal: "gauge.medium"
-        case .slow: "tortoise.fill"
-        }
-    }
-}
-
-// MARK: - Content Type Filter
-
-enum ContentTypeFilter: String, CaseIterable, Sendable {
-    case json = "JSON"
-    case html = "HTML"
-    case xml = "XML"
-    case image = "Image"
-    case javascript = "JavaScript"
-    case css = "CSS"
-    case plainText = "Plain Text"
-    case binary = "Binary"
-
-    var mimeTypes: [String] {
-        switch self {
-        case .json: ["application/json", "text/json"]
-        case .html: ["text/html"]
-        case .xml: ["application/xml", "text/xml"]
-        case .image: [
-                "image/png",
-                "image/jpeg",
-                "image/gif",
-                "image/webp",
-                "image/svg+xml",
-                "image/heic",
-                "image/heif",
-                "image/avif",
-                "image/tiff",
-                "image/bmp",
-                "image/x-ms-bmp",
-                "image/x-icon",
-                "image/vnd.microsoft.icon"
-            ]
-        case .javascript: ["application/javascript", "text/javascript"]
-        case .css: ["text/css"]
-        case .plainText: ["text/plain"]
-        case .binary: ["application/octet-stream", "binary/octet-stream", "octet-stream"]
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .json: "curlybraces"
-        case .html: "doc.text"
-        case .xml: "chevron.left.forwardslash.chevron.right"
-        case .image: "photo"
-        case .javascript: "scroll"
-        case .css: "paintbrush"
-        case .plainText: "text.alignleft"
-        case .binary: "doc.zipper"
-        }
-    }
-}
-
-// MARK: - Request Grouping
-
-enum RequestGroupingMode: String, CaseIterable, Codable {
-    case none = "None"
-    case byDomain = "By Domain"
-    case bySession = "By Session"
-    case hierarchical = "Hierarchical"
-
-    var icon: String {
-        switch self {
-        case .none: "list.bullet"
-        case .byDomain: "globe"
-        case .bySession: "clock"
-        case .hierarchical: "list.bullet.indent"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .none: "Flat list of all requests"
-        case .byDomain: "Group by domain"
-        case .bySession: "Group by capture session"
-        case .hierarchical: "Group by session, then domain"
-        }
-    }
-}
-
-struct DomainGroup: Identifiable {
-    let id: String
-    let domain: String
-    let requests: [NetworkRequest]
-
-    init(id: String? = nil, domain: String, requests: [NetworkRequest]) {
-        self.id = id ?? domain
-        self.domain = domain
-        self.requests = requests
-    }
-
-    var requestCount: Int {
-        requests.count
-    }
-
-    var totalSize: Int64 {
-        requests.reduce(0) { $0 + Int64($1.responseSize ?? 0) }
-    }
-
-    var totalSizeString: String {
-        ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
-    }
-}
-
-struct SessionGroup: Identifiable {
-    let session: CaptureSession
-    let requests: [NetworkRequest]
-    let domainGroups: [DomainGroup]
-
-    var id: UUID {
-        session.id
-    }
-
-    var requestCount: Int {
-        requests.count
-    }
-
-    var totalSize: Int64 {
-        requests.reduce(0) { $0 + Int64($1.responseSize ?? 0) }
-    }
-
-    var totalSizeString: String {
-        ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
-    }
-}
-
-struct GroupedRequests {
-    let mode: RequestGroupingMode
-    let domainGroups: [DomainGroup]
-    let sessionGroups: [SessionGroup]
-
-    init(mode: RequestGroupingMode, domainGroups: [DomainGroup] = [], sessionGroups: [SessionGroup] = []) {
-        self.mode = mode
-        self.domainGroups = domainGroups
-        self.sessionGroups = sessionGroups
-    }
-
-    var isEmpty: Bool {
-        domainGroups.isEmpty && sessionGroups.isEmpty
-    }
-}
-
-// MARK: - Saved Filter Preset
-
-struct SavedFilterPreset: Codable, Identifiable, Equatable {
-    let id: UUID
-    var name: String
-    var filterMethod: String?
-    var filterStatusCode: Int?
-    var filterDomains: [String]
-    var filterFavoritesOnly: Bool
-    var filterContentTypes: [String]
-    var filterNetworkEventTypes: [String]?
-    var filterMinSize: Int?
-    var filterMaxSize: Int?
-    var filterMinDuration: TimeInterval?
-    var filterMaxDuration: TimeInterval?
-    var filterRegexPattern: String?
-    var filterResponseTime: String?
-    var filterShowDuplicatesOnly: Bool
-    var filterShowErrorsOnly: Bool
-
-    init(
-        id: UUID = UUID(),
-        name: String,
-        filterMethod: HTTPMethod? = nil,
-        filterStatusCode: Int? = nil,
-        filterDomains: [String] = [],
-        filterFavoritesOnly: Bool = false,
-        filterContentTypes: [ContentTypeFilter] = [],
-        filterNetworkEventTypes: [NetworkEventType]? = nil,
-        filterMinSize: Int? = nil,
-        filterMaxSize: Int? = nil,
-        filterMinDuration: TimeInterval? = nil,
-        filterMaxDuration: TimeInterval? = nil,
-        filterRegexPattern: String? = nil,
-        filterResponseTime: ResponseTimeFilter? = nil,
-        filterShowDuplicatesOnly: Bool = false,
-        filterShowErrorsOnly: Bool = false
-    ) {
-        self.id = id
-        self.name = name
-        self.filterMethod = filterMethod?.rawValue
-        self.filterStatusCode = filterStatusCode
-        self.filterDomains = filterDomains
-        self.filterFavoritesOnly = filterFavoritesOnly
-        self.filterContentTypes = filterContentTypes.map(\.rawValue)
-        self.filterNetworkEventTypes = filterNetworkEventTypes?.map(\.rawValue)
-        self.filterMinSize = filterMinSize
-        self.filterMaxSize = filterMaxSize
-        self.filterMinDuration = filterMinDuration
-        self.filterMaxDuration = filterMaxDuration
-        self.filterRegexPattern = filterRegexPattern
-        self.filterResponseTime = filterResponseTime?.rawValue
-        self.filterShowDuplicatesOnly = filterShowDuplicatesOnly
-        self.filterShowErrorsOnly = filterShowErrorsOnly
-    }
-}
-
 @MainActor
 final class CaptureViewModel: ObservableObject {
     // Use App Group storage for VPN-captured requests
     private let storage = AppGroupStorage.shared
+    private static let defaultVisibleNetworkEventTypes: Set<NetworkEventType> = {
+        var defaults = Set(NetworkEventType.allCases)
+        defaults.remove(.tcp)
+        defaults.remove(.udp)
+        defaults.remove(.dns)
+        defaults.remove(.quic)
+        return defaults
+    }()
+
     private struct FilterCacheKey: Hashable {
         let requestsVersion: Int
         let favoritesVersion: Int
@@ -324,7 +93,7 @@ final class CaptureViewModel: ObservableObject {
 
     // Advanced filters
     @Published var filterContentTypes: Set<ContentTypeFilter> = []
-    @Published var filterNetworkEventTypes: Set<NetworkEventType> = Set(NetworkEventType.allCases) {
+    @Published var filterNetworkEventTypes: Set<NetworkEventType> = CaptureViewModel.defaultVisibleNetworkEventTypes {
         didSet {
             // Affects both `filteredRequests` and whether grouping is allowed (HTTP-only).
             filteredRequestsCache = nil
@@ -475,9 +244,11 @@ final class CaptureViewModel: ObservableObject {
     private var requestIDSet: Set<UUID> = []
     private var transportLoadTask: Task<Void, Never>?
     private var activeTransportLoadTask: Task<Void, Never>?
+    private var activeUDPFlowHintLoadTask: Task<Void, Never>?
     private var lastTransportLoadTime: Date?
     private var lastTransportFullReloadTime: Date?
     private var transportIncrementalLoadsSinceFullReload = 0
+    private var transportProtocolHintsByFlowKey: [String: String] = [:]
     private var transportRequestIDSet: Set<UUID> = []
     private let minLoadInterval: TimeInterval = 0.5 // Minimum 500ms between loads
     private let requestFullReloadInterval: TimeInterval = 20
@@ -490,6 +261,7 @@ final class CaptureViewModel: ObservableObject {
     private var notificationObservers: [NSObjectProtocol] = []
     private var newRequestsObserverToken: AppGroupStorageObserverToken?
     private var newTransportRequestsObserverToken: AppGroupStorageObserverToken?
+    private var newUDPFlowsObserverToken: AppGroupStorageObserverToken?
     private var throttlingUpdateTask: Task<Void, Never>?
     private var duplicateDetectionTask: Task<Void, Never>?
     private var isRunningDuplicateDetection = false
@@ -518,6 +290,7 @@ final class CaptureViewModel: ObservableObject {
         // Load initial requests from storage
         loadRequests()
         loadTransportRequests(forceFullReload: true)
+        loadTransportProtocolHints()
         loadSavedPresets()
         loadSessions()
         cleanupOrphanedSessions()
@@ -534,6 +307,12 @@ final class CaptureViewModel: ObservableObject {
         newTransportRequestsObserverToken = storage.observeNewTransportRequests { [weak self] in
             Task { @MainActor [weak self] in
                 self?.debouncedLoadTransportRequests()
+            }
+        }
+
+        newUDPFlowsObserverToken = storage.observeNewUDPFlows { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.loadTransportProtocolHints()
             }
         }
 
@@ -572,6 +351,7 @@ final class CaptureViewModel: ObservableObject {
         activeLoadTask?.cancel()
         transportLoadTask?.cancel()
         activeTransportLoadTask?.cancel()
+        activeUDPFlowHintLoadTask?.cancel()
         throttlingUpdateTask?.cancel()
         duplicateDetectionTask?.cancel()
 
@@ -579,6 +359,8 @@ final class CaptureViewModel: ObservableObject {
         newRequestsObserverToken = nil
         newTransportRequestsObserverToken?.cancel()
         newTransportRequestsObserverToken = nil
+        newUDPFlowsObserverToken?.cancel()
+        newUDPFlowsObserverToken = nil
 
         for observer in notificationObservers {
             NotificationCenter.default.removeObserver(observer)
@@ -973,7 +755,7 @@ final class CaptureViewModel: ObservableObject {
                     let loaded = try await self.storage.loadAllTransportRequestsAsync()
 
                     guard !Task.isCancelled else { return }
-                    self.transportRequests = loaded
+                    self.transportRequests = self.enrichTransportRequests(loaded)
                     self.transportRequestIDSet = Set(loaded.map(\.id))
                     self.lastTransportFullReloadTime = Date()
                     self.transportIncrementalLoadsSinceFullReload = 0
@@ -983,7 +765,7 @@ final class CaptureViewModel: ObservableObject {
                 guard let newestKnownTimestamp = self.transportRequests.first?.timestamp else {
                     let loaded = try await self.storage.loadAllTransportRequestsAsync()
                     guard !Task.isCancelled else { return }
-                    self.transportRequests = loaded
+                    self.transportRequests = self.enrichTransportRequests(loaded)
                     self.transportRequestIDSet = Set(loaded.map(\.id))
                     self.lastTransportFullReloadTime = Date()
                     self.transportIncrementalLoadsSinceFullReload = 0
@@ -1031,11 +813,73 @@ final class CaptureViewModel: ObservableObject {
         newRequests.reserveCapacity(loaded.count)
 
         for request in loaded where transportRequestIDSet.insert(request.id).inserted {
-            newRequests.append(request)
+            newRequests.append(enrichTransportRequest(request))
         }
 
         guard !newRequests.isEmpty else { return }
         transportRequests.insert(contentsOf: newRequests, at: 0)
+    }
+
+    private func loadTransportProtocolHints() {
+        activeUDPFlowHintLoadTask?.cancel()
+        activeUDPFlowHintLoadTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let flows = try await self.storage.loadAllUDPFlowMetadataAsync()
+                guard !Task.isCancelled else { return }
+
+                self.transportProtocolHintsByFlowKey = Self.buildTransportProtocolHints(from: flows)
+                self.applyTransportProtocolHints()
+            } catch {
+                guard !Task.isCancelled else { return }
+                CoreLog.storage.error(
+                    "event=storage.udp_flow_hints_load outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+    }
+
+    private func enrichTransportRequests(_ requests: [TransportRequest]) -> [TransportRequest] {
+        requests.map(enrichTransportRequest)
+    }
+
+    private func enrichTransportRequest(_ request: TransportRequest) -> TransportRequest {
+        guard request.applicationProtocol == .quic else { return request }
+        var enriched = request
+        enriched.applicationProtocolHint = transportProtocolHintsByFlowKey[request.flowKey]
+        return enriched
+    }
+
+    private func applyTransportProtocolHints() {
+        guard !transportRequests.isEmpty else { return }
+
+        var updated = transportRequests
+        var didChange = false
+
+        for index in updated.indices where updated[index].applicationProtocol == .quic {
+            let newHint = transportProtocolHintsByFlowKey[updated[index].flowKey]
+            if updated[index].applicationProtocolHint != newHint {
+                updated[index].applicationProtocolHint = newHint
+                didChange = true
+            }
+        }
+
+        if didChange {
+            transportRequests = updated
+        }
+    }
+
+    private static func buildTransportProtocolHints(from flows: [UDPFlowMetadata]) -> [String: String] {
+        var hints: [String: String] = [:]
+        hints.reserveCapacity(flows.count)
+
+        for flow in flows {
+            guard let hint = flow.http3ALPNHint else { continue }
+            hints[flow.transportFlowKey] = hint
+        }
+
+        return hints
     }
 
     private let redirectChainResolver = RedirectChainResolver()
@@ -1060,8 +904,8 @@ final class CaptureViewModel: ObservableObject {
         if groupingMode != .none && filterNetworkEventTypes == Set([.http]) {
             return false
         }
-        // Otherwise, if it's not all types, it's user-set
-        return filterNetworkEventTypes.count != NetworkEventType.allCases.count
+        // Otherwise, if it differs from the default visible set, it's user-set.
+        return filterNetworkEventTypes != Self.defaultVisibleNetworkEventTypes
     }
 
     var hasActiveFilters: Bool {
@@ -1090,7 +934,7 @@ final class CaptureViewModel: ObservableObject {
     }
 
     var hasAdvancedFilters: Bool {
-        !filterContentTypes.isEmpty || filterNetworkEventTypes.count != NetworkEventType.allCases.count ||
+        !filterContentTypes.isEmpty || filterNetworkEventTypes != Self.defaultVisibleNetworkEventTypes ||
             filterMinSize != nil || filterMaxSize != nil ||
             filterMinDuration != nil || filterMaxDuration != nil || filterRegexPattern != nil ||
             filterResponseTime != nil || filterShowDuplicatesOnly || filterShowErrorsOnly
@@ -1427,7 +1271,7 @@ final class CaptureViewModel: ObservableObject {
         filterFavoritesOnly = false
         // Clear advanced filters
         filterContentTypes = []
-        filterNetworkEventTypes = Set(NetworkEventType.allCases)
+        filterNetworkEventTypes = Self.defaultVisibleNetworkEventTypes
         filterMinSize = nil
         filterMaxSize = nil
         filterMinDuration = nil
@@ -1443,7 +1287,7 @@ final class CaptureViewModel: ObservableObject {
 
     func clearAdvancedFilters() {
         filterContentTypes = []
-        filterNetworkEventTypes = Set(NetworkEventType.allCases)
+        filterNetworkEventTypes = Self.defaultVisibleNetworkEventTypes
         filterMinSize = nil
         filterMaxSize = nil
         filterMinDuration = nil
@@ -1491,7 +1335,7 @@ final class CaptureViewModel: ObservableObject {
         filterDomains = preset.filterDomains
         filterFavoritesOnly = preset.filterFavoritesOnly
         filterContentTypes = Set(preset.filterContentTypes.compactMap { ContentTypeFilter(rawValue: $0) })
-        filterNetworkEventTypes = preset.filterNetworkEventTypes.map { Set($0.compactMap { NetworkEventType(rawValue: $0) }) } ?? Set(NetworkEventType.allCases)
+        filterNetworkEventTypes = preset.filterNetworkEventTypes.map { Set($0.compactMap { NetworkEventType(rawValue: $0) }) } ?? Self.defaultVisibleNetworkEventTypes
         filterMinSize = preset.filterMinSize
         filterMaxSize = preset.filterMaxSize
         filterMinDuration = preset.filterMinDuration

@@ -33,8 +33,71 @@ let appProducts: [Product] = [
 let appProducts: [Product] = []
 #endif
 
+func candidatePackageRoots() -> [String] {
+    var candidates: [String] = []
+
+    let environment = ProcessInfo.processInfo.environment
+    let environmentKeys = [
+        "PACKAGE_ROOT",
+        "SRCROOT",
+        "PROJECT_DIR",
+        "PWD"
+    ]
+    for key in environmentKeys {
+        if let value = environment[key], !value.isEmpty {
+            candidates.append(value)
+        }
+    }
+
+    candidates.append(FileManager.default.currentDirectoryPath)
+    candidates.append(URL(fileURLWithPath: #filePath).deletingLastPathComponent().path)
+
+    return candidates
+}
+
+func canonicalPath(_ path: String) -> String {
+    URL(fileURLWithPath: path).standardizedFileURL.path
+}
+
+func looksLikePackageRoot(_ path: String) -> Bool {
+    let packageSwift = URL(fileURLWithPath: path).appendingPathComponent("Package.swift").path
+    let cquicheHeaders = URL(fileURLWithPath: path)
+        .appendingPathComponent("ThirdParty/CQuicheFFI/include/cquiche_ffi.h")
+        .path
+    return FileManager.default.fileExists(atPath: packageSwift) &&
+        FileManager.default.fileExists(atPath: cquicheHeaders)
+}
+
+func resolvedPackageRootPath() -> String {
+    var seen = Set<String>()
+    let candidates = candidatePackageRoots()
+        .map(canonicalPath)
+        .filter { seen.insert($0).inserted }
+
+    if let exactMatch = candidates.first(where: looksLikePackageRoot) {
+        return exactMatch
+    }
+
+    for candidate in candidates {
+        var searchURL = URL(fileURLWithPath: candidate)
+        for _ in 0 ..< 6 {
+            let path = searchURL.path
+            if looksLikePackageRoot(path) {
+                return path
+            }
+            let parent = searchURL.deletingLastPathComponent()
+            if parent.path == path {
+                break
+            }
+            searchURL = parent
+        }
+    }
+
+    return URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
+}
+
 let externalDependencies: [Package.Dependency] = [
-    .package(url: "https://github.com/apple/swift-certificates.git", exact: "1.17.1"),
+    .package(url: "https://github.com/apple/swift-certificates.git", exact: "1.18.0"),
     .package(url: "https://github.com/apple/swift-asn1.git", exact: "1.5.1"),
     .package(url: "https://github.com/facebook/zstd.git", exact: "1.5.7"),
     .package(url: "https://github.com/groue/GRDB.swift.git", from: "6.0.0"),
@@ -45,7 +108,7 @@ let externalDependencies: [Package.Dependency] = [
     .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.0.0")
 ]
 
-let packageRootPath = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
+let packageRootPath = resolvedPackageRootPath()
 let quicheBuildRoot = "\(packageRootPath)/build/quiche"
 let quicheIncludePath = "\(quicheBuildRoot)/include"
 let quicheXCFrameworkRelativePath = "build/quiche/quiche.xcframework"
@@ -54,8 +117,8 @@ let quicheDeviceLibraryPath = "\(quicheBuildRoot)/lib/aarch64-apple-ios/libquich
 let quicheSimulatorLibraryPath = "\(quicheBuildRoot)/lib/ios-simulator-universal/libquiche.a"
 let quicheStaticLibrariesAvailable = FileManager.default.fileExists(atPath: quicheDeviceLibraryPath) &&
     FileManager.default.fileExists(atPath: quicheSimulatorLibraryPath)
-let quicheXCFrameworkAvailable = FileManager.default.fileExists(atPath: quicheXCFrameworkPath)
 let quicheHeadersAvailable = FileManager.default.fileExists(atPath: quicheIncludePath)
+let quicheXCFrameworkAvailable = FileManager.default.fileExists(atPath: quicheXCFrameworkPath)
 let quicheArtifactsAvailable = quicheHeadersAvailable && (quicheXCFrameworkAvailable || quicheStaticLibrariesAvailable)
 let quicheSDKName = ProcessInfo.processInfo.environment["SDK_NAME"]?.lowercased() ?? ""
 let quichePlatformName = ProcessInfo.processInfo.environment["PLATFORM_NAME"]?.lowercased() ?? ""
@@ -134,6 +197,7 @@ let traceQUICDependencies: [Target.Dependency] = [
 
 let traceProxyDependencies: [Target.Dependency] = [
     "TraceCore",
+    "TraceCompression",
     "TraceSecurity",
     "TraceFeatures",
     "TraceQUIC",

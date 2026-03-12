@@ -223,7 +223,7 @@ final class BreakpointPresetTests: XCTestCase {
     // MARK: - Configuration Tests
 
     func testConfigurationWithAllBreakpointTypes() throws {
-        let types: [BreakpointType] = [.request, .response, .both]
+        let types: [BreakpointType] = [.request, .response, .stream, .both]
 
         for type in types {
             let config = BreakpointConfiguration(

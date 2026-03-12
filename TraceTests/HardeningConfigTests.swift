@@ -129,12 +129,6 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertFalse(enabled)
     }
 
-    func testDefaultDualMITMMITMEngineV2Disabled() async {
-        let enabled = await sut.dualMITMMITMEngineV2
-
-        XCTAssertFalse(enabled)
-    }
-
     func testDefaultDualMITMHttp2MITMDisabled() async {
         let enabled = await sut.dualMITMHttp2MITMEnabled
 
@@ -579,13 +573,6 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertTrue(result)
     }
 
-    func testSetDualMITMMITMEngineV2() async {
-        await sut.setDualMITMMITMEngineV2(true)
-        let result = await sut.dualMITMMITMEngineV2
-
-        XCTAssertTrue(result)
-    }
-
     func testSetDualMITMHttp2MITMEnabled() async {
         await sut.setDualMITMHttp2MITMEnabled(true)
         let result = await sut.dualMITMHttp2MITMEnabled
@@ -616,7 +603,6 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertFalse(snapshot.dualMITMPolicyEngineEnforcedTCP)
         XCTAssertFalse(snapshot.dualMITMPolicyEngineEnforcedProxy)
         XCTAssertFalse(snapshot.dualMITMPolicyEngineEnforcedQUIC)
-        XCTAssertFalse(snapshot.dualMITMMITMEngineV2)
         XCTAssertFalse(snapshot.dualMITMHttp2MITMEnabled)
         XCTAssertTrue(snapshot.dualMITMStrictEnforcementHardFail)
     }
@@ -662,7 +648,6 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertNotNil(dict["dualMitmPolicyEngineEnforcedTCP"])
         XCTAssertNotNil(dict["dualMitmPolicyEngineEnforcedProxy"])
         XCTAssertNotNil(dict["dualMitmPolicyEngineEnforcedQUIC"])
-        XCTAssertNotNil(dict["dualMitmMITMEngineV2"])
         XCTAssertNotNil(dict["dualMitmHttp2MITMEnabled"])
         XCTAssertNotNil(dict["dualMitmStrictEnforcementHardFail"])
     }

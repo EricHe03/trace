@@ -65,6 +65,12 @@ public final class NoopCircuitBreakerController: CircuitBreakerController, @unch
             quicAttemptsInWindow: 0,
             quicFailuresInWindow: 0,
             quicFailureRate: 0,
+            tcpIsDegraded: false,
+            tcpDegradedUntil: nil,
+            tcpDegradeReason: nil,
+            quicIsDegraded: false,
+            quicDegradedUntil: nil,
+            quicDegradeReason: nil,
             isDegraded: false,
             degradedUntil: nil,
             degradeReason: nil

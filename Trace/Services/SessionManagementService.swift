@@ -38,9 +38,13 @@ class SessionManagementService: SessionManagementServiceProtocol {
     }
 
     convenience init() {
+        self.init(store: AppGroupCaptureStore())
+    }
+
+    convenience init(store: CaptureDataStore) {
         self.init(
-            sessionRepository: SessionRepositoryImpl(),
-            requestRepository: NetworkRequestRepositoryImpl()
+            sessionRepository: SessionRepositoryImpl(store: store),
+            requestRepository: NetworkRequestRepositoryImpl(store: store)
         )
     }
 

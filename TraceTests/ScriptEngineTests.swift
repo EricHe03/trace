@@ -212,6 +212,64 @@ final class ScriptEngineTests: XCTestCase {
         XCTAssertEqual(modified.responseBody.getString(), "{\"created\": true}")
     }
 
+    // MARK: - Stream Script Tests
+
+    func testExecuteStreamScriptModifiesPayloadAndMetadata() throws {
+        let script = """
+        stream.event.payload.text = 'patched';
+        stream.event.metadata['stage'] = 'mutated';
+        stream.action = 'forward';
+        """
+
+        let session = StreamSession(
+            protocolType: .websocket,
+            url: "wss://example.com/socket",
+            status: .open
+        )
+        let event = StreamEvent(
+            sessionID: session.id,
+            sequence: 1,
+            direction: .received,
+            kind: .message,
+            payload: .text("hello", contentType: "text/plain"),
+            metadata: ["message_type": "text"]
+        )
+        let context = StreamScriptContext(session: session, event: event)
+
+        let result = try engine.executeStreamScript(script, context: context)
+
+        XCTAssertEqual(result.action, .forward)
+        XCTAssertEqual(result.event.payload.text, "patched")
+        XCTAssertEqual(result.event.metadata["stage"], "mutated")
+    }
+
+    func testExecuteStreamScriptCanDropAndSetBinaryPayload() throws {
+        let script = """
+        stream.event.payload.base64 = btoa('patched-binary');
+        stream.action = 'drop';
+        """
+
+        let session = StreamSession(
+            protocolType: .websocket,
+            url: "wss://example.com/socket",
+            status: .open
+        )
+        let event = StreamEvent(
+            sessionID: session.id,
+            sequence: 2,
+            direction: .sent,
+            kind: .message,
+            payload: .binary(Data([0x01, 0x02]), contentType: "application/octet-stream"),
+            metadata: ["message_type": "binary"]
+        )
+        let context = StreamScriptContext(session: session, event: event)
+
+        let result = try engine.executeStreamScript(script, context: context)
+
+        XCTAssertEqual(result.action, .drop)
+        XCTAssertEqual(result.event.payload.binary, Data("patched-binary".utf8))
+    }
+
     // MARK: - Helper Functions Tests
 
     func testBase64Encode() throws {

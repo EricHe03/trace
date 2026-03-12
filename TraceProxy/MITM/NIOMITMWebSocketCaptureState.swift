@@ -16,8 +16,12 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
     )
 
     let lock = NSLock()
+    let connectionID: UUID
     var connection: WebSocketConnection
     var finalized = false
+    var streamSequence: Int64 = 0
+    var didLogFirstFrame = false
+    var didLogFirstMessage = false
 
     var sentContinuationType: WebSocketMessageType?
     var sentContinuationPayload = Data()
@@ -26,15 +30,33 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
 
     let maxContinuationPayloadBytes = 5 * 1024 * 1024
 
-    init(url: String, requestHeaders: [TraceHTTPHeader]) {
+    init(url: String, requestHeaders: [TraceHTTPHeader], sessionID: UUID? = nil) {
+        let resolvedID = sessionID ?? UUID()
+        connectionID = resolvedID
         connection = WebSocketConnection(
-            id: UUID(),
+            id: resolvedID,
             url: url,
             startTime: Date(),
             status: .connecting,
             requestHeaders: requestHeaders
         )
         persist(connection)
+        persistStreamSession(
+            StreamSession(
+                id: connection.id,
+                protocolType: .websocket,
+                url: connection.url,
+                startTime: connection.startTime,
+                endTime: connection.endTime,
+                status: .connecting,
+                requestHeaders: connection.requestHeaders,
+                responseHeaders: connection.responseHeaders,
+                metadata: [:],
+                eventCount: 0,
+                bytesIn: 0,
+                bytesOut: 0
+            )
+        )
     }
 
     func markOpen(responseHeaders: [TraceHTTPHeader]) {
@@ -44,12 +66,20 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
         connection.status = .open
         connection.responseHeaders = responseHeaders
         persist(connection)
+        persistStreamSession(currentStreamSession(status: .open))
     }
 
     func recordFrame(_ frame: WebSocketFrame, direction: WebSocketDirection) {
         lock.lock()
         defer { lock.unlock() }
         guard !finalized else { return }
+        if !didLogFirstFrame {
+            didLogFirstFrame = true
+            let payloadBytes = (frame.extensionData?.readableBytes ?? 0) + frame.data.readableBytes
+            ProxyLog.mitm.info(
+                "event=proxy.nio_ws_first_frame outcome=received ws_id=\(self.connection.id.uuidString, privacy: .public) direction=\(direction.rawValue, privacy: .public) opcode=\(frame.opcode.description, privacy: .public) fin=\(frame.fin, privacy: .public) masked=\(frame.maskKey != nil, privacy: .public) payload_bytes=\(payloadBytes, privacy: .public) url=\(self.connection.url, privacy: .private(mask: .hash))"
+            )
+        }
         guard let frameType = websocketMessageType(for: frame.opcode) else { return }
 
         var continuationType = continuationType(for: direction)
@@ -73,7 +103,9 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
                     payload: continuationPayload,
                     isFinal: true,
                     isMasked: frame.maskKey != nil,
-                    direction: direction
+                    direction: direction,
+                    wasModified: false,
+                    wasBlocked: false
                 )
                 continuationType = nil
                 continuationPayload.removeAll(keepingCapacity: false)
@@ -85,7 +117,9 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
                     payload: payload,
                     isFinal: true,
                     isMasked: frame.maskKey != nil,
-                    direction: direction
+                    direction: direction,
+                    wasModified: false,
+                    wasBlocked: false
                 )
             } else {
                 guard payload.count <= maxContinuationPayloadBytes else {
@@ -103,7 +137,9 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
                 payload: payload,
                 isFinal: frame.fin,
                 isMasked: frame.maskKey != nil,
-                direction: direction
+                direction: direction,
+                wasModified: false,
+                wasBlocked: false
             )
             if frameType == .close {
                 connection.status = .closing
@@ -114,6 +150,42 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
 
         setContinuation(type: continuationType, payload: continuationPayload, for: direction)
         persist(connection)
+        persistStreamSession(currentStreamSession(status: streamStatus(for: connection.status)))
+    }
+
+    func recordMessage(
+        type: WebSocketMessageType,
+        payload: Data,
+        isFinal: Bool,
+        isMasked: Bool,
+        direction: WebSocketDirection,
+        wasModified: Bool,
+        wasBlocked: Bool,
+        metadata: [String: String] = [:]
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finalized else { return }
+
+        appendMessage(
+            type: type,
+            payload: payload,
+            isFinal: isFinal,
+            isMasked: isMasked,
+            direction: direction,
+            wasModified: wasModified,
+            wasBlocked: wasBlocked,
+            additionalMetadata: metadata
+        )
+
+        if type == .close {
+            connection.status = .closing
+            connection.closeCode = extractCloseCode(from: payload)
+            connection.closeReason = extractCloseReason(from: payload)
+        }
+
+        persist(connection)
+        persistStreamSession(currentStreamSession(status: streamStatus(for: connection.status)))
     }
 
     func markClosed(code: Int?, reason: String?) {
@@ -130,6 +202,7 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
             connection.closeReason = reason
         }
         persist(connection)
+        persistStreamSession(currentStreamSession(status: .closed))
     }
 
     func markFailed() {
@@ -140,6 +213,7 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
         connection.status = .failed
         connection.endTime = Date()
         persist(connection)
+        persistStreamSession(currentStreamSession(status: .failed))
     }
 
     func appendMessage(
@@ -147,7 +221,10 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
         payload: Data,
         isFinal: Bool,
         isMasked: Bool,
-        direction: WebSocketDirection
+        direction: WebSocketDirection,
+        wasModified: Bool = false,
+        wasBlocked: Bool = false,
+        additionalMetadata: [String: String] = [:]
     ) {
         connection.addMessage(
             WebSocketMessage(
@@ -160,6 +237,35 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
                 payloadLength: payload.count
             )
         )
+        if !didLogFirstMessage {
+            didLogFirstMessage = true
+            ProxyLog.mitm.info(
+                "event=proxy.nio_ws_first_message outcome=captured ws_id=\(self.connection.id.uuidString, privacy: .public) direction=\(direction.rawValue, privacy: .public) type=\(type.rawValue, privacy: .public) payload_bytes=\(payload.count, privacy: .public) url=\(self.connection.url, privacy: .private(mask: .hash))"
+            )
+        }
+        streamSequence += 1
+        let payloadText = type == .text ? String(data: payload, encoding: .utf8) : nil
+        let streamEvent = StreamEvent(
+            sessionID: connection.id,
+            sequence: streamSequence,
+            direction: direction == .sent ? .sent : .received,
+            kind: streamEventKind(for: type),
+            payload: StreamEventPayload(
+                text: payloadText,
+                binary: payload,
+                contentType: type == .text ? "text/plain; charset=utf-8" : "application/octet-stream",
+                encoding: type == .text ? "utf-8" : nil
+            ),
+            wasModified: wasModified,
+            wasBlocked: wasBlocked,
+            metadata: [
+                "message_type": type.rawValue,
+                "is_final": isFinal ? "true" : "false",
+                "is_masked": isMasked ? "true" : "false",
+                "payload_length": String(payload.count)
+            ].merging(additionalMetadata) { _, new in new }
+        )
+        persistStreamEvent(streamEvent)
     }
 
     func continuationType(for direction: WebSocketDirection) -> WebSocketMessageType? {
@@ -234,6 +340,90 @@ final class NIOMITMWebSocketCaptureState: @unchecked Sendable {
                     "event=proxy.nio_ws_capture_persist outcome=failure error=\(error.localizedDescription, privacy: .public)"
                 )
             }
+        }
+    }
+
+    func persistStreamSession(_ session: StreamSession) {
+        Self.persistenceQueue.async {
+            do {
+                try AppGroupStorage.shared.upsertStreamSession(session)
+            } catch {
+                ProxyLog.mitm.warning(
+                    "event=proxy.nio_ws_stream_session_persist outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+    }
+
+    func persistStreamEvent(_ event: StreamEvent) {
+        Self.persistenceQueue.async {
+            do {
+                try AppGroupStorage.shared.appendStreamEvent(event)
+            } catch {
+                ProxyLog.mitm.warning(
+                    "event=proxy.nio_ws_stream_event_persist outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+    }
+
+    func currentStreamSession(status: StreamSessionStatus) -> StreamSession {
+        let bytesIn = connection.messages
+            .filter { $0.direction == .received }
+            .reduce(into: 0) { $0 += $1.payloadLength }
+        let bytesOut = connection.messages
+            .filter { $0.direction == .sent }
+            .reduce(into: 0) { $0 += $1.payloadLength }
+
+        var metadata: [String: String] = [:]
+        if let closeCode = connection.closeCode {
+            metadata["close_code"] = String(closeCode)
+        }
+        if let closeReason = connection.closeReason {
+            metadata["close_reason"] = closeReason
+        }
+
+        return StreamSession(
+            id: connection.id,
+            protocolType: .websocket,
+            url: connection.url,
+            startTime: connection.startTime,
+            endTime: connection.endTime,
+            status: status,
+            requestHeaders: connection.requestHeaders,
+            responseHeaders: connection.responseHeaders,
+            metadata: metadata,
+            eventCount: connection.messages.count,
+            bytesIn: bytesIn,
+            bytesOut: bytesOut
+        )
+    }
+
+    func streamStatus(for status: WebSocketConnectionStatus) -> StreamSessionStatus {
+        switch status {
+        case .connecting:
+            .connecting
+        case .open:
+            .open
+        case .closing:
+            .closing
+        case .closed:
+            .closed
+        case .failed:
+            .failed
+        }
+    }
+
+    func streamEventKind(for messageType: WebSocketMessageType) -> StreamEventKind {
+        switch messageType {
+        case .ping:
+            .ping
+        case .pong:
+            .pong
+        case .close:
+            .close
+        case .text, .binary, .continuation:
+            .message
         }
     }
 }

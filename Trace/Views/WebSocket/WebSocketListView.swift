@@ -32,7 +32,7 @@ struct WebSocketListView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("WebSocket")
+            .navigationTitle("WebSocket Connections")
             .searchable(
                 text: $viewModel.searchText,
                 prompt: "Search connections"
@@ -93,21 +93,28 @@ struct WebSocketConnectionRow: View {
     let connection: WebSocketConnection
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignSystem.Spacing.smPlus) {
-            HStack {
-                Text(connection.status.displayName)
-                    .badgeStyle(backgroundColor: statusColor)
+        VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
+            HStack(spacing: DesignSystem.Spacing.smPlus) {
+                badge(
+                    text: "WS",
+                    background: DesignSystem.Colors.eventTypeColor(for: .webSocket)
+                )
+
+                badge(
+                    text: connection.status.displayName,
+                    background: statusColor
+                )
 
                 Text("\(connection.messageCount) messages")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
 
                 Spacer()
 
                 if let duration = connection.duration {
                     Text(DesignSystem.formattedDuration(duration))
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -116,24 +123,35 @@ struct WebSocketConnectionRow: View {
                 .lineLimit(2)
 
             HStack {
-                Text(connection.startTime, style: .relative) + Text(" ago")
+                Text(connection.startTime, style: .relative)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.tertiary)
 
                 Spacer()
 
                 Text("↑ \(connection.sentMessageCount) ↓ \(connection.receivedMessageCount)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.vertical, DesignSystem.Spacing.rowVertical)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("WebSocket connection, \(connection.status.displayName), \(connection.messageCount) messages, \(connection.sentMessageCount) sent, \(connection.receivedMessageCount) received, \(connection.url)")
+        .accessibilityLabel("WebSocket connection to \(connection.url), \(connection.status.displayName), \(connection.messageCount) messages, \(connection.sentMessageCount) sent, \(connection.receivedMessageCount) received")
     }
 
     private var statusColor: Color {
         DesignSystem.Colors.statusColor(for: connection.status.color)
+    }
+
+    private func badge(text: String, background: Color, foreground: Color = .white) -> some View {
+        Text(text)
+            .font(DesignSystem.Badge.font)
+            .fontWeight(DesignSystem.Badge.fontWeight)
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(background)
+            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
     }
 }
 

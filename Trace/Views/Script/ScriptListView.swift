@@ -324,6 +324,7 @@ struct ScriptTypeBadge: View {
         switch type {
         case .request: DesignSystem.Colors.accent
         case .response: DesignSystem.Colors.accentAlt
+        case .stream: DesignSystem.Colors.warning
         case .both: DesignSystem.Colors.success
         }
     }

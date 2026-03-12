@@ -290,6 +290,17 @@ final class ServerSentEventTests: XCTestCase {
         XCTAssertEqual(events[0].data, "test")
     }
 
+    func testSSEParserCarriesForwardIDAcrossEvents() {
+        let parser = SSEParser()
+        let input = "id: carry\ndata: one\n\ndata: two\n\n"
+
+        let events = parser.parse(input)
+
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events[0].eventId, "carry")
+        XCTAssertEqual(events[1].eventId, "carry")
+    }
+
     func testSSEParserParseEventWithType() {
         let parser = SSEParser()
         let input = "event: message\ndata: hello\n\n"
@@ -310,6 +321,16 @@ final class ServerSentEventTests: XCTestCase {
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].retry, 5000)
         XCTAssertEqual(events[0].data, "test")
+    }
+
+    func testSSEParserRejectsNonNumericRetry() {
+        let parser = SSEParser()
+        let input = "retry: 5s\ndata: test\n\n"
+
+        let events = parser.parse(input)
+
+        XCTAssertEqual(events.count, 1)
+        XCTAssertNil(events[0].retry)
     }
 
     func testSSEParserParseMultipleDataLines() {
