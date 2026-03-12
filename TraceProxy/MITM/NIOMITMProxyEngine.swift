@@ -22,7 +22,7 @@ struct NIOMITMUncheckedSendableBox<Value>: @unchecked Sendable {
     let value: Value
 }
 
-enum TransparentMITMFailureKind: Sendable {
+enum TransparentMITMFailureKind: Sendable, Equatable {
     case clientRejectedMITMOrPinning(detail: String?)
     case connectionClosedEarly(detail: String?)
     case upstreamTimeout(detail: String?)
@@ -70,6 +70,10 @@ enum TransparentMITMFailureKind: Sendable {
             return normalizedToken
         }
         return "\(normalizedToken): \(detail)"
+    }
+
+    var shouldAffectGlobalCircuitBreaker: Bool {
+        MITMFailureMapper.mapTransparentFailure(self).shouldAffectGlobalCircuitBreaker
     }
 }
 

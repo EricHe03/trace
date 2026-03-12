@@ -434,8 +434,16 @@ final class QUICFlowRouterTests: XCTestCase {
         XCTAssertTrue(QUICFlowRouter.shouldEnableHostFailOpen(for: "certificatePinning"))
     }
 
+    func testShouldEnableHostFailOpenForCanonicalCertificatePinningReason() {
+        XCTAssertTrue(QUICFlowRouter.shouldEnableHostFailOpen(for: "quic_certificate_pinning"))
+    }
+
     func testShouldEnableHostFailOpenForClosedBeforeHTTP3Reason() {
         XCTAssertTrue(QUICFlowRouter.shouldEnableHostFailOpen(for: "quic_closed_before_http3_handshakeFailed"))
+    }
+
+    func testShouldEnableHostFailOpenForCanonicalAuthorityRetryReason() {
+        XCTAssertTrue(QUICFlowRouter.shouldEnableHostFailOpen(for: "quic_authority_retry_failed"))
     }
 
     func testShouldEnableHostFailOpenSkipsUnrelatedReason() {
@@ -448,6 +456,10 @@ final class QUICFlowRouterTests: XCTestCase {
 
     func testPrefersDirectFailOpenForwardingForCircuitBreakerReason() {
         XCTAssertTrue(QUICFlowRouter.prefersDirectFailOpenForwarding(for: "dual_mitm_circuit_breaker"))
+    }
+
+    func testPrefersDirectFailOpenForwardingForTunnelUnavailableReason() {
+        XCTAssertTrue(QUICFlowRouter.prefersDirectFailOpenForwarding(for: "quic_tunnel_required_unavailable"))
     }
 
     func testPrefersDirectFailOpenForwardingSkipsUnrelatedReason() {

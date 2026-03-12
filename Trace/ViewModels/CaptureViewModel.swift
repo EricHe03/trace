@@ -244,9 +244,11 @@ final class CaptureViewModel: ObservableObject {
     private var requestIDSet: Set<UUID> = []
     private var transportLoadTask: Task<Void, Never>?
     private var activeTransportLoadTask: Task<Void, Never>?
+    private var activeUDPFlowHintLoadTask: Task<Void, Never>?
     private var lastTransportLoadTime: Date?
     private var lastTransportFullReloadTime: Date?
     private var transportIncrementalLoadsSinceFullReload = 0
+    private var transportProtocolHintsByFlowKey: [String: String] = [:]
     private var transportRequestIDSet: Set<UUID> = []
     private let minLoadInterval: TimeInterval = 0.5 // Minimum 500ms between loads
     private let requestFullReloadInterval: TimeInterval = 20
@@ -259,6 +261,7 @@ final class CaptureViewModel: ObservableObject {
     private var notificationObservers: [NSObjectProtocol] = []
     private var newRequestsObserverToken: AppGroupStorageObserverToken?
     private var newTransportRequestsObserverToken: AppGroupStorageObserverToken?
+    private var newUDPFlowsObserverToken: AppGroupStorageObserverToken?
     private var throttlingUpdateTask: Task<Void, Never>?
     private var duplicateDetectionTask: Task<Void, Never>?
     private var isRunningDuplicateDetection = false
@@ -287,6 +290,7 @@ final class CaptureViewModel: ObservableObject {
         // Load initial requests from storage
         loadRequests()
         loadTransportRequests(forceFullReload: true)
+        loadTransportProtocolHints()
         loadSavedPresets()
         loadSessions()
         cleanupOrphanedSessions()
@@ -303,6 +307,12 @@ final class CaptureViewModel: ObservableObject {
         newTransportRequestsObserverToken = storage.observeNewTransportRequests { [weak self] in
             Task { @MainActor [weak self] in
                 self?.debouncedLoadTransportRequests()
+            }
+        }
+
+        newUDPFlowsObserverToken = storage.observeNewUDPFlows { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.loadTransportProtocolHints()
             }
         }
 
@@ -341,6 +351,7 @@ final class CaptureViewModel: ObservableObject {
         activeLoadTask?.cancel()
         transportLoadTask?.cancel()
         activeTransportLoadTask?.cancel()
+        activeUDPFlowHintLoadTask?.cancel()
         throttlingUpdateTask?.cancel()
         duplicateDetectionTask?.cancel()
 
@@ -348,6 +359,8 @@ final class CaptureViewModel: ObservableObject {
         newRequestsObserverToken = nil
         newTransportRequestsObserverToken?.cancel()
         newTransportRequestsObserverToken = nil
+        newUDPFlowsObserverToken?.cancel()
+        newUDPFlowsObserverToken = nil
 
         for observer in notificationObservers {
             NotificationCenter.default.removeObserver(observer)
@@ -742,7 +755,7 @@ final class CaptureViewModel: ObservableObject {
                     let loaded = try await self.storage.loadAllTransportRequestsAsync()
 
                     guard !Task.isCancelled else { return }
-                    self.transportRequests = loaded
+                    self.transportRequests = self.enrichTransportRequests(loaded)
                     self.transportRequestIDSet = Set(loaded.map(\.id))
                     self.lastTransportFullReloadTime = Date()
                     self.transportIncrementalLoadsSinceFullReload = 0
@@ -752,7 +765,7 @@ final class CaptureViewModel: ObservableObject {
                 guard let newestKnownTimestamp = self.transportRequests.first?.timestamp else {
                     let loaded = try await self.storage.loadAllTransportRequestsAsync()
                     guard !Task.isCancelled else { return }
-                    self.transportRequests = loaded
+                    self.transportRequests = self.enrichTransportRequests(loaded)
                     self.transportRequestIDSet = Set(loaded.map(\.id))
                     self.lastTransportFullReloadTime = Date()
                     self.transportIncrementalLoadsSinceFullReload = 0
@@ -800,11 +813,73 @@ final class CaptureViewModel: ObservableObject {
         newRequests.reserveCapacity(loaded.count)
 
         for request in loaded where transportRequestIDSet.insert(request.id).inserted {
-            newRequests.append(request)
+            newRequests.append(enrichTransportRequest(request))
         }
 
         guard !newRequests.isEmpty else { return }
         transportRequests.insert(contentsOf: newRequests, at: 0)
+    }
+
+    private func loadTransportProtocolHints() {
+        activeUDPFlowHintLoadTask?.cancel()
+        activeUDPFlowHintLoadTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let flows = try await self.storage.loadAllUDPFlowMetadataAsync()
+                guard !Task.isCancelled else { return }
+
+                self.transportProtocolHintsByFlowKey = Self.buildTransportProtocolHints(from: flows)
+                self.applyTransportProtocolHints()
+            } catch {
+                guard !Task.isCancelled else { return }
+                CoreLog.storage.error(
+                    "event=storage.udp_flow_hints_load outcome=failure error=\(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+    }
+
+    private func enrichTransportRequests(_ requests: [TransportRequest]) -> [TransportRequest] {
+        requests.map(enrichTransportRequest)
+    }
+
+    private func enrichTransportRequest(_ request: TransportRequest) -> TransportRequest {
+        guard request.applicationProtocol == .quic else { return request }
+        var enriched = request
+        enriched.applicationProtocolHint = transportProtocolHintsByFlowKey[request.flowKey]
+        return enriched
+    }
+
+    private func applyTransportProtocolHints() {
+        guard !transportRequests.isEmpty else { return }
+
+        var updated = transportRequests
+        var didChange = false
+
+        for index in updated.indices where updated[index].applicationProtocol == .quic {
+            let newHint = transportProtocolHintsByFlowKey[updated[index].flowKey]
+            if updated[index].applicationProtocolHint != newHint {
+                updated[index].applicationProtocolHint = newHint
+                didChange = true
+            }
+        }
+
+        if didChange {
+            transportRequests = updated
+        }
+    }
+
+    private static func buildTransportProtocolHints(from flows: [UDPFlowMetadata]) -> [String: String] {
+        var hints: [String: String] = [:]
+        hints.reserveCapacity(flows.count)
+
+        for flow in flows {
+            guard let hint = flow.http3ALPNHint else { continue }
+            hints[flow.transportFlowKey] = hint
+        }
+
+        return hints
     }
 
     private let redirectChainResolver = RedirectChainResolver()

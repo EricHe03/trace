@@ -1311,6 +1311,18 @@ public class AppGroupStorage: @unchecked Sendable {
         }
     }
 
+    public func loadAllUDPFlowMetadataAsync() async throws -> [UDPFlowMetadata] {
+        try await withCheckedThrowingContinuation { continuation in
+            storageQueue.async {
+                do {
+                    try continuation.resume(returning: self.loadAllUDPFlowMetadata())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     /// Deletes a UDP flow metadata record from the shared container.
     public func deleteUDPFlowMetadata(_ id: UUID) throws {
         let didWrite = executeDBWrite { db in

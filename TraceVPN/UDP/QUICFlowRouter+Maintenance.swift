@@ -259,35 +259,54 @@ extension QUICFlowRouter {
     }
 
     static func shouldEnableHostFailOpen(for reason: String) -> Bool {
-        let normalized = reason
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard !normalized.isEmpty else { return false }
-
-        if normalized == "handshakefailed" ||
-            normalized == "certificatepinning" ||
-            normalized == "quic_retry_with_authority_failed" {
-            return true
+        switch canonicalQUICFailureBehavior(for: reason) {
+        case .hostFailOpen:
+            true
+        case .directFailOpenOnly, .noSpecialHandling:
+            false
         }
-
-        return normalized.hasPrefix("quic_closed_before_http3_")
     }
 
     static func prefersDirectFailOpenForwarding(for reason: String) -> Bool {
+        switch canonicalQUICFailureBehavior(for: reason) {
+        case .hostFailOpen, .directFailOpenOnly:
+            true
+        case .noSpecialHandling:
+            false
+        }
+    }
+
+    private enum QUICFailureBehavior {
+        case noSpecialHandling
+        case hostFailOpen
+        case directFailOpenOnly
+    }
+
+    private static func canonicalQUICFailureBehavior(for reason: String) -> QUICFailureBehavior {
         let normalized = reason
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        guard !normalized.isEmpty else { return false }
+        guard !normalized.isEmpty else { return .noSpecialHandling }
 
         if normalized == "quic_no_progress_fail_open" ||
             normalized == "quic_tunnel_required_unavailable" ||
-            normalized == "quic_retry_with_authority_failed" ||
-            normalized == "dual_mitm_circuit_breaker" ||
-            normalized == "handshakefailed" ||
-            normalized == "certificatepinning" {
-            return true
+            normalized == "dual_mitm_circuit_breaker" {
+            return .directFailOpenOnly
         }
 
-        return normalized.hasPrefix("quic_closed_before_http3_")
+        let decoded = LegacyReasonCodec.decode(reason)
+        switch decoded.failure {
+        case .quicHandshakeFailed,
+             .quicCertificatePinning,
+             .quicAuthorityRetryFailed,
+             .quicClosedBeforeHTTP3:
+            return .hostFailOpen
+        case .quicNoProgress:
+            return .directFailOpenOnly
+        default:
+            break
+        }
+
+        return .noSpecialHandling
     }
 }

@@ -147,6 +147,34 @@ public enum InterceptionFailure: Sendable, Equatable {
     case internalError(code: InternalErrorCode, context: String?)
 }
 
+public extension InterceptionFailure {
+    var shouldAffectGlobalCircuitBreaker: Bool {
+        switch self {
+        case .clientRejectedMITMOrPinning,
+             .sniInvalidOrMissing,
+             .connectionClosedEarly,
+             .upstreamConnectionClosed,
+             .upstreamTLSTrustFailed,
+             .upstreamTLSHostnameMismatch,
+             .nonHTTPProtocol,
+             .protocolMismatch,
+             .quicCertificatePinning:
+            false
+        case .localProxyUnreachable,
+             .transparentMetadataInvalid,
+             .resourceExhausted,
+             .upstreamTimeout,
+             .mitmSetupFailed,
+             .quicHandshakeFailed,
+             .quicAuthorityRetryFailed,
+             .quicClosedBeforeHTTP3,
+             .quicNoProgress,
+             .internalError:
+            true
+        }
+    }
+}
+
 extension InterceptionFailure: Codable {
     private enum CodingKeys: String, CodingKey {
         case type

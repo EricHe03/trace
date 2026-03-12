@@ -111,6 +111,13 @@ struct TransportDetailView: View {
     private var summarySection: some View {
         Section("Summary") {
             LabeledContent("Protocol", value: request.applicationProtocol.displayName)
+            if let protocolBadge = request.protocolBadgeText {
+                LabeledContent("Protocol Badge", value: protocolBadge)
+            }
+            if let protocolHint = request.applicationProtocolHint,
+               !protocolHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                LabeledContent("Protocol Hint", value: protocolHint)
+            }
             LabeledContent("Transport", value: request.transport.rawValue.uppercased())
             LabeledContent("Source", value: "\(request.sourceIP):\(request.sourcePort)")
             LabeledContent("Destination", value: "\(request.destinationIP):\(request.destinationPort)")

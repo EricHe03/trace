@@ -390,6 +390,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
             flowID: flowID,
             requestURL: resolvedURL,
             methodToken: head.method.rawValue,
+            requestVersion: head.version,
             requestHeaders: dictionary(from: head.headers),
             requestBodyData: requestBodyData,
             startTime: requestStart,

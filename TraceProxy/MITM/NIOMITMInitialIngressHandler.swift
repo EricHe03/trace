@@ -648,7 +648,9 @@ extension NIOMITMInitialIngressHandler {
                     )
                     let failureToken = self.transparentFailureToken(for: failureKind)
                     let classifiedFailure = self.transparentFailureLogReason(for: failureKind)
-                    DualMITMCircuitBreaker.shared.recordTCPClientHandshake(success: false)
+                    if self.shouldRecordTCPHandshakeFailure(for: failureKind) {
+                        DualMITMCircuitBreaker.shared.recordTCPClientHandshake(success: false)
+                    }
                     self.onMITMFailure?(host, failureToken)
                     if host.caseInsensitiveCompare(upstreamConnectHost) != .orderedSame {
                         self.onMITMFailure?(upstreamConnectHost, failureToken)
@@ -753,10 +755,15 @@ extension NIOMITMInitialIngressHandler {
         _ error: Error,
         stage: TransparentMITMFailureStage = .generic
     ) -> TransparentMITMFailureKind {
-        let lowercaseDetail = error.localizedDescription.lowercased()
-        if stage == .clientTLSHandshake,
-           lowercaseDetail.contains("niossl.niosslerror error 0") {
-            return .clientRejectedMITMOrPinning(detail: "niossl_error_0")
+        let detail = transparentMITMFailureDetail(error)
+        let lowercaseDetail = detail.lowercased()
+        if stage == .clientTLSHandshake {
+            if let clientTLSAlert = classifyClientTLSAlertDetail(from: lowercaseDetail) {
+                return .clientRejectedMITMOrPinning(detail: clientTLSAlert)
+            }
+            if lowercaseDetail.contains("niossl.niosslerror error 0") {
+                return .clientRejectedMITMOrPinning(detail: "niossl_error_0")
+            }
         }
 
         if let transparentError = error as? TransparentMITMError {
@@ -816,7 +823,53 @@ extension NIOMITMInitialIngressHandler {
         if lowercaseDetail.contains("timed out") || lowercaseDetail.contains("timeout") {
             return .upstreamTimeout(detail: nil)
         }
-        return .mitmSetupFailed(detail: error.localizedDescription)
+        return .mitmSetupFailed(detail: detail)
+    }
+
+    private func transparentMITMFailureDetail(_ error: Error) -> String {
+        var segments = [error.localizedDescription, String(describing: error)]
+        var current = (error as NSError).userInfo[NSUnderlyingErrorKey] as? Error
+        var depth = 0
+
+        while let current, depth < 4 {
+            segments.append(current.localizedDescription)
+            segments.append(String(describing: current))
+            current = (current as NSError).userInfo[NSUnderlyingErrorKey] as? Error
+            depth += 1
+        }
+
+        return segments
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " | ")
+    }
+
+    private func classifyClientTLSAlertDetail(from detail: String) -> String? {
+        let alertMappings = [
+            ("certificate_unknown", "peer_tls_alert_certificate_unknown"),
+            ("unknown_ca", "peer_tls_alert_unknown_ca"),
+            ("bad_certificate", "peer_tls_alert_bad_certificate"),
+            ("unsupported_certificate", "peer_tls_alert_unsupported_certificate"),
+            ("certificate_expired", "peer_tls_alert_certificate_expired"),
+            ("certificate_revoked", "peer_tls_alert_certificate_revoked"),
+            ("access_denied", "peer_tls_alert_access_denied")
+        ]
+
+        for (needle, token) in alertMappings where detail.contains(needle) {
+            return token
+        }
+
+        if detail.contains("certificate unknown") {
+            return "peer_tls_alert_certificate_unknown"
+        }
+        if detail.contains("unknown ca") {
+            return "peer_tls_alert_unknown_ca"
+        }
+        if detail.contains("bad certificate") {
+            return "peer_tls_alert_bad_certificate"
+        }
+
+        return nil
     }
 
     func transparentFailureToken(for failureKind: TransparentMITMFailureKind) -> String {
@@ -835,20 +888,7 @@ extension NIOMITMInitialIngressHandler {
     }
 
     func shouldRecordTCPHandshakeFailure(for failureKind: TransparentMITMFailureKind) -> Bool {
-        switch failureKind {
-        case .tlsUpstreamTrustFailed, .tlsUpstreamHostnameMismatch:
-            // Certificate trust/hostname validation problems are host-specific and
-            // should not globally degrade Dual MITM.
-            false
-        case .clientRejectedMITMOrPinning,
-             .upstreamTimeout,
-             .mitmSetupFailed:
-            true
-        case .connectionClosedEarly, .upstreamConnectionClosed:
-            // Early close / unclean shutdown is common for speculative connections and
-            // should not bias global breaker health.
-            false
-        }
+        failureKind.shouldAffectGlobalCircuitBreaker
     }
 
     func makeConnectHandler(

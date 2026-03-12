@@ -110,6 +110,7 @@ public struct TransportRequest: Identifiable, Codable {
     public let udpDatagramLength: UInt16?
     public let summary: String?
     public let flowKey: String
+    public var applicationProtocolHint: String?
 
     public init(
         id: UUID = UUID(),
@@ -140,7 +141,8 @@ public struct TransportRequest: Identifiable, Codable {
         tcpOptions: TransportTCPPacketOptions? = nil,
         udpDatagramLength: UInt16? = nil,
         summary: String? = nil,
-        flowKey: String
+        flowKey: String,
+        applicationProtocolHint: String? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -171,6 +173,7 @@ public struct TransportRequest: Identifiable, Codable {
         self.udpDatagramLength = udpDatagramLength
         self.summary = summary
         self.flowKey = flowKey
+        self.applicationProtocolHint = applicationProtocolHint
     }
 
     public var capturedPayloadBytes: Int {
@@ -199,5 +202,28 @@ public struct TransportRequest: Identifiable, Codable {
 
     public var endpointSummary: String {
         "\(sourceIP):\(sourcePort) -> \(destinationIP):\(destinationPort)"
+    }
+
+    public var normalizedApplicationProtocolHint: String? {
+        applicationProtocolHint?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .nilIfEmpty
+    }
+
+    public var protocolBadgeText: String? {
+        guard applicationProtocol == .quic,
+              let normalizedHint = normalizedApplicationProtocolHint,
+              normalizedHint == "h3" || normalizedHint.hasPrefix("h3-")
+        else {
+            return nil
+        }
+        return "H3"
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }

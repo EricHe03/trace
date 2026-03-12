@@ -485,18 +485,15 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         let action: FailureOutcomeAction
         var bypassReason: BypassReason?
         var bypassTTL: Int?
-        var recordBreakerFailure = false
+        let recordBreakerFailure = failure.shouldAffectGlobalCircuitBreaker
 
         switch failure {
         case .transparentMetadataInvalid:
             action = .failClosedBlock(reason: reasonToken)
-            recordBreakerFailure = true
         case .localProxyUnreachable:
             action = .failOpenDirect(reason: reasonToken)
-            recordBreakerFailure = true
         case .resourceExhausted:
             action = .failOpenPassThrough(reason: reasonToken)
-            recordBreakerFailure = true
         case .clientRejectedMITMOrPinning:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .certificatePinning
@@ -509,24 +506,20 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .transientUpstreamFailure
             bypassTTL = isQUIC ? quicTTL : tcpTTL
-            recordBreakerFailure = true
         case .upstreamTimeout:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .transientUpstreamFailure
             bypassTTL = isQUIC ? quicTTL : tcpTTL
-            recordBreakerFailure = true
         case .upstreamConnectionClosed:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .transientUpstreamFailure
             bypassTTL = isQUIC ? quicTTL : tcpTTL
-            recordBreakerFailure = true
         case .upstreamTLSTrustFailed, .upstreamTLSHostnameMismatch:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .upstreamTLSIssue
             bypassTTL = isQUIC ? quicTTL : 3600
         case .mitmSetupFailed:
             action = .failOpenPassThrough(reason: reasonToken)
-            recordBreakerFailure = true
         case .nonHTTPProtocol, .protocolMismatch:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .protocolMismatch
@@ -535,14 +528,12 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .mitmSetupInstability
             bypassTTL = quicTTL
-            recordBreakerFailure = true
         case .quicCertificatePinning:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .certificatePinning
             bypassTTL = quicTTL
         case .internalError:
             action = .failOpenPassThrough(reason: reasonToken)
-            recordBreakerFailure = true
         }
 
         return FailurePlan(

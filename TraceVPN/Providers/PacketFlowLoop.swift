@@ -251,9 +251,15 @@ final class PacketFlowLoop: @unchecked Sendable {
         let degraded: Bool
         let degradedUntil: Date?
         let degradeReason: String?
+        let tcpDegraded: Bool
+        let tcpDegradedUntil: Date?
+        let tcpDegradeReason: String?
         let tcpAttempts: Int
         let tcpFailures: Int
         let tcpFailureRate: Double
+        let quicDegraded: Bool
+        let quicDegradedUntil: Date?
+        let quicDegradeReason: String?
         let quicAttempts: Int
         let quicFailures: Int
         let quicFailureRate: Double
@@ -339,6 +345,8 @@ final class PacketFlowLoop: @unchecked Sendable {
     private let quicCertMaterialCacheTTLSeconds: Int
     private let dualMITMPolicyEngine: DualMITMPolicyEngine?
     private var lastDualMITMDegradedState = false
+    private var lastDualMITMTCPDegradedState = false
+    private var lastDualMITMQUICDegradedState = false
 
     init(
         packetFlow: NEPacketTunnelFlow,
@@ -834,7 +842,7 @@ final class PacketFlowLoop: @unchecked Sendable {
             self.quicPassThroughMarked > 0 ||
             self.quicBlockedICMPSent > 0 else { return }
         VPNLog.tunnel.info(
-            "event=vpn.udp_forward_summary reason=\(reason, privacy: .public) udp_out_packets=\(self.udpForwardedPackets) udp_out_443=\(self.udpForwardedPackets443) quic_mode=\(self.quicHandlingMode.rawValue, privacy: .public) quic_intercept_candidates=\(self.quicInterceptCandidates) quic_pass_through_marked=\(self.quicPassThroughMarked) quic_blocked=\(self.quicBlockedPackets) quic_icmp=\(self.quicBlockedICMPSent) quic_icmp_rl=\(self.quicBlockedICMPRateLimited) dual_mitm_policy=\(dualMITMHealth.policy.rawValue, privacy: .public) dual_mitm_breaker_enabled=\(dualMITMHealth.enabled) dual_mitm_breaker_degraded=\(dualMITMHealth.degraded) dual_mitm_breaker_reason=\(dualMITMHealth.degradeReason ?? "none", privacy: .public) dual_mitm_tcp_failure_rate=\(dualMITMHealth.tcpFailureRate) dual_mitm_quic_failure_rate=\(dualMITMHealth.quicFailureRate)"
+            "event=vpn.udp_forward_summary reason=\(reason, privacy: .public) udp_out_packets=\(self.udpForwardedPackets) udp_out_443=\(self.udpForwardedPackets443) quic_mode=\(self.quicHandlingMode.rawValue, privacy: .public) quic_intercept_candidates=\(self.quicInterceptCandidates) quic_pass_through_marked=\(self.quicPassThroughMarked) quic_blocked=\(self.quicBlockedPackets) quic_icmp=\(self.quicBlockedICMPSent) quic_icmp_rl=\(self.quicBlockedICMPRateLimited) dual_mitm_policy=\(dualMITMHealth.policy.rawValue, privacy: .public) dual_mitm_breaker_enabled=\(dualMITMHealth.enabled) dual_mitm_breaker_degraded=\(dualMITMHealth.degraded) dual_mitm_breaker_reason=\(dualMITMHealth.degradeReason ?? "none", privacy: .public) dual_mitm_breaker_tcp_degraded=\(dualMITMHealth.tcpDegraded) dual_mitm_breaker_tcp_reason=\(dualMITMHealth.tcpDegradeReason ?? "none", privacy: .public) dual_mitm_breaker_quic_degraded=\(dualMITMHealth.quicDegraded) dual_mitm_breaker_quic_reason=\(dualMITMHealth.quicDegradeReason ?? "none", privacy: .public) dual_mitm_tcp_failure_rate=\(dualMITMHealth.tcpFailureRate) dual_mitm_quic_failure_rate=\(dualMITMHealth.quicFailureRate)"
         )
         if dualMITMHealth.degraded != lastDualMITMDegradedState {
             lastDualMITMDegradedState = dualMITMHealth.degraded
@@ -844,12 +852,28 @@ final class PacketFlowLoop: @unchecked Sendable {
                 "outcome=\(outcome) degraded=\(dualMITMHealth.degraded) reason=\(dualMITMHealth.degradeReason ?? "none") policy=\(dualMITMHealth.policy.rawValue) cooldown_until=\(dualMITMHealth.degradedUntil?.timeIntervalSince1970 ?? 0)"
             )
         }
+        if dualMITMHealth.tcpDegraded != lastDualMITMTCPDegradedState {
+            lastDualMITMTCPDegradedState = dualMITMHealth.tcpDegraded
+            let outcome = dualMITMHealth.tcpDegraded ? "entered" : "exited"
+            eventLogHandler?(
+                "dual_mitm_breaker_tcp",
+                "outcome=\(outcome) degraded=\(dualMITMHealth.tcpDegraded) reason=\(dualMITMHealth.tcpDegradeReason ?? "none") policy=\(dualMITMHealth.policy.rawValue) cooldown_until=\(dualMITMHealth.tcpDegradedUntil?.timeIntervalSince1970 ?? 0)"
+            )
+        }
+        if dualMITMHealth.quicDegraded != lastDualMITMQUICDegradedState {
+            lastDualMITMQUICDegradedState = dualMITMHealth.quicDegraded
+            let outcome = dualMITMHealth.quicDegraded ? "entered" : "exited"
+            eventLogHandler?(
+                "dual_mitm_breaker_quic",
+                "outcome=\(outcome) degraded=\(dualMITMHealth.quicDegraded) reason=\(dualMITMHealth.quicDegradeReason ?? "none") policy=\(dualMITMHealth.policy.rawValue) cooldown_until=\(dualMITMHealth.quicDegradedUntil?.timeIntervalSince1970 ?? 0)"
+            )
+        }
         if let eventLogHandler {
             Task {
                 let snapshot = await QUICConnectionManager.shared.snapshot()
                 eventLogHandler(
                     "quic_summary",
-                    "reason=\(reason) flows_seen=\(snapshot.quicFlowsSeenTotal) intercepted=\(snapshot.quicFlowsInterceptedTotal) pass_through=\(snapshot.quicFlowsPassThroughTotal) blocked=\(snapshot.quicFlowsBlockedTotal) tunnel_forwarded=\(snapshot.quicFlowsTunnelForwardedTotal) http3_captured=\(snapshot.http3RequestsCapturedTotal) failures=\(snapshot.quicMitmFailuresTotal) dual_mitm_policy=\(dualMITMHealth.policy.rawValue) dual_mitm_breaker_enabled=\(dualMITMHealth.enabled) dual_mitm_breaker_degraded=\(dualMITMHealth.degraded) dual_mitm_tcp_failure_rate=\(dualMITMHealth.tcpFailureRate) dual_mitm_quic_failure_rate=\(dualMITMHealth.quicFailureRate)"
+                    "reason=\(reason) flows_seen=\(snapshot.quicFlowsSeenTotal) intercepted=\(snapshot.quicFlowsInterceptedTotal) pass_through=\(snapshot.quicFlowsPassThroughTotal) blocked=\(snapshot.quicFlowsBlockedTotal) tunnel_forwarded=\(snapshot.quicFlowsTunnelForwardedTotal) http3_captured=\(snapshot.http3RequestsCapturedTotal) failures=\(snapshot.quicMitmFailuresTotal) dual_mitm_policy=\(dualMITMHealth.policy.rawValue) dual_mitm_breaker_enabled=\(dualMITMHealth.enabled) dual_mitm_breaker_degraded=\(dualMITMHealth.degraded) dual_mitm_breaker_tcp_degraded=\(dualMITMHealth.tcpDegraded) dual_mitm_breaker_quic_degraded=\(dualMITMHealth.quicDegraded) dual_mitm_tcp_failure_rate=\(dualMITMHealth.tcpFailureRate) dual_mitm_quic_failure_rate=\(dualMITMHealth.quicFailureRate)"
                 )
             }
         }
@@ -863,9 +887,15 @@ final class PacketFlowLoop: @unchecked Sendable {
             degraded: dualMITMCircuitBreakerEnabled && breakerSnapshot.isDegraded,
             degradedUntil: breakerSnapshot.degradedUntil,
             degradeReason: breakerSnapshot.degradeReason,
+            tcpDegraded: dualMITMCircuitBreakerEnabled && breakerSnapshot.tcpIsDegraded,
+            tcpDegradedUntil: breakerSnapshot.tcpDegradedUntil,
+            tcpDegradeReason: breakerSnapshot.tcpDegradeReason,
             tcpAttempts: breakerSnapshot.tcpAttempts,
             tcpFailures: breakerSnapshot.tcpFailures,
             tcpFailureRate: breakerSnapshot.tcpFailureRate,
+            quicDegraded: dualMITMCircuitBreakerEnabled && breakerSnapshot.quicIsDegraded,
+            quicDegradedUntil: breakerSnapshot.quicDegradedUntil,
+            quicDegradeReason: breakerSnapshot.quicDegradeReason,
             quicAttempts: breakerSnapshot.quicAttemptsInWindow,
             quicFailures: breakerSnapshot.quicFailuresInWindow,
             quicFailureRate: breakerSnapshot.quicFailureRate

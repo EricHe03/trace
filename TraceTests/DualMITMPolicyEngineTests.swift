@@ -246,6 +246,64 @@ final class DualMITMPolicyEngineTests: XCTestCase {
         XCTAssertEqual(spy.quicSampleCalls.first?.failed, false)
     }
 
+    func testPinningFailureDoesNotFeedCircuitBreakerController() {
+        let spy = SpyCircuitBreakerController()
+        let engine = makeEngine(
+            policyMode: .adaptiveFailOpen,
+            circuitBreakerController: spy
+        )
+
+        let plan = engine.planNewFlow(
+            protocolName: .tcpTransparent,
+            destination: HostPort(host: "pinned.example.com", port: 443)
+        )
+        _ = engine.handleFailure(
+            profile: plan.profile,
+            failure: .clientRejectedMITMOrPinning
+        )
+
+        XCTAssertTrue(spy.tcpHandshakeCalls.isEmpty)
+    }
+
+    func testConnectionClosedEarlyDoesNotFeedCircuitBreakerController() {
+        let spy = SpyCircuitBreakerController()
+        let engine = makeEngine(
+            policyMode: .adaptiveFailOpen,
+            circuitBreakerController: spy
+        )
+
+        let plan = engine.planNewFlow(
+            protocolName: .httpConnect,
+            destination: HostPort(host: "browser-preconnect.example.com", port: 443)
+        )
+        _ = engine.handleFailure(
+            profile: plan.profile,
+            failure: .connectionClosedEarly(side: .client)
+        )
+
+        XCTAssertTrue(spy.tcpHandshakeCalls.isEmpty)
+    }
+
+    func testQUICNoProgressStillFeedsCircuitBreakerController() {
+        let spy = SpyCircuitBreakerController()
+        let engine = makeEngine(
+            policyMode: .adaptiveFailOpen,
+            circuitBreakerController: spy
+        )
+
+        let plan = engine.planNewFlow(
+            protocolName: .quic,
+            destination: HostPort(host: "quic.example.com", port: 443)
+        )
+        _ = engine.handleFailure(
+            profile: plan.profile,
+            failure: .quicNoProgress(detail: .idleTimeout)
+        )
+
+        XCTAssertEqual(spy.quicSampleCalls.count, 1)
+        XCTAssertEqual(spy.quicSampleCalls.first?.failed, true)
+    }
+
     func testTCPBypassStoreUsedForInitialBypass() {
         let store = InMemoryHostBypassStore()
         let now = Date()
@@ -366,6 +424,12 @@ private final class SpyCircuitBreakerController: CircuitBreakerController, @unch
             quicAttemptsInWindow: 0,
             quicFailuresInWindow: 0,
             quicFailureRate: 0,
+            tcpIsDegraded: false,
+            tcpDegradedUntil: nil,
+            tcpDegradeReason: nil,
+            quicIsDegraded: false,
+            quicDegradedUntil: nil,
+            quicDegradeReason: nil,
             isDegraded: false,
             degradedUntil: nil,
             degradeReason: nil

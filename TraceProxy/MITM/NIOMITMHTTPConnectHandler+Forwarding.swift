@@ -145,7 +145,10 @@ extension NIOMITMHTTPConnectHandler {
                                     let declaredContentLength = self.contentLength(from: forwardedHeaders)
                                     let captureConfig = self.captureConfigProvider()
                                     var captured = outboundContext.requestSnapshot
-                                    captured.protocolVersion = self.httpProtocolVersion(from: response.version)
+                                    captured.protocolVersion = self.mergedCapturedProtocolVersion(
+                                        current: captured.protocolVersion,
+                                        fallback: response.version
+                                    )
                                     captured.statusCode = Int(response.status.code)
                                     captured.statusMessage = response.status.reasonPhrase
                                     captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
@@ -733,7 +736,10 @@ extension NIOMITMHTTPConnectHandler {
                                     eventLoop: context.eventLoop
                                 )
                                 var captured = outboundContext.requestSnapshot
-                                captured.protocolVersion = self.httpProtocolVersion(from: head.version)
+                                captured.protocolVersion = self.mergedCapturedProtocolVersion(
+                                    current: captured.protocolVersion,
+                                    fallback: head.version
+                                )
                                 captured.statusCode = Int(head.status.code)
                                 captured.statusMessage = head.status.reasonPhrase
                                 captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
@@ -1146,7 +1152,10 @@ extension NIOMITMHTTPConnectHandler {
                 responseHead = head
                 responseHeadSent = true
                 declaredResponseBodyBytes = self.contentLength(from: head.headers)
-                capturedRequest.protocolVersion = self.httpProtocolVersion(from: head.version)
+                capturedRequest.protocolVersion = self.mergedCapturedProtocolVersion(
+                    current: capturedRequest.protocolVersion,
+                    fallback: head.version
+                )
                 self.logConnectStage(
                     stage: "http_upstream",
                     outcome: "response",

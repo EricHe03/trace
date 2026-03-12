@@ -34,6 +34,7 @@ extension NIOMITMHTTPConnectHandler {
         flowID: UUID,
         requestURL: String,
         methodToken: String,
+        requestVersion: HTTPVersion,
         requestHeaders: [String: String],
         requestBodyData: Data,
         startTime: Date,
@@ -64,7 +65,7 @@ extension NIOMITMHTTPConnectHandler {
             responseHeaders: [],
             requestBody: requestBody,
             responseBody: .empty,
-            protocolVersion: usesHTTP2StreamSemantics ? .http2 : nil
+            protocolVersion: usesHTTP2StreamSemantics ? .http2 : httpProtocolVersion(from: requestVersion)
         )
         annotateCaptureMetadata(&request)
         return request
