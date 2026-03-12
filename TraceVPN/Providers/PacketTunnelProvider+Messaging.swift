@@ -114,7 +114,6 @@ extension PacketTunnelProvider {
         let dualMITMPolicyEngineEnforcedTCP = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedTCP
         let dualMITMPolicyEngineEnforcedProxy = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedProxy
         let dualMITMPolicyEngineEnforcedQUIC = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedQUIC
-        let dualMITMMITMEngineV2 = await HardeningConfig.shared.dualMITMMITMEngineV2
         let dualMITMHttp2MITMEnabled = await HardeningConfig.shared.dualMITMHttp2MITMEnabled
         let dualMITMStrictEnforcementHardFail = await HardeningConfig.shared.dualMITMStrictEnforcementHardFail
         let enableProxyPCAP = shouldEnableProxyPCAP(rawCaptureEnabled: rawCaptureEnabled, mode: config.captureMode)
@@ -187,7 +186,6 @@ extension PacketTunnelProvider {
                     dualMITMPolicyEngineEnforcedTCP: dualMITMPolicyEngineEnforcedTCP,
                     dualMITMPolicyEngineEnforcedProxy: dualMITMPolicyEngineEnforcedProxy,
                     dualMITMPolicyEngineEnforcedQUIC: dualMITMPolicyEngineEnforcedQUIC,
-                    dualMITMMITMEngineV2: dualMITMMITMEngineV2,
                     dualMITMHttp2MITMEnabled: dualMITMHttp2MITMEnabled,
                     dualMITMStrictEnforcementHardFail: dualMITMStrictEnforcementHardFail
                 )
@@ -352,15 +350,6 @@ extension PacketTunnelProvider {
             )
         }
 
-        if let mitmEngineV2 = config["dualMitmMITMEngineV2"] as? Bool {
-            await hardeningConfig.setDualMITMMITMEngineV2(mitmEngineV2)
-            shouldRefreshProxyIngress = true
-            await runtimeState.appendEventLog(
-                type: "dual_mitm_engine_v2",
-                msg: "enabled=\(mitmEngineV2)"
-            )
-        }
-
         if let http2MITMEnabled = config["dualMitmHttp2MITMEnabled"] as? Bool {
             await hardeningConfig.setDualMITMHttp2MITMEnabled(http2MITMEnabled)
             shouldRefreshCaptureFlow = true
@@ -425,14 +414,12 @@ extension PacketTunnelProvider {
     func applyProxyIngressMode(for config: CaptureConfiguration) async {
         let transparentTLSModeEnabled = effectiveTransparentTCPMITMEnabled(for: config)
         let enforcedProxy = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedProxy
-        let mitmEngineV2Enabled = await HardeningConfig.shared.dualMITMMITMEngineV2
         let http2MITMEnabled = await HardeningConfig.shared.dualMITMHttp2MITMEnabled
         let strictHardFail = await HardeningConfig.shared.dualMITMStrictEnforcementHardFail
         let payload: UnsafeSendable<[String: Any]> = UnsafeSendable(
             [
                 "transparentTLSModeEnabled": transparentTLSModeEnabled,
                 "dualMitmPolicyEngineEnforcedProxy": enforcedProxy,
-                "dualMitmMITMEngineV2": mitmEngineV2Enabled,
                 "dualMitmHttp2MITMEnabled": http2MITMEnabled,
                 "dualMitmStrictEnforcementHardFail": strictHardFail
             ]
@@ -440,7 +427,7 @@ extension PacketTunnelProvider {
         await runtimeState.updateProxyConfiguration(payload)
         await runtimeState.appendEventLog(
             type: "proxy_ingress_mode",
-            msg: "mode=\(config.captureMode.rawValue) transparent_tls=\(transparentTLSModeEnabled) hybrid_tcp_mitm=\(config.fullTunnelHybridTCPMITMEnabled) policy_enforced_proxy=\(enforcedProxy) mitm_engine_v2=\(mitmEngineV2Enabled) http2_mitm=\(http2MITMEnabled) strict_hard_fail=\(strictHardFail)"
+            msg: "mode=\(config.captureMode.rawValue) transparent_tls=\(transparentTLSModeEnabled) hybrid_tcp_mitm=\(config.fullTunnelHybridTCPMITMEnabled) policy_enforced_proxy=\(enforcedProxy) http2_mitm=\(http2MITMEnabled) strict_hard_fail=\(strictHardFail)"
         )
     }
 

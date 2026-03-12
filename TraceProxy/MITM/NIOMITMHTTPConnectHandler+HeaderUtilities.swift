@@ -241,6 +241,13 @@ extension NIOMITMHTTPConnectHandler {
         }
     }
 
+    func mergedCapturedProtocolVersion(
+        current: HTTPProtocolVersion?,
+        fallback version: HTTPVersion
+    ) -> HTTPProtocolVersion {
+        current ?? httpProtocolVersion(from: version)
+    }
+
     func headerContainsToken(_ headerName: String, token: String, in headers: HTTPHeaders) -> Bool {
         headers[canonicalForm: headerName].contains { value in
             value

@@ -258,7 +258,6 @@ public class AppGroupStorage: @unchecked Sendable {
             "hardening.dualMitmPolicyEngineEnforcedTCP",
             "hardening.dualMitmPolicyEngineEnforcedProxy",
             "hardening.dualMitmPolicyEngineEnforcedQUIC",
-            "hardening.dualMitmMITMEngineV2",
             "hardening.dualMitmHttp2MITMEnabled",
             "hardening.dualMitmStrictEnforcementHardFail",
             "hardening.enableStreamInterceptionV2"
@@ -1309,6 +1308,18 @@ public class AppGroupStorage: @unchecked Sendable {
             }
         } catch {
             throw mapDatabaseError(error)
+        }
+    }
+
+    public func loadAllUDPFlowMetadataAsync() async throws -> [UDPFlowMetadata] {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try continuation.resume(returning: self.loadAllUDPFlowMetadata())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
         }
     }
 

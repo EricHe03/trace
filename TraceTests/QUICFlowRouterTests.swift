@@ -79,8 +79,7 @@ final class QUICFlowRouterTests: XCTestCase {
                     shadowEnabled: true,
                     enforceTCPRouting: false,
                     enforceProxyRouting: false,
-                    enforceQUICRouting: true,
-                    mitmEngineV2Enabled: false
+                    enforceQUICRouting: true
                 )
             )
         )
@@ -124,8 +123,7 @@ final class QUICFlowRouterTests: XCTestCase {
                     shadowEnabled: true,
                     enforceTCPRouting: false,
                     enforceProxyRouting: false,
-                    enforceQUICRouting: true,
-                    mitmEngineV2Enabled: false
+                    enforceQUICRouting: true
                 )
             )
         )
@@ -436,8 +434,16 @@ final class QUICFlowRouterTests: XCTestCase {
         XCTAssertTrue(QUICFlowRouter.shouldEnableHostFailOpen(for: "certificatePinning"))
     }
 
+    func testShouldEnableHostFailOpenForCanonicalCertificatePinningReason() {
+        XCTAssertTrue(QUICFlowRouter.shouldEnableHostFailOpen(for: "quic_certificate_pinning"))
+    }
+
     func testShouldEnableHostFailOpenForClosedBeforeHTTP3Reason() {
         XCTAssertTrue(QUICFlowRouter.shouldEnableHostFailOpen(for: "quic_closed_before_http3_handshakeFailed"))
+    }
+
+    func testShouldEnableHostFailOpenForCanonicalAuthorityRetryReason() {
+        XCTAssertTrue(QUICFlowRouter.shouldEnableHostFailOpen(for: "quic_authority_retry_failed"))
     }
 
     func testShouldEnableHostFailOpenSkipsUnrelatedReason() {
@@ -450,6 +456,10 @@ final class QUICFlowRouterTests: XCTestCase {
 
     func testPrefersDirectFailOpenForwardingForCircuitBreakerReason() {
         XCTAssertTrue(QUICFlowRouter.prefersDirectFailOpenForwarding(for: "dual_mitm_circuit_breaker"))
+    }
+
+    func testPrefersDirectFailOpenForwardingForTunnelUnavailableReason() {
+        XCTAssertTrue(QUICFlowRouter.prefersDirectFailOpenForwarding(for: "quic_tunnel_required_unavailable"))
     }
 
     func testPrefersDirectFailOpenForwardingSkipsUnrelatedReason() {
@@ -602,6 +612,114 @@ final class QUICFlowRouterTests: XCTestCase {
         )
 
         XCTAssertEqual(reason, "attempt_exhausted")
+    }
+
+    func testScheduleAuthorityRetryRequeuesBufferedClientDatagrams() {
+        let router = QUICFlowRouter(maxAuthorityRetryAttempts: 1)
+        let flowKey = QUICFlowRouter.FlowKey(
+            sourceIP: .v4(0x0A000001),
+            sourcePort: 50_000,
+            destinationIP: .v4(0xC0A80101),
+            destinationPort: 443
+        )
+        let datagram1 = Data([0xC0, 0x00, 0x01])
+        let datagram2 = Data([0xC0, 0x00, 0x02])
+        let datagram3 = Data([0xC0, 0x00, 0x03])
+        let session = QUICMitmSession(flowID: UUID(), host: "192.0.2.10", port: 443)
+        var state = QUICFlowRouter.FlowSessionState(
+            flowID: UUID(),
+            host: "192.0.2.10",
+            port: 443,
+            clientIP: .v4(0x0A000001),
+            clientPort: 50_000,
+            serverIP: .v4(0xC0A80101),
+            serverPort: 443,
+            upstreamForwardingDecision: .forwardDirect,
+            now: Date(),
+            tunnelPolicyRequired: false
+        )
+        state.session = session
+        state.isEstablishing = false
+        state.isEstablished = true
+        state.recentClientDatagrams = [datagram1, datagram2]
+        state.pendingDatagrams = [QUICFlowRouter.QueuedDatagram(payload: datagram3, fromClient: true)]
+
+        router.stateQueue.sync {
+            router.flowStates[flowKey] = state
+        }
+
+        let retryTask = router.scheduleAuthorityRetry(
+            flowKey: flowKey,
+            flowID: state.flowID,
+            authorityHint: "example.com",
+            replayDatagram: datagram3,
+            fromClient: true
+        )
+
+        XCTAssertNotNil(retryTask)
+
+        let updatedState = router.stateQueue.sync {
+            router.flowStates[flowKey]
+        }
+
+        XCTAssertEqual(updatedState?.host, "example.com")
+        XCTAssertEqual(updatedState?.authorityRetryCount, 1)
+        XCTAssertEqual(
+            updatedState?.pendingDatagrams.map(\.payload),
+            [datagram1, datagram2, datagram3]
+        )
+    }
+
+    func testScheduleAuthorityRetryKeepsAttemptCountAfterRetryBootstrap() {
+        let router = QUICFlowRouter(maxAuthorityRetryAttempts: 1)
+        let flowKey = QUICFlowRouter.FlowKey(
+            sourceIP: .v4(0x0A000001),
+            sourcePort: 50_000,
+            destinationIP: .v4(0xC0A80101),
+            destinationPort: 443
+        )
+        let session = QUICMitmSession(flowID: UUID(), host: "192.0.2.10", port: 443)
+        var state = QUICFlowRouter.FlowSessionState(
+            flowID: UUID(),
+            host: "example.com",
+            port: 443,
+            clientIP: .v4(0x0A000001),
+            clientPort: 50_000,
+            serverIP: .v4(0xC0A80101),
+            serverPort: 443,
+            upstreamForwardingDecision: .forwardDirect,
+            now: Date(),
+            tunnelPolicyRequired: false
+        )
+        state.session = session
+        state.isEstablishing = false
+        state.isEstablished = true
+        state.authorityRetryCount = 1
+        state.lastAuthorityRetry = "example.com"
+
+        let shouldSkip = QUICFlowRouter.authorityRetrySkipReason(
+            currentAuthority: state.host,
+            nextAuthority: "api.example.com",
+            attemptsUsed: state.authorityRetryCount,
+            maxAttempts: 1,
+            lastAuthorityRetry: state.lastAuthorityRetry
+        )
+
+        XCTAssertEqual(shouldSkip, "retry_policy_hostname_already_known")
+
+        router.stateQueue.sync {
+            router.flowStates[flowKey] = state
+        }
+
+        let retryTask = router.scheduleAuthorityRetry(
+            flowKey: flowKey,
+            flowID: state.flowID,
+            authorityHint: "other.example.com",
+            replayDatagram: nil,
+            fromClient: true
+        )
+
+        XCTAssertNil(retryTask)
     }
 }
 

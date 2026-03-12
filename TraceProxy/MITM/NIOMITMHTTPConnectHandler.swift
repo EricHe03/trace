@@ -43,8 +43,8 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
     static let tunnelPipelineVersion = "connect-relay-2026-02-20-v4"
     static let upstreamHTTPResponseDeadlineSeconds: Int64 = 600
     static let transparentTLSUpgradeTimeout: TimeAmount = .seconds(3)
-    /// Keep MITM ALPN on HTTP/1.1 until tunneled HTTP/2 request stalls are fully resolved.
-    static let mitmALPNProtocols: [String] = ["http/1.1"]
+    /// MITM ALPN protocols offered during the client-facing TLS handshake.
+    static let mitmALPNProtocols: [String] = ["h2", "http/1.1"]
 
     enum State {
         case waitingForRequest
@@ -81,6 +81,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
     let captureConfigProvider: () -> CaptureConfiguration
     let onRequestCaptured: ((NetworkRequest) -> Void)?
     let shouldMitmConnect: (String, UInt16) -> Bool
+    let http2MITMEnabledProvider: () -> Bool
     let shouldFailOpenAfterMITMFailure: (String, UInt16, String, MITMFailoverContext) -> Bool
     let onMITMFailure: ((String, String) -> Void)?
     let ingressMode: IngressMode
@@ -92,6 +93,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
     var upstreamChannel: Channel?
     var pendingRequestHead: HTTPRequestHead?
     var pendingRequestBody = ByteBuffer()
+    var activeCapturedRequest: NetworkRequest?
     var connectTargetHost: String?
     var connectTargetPort: Int?
     var connectRequestStartTime: Date?
@@ -109,6 +111,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
         captureConfigProvider: @escaping () -> CaptureConfiguration,
         onRequestCaptured: ((NetworkRequest) -> Void)?,
         shouldMitmConnect: @escaping (String, UInt16) -> Bool,
+        http2MITMEnabledProvider: @escaping () -> Bool = { true },
         shouldFailOpenAfterMITMFailure: @escaping (String, UInt16, String, MITMFailoverContext) -> Bool,
         onMITMFailure: ((String, String) -> Void)?,
         ingressMode: IngressMode,
@@ -122,6 +125,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
         self.captureConfigProvider = captureConfigProvider
         self.onRequestCaptured = onRequestCaptured
         self.shouldMitmConnect = shouldMitmConnect
+        self.http2MITMEnabledProvider = http2MITMEnabledProvider
         self.shouldFailOpenAfterMITMFailure = shouldFailOpenAfterMITMFailure
         self.onMITMFailure = onMITMFailure
         self.ingressMode = ingressMode
@@ -149,6 +153,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
 
     func handlerRemoved(context: ChannelHandlerContext) {
         cancelTransparentTLSUpgradeWatchdog()
+        finalizeActiveRequestAsCancellation(reason: "handler_removed")
         logConnectStage(
             stage: "handler_removed",
             outcome: "success",
@@ -202,6 +207,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
 
     func channelInactive(context: ChannelHandlerContext) {
         cancelTransparentTLSUpgradeWatchdog()
+        finalizeActiveRequestAsCancellation(reason: "client_channel_inactive")
         logConnectStage(stage: "client_channel_inactive", outcome: "closed")
         upstreamChannel?.close(promise: nil)
         connectRequestStartTime = nil
@@ -220,6 +226,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
             ProxyLog.mitm.warning(
                 "event=proxy.nio_connect_handler_error outcome=failure error=\(error.localizedDescription, privacy: .public) classified=\(failure.reason, privacy: .public)"
             )
+            finalizeActiveRequestAsFailure(reason: failure.reason)
             logConnectStage(
                 stage: "client_handler_error",
                 outcome: "failure",
@@ -230,6 +237,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
             ProxyLog.mitm.info(
                 "event=proxy.nio_connect_handler_error outcome=ignored error=\(error.localizedDescription, privacy: .public) classified=\(failure.reason, privacy: .public)"
             )
+            finalizeActiveRequestAsCancellation(reason: failure.reason)
             logConnectStage(
                 stage: "client_handler_error",
                 outcome: "ignored",
@@ -387,11 +395,13 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
             flowID: flowID,
             requestURL: resolvedURL,
             methodToken: head.method.rawValue,
+            requestVersion: head.version,
             requestHeaders: dictionary(from: head.headers),
             requestBodyData: requestBodyData,
             startTime: requestStart,
             captureConfig: captureConfig
         )
+        activeCapturedRequest = baseRequest
 
         didEmitForwardingErrorResponse = false
         shouldCloseAfterForwardingResponse = false
@@ -419,6 +429,10 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
                         context: context
                     )
                 case let .failure(error):
+                    self.finalizeActiveRequestAsHTTPFailure(
+                        status: .internalServerError,
+                        reason: "request_interception_failed: \(error.localizedDescription)"
+                    )
                     self.sendResponse(
                         status: .internalServerError,
                         body: "Interception failed: \(error.localizedDescription)",
@@ -452,27 +466,32 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
             NetworkThrottlingController.shared.applyMetadata(to: &blocked)
             finalizeCapturedDuration(for: &blocked)
             onRequestCaptured?(blocked)
+            clearActiveCapturedRequest()
             Task {
                 await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
                 await ProxyNetworkMetrics.shared.recordHTTPTransactionCompleted()
             }
             sendResponse(status: .forbidden, body: nil, closeAfterSend: shouldCloseConnection(requestHead: requestHead, responseHeaders: HTTPHeaders()), context: context) { [weak self] in
+                self?.clearActiveCapturedRequest()
                 self?.state = self?.shouldCloseConnection(requestHead: requestHead, responseHeaders: HTTPHeaders()) == true ? .closed : .waitingForRequest
             }
 
         case let .failed(failure):
             switch failure {
             case .timeout:
+                finalizeActiveRequestAsFailure(reason: "request_interception_timeout")
                 context.eventLoop.scheduleTask(in: .milliseconds(500)) { [weak self] in
                     self?.state = .closed
                     context.close(promise: nil)
                 }
             case .connectionReset, .dropConnection, .packetLoss:
+                finalizeActiveRequestAsFailure(reason: "request_interception_connection_closed")
                 state = .closed
                 context.close(promise: nil)
             }
 
         case let .mocked(mockRequest):
+            activeCapturedRequest = mockRequest
             deliverCapturedResponse(
                 mockRequest,
                 requestHead: requestHead,
@@ -485,10 +504,15 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
                 from: modifiedRequest,
                 fallbackBody: requestBodyData
             ) else {
+                finalizeActiveRequestAsHTTPFailure(
+                    status: .badRequest,
+                    reason: "invalid_outbound_request"
+                )
                 sendResponse(status: .badRequest, body: "Invalid outbound request", closeAfterSend: true, context: context)
                 Task { await ProxyNetworkMetrics.shared.recordHTTPParseFailure() }
                 return
             }
+            activeCapturedRequest = outboundContext.requestSnapshot
             emitPendingTunneledSnapshotIfNeeded(outboundContext.requestSnapshot)
             forwardModifiedHTTPRequest(outboundContext, requestHead: requestHead, context: context)
         }
@@ -528,7 +552,13 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
     func beginCONNECTMITM(host: String, port: Int, context: ChannelHandlerContext) {
         logConnectStage(stage: "mitm_prepare", outcome: "begin")
         do {
-            let tlsContext = try Self.makeServerTLSContext(for: host)
+            let applicationProtocols = http2MITMEnabledProvider()
+                ? Self.mitmALPNProtocols
+                : ["http/1.1"]
+            let tlsContext = try Self.makeServerTLSContext(
+                for: host,
+                applicationProtocols: applicationProtocols
+            )
             context.channel.setOption(ChannelOptions.autoRead, value: false).whenComplete { [weak self] _ in
                 guard let self else { return }
                 self.logConnectStage(stage: "connect_response", outcome: "writing", detail: "mitm")

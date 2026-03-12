@@ -502,6 +502,8 @@ struct NetworkView: View {
 
         let basicSearch = request.endpointSummary.localizedCaseInsensitiveContains(searchText) ||
             request.applicationProtocol.displayName.localizedCaseInsensitiveContains(searchText) ||
+            (request.applicationProtocolHint?.localizedCaseInsensitiveContains(searchText) ?? false) ||
+            (request.protocolBadgeText?.localizedCaseInsensitiveContains(searchText) ?? false) ||
             (request.summary?.localizedCaseInsensitiveContains(searchText) ?? false)
         let bodySearch: Bool = if searchScope == .body || searchScope == .all {
             request.payload.getString(maxBytes: 32 * 1024)?

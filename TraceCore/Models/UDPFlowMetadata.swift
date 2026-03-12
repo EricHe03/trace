@@ -169,6 +169,28 @@ public extension UDPFlowMetadata {
         quicInspectionOutcome != nil || quicFlowMetadata != nil
     }
 
+    var transportFlowKey: String {
+        let left = "\(sourceIP):\(sourcePort)"
+        let right = "\(destinationIP):\(destinationPort)"
+        if left <= right {
+            return "\(FlowTransportProtocol.udp.rawValue)|\(left)|\(right)"
+        }
+        return "\(FlowTransportProtocol.udp.rawValue)|\(right)|\(left)"
+    }
+
+    var http3ALPNHint: String? {
+        guard detectedProtocol == .quic else { return nil }
+        guard let alpn = quicFlowMetadata?.alpn?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !alpn.isEmpty
+        else {
+            return nil
+        }
+        let normalized = alpn.lowercased()
+        guard normalized == "h3" || normalized.hasPrefix("h3-") else { return nil }
+        return alpn
+    }
+
     var wellKnownPortDescription: String? {
         if let name = Self.wellKnownPortName(sourcePort) {
             return "Source: \(name)"

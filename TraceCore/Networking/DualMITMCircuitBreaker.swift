@@ -15,6 +15,12 @@ public struct DualMITMCircuitBreakerSnapshot: Sendable {
     public let quicAttemptsInWindow: Int
     public let quicFailuresInWindow: Int
     public let quicFailureRate: Double
+    public let tcpIsDegraded: Bool
+    public let tcpDegradedUntil: Date?
+    public let tcpDegradeReason: String?
+    public let quicIsDegraded: Bool
+    public let quicDegradedUntil: Date?
+    public let quicDegradeReason: String?
     public let isDegraded: Bool
     public let degradedUntil: Date?
     public let degradeReason: String?
@@ -46,8 +52,10 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
 
     private var tcpClientHandshakeOutcomes: [Bool] = []
     private var quicSamples: [QUICSample] = []
-    private var degradedUntil: Date?
-    private var degradeReason: String?
+    private var tcpDegradedUntil: Date?
+    private var tcpDegradeReason: String?
+    private var quicDegradedUntil: Date?
+    private var quicDegradeReason: String?
 
     public init() {}
 
@@ -74,8 +82,10 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
         // stale observations from previous sessions do not leak across reconfigure.
         tcpClientHandshakeOutcomes.removeAll(keepingCapacity: false)
         quicSamples.removeAll(keepingCapacity: false)
-        degradedUntil = nil
-        degradeReason = nil
+        tcpDegradedUntil = nil
+        tcpDegradeReason = nil
+        quicDegradedUntil = nil
+        quicDegradeReason = nil
     }
 
     public func recordTCPClientHandshake(success: Bool, now: Date = Date()) {
@@ -111,8 +121,8 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
         defer { lock.unlock() }
         guard enabled else { return false }
         maybeExitDegradedLocked(now: now)
-        guard let degradedUntil else { return false }
-        return degradedUntil > now
+        guard let tcpDegradedUntil else { return false }
+        return tcpDegradedUntil > now
     }
 
     public func shouldForceQUICPassThrough(now: Date = Date()) -> Bool {
@@ -120,8 +130,8 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
         defer { lock.unlock() }
         guard enabled else { return false }
         maybeExitDegradedLocked(now: now)
-        guard let degradedUntil else { return false }
-        return degradedUntil > now
+        guard let quicDegradedUntil else { return false }
+        return quicDegradedUntil > now
     }
 
     public func snapshot(now: Date = Date()) -> DualMITMCircuitBreakerSnapshot {
@@ -139,7 +149,15 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
         let quicFailures = quicSamples.filter(\.failed).count
         let quicFailureRate = quicAttempts > 0 ? Double(quicFailures) / Double(quicAttempts) : 0
 
-        let degradedActive = degradedUntil.map { $0 > now } ?? false
+        let tcpDegradedActive = tcpDegradedUntil.map { $0 > now } ?? false
+        let quicDegradedActive = quicDegradedUntil.map { $0 > now } ?? false
+        let degradedUntil = [tcpDegradedUntil, quicDegradedUntil]
+            .compactMap(\.self)
+            .max()
+        let degradeReason = aggregatedDegradeReasonLocked(
+            tcpActive: tcpDegradedActive,
+            quicActive: quicDegradedActive
+        )
         return DualMITMCircuitBreakerSnapshot(
             enabled: enabled,
             tcpAttempts: tcpAttempts,
@@ -148,7 +166,13 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
             quicAttemptsInWindow: quicAttempts,
             quicFailuresInWindow: quicFailures,
             quicFailureRate: quicFailureRate,
-            isDegraded: degradedActive,
+            tcpIsDegraded: tcpDegradedActive,
+            tcpDegradedUntil: tcpDegradedActive ? tcpDegradedUntil : nil,
+            tcpDegradeReason: tcpDegradedActive ? tcpDegradeReason : nil,
+            quicIsDegraded: quicDegradedActive,
+            quicDegradedUntil: quicDegradedActive ? quicDegradedUntil : nil,
+            quicDegradeReason: quicDegradedActive ? quicDegradeReason : nil,
+            isDegraded: tcpDegradedActive || quicDegradedActive,
             degradedUntil: degradedUntil,
             degradeReason: degradeReason
         )
@@ -159,15 +183,13 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
         defer { lock.unlock() }
         tcpClientHandshakeOutcomes.removeAll(keepingCapacity: false)
         quicSamples.removeAll(keepingCapacity: false)
-        degradedUntil = nil
-        degradeReason = nil
+        tcpDegradedUntil = nil
+        tcpDegradeReason = nil
+        quicDegradedUntil = nil
+        quicDegradeReason = nil
     }
 
     private func evaluateAndTripLocked(now: Date) {
-        guard degradedUntil == nil || degradedUntil.map({ $0 <= now }) == true else {
-            return
-        }
-
         let tcpAttempts = tcpClientHandshakeOutcomes.count
         let tcpFailures = tcpClientHandshakeOutcomes.count(where: { !$0 })
         let tcpFailureRate = tcpAttempts > 0 ? Double(tcpFailures) / Double(tcpAttempts) : 0
@@ -176,28 +198,44 @@ public final class DualMITMCircuitBreaker: @unchecked Sendable {
         let quicFailures = quicSamples.filter(\.failed).count
         let quicFailureRate = quicAttempts > 0 ? Double(quicFailures) / Double(quicAttempts) : 0
 
-        if tcpAttempts >= tcpWindowSize, tcpFailureRate > tcpFailureThreshold {
-            degradedUntil = now.addingTimeInterval(cooldownSeconds)
-            degradeReason = "tcp_client_handshake_failure_rate"
-            return
+        if tcpDegradedUntil == nil || tcpDegradedUntil.map({ $0 <= now }) == true,
+           tcpAttempts >= tcpWindowSize,
+           tcpFailureRate > tcpFailureThreshold {
+            tcpDegradedUntil = now.addingTimeInterval(cooldownSeconds)
+            tcpDegradeReason = "tcp_client_handshake_failure_rate"
         }
 
-        if quicAttempts >= quicMinimumSamples, quicFailureRate > quicFailureThreshold {
-            degradedUntil = now.addingTimeInterval(cooldownSeconds)
-            degradeReason = "quic_intercept_failure_rate"
+        if quicDegradedUntil == nil || quicDegradedUntil.map({ $0 <= now }) == true,
+           quicAttempts >= quicMinimumSamples,
+           quicFailureRate > quicFailureThreshold {
+            quicDegradedUntil = now.addingTimeInterval(cooldownSeconds)
+            quicDegradeReason = "quic_intercept_failure_rate"
         }
     }
 
     private func maybeExitDegradedLocked(now: Date) {
-        guard let degradedUntil else { return }
-        guard degradedUntil <= now else { return }
-        self.degradedUntil = nil
-        degradeReason = nil
+        if let tcpDegradedUntil, tcpDegradedUntil <= now {
+            self.tcpDegradedUntil = nil
+            tcpDegradeReason = nil
+        }
+        if let quicDegradedUntil, quicDegradedUntil <= now {
+            self.quicDegradedUntil = nil
+            quicDegradeReason = nil
+        }
     }
 
     private func pruneQUICSamplesLocked(now: Date) {
         guard !quicSamples.isEmpty else { return }
         let cutoff = now.addingTimeInterval(-quicWindowSeconds)
         quicSamples = quicSamples.filter { $0.timestamp >= cutoff }
+    }
+
+    private func aggregatedDegradeReasonLocked(tcpActive: Bool, quicActive: Bool) -> String? {
+        let reasons = [
+            tcpActive ? tcpDegradeReason : nil,
+            quicActive ? quicDegradeReason : nil
+        ].compactMap(\.self)
+        guard !reasons.isEmpty else { return nil }
+        return reasons.joined(separator: "+")
     }
 }

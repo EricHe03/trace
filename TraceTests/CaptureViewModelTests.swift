@@ -61,9 +61,11 @@ final class CaptureViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.hasActiveFilters)
     }
 
-    func testNetworkEventTypeDefaultsHideTCPAndUDP() {
+    func testNetworkEventTypeDefaultsHideTransportNoise() {
         XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.tcp))
         XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.udp))
+        XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.dns))
+        XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.quic))
         XCTAssertTrue(viewModel.filterNetworkEventTypes.contains(.http))
         XCTAssertTrue(viewModel.filterNetworkEventTypes.contains(.webSocket))
         XCTAssertTrue(viewModel.filterNetworkEventTypes.contains(.sse))
@@ -121,6 +123,8 @@ final class CaptureViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.filterFavoritesOnly)
         XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.tcp))
         XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.udp))
+        XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.dns))
+        XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.quic))
         XCTAssertTrue(viewModel.filterNetworkEventTypes.contains(.http))
     }
 
@@ -132,6 +136,8 @@ final class CaptureViewModelTests: XCTestCase {
 
         XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.tcp))
         XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.udp))
+        XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.dns))
+        XCTAssertFalse(viewModel.filterNetworkEventTypes.contains(.quic))
         XCTAssertTrue(viewModel.filterNetworkEventTypes.contains(.http))
         XCTAssertTrue(viewModel.filterContentTypes.isEmpty)
     }

@@ -45,8 +45,10 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
     }
 
     public func updateSnapshot(_ snapshot: DualMITMPolicySnapshot) {
+        var sanitized = snapshot
+        sanitized.allowlist = Self.sanitizeAllowlist(snapshot.allowlist)
         lock.lock()
-        self.snapshot = snapshot
+        self.snapshot = sanitized
         lock.unlock()
     }
 
@@ -74,7 +76,8 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
 
     public func handleFailure(
         profile: FlowPolicyProfile,
-        failure: InterceptionFailure
+        failure: InterceptionFailure,
+        applySideEffects: Bool = true
     ) -> FailurePlan {
         let decisionTime = now()
         let reasonToken = LegacyReasonCodec.encode(failure)
@@ -108,11 +111,13 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         plan.shadowEnabled = shadowEnabled
         plan.enforced = enforced
 
-        applyFailureSideEffects(
-            profile: profile,
-            plan: plan,
-            at: decisionTime
-        )
+        if applySideEffects {
+            applyFailureSideEffects(
+                profile: profile,
+                plan: plan,
+                at: decisionTime
+            )
+        }
         emitFailureEvent(
             profile: profile,
             failure: failure,
@@ -181,7 +186,7 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
     ) -> DualMITMProxyFlowStartPlan {
         var current = currentSnapshot()
         current.mitmEnabled = mitmEnabled
-        current.allowlist = allowlist
+        current.allowlist = Self.sanitizeAllowlist(allowlist)
 
         let flowPlan = planNewFlow(
             snapshot: current,
@@ -215,7 +220,7 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
     ) -> DualMITMProxyFailurePlan {
         var snapshot = currentSnapshot()
         snapshot.mitmEnabled = mitmEnabled
-        snapshot.allowlist = allowlist
+        snapshot.allowlist = Self.sanitizeAllowlist(allowlist)
 
         let startPlan = planNewFlow(
             snapshot: snapshot,
@@ -226,7 +231,11 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         let decoded = LegacyReasonCodec.decode(failureReason)
         let failure = decoded.failure ??
             .internalError(code: .legacyUnknownToken, context: failureReason)
-        let failurePlan = handleFailure(profile: startPlan.profile, failure: failure)
+        let failurePlan = handleFailure(
+            profile: startPlan.profile,
+            failure: failure,
+            applySideEffects: startPlan.enforceProxyRouting
+        )
 
         let action: DualMITMProxyFailureAction = switch failurePlan.action {
         case let .failOpenPassThrough(reason), let .failOpenDirect(reason):
@@ -295,7 +304,11 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         let decoded = LegacyReasonCodec.decode(failureReason)
         let failure = decoded.failure ??
             .internalError(code: .legacyUnknownToken, context: failureReason)
-        let failurePlan = handleFailure(profile: startPlan.profile, failure: failure)
+        let failurePlan = handleFailure(
+            profile: startPlan.profile,
+            failure: failure,
+            applySideEffects: startPlan.enforceQUICRouting
+        )
 
         let action: DualMITMQUICFailureAction = switch failurePlan.action {
         case let .failClosedBlock(reason):
@@ -483,18 +496,15 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         let action: FailureOutcomeAction
         var bypassReason: BypassReason?
         var bypassTTL: Int?
-        var recordBreakerFailure = false
+        let recordBreakerFailure = failure.shouldAffectGlobalCircuitBreaker
 
         switch failure {
         case .transparentMetadataInvalid:
             action = .failClosedBlock(reason: reasonToken)
-            recordBreakerFailure = true
         case .localProxyUnreachable:
             action = .failOpenDirect(reason: reasonToken)
-            recordBreakerFailure = true
         case .resourceExhausted:
             action = .failOpenPassThrough(reason: reasonToken)
-            recordBreakerFailure = true
         case .clientRejectedMITMOrPinning:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .certificatePinning
@@ -507,24 +517,20 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .transientUpstreamFailure
             bypassTTL = isQUIC ? quicTTL : tcpTTL
-            recordBreakerFailure = true
         case .upstreamTimeout:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .transientUpstreamFailure
             bypassTTL = isQUIC ? quicTTL : tcpTTL
-            recordBreakerFailure = true
         case .upstreamConnectionClosed:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .transientUpstreamFailure
             bypassTTL = isQUIC ? quicTTL : tcpTTL
-            recordBreakerFailure = true
         case .upstreamTLSTrustFailed, .upstreamTLSHostnameMismatch:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .upstreamTLSIssue
             bypassTTL = isQUIC ? quicTTL : 3600
         case .mitmSetupFailed:
             action = .failOpenPassThrough(reason: reasonToken)
-            recordBreakerFailure = true
         case .nonHTTPProtocol, .protocolMismatch:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .protocolMismatch
@@ -533,14 +539,12 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .mitmSetupInstability
             bypassTTL = quicTTL
-            recordBreakerFailure = true
         case .quicCertificatePinning:
             action = .failOpenPassThrough(reason: reasonToken)
             bypassReason = .certificatePinning
             bypassTTL = quicTTL
         case .internalError:
             action = .failOpenPassThrough(reason: reasonToken)
-            recordBreakerFailure = true
         }
 
         return FailurePlan(
@@ -628,6 +632,7 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
                 dualMITMPolicy: profile.snapshot.policyMode.rawValue,
                 protocolName: profile.protocolName.rawValue,
                 destinationHost: profile.destination.host,
+                destinationHostHash: LogRedaction.hash(profile.destination.host),
                 destinationPort: profile.destination.port,
                 action: action,
                 decisionReason: decisionReason,
@@ -698,14 +703,16 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         }
     }
 
-    private static func hostIsAllowlisted(_ host: String, allowlist: [String]) -> Bool {
-        let sanitized = allowlist
+    private static func sanitizeAllowlist(_ allowlist: [String]) -> [String] {
+        allowlist
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { !$0.isEmpty }
+    }
 
-        guard !sanitized.isEmpty else { return false }
-        if sanitized.contains("*") { return true }
-        return sanitized.contains { pattern in
+    private static func hostIsAllowlisted(_ host: String, allowlist: [String]) -> Bool {
+        guard !allowlist.isEmpty else { return false }
+        if allowlist.contains("*") { return true }
+        return allowlist.contains { pattern in
             if pattern.contains("*") {
                 return StringMatcher(
                     matchType: .wildcard,
