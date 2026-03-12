@@ -80,7 +80,7 @@ func resolvedPackageRootPath() -> String {
 
     for candidate in candidates {
         var searchURL = URL(fileURLWithPath: candidate)
-        for _ in 0..<6 {
+        for _ in 0 ..< 6 {
             let path = searchURL.path
             if looksLikePackageRoot(path) {
                 return path

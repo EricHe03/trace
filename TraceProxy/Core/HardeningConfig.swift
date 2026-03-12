@@ -225,7 +225,6 @@ public actor HardeningConfig {
             _enableMetrics = true
             _enableDebugLogging = false
         }
-
     }
 
     // MARK: - Public API

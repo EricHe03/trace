@@ -216,7 +216,6 @@ extension NIOMITMHTTPConnectHandler {
         let streamHandlerFactory = makeTunneledHTTP2StreamHandlerFactory(host: host, port: port)
 
         return channel.configureHTTP2Pipeline(mode: .server) { streamChannel in
-
             Task { await ProxyNetworkMetrics.shared.recordHTTP2StreamCreated() }
             streamChannel.closeFuture.whenComplete { _ in
                 Task { await ProxyNetworkMetrics.shared.recordHTTP2StreamClosed() }
