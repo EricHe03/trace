@@ -9,6 +9,21 @@ import XCTest
 @testable import TraceCore
 
 final class DualMITMPolicySnapshotBuilderTests: XCTestCase {
+    func testDefaultFeatureFlagsStayShadowOnly() {
+        let defaults = DualMITMPolicyFeatureFlags.defaults
+
+        #if DEBUG
+        XCTAssertTrue(defaults.shadowEnabled)
+        #else
+        XCTAssertFalse(defaults.shadowEnabled)
+        #endif
+        XCTAssertFalse(defaults.enforceTCPRouting)
+        XCTAssertFalse(defaults.enforceProxyRouting)
+        XCTAssertFalse(defaults.enforceQUICRouting)
+        XCTAssertFalse(defaults.http2MITMEnabled)
+        XCTAssertTrue(defaults.strictEnforcementHardFail)
+    }
+
     func testBuildUsesNormalizedCaptureConfigValues() {
         var config = CaptureConfiguration.default
         config.dualMITMPolicy = .strictMITM

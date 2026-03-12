@@ -111,28 +111,28 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertTrue(enabled)
     }
 
-    func testDefaultDualMITMPolicyEngineTCPEnforcedEnabled() async {
+    func testDefaultDualMITMPolicyEngineTCPEnforcedDisabled() async {
         let enabled = await sut.dualMITMPolicyEngineEnforcedTCP
 
-        XCTAssertTrue(enabled)
+        XCTAssertFalse(enabled)
     }
 
-    func testDefaultDualMITMPolicyEngineProxyEnforcedEnabled() async {
+    func testDefaultDualMITMPolicyEngineProxyEnforcedDisabled() async {
         let enabled = await sut.dualMITMPolicyEngineEnforcedProxy
 
-        XCTAssertTrue(enabled)
+        XCTAssertFalse(enabled)
     }
 
-    func testDefaultDualMITMPolicyEngineQUICEnforcedEnabled() async {
+    func testDefaultDualMITMPolicyEngineQUICEnforcedDisabled() async {
         let enabled = await sut.dualMITMPolicyEngineEnforcedQUIC
 
-        XCTAssertTrue(enabled)
+        XCTAssertFalse(enabled)
     }
 
-    func testDefaultDualMITMHttp2MITMEnabled() async {
+    func testDefaultDualMITMHttp2MITMDisabled() async {
         let enabled = await sut.dualMITMHttp2MITMEnabled
 
-        XCTAssertTrue(enabled)
+        XCTAssertFalse(enabled)
     }
 
     func testDefaultDualMITMStrictEnforcementHardFailEnabled() async {
@@ -600,10 +600,10 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertEqual(snapshot.quicHandlingMode, QUICHandlingMode.intercept.rawValue)
         XCTAssertFalse(snapshot.blockQUIC)
         XCTAssertTrue(snapshot.enableNetworkFrameworkMITM)
-        XCTAssertTrue(snapshot.dualMITMPolicyEngineEnforcedTCP)
-        XCTAssertTrue(snapshot.dualMITMPolicyEngineEnforcedProxy)
-        XCTAssertTrue(snapshot.dualMITMPolicyEngineEnforcedQUIC)
-        XCTAssertTrue(snapshot.dualMITMHttp2MITMEnabled)
+        XCTAssertFalse(snapshot.dualMITMPolicyEngineEnforcedTCP)
+        XCTAssertFalse(snapshot.dualMITMPolicyEngineEnforcedProxy)
+        XCTAssertFalse(snapshot.dualMITMPolicyEngineEnforcedQUIC)
+        XCTAssertFalse(snapshot.dualMITMHttp2MITMEnabled)
         XCTAssertTrue(snapshot.dualMITMStrictEnforcementHardFail)
     }
 

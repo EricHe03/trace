@@ -113,44 +113,58 @@ let quicheBuildRoot = "\(packageRootPath)/build/quiche"
 let quicheIncludePath = "\(quicheBuildRoot)/include"
 let quicheXCFrameworkRelativePath = "build/quiche/quiche.xcframework"
 let quicheXCFrameworkPath = "\(packageRootPath)/\(quicheXCFrameworkRelativePath)"
+let quicheDeviceLibraryPath = "\(quicheBuildRoot)/lib/aarch64-apple-ios/libquiche.a"
+let quicheSimulatorLibraryPath = "\(quicheBuildRoot)/lib/ios-simulator-universal/libquiche.a"
+let quicheStaticLibrariesAvailable = FileManager.default.fileExists(atPath: quicheDeviceLibraryPath) &&
+    FileManager.default.fileExists(atPath: quicheSimulatorLibraryPath)
 let quicheHeadersAvailable = FileManager.default.fileExists(atPath: quicheIncludePath)
 let quicheXCFrameworkAvailable = FileManager.default.fileExists(atPath: quicheXCFrameworkPath)
-
-guard quicheHeadersAvailable else {
-    fatalError(
-        """
-        Missing quiche headers at \(quicheIncludePath).
-        Run: ./Tools/QUIC/build_quiche_apple.sh
-        """
-    )
+let quicheArtifactsAvailable = quicheHeadersAvailable && (quicheXCFrameworkAvailable || quicheStaticLibrariesAvailable)
+let quicheSDKName = ProcessInfo.processInfo.environment["SDK_NAME"]?.lowercased() ?? ""
+let quichePlatformName = ProcessInfo.processInfo.environment["PLATFORM_NAME"]?.lowercased() ?? ""
+let quicheEffectivePlatformName = ProcessInfo.processInfo.environment["EFFECTIVE_PLATFORM_NAME"]?.lowercased() ?? ""
+let quichePreferredLibraryPath: String = if quicheSDKName.contains("iphonesimulator") ||
+    quichePlatformName.contains("iphonesimulator") ||
+    quicheEffectivePlatformName.contains("iphonesimulator") {
+    quicheSimulatorLibraryPath
+} else if quicheSDKName.contains("iphoneos") ||
+    quichePlatformName == "iphoneos" ||
+    quicheEffectivePlatformName == "-iphoneos" {
+    quicheDeviceLibraryPath
+} else {
+    // Default to simulator archive when platform context is unavailable (for indexing/resolution).
+    quicheSimulatorLibraryPath
 }
 
-guard quicheXCFrameworkAvailable else {
-    fatalError(
-        """
-        Missing quiche XCFramework at \(quicheXCFrameworkPath).
-        Run: ./Tools/QUIC/build_quiche_apple.sh
-        """
-    )
-}
+let quicheLinkerFlags = [quichePreferredLibraryPath]
 
-let cquicheFFICSettings: [CSetting] = [
-    .headerSearchPath("../../build/quiche/include"),
-    .define("CQUICHE_WITH_QUICHE")
-]
+let cquicheFFICSettings: [CSetting] = quicheArtifactsAvailable
+    ? [
+        .headerSearchPath("../../build/quiche/include"),
+        .define("CQUICHE_WITH_QUICHE")
+    ]
+    : []
 
-let cquicheFFIDependencies: [Target.Dependency] = [
-    "QuicheBinary"
-]
+let cquicheFFIDependencies: [Target.Dependency] = quicheXCFrameworkAvailable
+    ? [
+        "QuicheBinary"
+    ]
+    : []
 
-let cquicheFFILinkerSettings: [LinkerSetting] = []
+let cquicheFFILinkerSettings: [LinkerSetting] = (!quicheXCFrameworkAvailable && quicheStaticLibrariesAvailable)
+    ? [
+        .unsafeFlags(quicheLinkerFlags)
+    ]
+    : []
 
-let quicheBinaryTargets: [Target] = [
-    .binaryTarget(
-        name: "QuicheBinary",
-        path: quicheXCFrameworkRelativePath
-    )
-]
+let quicheBinaryTargets: [Target] = quicheXCFrameworkAvailable
+    ? [
+        .binaryTarget(
+            name: "QuicheBinary",
+            path: quicheXCFrameworkRelativePath
+        )
+    ]
+    : []
 
 let traceCompressionDependencies: [Target.Dependency] = [
     .product(name: "libzstd", package: "zstd")

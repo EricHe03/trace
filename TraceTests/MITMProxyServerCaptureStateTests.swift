@@ -51,6 +51,22 @@ final class MITMProxyServerCaptureStateTests: XCTestCase {
         )
     }
 
+    func testCaptureLifecycleStateTreatsSyntheticFailureResponseAsTerminalFailure() {
+        var request = NetworkRequest(
+            url: "https://example.com/failed-response",
+            method: .get,
+            duration: 0.25
+        )
+        request.statusCode = 502
+        request.statusMessage = "Bad Gateway"
+        request.executionErrors = [ExecutionError(message: "upstream_connection_closed")]
+
+        XCTAssertEqual(
+            MITMProxyServer.captureLifecycleState(for: request),
+            .terminalFailure(reason: "upstream_connection_closed")
+        )
+    }
+
     func testCaptureLifecycleStateTreatsResponseAsTerminalSuccess() {
         var request = NetworkRequest(
             url: "https://example.com/success",

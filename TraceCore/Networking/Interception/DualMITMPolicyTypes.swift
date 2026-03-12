@@ -32,14 +32,25 @@ public struct DualMITMPolicyFeatureFlags: Sendable, Codable, Equatable {
     }
 
     public static var defaults: DualMITMPolicyFeatureFlags {
+        #if DEBUG
         DualMITMPolicyFeatureFlags(
             shadowEnabled: true,
-            enforceTCPRouting: true,
-            enforceProxyRouting: true,
-            enforceQUICRouting: true,
-            http2MITMEnabled: true,
+            enforceTCPRouting: false,
+            enforceProxyRouting: false,
+            enforceQUICRouting: false,
+            http2MITMEnabled: false,
             strictEnforcementHardFail: true
         )
+        #else
+        DualMITMPolicyFeatureFlags(
+            shadowEnabled: false,
+            enforceTCPRouting: false,
+            enforceProxyRouting: false,
+            enforceQUICRouting: false,
+            http2MITMEnabled: false,
+            strictEnforcementHardFail: true
+        )
+        #endif
     }
 }
 

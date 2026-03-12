@@ -119,7 +119,8 @@ extension QUICFlowRouter {
         let failure = Self.quicFailure(from: reason)
         let plan = dualMITMPolicyEngine.handleFailure(
             profile: startPlan.profile,
-            failure: failure
+            failure: failure,
+            applySideEffects: startPlan.enforced
         )
         let policyDecision: Bool
         let policyReason: String

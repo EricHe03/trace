@@ -284,6 +284,46 @@ final class DualMITMPolicyEngineTests: XCTestCase {
         XCTAssertTrue(spy.tcpHandshakeCalls.isEmpty)
     }
 
+    func testHandleFailureWithoutSideEffectsDoesNotRecordTCPBypass() {
+        let store = InMemoryHostBypassStore()
+        let engine = makeEngine(
+            policyMode: .adaptiveFailOpen,
+            tcpBypassStore: store
+        )
+
+        let plan = engine.planNewFlow(
+            protocolName: .httpConnect,
+            destination: HostPort(host: "shadow.example.com", port: 443)
+        )
+        _ = engine.handleFailure(
+            profile: plan.profile,
+            failure: .mitmSetupFailed,
+            applySideEffects: false
+        )
+
+        XCTAssertNil(store.lookup(host: "shadow.example.com", domain: .tcpMITM, now: Date()))
+    }
+
+    func testHandleFailureWithoutSideEffectsDoesNotFeedCircuitBreakerController() {
+        let spy = SpyCircuitBreakerController()
+        let engine = makeEngine(
+            policyMode: .adaptiveFailOpen,
+            circuitBreakerController: spy
+        )
+
+        let plan = engine.planNewFlow(
+            protocolName: .quic,
+            destination: HostPort(host: "shadow-quic.example.com", port: 443)
+        )
+        _ = engine.handleFailure(
+            profile: plan.profile,
+            failure: .quicNoProgress(detail: .idleTimeout),
+            applySideEffects: false
+        )
+
+        XCTAssertTrue(spy.quicSampleCalls.isEmpty)
+    }
+
     func testQUICNoProgressStillFeedsCircuitBreakerController() {
         let spy = SpyCircuitBreakerController()
         let engine = makeEngine(

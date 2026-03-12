@@ -76,7 +76,8 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
 
     public func handleFailure(
         profile: FlowPolicyProfile,
-        failure: InterceptionFailure
+        failure: InterceptionFailure,
+        applySideEffects: Bool = true
     ) -> FailurePlan {
         let decisionTime = now()
         let reasonToken = LegacyReasonCodec.encode(failure)
@@ -110,11 +111,13 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         plan.shadowEnabled = shadowEnabled
         plan.enforced = enforced
 
-        applyFailureSideEffects(
-            profile: profile,
-            plan: plan,
-            at: decisionTime
-        )
+        if applySideEffects {
+            applyFailureSideEffects(
+                profile: profile,
+                plan: plan,
+                at: decisionTime
+            )
+        }
         emitFailureEvent(
             profile: profile,
             failure: failure,
@@ -228,7 +231,11 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         let decoded = LegacyReasonCodec.decode(failureReason)
         let failure = decoded.failure ??
             .internalError(code: .legacyUnknownToken, context: failureReason)
-        let failurePlan = handleFailure(profile: startPlan.profile, failure: failure)
+        let failurePlan = handleFailure(
+            profile: startPlan.profile,
+            failure: failure,
+            applySideEffects: startPlan.enforceProxyRouting
+        )
 
         let action: DualMITMProxyFailureAction = switch failurePlan.action {
         case let .failOpenPassThrough(reason), let .failOpenDirect(reason):
@@ -297,7 +304,11 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         let decoded = LegacyReasonCodec.decode(failureReason)
         let failure = decoded.failure ??
             .internalError(code: .legacyUnknownToken, context: failureReason)
-        let failurePlan = handleFailure(profile: startPlan.profile, failure: failure)
+        let failurePlan = handleFailure(
+            profile: startPlan.profile,
+            failure: failure,
+            applySideEffects: startPlan.enforceQUICRouting
+        )
 
         let action: DualMITMQUICFailureAction = switch failurePlan.action {
         case let .failClosedBlock(reason):

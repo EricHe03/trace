@@ -83,7 +83,6 @@ public actor HardeningConfig {
         case dualMITMHttp2MITMEnabled = "hardening.dualMitmHttp2MITMEnabled"
         case dualMITMStrictEnforcementHardFail = "hardening.dualMitmStrictEnforcementHardFail"
         case enableStreamInterceptionV2 = "hardening.enableStreamInterceptionV2"
-        case dualMITMMigrationVersion = "hardening.dualMitmMigrationVersion"
     }
 
     // MARK: - Rollout Stages
@@ -138,6 +137,14 @@ public actor HardeningConfig {
             return defaultValue
         }
 
+        func defaultDualMITMPolicyEngineShadowEnabled() -> Bool {
+            #if DEBUG
+            true
+            #else
+            false
+            #endif
+        }
+
         _enableRobustReassembly = boolValue(.enableRobustReassembly, default: true)
         _enableMetrics = boolValue(.enableMetrics, default: true)
         _enableDebugLogging = boolValue(.enableDebugLogging, default: false)
@@ -179,11 +186,14 @@ public actor HardeningConfig {
             _enableNIOMITM = boolValue(.enableNetworkFrameworkMITM, default: true)
         }
 
-        _dualMITMPolicyEngineShadow = boolValue(.dualMITMPolicyEngineShadow, default: true)
-        _dualMITMPolicyEngineEnforcedTCP = boolValue(.dualMITMPolicyEngineEnforcedTCP, default: true)
-        _dualMITMPolicyEngineEnforcedProxy = boolValue(.dualMITMPolicyEngineEnforcedProxy, default: true)
-        _dualMITMPolicyEngineEnforcedQUIC = boolValue(.dualMITMPolicyEngineEnforcedQUIC, default: true)
-        _dualMITMHttp2MITMEnabled = boolValue(.dualMITMHttp2MITMEnabled, default: true)
+        _dualMITMPolicyEngineShadow = boolValue(
+            .dualMITMPolicyEngineShadow,
+            default: defaultDualMITMPolicyEngineShadowEnabled()
+        )
+        _dualMITMPolicyEngineEnforcedTCP = boolValue(.dualMITMPolicyEngineEnforcedTCP, default: false)
+        _dualMITMPolicyEngineEnforcedProxy = boolValue(.dualMITMPolicyEngineEnforcedProxy, default: false)
+        _dualMITMPolicyEngineEnforcedQUIC = boolValue(.dualMITMPolicyEngineEnforcedQUIC, default: false)
+        _dualMITMHttp2MITMEnabled = boolValue(.dualMITMHttp2MITMEnabled, default: false)
         _dualMITMStrictEnforcementHardFail = boolValue(.dualMITMStrictEnforcementHardFail, default: true)
         _enableStreamInterceptionV2 = boolValue(.enableStreamInterceptionV2, default: false)
 
@@ -216,55 +226,6 @@ public actor HardeningConfig {
             _enableDebugLogging = false
         }
 
-        // Migrate enforcement defaults for existing users upgrading from older versions.
-        let currentMigrationVersion = storage.loadHardeningSetting(Int.self, forKey: ConfigKey.dualMITMMigrationVersion.rawValue) ?? 0
-        if currentMigrationVersion < 1 {
-            // Version 1: Enable shadow, enforcement, and h2 MITM by default.
-            // Adopt new defaults only when the corresponding keys were never explicitly
-            // persisted. This preserves intentional overrides from UI/remote config while
-            // still upgrading users who were previously on old in-code defaults.
-            let shadowStored = storage.loadHardeningSetting(Bool.self, forKey: ConfigKey.dualMITMPolicyEngineShadow.rawValue) != nil
-            let tcpEnforcedStored = storage.loadHardeningSetting(Bool.self, forKey: ConfigKey.dualMITMPolicyEngineEnforcedTCP.rawValue) != nil
-            let proxyEnforcedStored = storage.loadHardeningSetting(Bool.self, forKey: ConfigKey.dualMITMPolicyEngineEnforcedProxy.rawValue) != nil
-            let quicEnforcedStored = storage.loadHardeningSetting(Bool.self, forKey: ConfigKey.dualMITMPolicyEngineEnforcedQUIC.rawValue) != nil
-            let http2Stored = storage.loadHardeningSetting(Bool.self, forKey: ConfigKey.dualMITMHttp2MITMEnabled.rawValue) != nil
-
-            if !shadowStored {
-                _dualMITMPolicyEngineShadow = true
-            }
-            if !tcpEnforcedStored {
-                _dualMITMPolicyEngineEnforcedTCP = true
-            }
-            if !proxyEnforcedStored {
-                _dualMITMPolicyEngineEnforcedProxy = true
-            }
-            if !quicEnforcedStored {
-                _dualMITMPolicyEngineEnforcedQUIC = true
-            }
-            if !http2Stored {
-                _dualMITMHttp2MITMEnabled = true
-            }
-
-            func persistMigration(_ value: some Encodable, forKey key: String) {
-                try? storage.saveHardeningSetting(value, forKey: key)
-            }
-            if !shadowStored {
-                persistMigration(true, forKey: ConfigKey.dualMITMPolicyEngineShadow.rawValue)
-            }
-            if !tcpEnforcedStored {
-                persistMigration(true, forKey: ConfigKey.dualMITMPolicyEngineEnforcedTCP.rawValue)
-            }
-            if !proxyEnforcedStored {
-                persistMigration(true, forKey: ConfigKey.dualMITMPolicyEngineEnforcedProxy.rawValue)
-            }
-            if !quicEnforcedStored {
-                persistMigration(true, forKey: ConfigKey.dualMITMPolicyEngineEnforcedQUIC.rawValue)
-            }
-            if !http2Stored {
-                persistMigration(true, forKey: ConfigKey.dualMITMHttp2MITMEnabled.rawValue)
-            }
-            persistMigration(1, forKey: ConfigKey.dualMITMMigrationVersion.rawValue)
-        }
     }
 
     // MARK: - Public API
@@ -568,11 +529,15 @@ public actor HardeningConfig {
         _quicHandlingMode = .intercept
         _blockQUIC = _quicHandlingMode.blocksQUIC
         _enableNIOMITM = true
+        #if DEBUG
         _dualMITMPolicyEngineShadow = true
-        _dualMITMPolicyEngineEnforcedTCP = true
-        _dualMITMPolicyEngineEnforcedProxy = true
-        _dualMITMPolicyEngineEnforcedQUIC = true
-        _dualMITMHttp2MITMEnabled = true
+        #else
+        _dualMITMPolicyEngineShadow = false
+        #endif
+        _dualMITMPolicyEngineEnforcedTCP = false
+        _dualMITMPolicyEngineEnforcedProxy = false
+        _dualMITMPolicyEngineEnforcedQUIC = false
+        _dualMITMHttp2MITMEnabled = false
         _dualMITMStrictEnforcementHardFail = true
         _enableStreamInterceptionV2 = false
         _enableRawCapture = false

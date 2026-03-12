@@ -623,10 +623,6 @@ public class MITMProxyServer: @unchecked Sendable {
     }
 
     static func captureLifecycleState(for request: NetworkRequest) -> CaptureLifecycleState {
-        guard request.statusCode == nil else { return .terminalSuccess }
-        guard request.responseBody.isEmpty else { return .terminalSuccess }
-        guard request.responseHeaders.isEmpty else { return .terminalSuccess }
-
         if request.wasCancelled {
             return .terminalFailure(reason: "client_cancelled_before_response")
         }
@@ -635,6 +631,9 @@ public class MITMProxyServer: @unchecked Sendable {
             !failureMessage.isEmpty {
             return .terminalFailure(reason: failureMessage)
         }
+        guard request.statusCode == nil else { return .terminalSuccess }
+        guard request.responseBody.isEmpty else { return .terminalSuccess }
+        guard request.responseHeaders.isEmpty else { return .terminalSuccess }
 
         return .pending
     }
@@ -745,7 +744,8 @@ public class MITMProxyServer: @unchecked Sendable {
         let failure = decoded.failure ?? .internalError(code: .legacyUnknownToken, context: reason)
         let policyPlan = dualMITMPolicyEngine.handleFailure(
             profile: startPlan.profile,
-            failure: failure
+            failure: failure,
+            applySideEffects: startPlan.enforced
         )
         let policyDecision: Bool = switch policyPlan.action {
         case .failOpenPassThrough, .failOpenDirect, .retry:
