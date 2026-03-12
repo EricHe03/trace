@@ -234,7 +234,7 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         let failurePlan = handleFailure(
             profile: startPlan.profile,
             failure: failure,
-            applySideEffects: startPlan.enforceProxyRouting
+            applySideEffects: startPlan.enforced
         )
 
         let action: DualMITMProxyFailureAction = switch failurePlan.action {
@@ -307,7 +307,7 @@ public final class DualMITMPolicyEngine: @unchecked Sendable {
         let failurePlan = handleFailure(
             profile: startPlan.profile,
             failure: failure,
-            applySideEffects: startPlan.enforceQUICRouting
+            applySideEffects: startPlan.enforced
         )
 
         let action: DualMITMQUICFailureAction = switch failurePlan.action {
