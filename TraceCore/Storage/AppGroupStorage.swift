@@ -1313,7 +1313,7 @@ public class AppGroupStorage: @unchecked Sendable {
 
     public func loadAllUDPFlowMetadataAsync() async throws -> [UDPFlowMetadata] {
         try await withCheckedThrowingContinuation { continuation in
-            storageQueue.async {
+            DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     try continuation.resume(returning: self.loadAllUDPFlowMetadata())
                 } catch {

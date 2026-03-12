@@ -17,6 +17,70 @@ import NIOWebSocket
 import TraceCore
 import TraceSecurity
 
+final class NIOMITMTunneledHTTP2StreamHandlerFactory: @unchecked Sendable {
+    let group: NIOTSEventLoopGroup
+    weak var eventLog: NDJSONLogWriter?
+    let throttler: PacketThrottler?
+    let interceptor: (any InterceptionProviding)?
+    let captureConfigProvider: () -> CaptureConfiguration
+    let onRequestCaptured: ((NetworkRequest) -> Void)?
+    let shouldMitmConnect: (String, UInt16) -> Bool
+    let http2MITMEnabledProvider: () -> Bool
+    let shouldFailOpenAfterMITMFailure: (String, UInt16, String, MITMFailoverContext) -> Bool
+    let onMITMFailure: ((String, String) -> Void)?
+    let upstreamHint: TransparentProxyMetadata.UpstreamHint?
+    let host: String
+    let port: Int
+
+    init(
+        group: NIOTSEventLoopGroup,
+        eventLog: NDJSONLogWriter?,
+        throttler: PacketThrottler?,
+        interceptor: (any InterceptionProviding)?,
+        captureConfigProvider: @escaping () -> CaptureConfiguration,
+        onRequestCaptured: ((NetworkRequest) -> Void)?,
+        shouldMitmConnect: @escaping (String, UInt16) -> Bool,
+        http2MITMEnabledProvider: @escaping () -> Bool,
+        shouldFailOpenAfterMITMFailure: @escaping (String, UInt16, String, MITMFailoverContext) -> Bool,
+        onMITMFailure: ((String, String) -> Void)?,
+        upstreamHint: TransparentProxyMetadata.UpstreamHint?,
+        host: String,
+        port: Int
+    ) {
+        self.group = group
+        self.eventLog = eventLog
+        self.throttler = throttler
+        self.interceptor = interceptor
+        self.captureConfigProvider = captureConfigProvider
+        self.onRequestCaptured = onRequestCaptured
+        self.shouldMitmConnect = shouldMitmConnect
+        self.http2MITMEnabledProvider = http2MITMEnabledProvider
+        self.shouldFailOpenAfterMITMFailure = shouldFailOpenAfterMITMFailure
+        self.onMITMFailure = onMITMFailure
+        self.upstreamHint = upstreamHint
+        self.host = host
+        self.port = port
+    }
+
+    func makeHandler() -> NIOMITMHTTPConnectHandler {
+        NIOMITMHTTPConnectHandler(
+            group: group,
+            eventLog: eventLog,
+            throttler: throttler,
+            interceptor: interceptor,
+            captureConfigProvider: captureConfigProvider,
+            onRequestCaptured: onRequestCaptured,
+            shouldMitmConnect: shouldMitmConnect,
+            http2MITMEnabledProvider: http2MITMEnabledProvider,
+            shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
+            onMITMFailure: onMITMFailure,
+            ingressMode: .tunneledHTTPS(host: host, port: UInt16(port)),
+            upstreamHint: upstreamHint,
+            usesHTTP2StreamSemantics: true
+        )
+    }
+}
+
 extension NIOMITMHTTPConnectHandler {
     func attemptMITMFallbackToPassthrough(
         host: String,
@@ -146,10 +210,12 @@ extension NIOMITMHTTPConnectHandler {
             "event=proxy.nio_connect_mitm_protocol outcome=selected protocol=h2 host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public)"
         )
 
-        return channel.configureHTTP2Pipeline(mode: .server) { [weak self] streamChannel in
-            guard let self else {
-                return streamChannel.eventLoop.makeSucceededVoidFuture()
-            }
+        // Important: transparent dual-MITM installs HTTP/2 using a temporary setup handler.
+        // Stream channels can be created long after setup completes, so they must not depend
+        // on that temporary handler still being alive.
+        let streamHandlerFactory = makeTunneledHTTP2StreamHandlerFactory(host: host, port: port)
+
+        return channel.configureHTTP2Pipeline(mode: .server) { streamChannel in
 
             Task { await ProxyNetworkMetrics.shared.recordHTTP2StreamCreated() }
             streamChannel.closeFuture.whenComplete { _ in
@@ -169,11 +235,7 @@ extension NIOMITMHTTPConnectHandler {
                 }
                 .flatMap {
                     streamChannel.pipeline.addHandler(
-                        self.makeTunneledHTTPHandler(
-                            host: host,
-                            port: port,
-                            usesHTTP2StreamSemantics: true
-                        ),
+                        streamHandlerFactory.makeHandler(),
                         name: Self.tunneledHTTP2HandlerName
                     )
                 }
@@ -199,6 +261,27 @@ extension NIOMITMHTTPConnectHandler {
             ingressMode: .tunneledHTTPS(host: host, port: UInt16(port)),
             upstreamHint: upstreamHint,
             usesHTTP2StreamSemantics: usesHTTP2StreamSemantics
+        )
+    }
+
+    func makeTunneledHTTP2StreamHandlerFactory(
+        host: String,
+        port: Int
+    ) -> NIOMITMTunneledHTTP2StreamHandlerFactory {
+        NIOMITMTunneledHTTP2StreamHandlerFactory(
+            group: group,
+            eventLog: eventLog,
+            throttler: throttler,
+            interceptor: interceptor,
+            captureConfigProvider: captureConfigProvider,
+            onRequestCaptured: onRequestCaptured,
+            shouldMitmConnect: shouldMitmConnect,
+            http2MITMEnabledProvider: http2MITMEnabledProvider,
+            shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
+            onMITMFailure: onMITMFailure,
+            upstreamHint: upstreamHint,
+            host: host,
+            port: port
         )
     }
 

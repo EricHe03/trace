@@ -831,10 +831,10 @@ extension NIOMITMInitialIngressHandler {
         var current = (error as NSError).userInfo[NSUnderlyingErrorKey] as? Error
         var depth = 0
 
-        while let current, depth < 4 {
-            segments.append(current.localizedDescription)
-            segments.append(String(describing: current))
-            current = (current as NSError).userInfo[NSUnderlyingErrorKey] as? Error
+        while let currentError = current, depth < 4 {
+            segments.append(currentError.localizedDescription)
+            segments.append(String(describing: currentError))
+            current = (currentError as NSError).userInfo[NSUnderlyingErrorKey] as? Error
             depth += 1
         }
 
