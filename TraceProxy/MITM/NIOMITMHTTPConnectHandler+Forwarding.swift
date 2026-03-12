@@ -23,6 +23,10 @@ extension NIOMITMHTTPConnectHandler {
         context: ChannelHandlerContext
     ) {
         guard let httpClient = NIORuntime.shared.currentResources()?.httpClient else {
+            finalizeActiveRequestAsHTTPFailure(
+                status: .internalServerError,
+                reason: "nio_runtime_unavailable"
+            )
             sendResponse(status: .internalServerError, body: "NIO runtime unavailable", closeAfterSend: true, context: context)
             return
         }
@@ -69,6 +73,10 @@ extension NIOMITMHTTPConnectHandler {
                 body: outboundBody
             )
         } catch {
+            finalizeActiveRequestAsHTTPFailure(
+                status: .badRequest,
+                reason: "invalid_outbound_request"
+            )
             sendResponse(status: .badRequest, body: "Invalid outbound request", closeAfterSend: true, context: context)
             return
         }
@@ -206,6 +214,11 @@ extension NIOMITMHTTPConnectHandler {
                                     }
                                 case let .failure(error):
                                     let targetHost = URL(string: outboundContext.url)?.host ?? "unknown"
+                                    let failureReason = self.classifyMITMFailure(error)
+                                    self.finalizeActiveRequestAsHTTPFailure(
+                                        status: .badGateway,
+                                        reason: failureReason
+                                    )
                                     self.logUpstreamHTTPFailure(
                                         error: error,
                                         methodToken: outboundContext.methodToken,
@@ -311,6 +324,10 @@ extension NIOMITMHTTPConnectHandler {
         guard let targetURL = URL(string: outboundContext.url),
               let targetHost = targetURL.host
         else {
+            finalizeActiveRequestAsHTTPFailure(
+                status: .badRequest,
+                reason: "invalid_sse_request_target"
+            )
             sendResponse(status: .badRequest, body: "Invalid SSE request target", closeAfterSend: true, context: context)
             return
         }
@@ -324,6 +341,10 @@ extension NIOMITMHTTPConnectHandler {
             methodToken: outboundContext.methodToken,
             headers: requestHeaders
         ) else {
+            finalizeActiveRequestAsHTTPFailure(
+                status: .badRequest,
+                reason: "invalid_sse_request_headers"
+            )
             sendResponse(status: .badRequest, body: "Invalid SSE request headers", closeAfterSend: true, context: context)
             return
         }
@@ -427,7 +448,9 @@ extension NIOMITMHTTPConnectHandler {
                                 }
                                 bodyRelayChain.whenFailure { [weak self] error in
                                     guard let self else { return }
-                                    self.reportMITMFailure(reason: self.classifyMITMFailure(error))
+                                    let failureReason = self.classifyMITMFailure(error)
+                                    self.finalizeActiveRequestAsFailure(reason: failureReason)
+                                    self.reportMITMFailure(reason: failureReason)
                                     self.completeStreamRuntime(
                                         streamRuntime,
                                         status: .failed,
@@ -457,7 +480,9 @@ extension NIOMITMHTTPConnectHandler {
                                     context.writeAndFlush(self.wrapOutboundOut(.end(trailers)), promise: promise)
                                     return promise.futureResult
                                 }.whenFailure { error in
-                                    self.reportMITMFailure(reason: self.classifyMITMFailure(error))
+                                    let failureReason = self.classifyMITMFailure(error)
+                                    self.finalizeActiveRequestAsFailure(reason: failureReason)
+                                    self.reportMITMFailure(reason: failureReason)
                                     self.completeStreamRuntime(
                                         streamRuntime,
                                         status: .failed,
@@ -473,7 +498,12 @@ extension NIOMITMHTTPConnectHandler {
                         let context = sendableContext.value
                         context.eventLoop.execute {
                             guard let self, self.state == .forwardingHTTPRequest else { return }
-                            self.reportMITMFailure(reason: self.classifyMITMFailure(error))
+                            let failureReason = self.classifyMITMFailure(error)
+                            self.finalizeActiveRequestAsHTTPFailure(
+                                status: .badGateway,
+                                reason: failureReason
+                            )
+                            self.reportMITMFailure(reason: failureReason)
                             ProxyLog.mitm.warning(
                                 "event=proxy.nio_sse_upstream_error outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                             )
@@ -542,7 +572,12 @@ extension NIOMITMHTTPConnectHandler {
                     .whenComplete { [weak self] pipelineResult in
                         guard let self else { return }
                         if case let .failure(error) = pipelineResult {
-                            self.reportMITMFailure(reason: self.classifyMITMFailure(error))
+                            let failureReason = self.classifyMITMFailure(error)
+                            self.finalizeActiveRequestAsHTTPFailure(
+                                status: .badGateway,
+                                reason: failureReason
+                            )
+                            self.reportMITMFailure(reason: failureReason)
                             ProxyLog.mitm.warning(
                                 "event=proxy.nio_sse_setup outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                             )
@@ -569,7 +604,12 @@ extension NIOMITMHTTPConnectHandler {
                         }
                     }
                 case let .failure(error):
-                    self.reportMITMFailure(reason: self.classifyMITMFailure(error))
+                    let failureReason = self.classifyMITMFailure(error)
+                    self.finalizeActiveRequestAsHTTPFailure(
+                        status: .badGateway,
+                        reason: failureReason
+                    )
+                    self.reportMITMFailure(reason: failureReason)
                     ProxyLog.mitm.warning(
                         "event=proxy.nio_sse_connect outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                     )
@@ -601,6 +641,10 @@ extension NIOMITMHTTPConnectHandler {
         guard let targetURL = URL(string: outboundContext.url),
               let targetHost = targetURL.host
         else {
+            finalizeActiveRequestAsHTTPFailure(
+                status: .badRequest,
+                reason: "invalid_websocket_request_target"
+            )
             sendResponse(status: .badRequest, body: "Invalid WebSocket request target", closeAfterSend: true, context: context)
             return
         }
@@ -612,6 +656,10 @@ extension NIOMITMHTTPConnectHandler {
             methodToken: outboundContext.methodToken,
             headers: requestHeaders
         ) else {
+            finalizeActiveRequestAsHTTPFailure(
+                status: .badRequest,
+                reason: "invalid_websocket_request_headers"
+            )
             sendResponse(status: .badRequest, body: "Invalid WebSocket request headers", closeAfterSend: true, context: context)
             return
         }
@@ -768,7 +816,8 @@ extension NIOMITMHTTPConnectHandler {
                                 captured.extractHTTPFields()
                                 NetworkThrottlingController.shared.applyMetadata(to: &captured)
                                 self.finalizeCapturedDuration(for: &captured)
-                                self.onRequestCaptured?(captured)
+                                self.activeCapturedRequest = captured
+                                self.publishCapturedRequest(captured)
 
                                 let promise = context.eventLoop.makePromise(of: Void.self)
                                 promise.futureResult.whenComplete { _ in
@@ -785,7 +834,12 @@ extension NIOMITMHTTPConnectHandler {
                         let context = sendableContext.value
                         context.eventLoop.execute {
                             guard let self, self.state == .forwardingHTTPRequest else { return }
-                            self.reportMITMFailure(reason: self.classifyMITMFailure(error))
+                            let failureReason = self.classifyMITMFailure(error)
+                            self.finalizeActiveRequestAsHTTPFailure(
+                                status: .badGateway,
+                                reason: failureReason
+                            )
+                            self.reportMITMFailure(reason: failureReason)
                             ProxyLog.mitm.warning(
                                 "event=proxy.nio_ws_upstream_error outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                             )
@@ -846,7 +900,12 @@ extension NIOMITMHTTPConnectHandler {
                     .whenComplete { [weak self] pipelineResult in
                         guard let self else { return }
                         if case let .failure(error) = pipelineResult {
-                            self.reportMITMFailure(reason: self.classifyMITMFailure(error))
+                            let failureReason = self.classifyMITMFailure(error)
+                            self.finalizeActiveRequestAsHTTPFailure(
+                                status: .badGateway,
+                                reason: failureReason
+                            )
+                            self.reportMITMFailure(reason: failureReason)
                             ProxyLog.mitm.warning(
                                 "event=proxy.nio_ws_setup outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                             )
@@ -869,7 +928,12 @@ extension NIOMITMHTTPConnectHandler {
                         }
                     }
                 case let .failure(error):
-                    self.reportMITMFailure(reason: self.classifyMITMFailure(error))
+                    let failureReason = self.classifyMITMFailure(error)
+                    self.finalizeActiveRequestAsHTTPFailure(
+                        status: .badGateway,
+                        reason: failureReason
+                    )
+                    self.reportMITMFailure(reason: failureReason)
                     ProxyLog.mitm.warning(
                         "event=proxy.nio_ws_connect outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                     )
@@ -1053,10 +1117,7 @@ extension NIOMITMHTTPConnectHandler {
                 context: context
             ) { [weak self] in
                 guard let self else { return }
-                var finalized = request
-                self.annotateCaptureMetadata(&finalized)
-                self.finalizeCapturedDuration(for: &finalized)
-                self.onRequestCaptured?(finalized)
+                self.publishCapturedRequest(request)
                 if metricsAsParsedResponse {
                     Task {
                         await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
@@ -1095,10 +1156,7 @@ extension NIOMITMHTTPConnectHandler {
                 context: context
             ) { [weak self] in
                 guard let self else { return }
-                var finalized = capturedRequest
-                self.annotateCaptureMetadata(&finalized)
-                self.finalizeCapturedDuration(for: &finalized)
-                self.onRequestCaptured?(finalized)
+                self.publishCapturedRequest(capturedRequest)
                 if metricsAsParsedResponse {
                     Task {
                         await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
@@ -1186,6 +1244,7 @@ extension NIOMITMHTTPConnectHandler {
                         onRequestCaptured: self.onRequestCaptured
                     )
                 }
+                self.activeCapturedRequest = capturedRequest
 
                 if head.status.code >= 400 {
                     self.logConnectStage(
@@ -1280,6 +1339,7 @@ extension NIOMITMHTTPConnectHandler {
                     )
                     let endPromise = context.eventLoop.makePromise(of: Void.self)
                     endPromise.futureResult.whenComplete { _ in
+                        self.clearActiveCapturedRequest()
                         if metricsAsParsedResponse {
                             Task {
                                 await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
@@ -1338,10 +1398,7 @@ extension NIOMITMHTTPConnectHandler {
 
                 let endPromise = context.eventLoop.makePromise(of: Void.self)
                 endPromise.futureResult.whenComplete { _ in
-                    var finalized = capturedRequest
-                    self.annotateCaptureMetadata(&finalized)
-                    self.finalizeCapturedDuration(for: &finalized)
-                    self.onRequestCaptured?(finalized)
+                    self.publishCapturedRequest(capturedRequest)
                     if metricsAsParsedResponse {
                         Task {
                             await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
@@ -1376,9 +1433,46 @@ extension NIOMITMHTTPConnectHandler {
                 )
 
                 if responseHeadSent {
+                    var failedRequest = capturedRequest
+                    failedRequest.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
+                    if let status = responseHead?.status {
+                        failedRequest.statusCode = Int(status.code)
+                        failedRequest.statusMessage = status.reasonPhrase
+                    }
+                    let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
+                    let observedResponseBodyBytes = max(receivedBodyBytes, capturedBodyData.count)
+                    let resolvedResponseBodyBytes = self.resolvedResponseBodyBytes(
+                        declaredContentLength: declaredResponseBodyBytes,
+                        observedBodyBytes: observedResponseBodyBytes
+                    )
+                    failedRequest.responseBody = didTruncateCapturedBody
+                        ? self.truncatedBodyStorage(
+                            fromCapturedData: capturedBodyData,
+                            totalSize: max(capturedBodyData.count, resolvedResponseBodyBytes),
+                            charset: responseCharset,
+                            contentEncoding: responseContentEncoding,
+                            decodeCompressedContent: true,
+                            maxStoredBodyBytes: max(0, captureConfig.maxBodySize)
+                        )
+                        : self.bodyStorage(
+                            from: capturedBodyData,
+                            charset: responseCharset,
+                            contentEncoding: responseContentEncoding,
+                            captureConfig: captureConfig,
+                            decodeCompressedContent: true
+                        )
+                    failedRequest.executionErrors.append(
+                        ExecutionError(message: self.classifyMITMFailure(error))
+                    )
+                    NetworkThrottlingController.shared.applyMetadata(to: &failedRequest)
+                    self.publishCapturedRequest(failedRequest)
                     self.state = .closed
                     context.close(promise: nil)
                 } else {
+                    self.finalizeActiveRequestAsHTTPFailure(
+                        status: .badGateway,
+                        reason: self.classifyMITMFailure(error)
+                    )
                     self.sendResponse(
                         status: .badGateway,
                         body: "Upstream HTTP request failed",

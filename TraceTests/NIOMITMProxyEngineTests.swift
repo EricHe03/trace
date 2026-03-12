@@ -691,6 +691,108 @@ final class NIOMITMProxyEngineTests: XCTestCase {
         XCTAssertEqual(captured?.url, "https://\(targetHost)\(path)")
     }
 
+    func testTransparentTLSMITMFinalizesPendingSnapshotWhenUpstreamClosesBeforeResponse() throws {
+        let targetHost = "pending-close.trace.test"
+        let path = "/pending-close"
+        let upstreamServer = try SingleConnectionTLSServer(serverName: targetHost)
+        defer { upstreamServer.stop() }
+
+        let pendingExpectation = expectation(description: "captured pending tunneled request snapshot")
+        let finalExpectation = expectation(description: "captured terminal tunneled request snapshot")
+        finalExpectation.assertForOverFulfill = false
+
+        let capturedLock = NSLock()
+        var capturedRequests: [NetworkRequest] = []
+
+        let engine = NIOMITMProxyEngine(
+            port: 0,
+            eventLog: nil,
+            interceptor: StreamOnlyInterceptor(),
+            onRequestCaptured: { request in
+                guard request.url == "https://\(targetHost)\(path)" else { return }
+                capturedLock.lock()
+                capturedRequests.append(request)
+                capturedLock.unlock()
+
+                if request.statusCode == nil,
+                   request.executionErrors.isEmpty,
+                   !request.wasCancelled {
+                    pendingExpectation.fulfill()
+                } else {
+                    finalExpectation.fulfill()
+                }
+            },
+            shouldMitmConnect: { host, port in
+                host == targetHost && port == upstreamServer.port
+            },
+            isTransparentTLSEnabled: { true }
+        )
+        let endpoint = try engine.start()
+        defer { engine.stop() }
+
+        let resources = NIORuntime.shared.acquire(for: .tests)
+        guard let group = resources.eventLoopGroup as? NIOTSEventLoopGroup else {
+            throw TestError.eventLoopGroupUnavailable
+        }
+
+        let channel = try NIOTSConnectionBootstrap(group: group)
+            .connect(host: endpoint.host, port: Int(endpoint.port))
+            .wait()
+        defer {
+            if channel.isActive {
+                channel.close(promise: nil)
+            }
+        }
+
+        guard let metadataBytes = TransparentProxyMetadata.encodeUpstreamHint(
+            host: "127.0.0.1",
+            port: upstreamServer.port,
+            addressTypeRaw: 0x01
+        ) else {
+            throw TestError.metadataEncodingFailed
+        }
+        var metadataBuffer = channel.allocator.buffer(capacity: metadataBytes.count)
+        metadataBuffer.writeBytes(metadataBytes)
+        try channel.writeAndFlush(metadataBuffer).wait()
+
+        var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
+        tlsConfiguration.certificateVerification = .none
+        tlsConfiguration.applicationProtocols = ["http/1.1"]
+        let tlsContext = try NIOSSLContext(configuration: tlsConfiguration)
+        let tlsHandler = try NIOSSLClientHandler(context: tlsContext, serverHostname: targetHost)
+        let handshakeObserver = TLSHandshakeObserver()
+        try channel.pipeline.addHandler(tlsHandler, position: .first)
+            .flatMap {
+                channel.pipeline.addHandler(handshakeObserver)
+            }
+            .wait()
+        XCTAssertTrue(handshakeObserver.waitForHandshake(timeout: 3))
+
+        let request = """
+        GET \(path) HTTP/1.1\r
+        Host: \(targetHost)\r
+        Connection: close\r
+        \r
+        """
+        var requestBuffer = channel.allocator.buffer(capacity: request.utf8.count)
+        requestBuffer.writeString(request)
+        try channel.writeAndFlush(requestBuffer).wait()
+
+        wait(for: [pendingExpectation], timeout: 3)
+        upstreamServer.stop()
+        wait(for: [finalExpectation], timeout: 3)
+
+        capturedLock.lock()
+        let terminalRequest = capturedRequests.last
+        capturedLock.unlock()
+
+        XCTAssertEqual(terminalRequest?.method, .get)
+        XCTAssertEqual(terminalRequest?.statusCode, 502)
+        XCTAssertEqual(terminalRequest?.statusMessage, "Bad Gateway")
+        XCTAssertEqual(terminalRequest?.url, "https://\(targetHost)\(path)")
+        XCTAssertEqual(terminalRequest?.executionErrors.last?.message, "upstream_connection_closed")
+    }
+
     func testForwardingState400EmissionIsOneShotForPipelinedRequests() throws {
         let tempDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("niomitm-tests-\(UUID().uuidString)", isDirectory: true)

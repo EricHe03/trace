@@ -11,6 +11,42 @@ import NIOHTTP1
 import TraceCore
 
 extension NIOMITMHTTPConnectHandler {
+    func clearActiveCapturedRequest() {
+        activeCapturedRequest = nil
+    }
+
+    func publishCapturedRequest(_ request: NetworkRequest) {
+        var finalized = request
+        annotateCaptureMetadata(&finalized)
+        finalizeCapturedDuration(for: &finalized)
+        onRequestCaptured?(finalized)
+        clearActiveCapturedRequest()
+    }
+
+    func finalizeActiveRequestAsHTTPFailure(
+        status: HTTPResponseStatus,
+        reason: String
+    ) {
+        guard var request = activeCapturedRequest else { return }
+        request.statusCode = Int(status.code)
+        request.statusMessage = status.reasonPhrase
+        request.executionErrors.append(ExecutionError(message: reason))
+        publishCapturedRequest(request)
+    }
+
+    func finalizeActiveRequestAsFailure(reason: String) {
+        guard var request = activeCapturedRequest else { return }
+        request.executionErrors.append(ExecutionError(message: reason))
+        publishCapturedRequest(request)
+    }
+
+    func finalizeActiveRequestAsCancellation(reason: String) {
+        guard var request = activeCapturedRequest else { return }
+        request.wasCancelled = true
+        request.executionErrors.append(ExecutionError(message: reason))
+        publishCapturedRequest(request)
+    }
+
     func makeOutboundRequestContext(from request: NetworkRequest, fallbackBody: Data) -> OutboundRequestContext? {
         let methodToken = request.requestMethodRaw ?? request.method.rawValue
         let requestHeaders = dictionary(from: request.requestHeaders)

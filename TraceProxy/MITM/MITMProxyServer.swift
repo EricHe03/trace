@@ -14,6 +14,12 @@ import TraceFeatures
 /// Runs inside the Network Extension and handles HTTP/HTTPS traffic routed to the local proxy
 /// (proxy-only mode via the tunnel's `proxySettings`).
 public class MITMProxyServer: @unchecked Sendable {
+    enum CaptureLifecycleState: Equatable {
+        case pending
+        case terminalSuccess
+        case terminalFailure(reason: String)
+    }
+
     private let port: UInt16
     private var mitmEngine: (any MITMEngine)?
     private var dualMITMPolicyEngine: DualMITMPolicyEngine?
@@ -330,16 +336,23 @@ public class MITMProxyServer: @unchecked Sendable {
     }
 
     private func handleCapturedRequest(_ request: NetworkRequest) {
-        let pendingTunneledSnapshot = isPendingTunneledSnapshot(request)
+        let captureState = Self.captureLifecycleState(for: request)
         if logSampler.shouldLog(key: "proxy.request_captured", first: 10, every: 200) {
             let protocolVersion = request.protocolVersion?.rawValue ?? "unknown"
-            let outcome = pendingTunneledSnapshot ? "pending" : "success"
+            let outcome = switch captureState {
+            case .pending:
+                "pending"
+            case .terminalSuccess:
+                "success"
+            case .terminalFailure:
+                "failure"
+            }
             ProxyLog.mitm.debug(
                 "event=proxy.request_captured outcome=\(outcome, privacy: .public) method=\(request.method.rawValue, privacy: .public) protocol=\(protocolVersion, privacy: .public) duration_ms=\(Int(request.duration * 1000), privacy: .public) url=\(request.url, privacy: .private(mask: .hash)) request_id=\(request.id.uuidString, privacy: .public)"
             )
         }
 
-        if pendingTunneledSnapshot {
+        if case .pending = captureState {
             appendProxyCaptureEvent(
                 request,
                 outcome: "pending",
@@ -362,10 +375,18 @@ public class MITMProxyServer: @unchecked Sendable {
             )
             return
         }
-        saveCapturedRequest(request)
+        let terminalFailureReason: String? = if case let .terminalFailure(reason) = captureState {
+            reason
+        } else {
+            nil
+        }
+        saveCapturedRequest(request, terminalFailureReason: terminalFailureReason)
     }
 
-    private func saveCapturedRequest(_ request: NetworkRequest) {
+    private func saveCapturedRequest(
+        _ request: NetworkRequest,
+        terminalFailureReason: String? = nil
+    ) {
         let samplingConfig = AppGroupStorage.shared.loadSamplingConfig()
         guard shouldSample(using: samplingConfig) else {
             appendProxyCaptureEvent(
@@ -379,7 +400,8 @@ public class MITMProxyServer: @unchecked Sendable {
             try AppGroupStorage.shared.saveRequest(request)
             appendProxyCaptureEvent(
                 request,
-                outcome: "success"
+                outcome: terminalFailureReason == nil ? "success" : "failure",
+                reason: terminalFailureReason
             )
             let hostHash = URL(string: request.url)?.host.map { LogRedaction.hash($0) } ?? "unknown"
             let protocolVersion = request.protocolVersion?.rawValue ?? "http1.1"
@@ -390,8 +412,9 @@ public class MITMProxyServer: @unchecked Sendable {
             appendBodyStorageSummaryEvent(request, hostHash: hostHash, protocolVersion: protocolVersion)
             if logSampler.shouldLog(key: "proxy.request_saved", first: 10, every: 200) {
                 let protocolVersion = request.protocolVersion?.rawValue ?? "unknown"
+                let outcome = terminalFailureReason == nil ? "success" : "failure"
                 ProxyLog.mitm.debug(
-                    "event=proxy.request_saved outcome=success method=\(request.method.rawValue, privacy: .public) protocol=\(protocolVersion, privacy: .public) duration_ms=\(Int(request.duration * 1000), privacy: .public) url=\(request.url, privacy: .private(mask: .hash)) request_id=\(request.id.uuidString, privacy: .public)"
+                    "event=proxy.request_saved outcome=\(outcome, privacy: .public) method=\(request.method.rawValue, privacy: .public) protocol=\(protocolVersion, privacy: .public) duration_ms=\(Int(request.duration * 1000), privacy: .public) url=\(request.url, privacy: .private(mask: .hash)) request_id=\(request.id.uuidString, privacy: .public)"
                 )
             }
 
@@ -599,11 +622,21 @@ public class MITMProxyServer: @unchecked Sendable {
         }
     }
 
-    private func isPendingTunneledSnapshot(_ request: NetworkRequest) -> Bool {
-        guard request.statusCode == nil else { return false }
-        guard request.responseBody.isEmpty else { return false }
-        guard request.responseHeaders.isEmpty else { return false }
-        return true
+    static func captureLifecycleState(for request: NetworkRequest) -> CaptureLifecycleState {
+        guard request.statusCode == nil else { return .terminalSuccess }
+        guard request.responseBody.isEmpty else { return .terminalSuccess }
+        guard request.responseHeaders.isEmpty else { return .terminalSuccess }
+
+        if request.wasCancelled {
+            return .terminalFailure(reason: "client_cancelled_before_response")
+        }
+        if let failureMessage = request.executionErrors.last?.message
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !failureMessage.isEmpty {
+            return .terminalFailure(reason: failureMessage)
+        }
+
+        return .pending
     }
 
     private func isLikelyTextContentType(_ contentTypeToken: String) -> Bool {
@@ -676,7 +709,7 @@ public class MITMProxyServer: @unchecked Sendable {
             protocolName: .httpConnect,
             destination: HostPort(host: normalizedHost, port: Int(port))
         )
-        let policyAllowsMITM: Bool = if case .mitm = policyPlan.action { true } else { false }
+        let policyAllowsMITM = if case .mitm = policyPlan.action { true } else { false }
         let legacyAllowsMITM = mitmBypassReason(host: normalizedHost) == nil
         return policyPlan.enforced ? policyAllowsMITM : legacyAllowsMITM
     }
