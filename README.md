@@ -8,9 +8,12 @@ An iOS network debugger for capturing and inspecting HTTP(S), HTTP/2, WebSocket,
 ![License](https://img.shields.io/badge/license-MIT-blue)
 [Latest Release](https://github.com/Trace-iOS/Trace/releases/latest) | [Releases](https://github.com/Trace-iOS/Trace/releases)
 
-Trace combines a local MITM proxy with a Network Extension packet tunnel and a self-generated root CA for HTTPS inspection. Captured data stays on-device unless you choose to export or share it. The app supports proxy-only, full-tunnel, and dual-MITM capture, and includes replay, rewriting, diagnostics, packet capture, and widget/live activity controls.
+Trace combines a local MITM proxy, a Network Extension packet tunnel, and a self-generated root CA for HTTPS inspection. Captured data stays on-device unless you explicitly export or share it. The app supports proxy-only, full-tunnel, and dual-MITM capture, and includes replay, rewriting, diagnostics, packet capture, and widget/live activity controls.
 
-The repository includes both `Trace.xcodeproj` and `Package.swift`. Use the Xcode project to build and run the app and extensions. The package manifest mirrors the module graph for package-aware tooling and module-level development.
+This repository ships both `Trace.xcodeproj` and `Package.swift`:
+
+- Use `Trace.xcodeproj` to build and run the app, packet tunnel, and widget extension.
+- Use `Package.swift` for package-aware indexing, module graph inspection, and module-level development.
 
 ## Features
 
@@ -44,6 +47,7 @@ The repository includes both `Trace.xcodeproj` and `Package.swift`. Use the Xcod
 - Apple Developer signing with the Network Extension capability
 - A physical iOS device for packet-tunnel and full-tunnel validation
 - Rust is only required when rebuilding quiche artifacts in `Tools/QUIC/`
+- `swiftformat` and `swiftlint` are only required for local formatting/lint checks
 
 ## Installation
 
@@ -64,7 +68,14 @@ open Trace.xcodeproj
 3. Configure signing for `Trace`, `TraceVPN`, and `TraceWidgetExtension`.
 4. Ensure all targets use the same App Group via `APP_GROUP_IDENTIFIER`.
 5. If you change bundle identifiers, update the related entitlements and `providerBundleIdentifier` in `TraceFeatures/VPN/VPNManager.swift`.
-6. Build and run on a physical device.
+6. Build and run on a physical device for full tunnel / Network Extension validation.
+
+If you need to validate the QUIC toolchain wiring or regenerate bundled quiche artifacts, run:
+
+```bash
+./Tools/QUIC/build_quiche_apple.sh
+./Tools/QUIC/verify_quiche_symbols.sh build/quiche/quiche.xcframework
+```
 
 ## Quick Start
 
@@ -94,6 +105,7 @@ open Trace.xcodeproj
 
 ```text
 Trace/
+├── .github/workflows/            # GitHub Actions for build/test, format, and lint
 ├── Trace.xcodeproj/              # Xcode project used for app + extension builds
 ├── Package.swift                 # SwiftPM manifest that mirrors the module graph
 ├── Docs/                         # Architecture notes and capture test plans
@@ -114,10 +126,11 @@ Trace/
 ├── ThirdParty/CQuicheFFI/        # C shim layer over quiche APIs
 ├── ThirdParty/quiche/            # Git submodule: QUIC/HTTP3 implementation
 ├── ThirdParty/hev-socks5-tunnel/ # Git submodule: full-tunnel SOCKS5 forwarding
-└── Tools/QUIC/                   # quiche build and verification scripts
+├── Tools/QUIC/                   # quiche build and verification scripts
+└── build/quiche/                 # Generated quiche artifacts consumed by TraceQUIC/CQuicheFFI
 ```
 
-Generated QUIC build artifacts live under `build/quiche/` after running the scripts in `Tools/QUIC/`.
+Generated QUIC build artifacts live under `build/quiche/`. The package manifest detects those artifacts and wires `TraceQUIC` / `CQuicheFFI` to either the generated `quiche.xcframework` or the static libraries when present.
 
 ## Documentation
 
@@ -127,7 +140,7 @@ Generated QUIC build artifacts live under `build/quiche/` after running the scri
 
 ## Testing
 
-Run the same base checks that CI runs:
+Run the same base checks as the repository workflows in `.github/workflows/build-and-test.yml`, `.github/workflows/format.yml`, and `.github/workflows/lint.yml`:
 
 ```bash
 xcodebuild -project Trace.xcodeproj -scheme Trace -configuration Debug -sdk iphonesimulator \
@@ -147,7 +160,13 @@ For QUIC toolchain changes, also run:
 ./Tools/QUIC/verify_quiche_symbols.sh build/quiche/quiche.xcframework
 ```
 
-CI also sets an explicit `DerivedData` path, disables simulator code signing, and writes an `.xcresult` bundle for uploads.
+GitHub Actions also sets an explicit `DerivedData` path, disables simulator code signing, and uploads an `.xcresult` bundle plus derived-data logs on failures.
+
+## Development Notes
+
+- `Trace.xcodeproj` is the canonical way to run the full product because it includes the app target, packet tunnel, and `TraceWidgetExtension`.
+- `Package.swift` mirrors the internal module graph (`TraceCore`, `TraceSecurity`, `TraceProxy`, `TraceFeatures`, `TraceVPN`, `TraceUI`, `TraceQUIC`, and related support targets) and is useful for navigation, indexing, and focused module work.
+- Packet-tunnel routing and full-tunnel traffic capture cannot be meaningfully validated in the iOS Simulator.
 
 ## Limitations
 
