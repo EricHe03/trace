@@ -11,103 +11,6 @@ import OSLog
 import TraceCore
 import TraceProxy
 
-final class CompletionHandlerBox<T>: @unchecked Sendable {
-    private let handler: (T) -> Void
-
-    init(_ handler: @escaping (T) -> Void) {
-        self.handler = handler
-    }
-
-    func call(_ value: T) {
-        handler(value)
-    }
-}
-
-final class UnsafeSendable<T>: @unchecked Sendable {
-    let value: T
-
-    init(_ value: T) {
-        self.value = value
-    }
-}
-
-actor CompletionOnce {
-    private let handler: CompletionHandlerBox<Void>
-    private let queue: DispatchQueue
-    private var didComplete = false
-
-    init(handler: CompletionHandlerBox<Void>, queue: DispatchQueue) {
-        self.handler = handler
-        self.queue = queue
-    }
-
-    func call() {
-        guard !didComplete else { return }
-        didComplete = true
-        queue.async {
-            self.handler.call(())
-        }
-    }
-}
-
-actor StartTunnelCompletion {
-    private let invocationID: String
-    private let startWall: Date
-    private let handler: CompletionHandlerBox<Error?>
-    private let queue: DispatchQueue
-    private var didComplete = false
-
-    init(invocationID: String, startWall: Date, handler: CompletionHandlerBox<Error?>, queue: DispatchQueue) {
-        self.invocationID = invocationID
-        self.startWall = startWall
-        self.handler = handler
-        self.queue = queue
-    }
-
-    func complete(_ error: Error?) {
-        guard !didComplete else { return }
-        didComplete = true
-
-        let elapsedMs = Int(Date().timeIntervalSince(startWall) * 1000)
-        if let error {
-            VPNLog.tunnel.error(
-                "event=vpn.tunnel_start outcome=failure id=\(self.invocationID, privacy: .public) duration_ms=\(elapsedMs) error=\(String(describing: error), privacy: .public)"
-            )
-        } else {
-            VPNLog.tunnel.info(
-                "event=vpn.tunnel_start outcome=success id=\(self.invocationID, privacy: .public) duration_ms=\(elapsedMs)"
-            )
-        }
-        queue.async {
-            self.handler.call(error)
-        }
-    }
-}
-
-struct AppMessageCompletion: @unchecked Sendable {
-    private let handler: CompletionHandlerBox<Data?>?
-    private let queue: DispatchQueue
-
-    init(handler: ((Data?) -> Void)?, queue: DispatchQueue) {
-        self.handler = handler.map { CompletionHandlerBox($0) }
-        self.queue = queue
-    }
-
-    func call(_ data: Data?) {
-        guard let handler else { return }
-        queue.async {
-            handler.call(data)
-        }
-    }
-
-    static func call(handler: ((Data?) -> Void)?, queue: DispatchQueue, data: Data?) {
-        guard let handler else { return }
-        queue.async {
-            handler(data)
-        }
-    }
-}
-
 struct HeartbeatSnapshot: Sendable {
     let invocationID: String?
     let isStopping: Bool
@@ -119,6 +22,61 @@ private final class PacketFlowLoopReference: @unchecked Sendable {
 }
 
 actor PacketTunnelRuntimeState {
+    struct PacketFlowConfig {
+        struct PacketCapture {
+            let enabled: Bool
+            let limit: UInt64
+            let writer: PCAPWriting?
+        }
+
+        struct Socks {
+            let remoteHost: String
+            let remotePort: UInt16
+            let localHost: String
+            let preferredLocalPort: UInt16
+        }
+
+        struct UDP {
+            let forwardingMode: UDPForwardingMode
+            let ipv6Enabled: Bool
+        }
+
+        struct TransparentProxy {
+            let enabled: Bool
+            let interceptPorts: Set<UInt16>
+            let proxyHost: String
+            let proxyPort: UInt16
+        }
+
+        struct DualMITM {
+            let policy: DualMITMPolicy
+            let tcpBypassTTLSeconds: Int
+            let quicHostFailOpenSeconds: Int
+            let circuitBreakerEnabled: Bool
+            let quicNoProgressGraceMs: Int
+            let quicNoProgressIdleMs: Int
+            let quicNoProgressAbsoluteMs: Int
+            let quicNoProgressMinClientDatagrams: Int
+            let quicAuthorityRetryAttempts: Int
+            let quicCertMaterialCacheTTLSeconds: Int
+            let shadowEnabled: Bool
+            let enforceTCPRouting: Bool
+            let enforceProxyRouting: Bool
+            let enforceQUICRouting: Bool
+            let http2MITMEnabled: Bool
+            let strictEnforcementHardFail: Bool
+        }
+
+        let packetFlow: NEPacketTunnelFlow
+        let captureMode: CaptureMode
+        let mtu: Int
+        let packetCapture: PacketCapture
+        let socks: Socks
+        let udp: UDP
+        let transparentProxy: TransparentProxy
+        let dualMITM: DualMITM
+    }
+
     private struct EffectiveSocksEndpoint: Sendable {
         let host: String
         let port: UInt16
@@ -144,41 +102,6 @@ actor PacketTunnelRuntimeState {
     private var udpTunnelSupported = false
     private var isStopping = false
     private let throttler = PacketThrottler()
-
-    struct PacketFlowConfig {
-        let packetFlow: NEPacketTunnelFlow
-        let mode: CaptureMode
-        let mtu: Int
-        let captureEnabled: Bool
-        let captureLimit: UInt64
-        let writer: PCAPWriting?
-        let socks5Host: String
-        let socks5Port: UInt16
-        let localSocks5Host: String
-        let localSocks5Port: UInt16
-        let udpForwardingMode: UDPForwardingMode
-        let ipv6Enabled: Bool
-        let tcpTransparentMITMEnabled: Bool
-        let tcpTransparentMITMPorts: Set<UInt16>
-        let mitmProxyHost: String
-        let mitmProxyPort: UInt16
-        let dualMITMPolicy: DualMITMPolicy
-        let tcpBypassTTLSeconds: Int
-        let quicHostFailOpenSeconds: Int
-        let dualMITMCircuitBreakerEnabled: Bool
-        let quicNoProgressGraceMs: Int
-        let quicNoProgressIdleMs: Int
-        let quicNoProgressAbsoluteMs: Int
-        let quicNoProgressMinClientDatagrams: Int
-        let quicAuthorityRetryAttempts: Int
-        let quicCertMaterialCacheTTLSeconds: Int
-        let dualMITMPolicyEngineShadowEnabled: Bool
-        let dualMITMPolicyEngineEnforcedTCP: Bool
-        let dualMITMPolicyEngineEnforcedProxy: Bool
-        let dualMITMPolicyEngineEnforcedQUIC: Bool
-        let dualMITMHttp2MITMEnabled: Bool
-        let dualMITMStrictEnforcementHardFail: Bool
-    }
 
     func setStopping(_ value: Bool) {
         isStopping = value
@@ -213,16 +136,20 @@ actor PacketTunnelRuntimeState {
     func configurePacketFlow(_ config: PacketFlowConfig) async {
         stopPacketFlow()
 
-        guard config.mode.usesPacketTunnelRouting else {
+        guard config.captureMode.usesPacketTunnelRouting else {
             stopLocalSocks5Server()
-            config.writer?.close()
+            config.packetCapture.writer?.close()
             return
         }
 
         let pipeline = PacketCapturePipeline(maxPending: 4096)
-        pipeline.configure(enabled: config.captureEnabled, limit: config.captureLimit, writer: config.writer)
+        pipeline.configure(
+            enabled: config.packetCapture.enabled,
+            limit: config.packetCapture.limit,
+            writer: config.packetCapture.writer
+        )
         packetCapturePipeline = pipeline
-        packetCaptureWriter = config.writer
+        packetCaptureWriter = config.packetCapture.writer
         let inboundCaptureObserver: @Sendable ([Data]) -> Void = { [weak pipeline] packets in
             guard let pipeline else { return }
             _ = pipeline.enqueue(packets: packets)
@@ -240,8 +167,8 @@ actor PacketTunnelRuntimeState {
                 await self?.appendEventLog(type: type, msg: msg)
             }
         }
-        let dualMITMBreakerEnabled = config.dualMITMCircuitBreakerEnabled &&
-            config.dualMITMPolicy == .adaptiveFailOpen
+        let dualMITMBreakerEnabled = config.dualMITM.circuitBreakerEnabled &&
+            config.dualMITM.policy == .adaptiveFailOpen
         DualMITMCircuitBreaker.shared.configure(
             enabled: dualMITMBreakerEnabled,
             cooldownSeconds: 180,
@@ -253,30 +180,30 @@ actor PacketTunnelRuntimeState {
         udpTunnelSupported = false
 
         let policySnapshot = DualMITMPolicySnapshot(
-            tcpTransparentMITMEnabled: config.tcpTransparentMITMEnabled,
-            tcpInterceptPorts: config.tcpTransparentMITMPorts,
-            mitmProxyHost: config.mitmProxyHost,
-            mitmProxyPort: config.mitmProxyPort,
-            policyMode: config.dualMITMPolicy,
-            circuitBreakerEnabled: config.dualMITMCircuitBreakerEnabled,
-            tcpBypassTTLSeconds: config.tcpBypassTTLSeconds,
-            quicHostFailOpenSeconds: config.quicHostFailOpenSeconds,
+            tcpTransparentMITMEnabled: config.transparentProxy.enabled,
+            tcpInterceptPorts: config.transparentProxy.interceptPorts,
+            mitmProxyHost: config.transparentProxy.proxyHost,
+            mitmProxyPort: config.transparentProxy.proxyPort,
+            policyMode: config.dualMITM.policy,
+            circuitBreakerEnabled: config.dualMITM.circuitBreakerEnabled,
+            tcpBypassTTLSeconds: config.dualMITM.tcpBypassTTLSeconds,
+            quicHostFailOpenSeconds: config.dualMITM.quicHostFailOpenSeconds,
             quicNoProgress: QUICNoProgressConfig(
-                graceMs: config.quicNoProgressGraceMs,
-                idleMs: config.quicNoProgressIdleMs,
-                absoluteMs: config.quicNoProgressAbsoluteMs,
-                minimumClientDatagrams: config.quicNoProgressMinClientDatagrams
+                graceMs: config.dualMITM.quicNoProgressGraceMs,
+                idleMs: config.dualMITM.quicNoProgressIdleMs,
+                absoluteMs: config.dualMITM.quicNoProgressAbsoluteMs,
+                minimumClientDatagrams: config.dualMITM.quicNoProgressMinClientDatagrams
             ),
-            quicAuthorityRetryAttempts: config.quicAuthorityRetryAttempts,
-            quicCertMaterialCacheTTLSeconds: config.quicCertMaterialCacheTTLSeconds,
+            quicAuthorityRetryAttempts: config.dualMITM.quicAuthorityRetryAttempts,
+            quicCertMaterialCacheTTLSeconds: config.dualMITM.quicCertMaterialCacheTTLSeconds,
             quicHandlingMode: quicHandlingMode,
             featureFlags: DualMITMPolicyFeatureFlags(
-                shadowEnabled: config.dualMITMPolicyEngineShadowEnabled,
-                enforceTCPRouting: config.dualMITMPolicyEngineEnforcedTCP,
-                enforceProxyRouting: config.dualMITMPolicyEngineEnforcedProxy,
-                enforceQUICRouting: config.dualMITMPolicyEngineEnforcedQUIC,
-                http2MITMEnabled: config.dualMITMHttp2MITMEnabled,
-                strictEnforcementHardFail: config.dualMITMStrictEnforcementHardFail
+                shadowEnabled: config.dualMITM.shadowEnabled,
+                enforceTCPRouting: config.dualMITM.enforceTCPRouting,
+                enforceProxyRouting: config.dualMITM.enforceProxyRouting,
+                enforceQUICRouting: config.dualMITM.enforceQUICRouting,
+                http2MITMEnabled: config.dualMITM.http2MITMEnabled,
+                strictEnforcementHardFail: config.dualMITM.strictEnforcementHardFail
             )
         )
         let tcpStore = tcpBypassStore ?? InMemoryHostBypassStore()
@@ -318,21 +245,21 @@ actor PacketTunnelRuntimeState {
         }
         dualMITMPolicyEngine = policyEngine
         proxyServer?.setDualMITMPolicyEngine(policyEngine)
-        proxyServer?.setDualMITMProxyPolicyEnforcement(config.dualMITMPolicyEngineEnforcedProxy)
+        proxyServer?.setDualMITMProxyPolicyEnforcement(config.dualMITM.enforceProxyRouting)
 
         do {
             let endpoint = try resolveSocksEndpoint(using: config)
             let trimmedHost = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines)
             let socksHostHash = LogRedaction.hash(trimmedHost)
             VPNLog.tunnel.info(
-                "event=vpn.packet_flow_config mode=\(config.mode.rawValue, privacy: .public) socks_source=\(endpoint.source, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue, privacy: .public) quic_mode=\(self.quicHandlingMode.rawValue, privacy: .public) block_quic=\(self.quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.tcpTransparentMITMEnabled) dual_mitm_policy=\(config.dualMITMPolicy.rawValue, privacy: .public) breaker=\(config.dualMITMCircuitBreakerEnabled) policy_shadow=\(config.dualMITMPolicyEngineShadowEnabled) policy_enforced_tcp=\(config.dualMITMPolicyEngineEnforcedTCP) policy_enforced_proxy=\(config.dualMITMPolicyEngineEnforcedProxy) policy_enforced_quic=\(config.dualMITMPolicyEngineEnforcedQUIC) http2_mitm=\(config.dualMITMHttp2MITMEnabled) strict_hard_fail=\(config.dualMITMStrictEnforcementHardFail) quic_no_progress_grace_ms=\(config.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.quicCertMaterialCacheTTLSeconds)"
+                "event=vpn.packet_flow_config mode=\(config.captureMode.rawValue, privacy: .public) socks_source=\(endpoint.source, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.udp.ipv6Enabled) udp_mode=\(config.udp.forwardingMode.rawValue, privacy: .public) quic_mode=\(self.quicHandlingMode.rawValue, privacy: .public) block_quic=\(self.quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.transparentProxy.enabled) dual_mitm_policy=\(config.dualMITM.policy.rawValue, privacy: .public) breaker=\(config.dualMITM.circuitBreakerEnabled) policy_shadow=\(config.dualMITM.shadowEnabled) policy_enforced_tcp=\(config.dualMITM.enforceTCPRouting) policy_enforced_proxy=\(config.dualMITM.enforceProxyRouting) policy_enforced_quic=\(config.dualMITM.enforceQUICRouting) http2_mitm=\(config.dualMITM.http2MITMEnabled) strict_hard_fail=\(config.dualMITM.strictEnforcementHardFail) quic_no_progress_grace_ms=\(config.dualMITM.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.dualMITM.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.dualMITM.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.dualMITM.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.dualMITM.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.dualMITM.quicCertMaterialCacheTTLSeconds)"
             )
             appendEventLog(
                 type: "packet_flow_config",
-                msg: "mode=\(config.mode.rawValue) socks_source=\(endpoint.source) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.ipv6Enabled) udp_mode=\(config.udpForwardingMode.rawValue) quic_mode=\(quicHandlingMode.rawValue) block_quic=\(quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.tcpTransparentMITMEnabled) dual_mitm_policy=\(config.dualMITMPolicy.rawValue) breaker=\(config.dualMITMCircuitBreakerEnabled) policy_shadow=\(config.dualMITMPolicyEngineShadowEnabled) policy_enforced_tcp=\(config.dualMITMPolicyEngineEnforcedTCP) policy_enforced_proxy=\(config.dualMITMPolicyEngineEnforcedProxy) policy_enforced_quic=\(config.dualMITMPolicyEngineEnforcedQUIC) http2_mitm=\(config.dualMITMHttp2MITMEnabled) strict_hard_fail=\(config.dualMITMStrictEnforcementHardFail) quic_no_progress_grace_ms=\(config.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.quicCertMaterialCacheTTLSeconds)"
+                msg: "mode=\(config.captureMode.rawValue) socks_source=\(endpoint.source) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.udp.ipv6Enabled) udp_mode=\(config.udp.forwardingMode.rawValue) quic_mode=\(quicHandlingMode.rawValue) block_quic=\(quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.transparentProxy.enabled) dual_mitm_policy=\(config.dualMITM.policy.rawValue) breaker=\(config.dualMITM.circuitBreakerEnabled) policy_shadow=\(config.dualMITM.shadowEnabled) policy_enforced_tcp=\(config.dualMITM.enforceTCPRouting) policy_enforced_proxy=\(config.dualMITM.enforceProxyRouting) policy_enforced_quic=\(config.dualMITM.enforceQUICRouting) http2_mitm=\(config.dualMITM.http2MITMEnabled) strict_hard_fail=\(config.dualMITM.strictEnforcementHardFail) quic_no_progress_grace_ms=\(config.dualMITM.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.dualMITM.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.dualMITM.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.dualMITM.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.dualMITM.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.dualMITM.quicCertMaterialCacheTTLSeconds)"
             )
 
-            let ipv6Enabled = config.ipv6Enabled
+            let ipv6Enabled = config.udp.ipv6Enabled
             let forwarder = HevSocks5TunnelForwarder(
                 packetFlow: config.packetFlow,
                 socks5Host: trimmedHost,
@@ -395,17 +322,17 @@ actor PacketTunnelRuntimeState {
             capturePipeline: pipeline,
             forwarder: packetForwarder,
             udpForwarder: udpForwarder,
-            udpForwardingMode: config.udpForwardingMode,
+            udpForwardingMode: config.udp.forwardingMode,
             quicHandlingMode: quicHandlingMode,
-            dualMITMPolicy: config.dualMITMPolicy,
-            quicHostFailOpenSeconds: config.quicHostFailOpenSeconds,
-            dualMITMCircuitBreakerEnabled: config.dualMITMCircuitBreakerEnabled,
-            quicNoProgressGraceMs: config.quicNoProgressGraceMs,
-            quicNoProgressIdleMs: config.quicNoProgressIdleMs,
-            quicNoProgressAbsoluteMs: config.quicNoProgressAbsoluteMs,
-            quicNoProgressMinClientDatagrams: config.quicNoProgressMinClientDatagrams,
-            quicAuthorityRetryAttempts: config.quicAuthorityRetryAttempts,
-            quicCertMaterialCacheTTLSeconds: config.quicCertMaterialCacheTTLSeconds,
+            dualMITMPolicy: config.dualMITM.policy,
+            quicHostFailOpenSeconds: config.dualMITM.quicHostFailOpenSeconds,
+            dualMITMCircuitBreakerEnabled: config.dualMITM.circuitBreakerEnabled,
+            quicNoProgressGraceMs: config.dualMITM.quicNoProgressGraceMs,
+            quicNoProgressIdleMs: config.dualMITM.quicNoProgressIdleMs,
+            quicNoProgressAbsoluteMs: config.dualMITM.quicNoProgressAbsoluteMs,
+            quicNoProgressMinClientDatagrams: config.dualMITM.quicNoProgressMinClientDatagrams,
+            quicAuthorityRetryAttempts: config.dualMITM.quicAuthorityRetryAttempts,
+            quicCertMaterialCacheTTLSeconds: config.dualMITM.quicCertMaterialCacheTTLSeconds,
             dualMITMPolicyEngine: policyEngine,
             quicInterceptor: RequestInterceptor.shared,
             eventLogHandler: eventLogger
@@ -441,11 +368,15 @@ actor PacketTunnelRuntimeState {
     }
 
     private func resolveSocksEndpoint(using config: PacketFlowConfig) throws -> EffectiveSocksEndpoint {
-        let source = selectSocksEndpointSource(host: config.socks5Host, port: config.socks5Port)
-        if config.mode.supportsCustomSocksServer, source == .configured {
-            let trimmedHost = config.socks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = selectSocksEndpointSource(host: config.socks.remoteHost, port: config.socks.remotePort)
+        if config.captureMode.supportsCustomSocksServer, source == .configured {
+            let trimmedHost = config.socks.remoteHost.trimmingCharacters(in: .whitespacesAndNewlines)
             stopLocalSocks5Server()
-            return EffectiveSocksEndpoint(host: trimmedHost, port: config.socks5Port, source: SocksEndpointSource.configured.rawValue)
+            return EffectiveSocksEndpoint(
+                host: trimmedHost,
+                port: config.socks.remotePort,
+                source: SocksEndpointSource.configured.rawValue
+            )
         }
 
         let localServer: LocalSocks5Server
@@ -457,13 +388,13 @@ actor PacketTunnelRuntimeState {
                     await self?.appendEventLog(type: type, msg: msg)
                 }
             }
-            let dualMITMPolicy = config.dualMITMPolicy
+            let dualMITMPolicy = config.dualMITM.policy
             let policyEngine = dualMITMPolicyEngine
             let tcpConnectRoutingPolicy = LocalSocks5Server.TCPConnectRoutingPolicy(
-                enabled: config.tcpTransparentMITMEnabled,
-                interceptPorts: config.tcpTransparentMITMPorts,
-                mitmProxyHost: config.mitmProxyHost,
-                mitmProxyPort: config.mitmProxyPort,
+                enabled: config.transparentProxy.enabled,
+                interceptPorts: config.transparentProxy.interceptPorts,
+                mitmProxyHost: config.transparentProxy.proxyHost,
+                mitmProxyPort: config.transparentProxy.proxyPort,
                 failOpen: dualMITMPolicy == .adaptiveFailOpen,
                 dualMITMPolicy: dualMITMPolicy,
                 policyEngine: policyEngine,
@@ -502,7 +433,7 @@ actor PacketTunnelRuntimeState {
                 }
             )
             let server = LocalSocks5Server(
-                bindHost: config.localSocks5Host,
+                bindHost: config.socks.localHost,
                 tcpConnectRoutingPolicy: tcpConnectRoutingPolicy,
                 eventLogHandler: eventLogger
             )
@@ -511,7 +442,7 @@ actor PacketTunnelRuntimeState {
         }
 
         do {
-            let endpoint = try localServer.start(preferredPort: config.localSocks5Port)
+            let endpoint = try localServer.start(preferredPort: config.socks.preferredLocalPort)
             return EffectiveSocksEndpoint(host: endpoint.host, port: endpoint.port, source: SocksEndpointSource.embedded.rawValue)
         } catch {
             localServer.stop()
@@ -587,8 +518,12 @@ actor PacketTunnelRuntimeState {
         VPNLog.proxy.info("event=vpn.runtime_server_stopped outcome=success")
     }
 
-    @preconcurrency func updateProxyConfiguration(_ config: UnsafeSendable<[String: Any]>) {
+    @preconcurrency func updateProxyServerConfiguration(_ config: UnsafeSendable<[String: Any]>) {
         proxyServer?.updateConfiguration(config.value)
+    }
+
+    func updateProxyIngressConfiguration(_ configuration: TunnelProxyIngressConfiguration) {
+        proxyServer?.updateConfiguration(configuration.asDictionary())
     }
 
     func setMitmAllowlist(_ allowlist: [String]) {
