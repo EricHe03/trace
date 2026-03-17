@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 import OSLog
 @testable import TraceCore
+import XCTest
 
 final class TraceLogTests: XCTestCase {
-
     // MARK: - Logger Factory Tests
 
     func testMakeLoggerWithModuleAndCategory() {
@@ -192,7 +191,9 @@ final class TraceLogTests: XCTestCase {
 
     func testLogEventWithError() {
         struct TestError: Error, CustomStringConvertible {
-            var description: String { "test error" }
+            var description: String {
+                "test error"
+            }
         }
 
         let event = LogEvent(domain: "test", action: "action")
@@ -451,7 +452,7 @@ final class TraceLogTests: XCTestCase {
 
     func testConcurrentLogEventCreation() async {
         await withTaskGroup(of: String.self) { group in
-            for i in 0..<100 {
+            for i in 0 ..< 100 {
                 group.addTask {
                     LogEvent(domain: "test", action: "action")
                         .success()
@@ -473,7 +474,7 @@ final class TraceLogTests: XCTestCase {
         let logger = TraceLog.make(module: .core, category: .storage)
 
         await withTaskGroup(of: Void.self) { group in
-            for i in 0..<100 {
+            for i in 0 ..< 100 {
                 group.addTask {
                     let event = LogEvent(domain: "test", action: "action").count(i)
                     logger.info(event)
@@ -486,7 +487,7 @@ final class TraceLogTests: XCTestCase {
 
     func testLogEventCreationPerformance() {
         measure {
-            for i in 0..<1000 {
+            for i in 0 ..< 1000 {
                 _ = LogEvent(domain: "test", action: "action")
                     .success()
                     .count(i)
@@ -501,7 +502,7 @@ final class TraceLogTests: XCTestCase {
         let logger = TraceLog.make(module: .core, category: .storage)
 
         measure {
-            for i in 0..<1000 {
+            for i in 0 ..< 1000 {
                 let event = LogEvent(domain: "test", action: "action").count(i)
                 logger.info(event)
             }
@@ -512,7 +513,7 @@ final class TraceLogTests: XCTestCase {
         let limiter = LogRateLimiter(maxRetries: 5)
 
         measure {
-            for i in 1...1000 {
+            for i in 1 ... 1000 {
                 _ = limiter.levelForAttempt(i % 5 + 1, isFinal: i % 5 == 4)
             }
         }
@@ -522,7 +523,7 @@ final class TraceLogTests: XCTestCase {
         let sampler = LogSampler()
 
         measure {
-            for i in 0..<1000 {
+            for i in 0 ..< 1000 {
                 _ = sampler.shouldLog(key: "test-\(i % 10)", first: 3, every: 100)
             }
         }

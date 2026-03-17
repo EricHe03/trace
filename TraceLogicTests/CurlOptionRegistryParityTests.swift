@@ -6,11 +6,10 @@
 //
 
 import Foundation
-import XCTest
 @testable import TraceFeatures
+import XCTest
 
 final class CurlOptionRegistryParityTests: XCTestCase {
-
     func testRegistryMatchesManpageOptions() throws {
         let manpage = try loadManpage()
         let parsed = parseOptionDefinitions(from: manpage)

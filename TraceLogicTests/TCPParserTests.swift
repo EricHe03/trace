@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/01/21.
 //
 
-import XCTest
 @testable import TracePacket
+import XCTest
 
 final class TCPParserTests: XCTestCase {
     // MARK: - Basic Parsing Tests
@@ -18,11 +18,11 @@ final class TCPParserTests: XCTestCase {
             0x1F, 0x90, // Destination port: 8080
             0x00, 0x00, 0x00, 0x01, // Sequence number: 1
             0x00, 0x00, 0x00, 0x02, // Acknowledgment number: 2
-            0x50,       // Data offset: 5 (20 bytes)
-            0x18,       // Flags: PSH + ACK
+            0x50, // Data offset: 5 (20 bytes)
+            0x18, // Flags: PSH + ACK
             0x20, 0x00, // Window size: 8192
             0x00, 0x00, // Checksum
-            0x00, 0x00, // Urgent pointer
+            0x00, 0x00 // Urgent pointer
         ])
 
         let packet = TCPParser.parse(data)
@@ -44,11 +44,11 @@ final class TCPParserTests: XCTestCase {
             0x1F, 0x90, // Destination port: 8080
             0x00, 0x00, 0x00, 0x01, // Sequence number: 1
             0x00, 0x00, 0x00, 0x02, // Acknowledgment number: 2
-            0x50,       // Data offset: 5 (20 bytes)
-            0x18,       // Flags: PSH + ACK
+            0x50, // Data offset: 5 (20 bytes)
+            0x18, // Flags: PSH + ACK
             0x20, 0x00, // Window size: 8192
             0x00, 0x00, // Checksum
-            0x00, 0x00, // Urgent pointer
+            0x00, 0x00 // Urgent pointer
         ])
 
         // Add payload
@@ -73,11 +73,11 @@ final class TCPParserTests: XCTestCase {
             0x1F, 0x90,
             0x00, 0x00, 0x00, 0x01,
             0x00, 0x00, 0x00, 0x02,
-            0x40,       // Data offset: 4 (16 bytes) - invalid!
+            0x40, // Data offset: 4 (16 bytes) - invalid!
             0x18,
             0x20, 0x00,
             0x00, 0x00,
-            0x00, 0x00,
+            0x00, 0x00
         ])
 
         let packet = TCPParser.parse(data)
@@ -91,11 +91,11 @@ final class TCPParserTests: XCTestCase {
             0x1F, 0x90,
             0x00, 0x00, 0x00, 0x01,
             0x00, 0x00, 0x00, 0x02,
-            0xF0,       // Data offset: 15 (60 bytes) but we only have 20
+            0xF0, // Data offset: 15 (60 bytes) but we only have 20
             0x18,
             0x20, 0x00,
             0x00, 0x00,
-            0x00, 0x00,
+            0x00, 0x00
         ])
 
         let packet = TCPParser.parse(data)
@@ -111,7 +111,7 @@ final class TCPParserTests: XCTestCase {
             0x00, 0x00, 0x00, 0x00,
             0x50, 0x02, // Flags: SYN
             0x20, 0x00,
-            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
         ])
 
         let packet = TCPParser.parse(data)
@@ -127,7 +127,7 @@ final class TCPParserTests: XCTestCase {
             0x00, 0x00, 0x00, 0x02,
             0x50, 0x12, // Flags: SYN + ACK
             0x20, 0x00,
-            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
         ])
 
         let packet = TCPParser.parse(data)
@@ -142,7 +142,7 @@ final class TCPParserTests: XCTestCase {
             0x00, 0x00, 0x00, 0x02,
             0x50, 0x11, // Flags: FIN + ACK
             0x20, 0x00,
-            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
         ])
 
         let packet = TCPParser.parse(data)
@@ -157,7 +157,7 @@ final class TCPParserTests: XCTestCase {
             0x00, 0x00, 0x00, 0x00,
             0x50, 0x04, // Flags: RST
             0x20, 0x00,
-            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
         ])
 
         let packet = TCPParser.parse(data)
@@ -171,7 +171,7 @@ final class TCPParserTests: XCTestCase {
             0x00, 0x00, 0x00, 0x02,
             0x50, 0x30, // Flags: URG + ACK
             0x20, 0x00,
-            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
         ])
 
         let packet = TCPParser.parse(data)
@@ -186,7 +186,7 @@ final class TCPParserTests: XCTestCase {
             0x00, 0x00, 0x00, 0x02,
             0x50, 0x3F, // All flags set
             0x20, 0x00,
-            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
         ])
 
         let packet = TCPParser.parse(data)
@@ -207,7 +207,7 @@ final class TCPParserTests: XCTestCase {
             0x00, 0x00, 0x00, 0x02,
             0x50, 0x18, // Data offset: 5, Flags: PSH + ACK
             0x20, 0x00,
-            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
         ])
 
         let packet = TCPParser.parse(data)
@@ -225,9 +225,9 @@ final class TCPParserTests: XCTestCase {
             0x20, 0x00,
             0x00, 0x00, 0x00, 0x00,
             // Options: MSS
-            0x02,       // Kind: MSS
-            0x04,       // Length: 4
-            0x05, 0xB4, // MSS value: 1460
+            0x02, // Kind: MSS
+            0x04, // Length: 4
+            0x05, 0xB4 // MSS value: 1460
         ])
 
         let packet = TCPParser.parse(data)
@@ -243,10 +243,10 @@ final class TCPParserTests: XCTestCase {
             0x20, 0x00,
             0x00, 0x00, 0x00, 0x00,
             // Options: Window Scale
-            0x03,       // Kind: Window Scale
-            0x03,       // Length: 3
-            0x07,       // Scale: 7
-            0x00,       // Padding
+            0x03, // Kind: Window Scale
+            0x03, // Length: 3
+            0x07, // Scale: 7
+            0x00 // Padding
         ])
 
         let packet = TCPParser.parse(data)
@@ -262,9 +262,9 @@ final class TCPParserTests: XCTestCase {
             0x20, 0x00,
             0x00, 0x00, 0x00, 0x00,
             // Options: SACK Permitted
-            0x04,       // Kind: SACK Permitted
-            0x02,       // Length: 2
-            0x00, 0x00, // Padding
+            0x04, // Kind: SACK Permitted
+            0x02, // Length: 2
+            0x00, 0x00 // Padding
         ])
 
         let packet = TCPParser.parse(data)
@@ -286,7 +286,7 @@ final class TCPParserTests: XCTestCase {
             // Options: SACK Permitted
             0x04, 0x02,
             // Padding
-            0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00
         ])
 
         let packet = TCPParser.parse(data)
@@ -304,10 +304,10 @@ final class TCPParserTests: XCTestCase {
             0x20, 0x00,
             0x00, 0x00, 0x00, 0x00,
             // Options
-            0x01,       // NOP
-            0x01,       // NOP
+            0x01, // NOP
+            0x01, // NOP
             0x02, 0x04, 0x05, 0xB4, // MSS
-            0x00, 0x00, // Padding
+            0x00, 0x00 // Padding
         ])
 
         let packet = TCPParser.parse(data)
@@ -324,8 +324,8 @@ final class TCPParserTests: XCTestCase {
             0x00, 0x00, 0x00, 0x00,
             // Options
             0x02, 0x04, 0x05, 0xB4, // MSS
-            0x00,       // EOL (should stop parsing)
-            0x03, 0x03, 0x07, // Window Scale (should be ignored)
+            0x00, // EOL (should stop parsing)
+            0x03, 0x03, 0x07 // Window Scale (should be ignored)
         ])
 
         let packet = TCPParser.parse(data)
@@ -343,14 +343,14 @@ final class TCPParserTests: XCTestCase {
             0xFF, 0xFF, 0xFF, 0xFF, // Acknowledgment number: max
             0x50, 0x18,
             0xFF, 0xFF, // Window size: 65535
-            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
         ])
 
         let packet = TCPParser.parse(data)
         XCTAssertEqual(packet?.sourcePort, 65535)
         XCTAssertEqual(packet?.destinationPort, 65535)
-        XCTAssertEqual(packet?.sequenceNumber, 0xFFFFFFFF)
-        XCTAssertEqual(packet?.acknowledgmentNumber, 0xFFFFFFFF)
+        XCTAssertEqual(packet?.sequenceNumber, 0xFFFF_FFFF)
+        XCTAssertEqual(packet?.acknowledgmentNumber, 0xFFFF_FFFF)
         XCTAssertEqual(packet?.windowSize, 65535)
     }
 
@@ -362,7 +362,7 @@ final class TCPParserTests: XCTestCase {
             0x00, 0x00, 0x00, 0x00, // Acknowledgment number: 0
             0x50, 0x00, // Data offset: 5, Flags: none
             0x00, 0x00, // Window size: 0
-            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
         ])
 
         let packet = TCPParser.parse(data)

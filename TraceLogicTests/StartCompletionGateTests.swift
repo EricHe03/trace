@@ -6,8 +6,8 @@
 //
 
 #if !targetEnvironment(simulator)
-import XCTest
 @testable import TraceVPNKit
+import XCTest
 
 final class StartCompletionGateTests: XCTestCase {
     func testAllowsOnlyFirstCompletionPerInvocation() async {

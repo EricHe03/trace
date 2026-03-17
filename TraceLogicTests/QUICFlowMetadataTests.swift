@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/02/18.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class QUICFlowMetadataTests: XCTestCase {
     func testInspectionOutcomeDisplayNames() {

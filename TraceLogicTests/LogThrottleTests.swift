@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class LogThrottleTests: XCTestCase {
-
     // MARK: - Initialization Tests
 
     func testLogThrottleSharedInstance() {
@@ -40,7 +39,7 @@ final class LogThrottleTests: XCTestCase {
         XCTAssertFalse(second)
     }
 
-    func testShouldLogAfterInterval() throws {
+    func testShouldLogAfterInterval() {
         let throttle = LogThrottle()
 
         let first = throttle.shouldLog(key: "test", minInterval: 0.1)
@@ -53,7 +52,7 @@ final class LogThrottleTests: XCTestCase {
         XCTAssertTrue(second)
     }
 
-    func testShouldThrottleBeforeInterval() throws {
+    func testShouldThrottleBeforeInterval() {
         let throttle = LogThrottle()
 
         let first = throttle.shouldLog(key: "test", minInterval: 1.0)
@@ -93,12 +92,12 @@ final class LogThrottleTests: XCTestCase {
     func testManyKeysSimultaneously() {
         let throttle = LogThrottle()
 
-        for i in 0..<100 {
+        for i in 0 ..< 100 {
             let shouldLog = throttle.shouldLog(key: "key-\(i)", minInterval: 1.0)
             XCTAssertTrue(shouldLog, "First call for key-\(i) should log")
         }
 
-        for i in 0..<100 {
+        for i in 0 ..< 100 {
             let shouldLog = throttle.shouldLog(key: "key-\(i)", minInterval: 1.0)
             XCTAssertFalse(shouldLog, "Second call for key-\(i) should be throttled")
         }
@@ -128,7 +127,7 @@ final class LogThrottleTests: XCTestCase {
         XCTAssertTrue(second)
     }
 
-    func testVerySmallInterval() throws {
+    func testVerySmallInterval() {
         let throttle = LogThrottle()
 
         let first = throttle.shouldLog(key: "test", minInterval: 0.001)
@@ -198,7 +197,7 @@ final class LogThrottleTests: XCTestCase {
 
     // MARK: - Timing Precision Tests
 
-    func testPreciseIntervalTiming() throws {
+    func testPreciseIntervalTiming() {
         let throttle = LogThrottle()
         let interval = 0.1
 
@@ -213,7 +212,7 @@ final class LogThrottleTests: XCTestCase {
         XCTAssertTrue(throttle.shouldLog(key: "test", minInterval: interval))
     }
 
-    func testMultipleIntervalsSequence() throws {
+    func testMultipleIntervalsSequence() {
         let throttle = LogThrottle()
 
         XCTAssertTrue(throttle.shouldLog(key: "test", minInterval: 0.05))
@@ -282,7 +281,7 @@ final class LogThrottleTests: XCTestCase {
 
     // MARK: - State Tests
 
-    func testThrottleStateReset() throws {
+    func testThrottleStateReset() {
         let throttle = LogThrottle()
 
         XCTAssertTrue(throttle.shouldLog(key: "test", minInterval: 0.1))
@@ -381,7 +380,7 @@ final class LogThrottleTests: XCTestCase {
         let throttle = LogThrottle()
         var throttledCount = 0
 
-        for _ in 0..<10000 {
+        for _ in 0 ..< 10000 {
             if !throttle.shouldLog(key: "high-freq", minInterval: 1.0) {
                 throttledCount += 1
             }
@@ -395,13 +394,13 @@ final class LogThrottleTests: XCTestCase {
         let throttle = LogThrottle()
         let keyCount = 10000
 
-        for i in 0..<keyCount {
+        for i in 0 ..< keyCount {
             let shouldLog = throttle.shouldLog(key: "key-\(i)", minInterval: 1.0)
             XCTAssertTrue(shouldLog)
         }
 
         // All second calls should be throttled
-        for i in 0..<keyCount {
+        for i in 0 ..< keyCount {
             let shouldLog = throttle.shouldLog(key: "key-\(i)", minInterval: 1.0)
             XCTAssertFalse(shouldLog)
         }
@@ -413,7 +412,7 @@ final class LogThrottleTests: XCTestCase {
         let throttle = LogThrottle()
 
         measure {
-            for i in 0..<1000 {
+            for i in 0 ..< 1000 {
                 _ = throttle.shouldLog(key: "test-\(i)", minInterval: 1.0)
             }
         }
@@ -423,7 +422,7 @@ final class LogThrottleTests: XCTestCase {
         let throttle = LogThrottle()
 
         measure {
-            for _ in 0..<1000 {
+            for _ in 0 ..< 1000 {
                 _ = throttle.shouldLog(key: "test", minInterval: 1.0)
             }
         }
@@ -433,7 +432,7 @@ final class LogThrottleTests: XCTestCase {
         let throttle = LogThrottle()
 
         measure {
-            for i in 0..<1000 {
+            for i in 0 ..< 1000 {
                 _ = throttle.shouldLog(event: "event", key: "key-\(i)", minInterval: 1.0)
             }
         }

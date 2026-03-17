@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 import OSLog
 @testable import TraceCore
+import XCTest
 
 final class LogStoreTests: XCTestCase {
-
     // MARK: - Initialization Tests
 
     func testLogStoreSharedInstance() {
@@ -145,7 +144,7 @@ final class LogStoreTests: XCTestCase {
         let store = LogStore.shared
 
         // Log multiple messages
-        for i in 0..<20 {
+        for i in 0 ..< 20 {
             CoreLog.storage.info("test message \(i)")
         }
 
@@ -189,7 +188,7 @@ final class LogStoreTests: XCTestCase {
         )
 
         // Should contain both categories
-        let categories = Set(logs.map { $0.category })
+        let categories = Set(logs.map(\.category))
         XCTAssertTrue(categories.contains("Storage") || categories.contains("Lifecycle") || categories.isEmpty)
     }
 
@@ -213,7 +212,7 @@ final class LogStoreTests: XCTestCase {
         )
 
         // Should be sorted by timestamp (most recent first)
-        for i in 0..<(logs.count - 1) {
+        for i in 0 ..< (logs.count - 1) {
             XCTAssertGreaterThanOrEqual(logs[i].timestamp, logs[i + 1].timestamp)
         }
     }
@@ -438,7 +437,7 @@ final class LogStoreTests: XCTestCase {
         let store = LogStore.shared
 
         // Log some messages
-        for i in 0..<10 {
+        for i in 0 ..< 10 {
             CoreLog.storage.info("concurrent test \(i)")
         }
 
@@ -460,7 +459,7 @@ final class LogStoreTests: XCTestCase {
         let store = LogStore.shared
 
         await withTaskGroup(of: Void.self) { group in
-            for _ in 0..<10 {
+            for _ in 0 ..< 10 {
                 group.addTask {
                     await store.clearVPNLogs()
                 }
@@ -474,7 +473,7 @@ final class LogStoreTests: XCTestCase {
         let store = LogStore.shared
 
         // Log many messages
-        for i in 0..<100 {
+        for i in 0 ..< 100 {
             CoreLog.storage.info("performance test \(i)")
         }
 
@@ -490,7 +489,7 @@ final class LogStoreTests: XCTestCase {
         }
     }
 
-    func testLogEntryEncodingPerformance() throws {
+    func testLogEntryEncodingPerformance() {
         let entry = LogEntry(
             timestamp: Date(),
             level: .info,
@@ -505,7 +504,7 @@ final class LogStoreTests: XCTestCase {
         let encoder = JSONEncoder()
 
         measure {
-            for _ in 0..<1000 {
+            for _ in 0 ..< 1000 {
                 _ = try? encoder.encode(entry)
             }
         }
@@ -528,7 +527,7 @@ final class LogStoreTests: XCTestCase {
         let decoder = JSONDecoder()
 
         measure {
-            for _ in 0..<1000 {
+            for _ in 0 ..< 1000 {
                 _ = try? decoder.decode(LogEntry.self, from: data)
             }
         }

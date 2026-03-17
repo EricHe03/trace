@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class ServerSentEventTests: XCTestCase {
-
     // MARK: - ServerSentEvent Initializer Tests
 
     func testServerSentEventInitWithDefaults() {
@@ -454,13 +453,13 @@ final class ServerSentEventTests: XCTestCase {
     func testSSEParserParseComplexEvent() {
         let parser = SSEParser()
         let input = """
-id: 42
-event: userconnect
-data: {"username": "bobby", "time": "02:33:48"}
-retry: 10000
+        id: 42
+        event: userconnect
+        data: {"username": "bobby", "time": "02:33:48"}
+        retry: 10000
 
 
-"""
+        """
 
         let events = parser.parse(input)
 

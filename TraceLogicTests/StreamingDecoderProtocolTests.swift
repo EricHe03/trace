@@ -5,13 +5,12 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 import Compression
-import zlib
 @testable import TraceCompression
+import XCTest
+import zlib
 
 final class StreamingDecoderProtocolTests: XCTestCase {
-
     // MARK: - Protocol Conformance Tests
 
     func testStreamingBrotliDecoderConformsToProtocol() {
@@ -137,17 +136,17 @@ final class StreamingDecoderProtocolTests: XCTestCase {
     func testStreamingDecoderConfigCustomValues() {
         let config = StreamingDecoderConfig(
             chunkSize: 1024,
-            maxOutputSize: 100000
+            maxOutputSize: 100_000
         )
 
         XCTAssertEqual(config.chunkSize, 1024)
-        XCTAssertEqual(config.maxOutputSize, 100000)
+        XCTAssertEqual(config.maxOutputSize, 100_000)
     }
 
     func testStreamingDecoderConfigIsSendable() {
         let config = StreamingDecoderConfig(
             chunkSize: 2048,
-            maxOutputSize: 200000
+            maxOutputSize: 200_000
         )
 
         Task {
@@ -240,7 +239,7 @@ final class StreamingDecoderProtocolTests: XCTestCase {
     func testProtocolWithCustomConfig() throws {
         let config = StreamingDecoderConfig(
             chunkSize: 1024,
-            maxOutputSize: 100000
+            maxOutputSize: 100_000
         )
 
         let decoder: any StreamingDecoderProtocol = StreamingDeflateDecoder(config: config)

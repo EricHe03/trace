@@ -5,13 +5,12 @@
 //  Created by Justin on 2026/01/27.
 //
 
-import XCTest
 import NetworkExtension
-@testable import TraceVPNKit
 @testable import TraceCore
+@testable import TraceVPNKit
+import XCTest
 
 final class PacketTunnelProviderTests: XCTestCase {
-
     // MARK: - IPC Message Tests
 
     func testIPCMessageGetHardeningConfig() {
@@ -214,7 +213,7 @@ final class PacketTunnelProviderTests: XCTestCase {
         let decision = decideUDPForwarding(
             udpForwarderAvailable: true,
             mode: .hevOnly,
-            sourcePort: 50_000,
+            sourcePort: 50000,
             destinationPort: 443,
             blockQUICEnabled: false,
             tunnelUDPSupported: false
@@ -228,7 +227,7 @@ final class PacketTunnelProviderTests: XCTestCase {
         let decision = decideUDPForwarding(
             udpForwarderAvailable: true,
             mode: .split,
-            sourcePort: 50_000,
+            sourcePort: 50000,
             destinationPort: 443,
             blockQUICEnabled: false,
             tunnelUDPSupported: false
@@ -242,7 +241,7 @@ final class PacketTunnelProviderTests: XCTestCase {
         let decision = decideUDPForwarding(
             udpForwarderAvailable: true,
             mode: .hevOnly,
-            sourcePort: 50_000,
+            sourcePort: 50000,
             destinationPort: 443,
             blockQUICEnabled: false,
             tunnelUDPSupported: true
@@ -256,7 +255,7 @@ final class PacketTunnelProviderTests: XCTestCase {
         let decision = decideUDPForwarding(
             udpForwarderAvailable: false,
             mode: .direct,
-            sourcePort: 40_000,
+            sourcePort: 40000,
             destinationPort: 53,
             blockQUICEnabled: false,
             tunnelUDPSupported: true
@@ -270,7 +269,7 @@ final class PacketTunnelProviderTests: XCTestCase {
         let decision = decideUDPForwarding(
             udpForwarderAvailable: true,
             mode: .direct,
-            sourcePort: 45_000,
+            sourcePort: 45000,
             destinationPort: 443,
             quicHandlingMode: .intercept,
             tunnelUDPSupported: true
@@ -284,7 +283,7 @@ final class PacketTunnelProviderTests: XCTestCase {
         let decision = decideUDPForwarding(
             udpForwarderAvailable: true,
             mode: .split,
-            sourcePort: 45_000,
+            sourcePort: 45000,
             destinationPort: 443,
             quicHandlingMode: .passThrough,
             tunnelUDPSupported: false
@@ -298,7 +297,7 @@ final class PacketTunnelProviderTests: XCTestCase {
         let decision = decideUDPForwarding(
             udpForwarderAvailable: true,
             mode: .direct,
-            sourcePort: 45_000,
+            sourcePort: 45000,
             destinationPort: 443,
             quicHandlingMode: .block,
             tunnelUDPSupported: true
@@ -700,9 +699,9 @@ final class PacketTunnelProviderTests: XCTestCase {
             let dnsServers: [String]
 
             func isValid() -> Bool {
-                return !proxyHost.isEmpty &&
-                       proxyPort > 0 &&
-                       !dnsServers.isEmpty
+                !proxyHost.isEmpty &&
+                    proxyPort > 0 &&
+                    !dnsServers.isEmpty
             }
         }
 
@@ -721,7 +720,7 @@ final class PacketTunnelProviderTests: XCTestCase {
             let proxyPort: UInt16
 
             func isValid() -> Bool {
-                return !proxyHost.isEmpty && proxyPort > 0
+                !proxyHost.isEmpty && proxyPort > 0
             }
         }
 

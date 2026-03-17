@@ -5,10 +5,10 @@
 //  Golden equivalence + failure-mode matrix coverage for SwiftNIO migration.
 //
 
-import XCTest
 @testable import TraceCore
 @testable import TraceFeatures
 @testable import TraceProxy
+import XCTest
 
 private final class ParityMockTransport: RequestExecutorTransport {
     var handler: ((RequestExecutorTransportRequest) throws -> RequestExecutorTransportResponse)?

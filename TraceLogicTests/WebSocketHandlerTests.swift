@@ -5,9 +5,9 @@
 //  Updated for NIO WebSocket model-based capture.
 //
 
-import XCTest
 import NIOWebSocket
 @testable import TraceCore
+import XCTest
 
 final class WebSocketHandlerTests: XCTestCase {
     func testWebSocketMessageTypeFromOpcodeRoundTrip() {

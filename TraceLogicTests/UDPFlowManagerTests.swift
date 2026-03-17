@@ -6,11 +6,11 @@
 //
 
 #if !targetEnvironment(simulator)
-import XCTest
 @testable import TraceCore
 @testable import TraceNetworking
 @testable import TracePacket
 @testable import TraceVPNKit
+import XCTest
 
 final class UDPFlowManagerTests: XCTestCase {
     var sut: UDPFlowManager!
@@ -388,7 +388,7 @@ final class UDPFlowManagerTests: XCTestCase {
         )
 
         // When - Record 15 datagrams
-        for i in 0..<15 {
+        for i in 0 ..< 15 {
             let udpPacket = createUDPPacket(
                 sourcePort: 12345,
                 destinationPort: 53,
@@ -448,7 +448,7 @@ final class UDPFlowManagerTests: XCTestCase {
         expectation.expectedFulfillmentCount = 5
 
         // When - Flush from multiple threads
-        for _ in 0..<5 {
+        for _ in 0 ..< 5 {
             DispatchQueue.global().async {
                 self.sut.flush()
                 expectation.fulfill()
@@ -565,7 +565,7 @@ final class UDPFlowManagerTests: XCTestCase {
     // MARK: - Helper Methods
 
     private func createIPPacket(source: String, destination: String) -> IPPacket {
-        return IPPacket(
+        IPPacket(
             version: 4,
             source: IPAddress(stringLiteral: source),
             destination: IPAddress(stringLiteral: destination),
@@ -576,7 +576,7 @@ final class UDPFlowManagerTests: XCTestCase {
     }
 
     private func createUDPPacket(sourcePort: UInt16, destinationPort: UInt16, payload: Data) -> UDPPacket {
-        return UDPPacket(
+        UDPPacket(
             sourcePort: sourcePort,
             destinationPort: destinationPort,
             payload: payload

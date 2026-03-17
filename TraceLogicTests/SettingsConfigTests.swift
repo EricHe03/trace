@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/01/24.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class SettingsConfigTests: XCTestCase {
     func testSamplingConfigNormalization() {

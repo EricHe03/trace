@@ -22,14 +22,37 @@ extension BodyStorage {
 }
 
 extension HTTPMethod {
-    static var GET: HTTPMethod { .get }
-    static var POST: HTTPMethod { .post }
-    static var PUT: HTTPMethod { .put }
-    static var DELETE: HTTPMethod { .delete }
-    static var PATCH: HTTPMethod { .patch }
-    static var HEAD: HTTPMethod { .head }
-    static var OPTIONS: HTTPMethod { .options }
-    static var CONNECT: HTTPMethod { .connect }
+    static var GET: HTTPMethod {
+        .get
+    }
+
+    static var POST: HTTPMethod {
+        .post
+    }
+
+    static var PUT: HTTPMethod {
+        .put
+    }
+
+    static var DELETE: HTTPMethod {
+        .delete
+    }
+
+    static var PATCH: HTTPMethod {
+        .patch
+    }
+
+    static var HEAD: HTTPMethod {
+        .head
+    }
+
+    static var OPTIONS: HTTPMethod {
+        .options
+    }
+
+    static var CONNECT: HTTPMethod {
+        .connect
+    }
 }
 
 extension RewriteManager {

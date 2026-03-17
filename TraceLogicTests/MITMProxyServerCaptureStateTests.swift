@@ -5,9 +5,9 @@
 //  Created by Justin on 2026/03/12.
 //
 
-import XCTest
 @testable import TraceCore
 @testable import TraceProxy
+import XCTest
 
 final class MITMProxyServerCaptureStateTests: XCTestCase {
     func testCaptureLifecycleStateTreatsBareTunneledSnapshotAsPending() {

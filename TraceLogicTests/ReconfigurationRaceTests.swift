@@ -5,9 +5,9 @@
 //  Created by Justin on 2026/02/24.
 //
 
-import XCTest
 @testable import TraceCore
 @testable import TraceVPNKit
+import XCTest
 
 final class ReconfigurationRaceTests: XCTestCase {
     func testConcurrentReconfigurationsRemainSerialized() async throws {
@@ -42,9 +42,9 @@ final class ReconfigurationRaceTests: XCTestCase {
 
         let events = recorder.events
         XCTAssertEqual(events.count, iterations * 2)
-        XCTAssertEqual(events.filter { $0.type == "reconfig_begin" }.count, iterations)
-        XCTAssertEqual(events.filter { $0.type == "reconfig_commit" }.count, iterations)
-        XCTAssertEqual(events.filter { $0.type == "reconfig_rollback" }.count, 0)
+        XCTAssertEqual(events.count(where: { $0.type == "reconfig_begin" }), iterations)
+        XCTAssertEqual(events.count(where: { $0.type == "reconfig_commit" }), iterations)
+        XCTAssertEqual(events.count(where: { $0.type == "reconfig_rollback" }), 0)
     }
 }
 

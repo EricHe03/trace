@@ -5,8 +5,8 @@
 //  Updated for HPACK model event list behavior.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class HPACKHuffmanEncoderTests: XCTestCase {
     func testHPACKTableEventArrayCodableRoundTrip() throws {

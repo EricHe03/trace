@@ -5,13 +5,12 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 import OSLog
-@testable import TraceNetworking
 @testable import TraceCore
+@testable import TraceNetworking
+import XCTest
 
 final class NetworkLogTests: XCTestCase {
-
     // MARK: - Logger Initialization Tests
 
     func testHTTPLoggerExists() {
@@ -390,7 +389,7 @@ final class NetworkLogTests: XCTestCase {
     func testLoggingPerformance() {
         measure {
             // Measure message construction rather than OSLog emission to keep this test deterministic.
-            for i in 0..<1000 {
+            for i in 0 ..< 1000 {
                 _ = LogEvent.http("performance_test").with("i", value: i).description
             }
         }
@@ -398,7 +397,7 @@ final class NetworkLogTests: XCTestCase {
 
     func testStructuredLoggingPerformance() {
         measure {
-            for i in 0..<1000 {
+            for i in 0 ..< 1000 {
                 _ = LogEvent.http("test").count(i).with("status", value: "ok").description
             }
         }
@@ -406,7 +405,7 @@ final class NetworkLogTests: XCTestCase {
 
     func testMultiLoggerPerformance() {
         measure {
-            for i in 0..<200 {
+            for i in 0 ..< 200 {
                 _ = LogEvent.http("message").with("i", value: i).description
                 _ = LogEvent.http2("message").with("i", value: i).description
                 _ = LogEvent.sse("message").with("i", value: i).description

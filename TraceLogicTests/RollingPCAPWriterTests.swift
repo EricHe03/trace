@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
-@testable import TraceProxy
 @testable import TraceCore
+@testable import TraceProxy
+import XCTest
 
 final class RollingPCAPWriterTests: XCTestCase {
-
     // MARK: - Initialization Tests
 
     func testRollingPCAPWriterInitialization() throws {
@@ -20,7 +19,7 @@ final class RollingPCAPWriterTests: XCTestCase {
             let writer = try RollingPCAPWriter(
                 appGroupID: AppGroupStorage.appGroupIdentifier,
                 fileName: fileName,
-                maxFileSize: 10_000,
+                maxFileSize: 10000,
                 maxFiles: 3
             )
 
@@ -53,7 +52,7 @@ final class RollingPCAPWriterTests: XCTestCase {
             try RollingPCAPWriter(
                 appGroupID: invalidAppGroupID,
                 fileName: fileName,
-                maxFileSize: 10_000,
+                maxFileSize: 10000,
                 maxFiles: 3
             )
         ) { error in
@@ -70,7 +69,7 @@ final class RollingPCAPWriterTests: XCTestCase {
             let writer = try RollingPCAPWriter(
                 appGroupID: AppGroupStorage.appGroupIdentifier,
                 fileName: fileName,
-                maxFileSize: 10_000,
+                maxFileSize: 10000,
                 maxFiles: 3
             )
 
@@ -99,7 +98,7 @@ final class RollingPCAPWriterTests: XCTestCase {
             let writer = try RollingPCAPWriter(
                 appGroupID: AppGroupStorage.appGroupIdentifier,
                 fileName: fileName,
-                maxFileSize: 10_000,
+                maxFileSize: 10000,
                 maxFiles: 3
             )
 
@@ -138,7 +137,7 @@ final class RollingPCAPWriterTests: XCTestCase {
             )
 
             // Write multiple packets
-            for i in 0..<10 {
+            for i in 0 ..< 10 {
                 let packet = Data(repeating: UInt8(i), count: 64)
                 writer.writePacket(packet)
             }
@@ -172,7 +171,7 @@ final class RollingPCAPWriterTests: XCTestCase {
             let writer = try RollingPCAPWriter(
                 appGroupID: AppGroupStorage.appGroupIdentifier,
                 fileName: fileName,
-                maxFileSize: 10_000,
+                maxFileSize: 10000,
                 maxFiles: 3
             )
 
@@ -202,7 +201,7 @@ final class RollingPCAPWriterTests: XCTestCase {
             let writer = try RollingPCAPWriter(
                 appGroupID: AppGroupStorage.appGroupIdentifier,
                 fileName: fileName,
-                maxFileSize: 10_000,
+                maxFileSize: 10000,
                 maxFiles: 3
             )
 
@@ -240,7 +239,7 @@ final class RollingPCAPWriterTests: XCTestCase {
             )
 
             // Write enough data to trigger rotation
-            for _ in 0..<50 {
+            for _ in 0 ..< 50 {
                 let packet = Data(repeating: 0x42, count: 100)
                 writer.writePacket(packet)
             }
@@ -259,7 +258,7 @@ final class RollingPCAPWriterTests: XCTestCase {
 
                 // Clean up rotated files
                 let stem = fileName.replacingOccurrences(of: ".pcap", with: "")
-                for i in 1...5 {
+                for i in 1 ... 5 {
                     let rotatedURL = container.appendingPathComponent("\(stem)_\(i).pcap")
                     try? FileManager.default.removeItem(at: rotatedURL)
                 }

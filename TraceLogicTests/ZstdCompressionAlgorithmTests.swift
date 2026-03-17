@@ -5,9 +5,9 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 import libzstd
 @testable import TraceCompression
+import XCTest
 
 final class ZstdCompressionAlgorithmTests: XCTestCase {
     func testZstdSupportFlagIsEnabled() {
@@ -23,7 +23,7 @@ final class ZstdCompressionAlgorithmTests: XCTestCase {
     func testZstdRoundTripWithLibraryCompression() throws {
         try requireZstdSupport()
 
-        let original = String(repeating: "zstd round trip ", count: 200).data(using: .utf8)!
+        let original = try XCTUnwrap(String(repeating: "zstd round trip ", count: 200).data(using: .utf8))
         let compressed = try compressZstd(original)
         let decompressed = try ZstdDecoder.decompress(compressed)
 
@@ -42,7 +42,7 @@ final class ZstdCompressionAlgorithmTests: XCTestCase {
     func testZstdCorruptedLibraryOutputIsError() throws {
         try requireZstdSupport()
 
-        let original = String(repeating: "zstd corruption ", count: 200).data(using: .utf8)!
+        let original = try XCTUnwrap(String(repeating: "zstd corruption ", count: 200).data(using: .utf8))
         var compressed = try compressZstd(original)
         compressed[compressed.startIndex + 8] ^= 0xAA
 

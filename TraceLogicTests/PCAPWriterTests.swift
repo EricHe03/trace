@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
-@testable import TraceProxy
 @testable import TraceCore
+@testable import TraceProxy
+import XCTest
 
 final class PCAPWriterTests: XCTestCase {
-
     var tempDirectory: URL!
     let testAppGroupID = "group.com.trace.test"
 
@@ -110,7 +109,7 @@ final class PCAPWriterTests: XCTestCase {
             let writer = try PCAPWriter(appGroupID: AppGroupStorage.appGroupIdentifier, fileName: fileName)
 
             // Write multiple packets
-            for i in 0..<10 {
+            for i in 0 ..< 10 {
                 let packet = Data(repeating: UInt8(i), count: 64)
                 writer.writePacket(packet)
             }

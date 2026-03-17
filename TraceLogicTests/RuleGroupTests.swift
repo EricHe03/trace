@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class RuleGroupTests: XCTestCase {
-
     // MARK: - Initialization Tests
 
     func testRuleGroupInitialization() {
@@ -259,7 +258,7 @@ final class RuleGroupTests: XCTestCase {
     }
 
     func testRuleGroupWithManyRules() throws {
-        let manyRules = (0..<1000).map { _ in UUID() }
+        let manyRules = (0 ..< 1000).map { _ in UUID() }
         let group = RuleGroup(name: "Many Rules", rules: manyRules)
 
         XCTAssertEqual(group.rules.count, 1000)

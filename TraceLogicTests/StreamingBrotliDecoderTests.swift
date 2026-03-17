@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 import Compression
 @testable import TraceCompression
+import XCTest
 
 final class StreamingBrotliDecoderTests: XCTestCase {
-
     // MARK: - Round-Trip Tests
 
     func testStreamingBrotliRoundTrip() throws {
@@ -21,7 +20,7 @@ final class StreamingBrotliDecoderTests: XCTestCase {
         ]
 
         for testString in testStrings {
-            let input = testString.data(using: .utf8)!
+            let input = try XCTUnwrap(testString.data(using: .utf8))
 
             let compressed = try compressBrotli(input)
             XCTAssertNotNil(compressed, "Failed to compress: \(testString.prefix(20))")
@@ -52,7 +51,7 @@ final class StreamingBrotliDecoderTests: XCTestCase {
     }
 
     func testStreamingBrotliMultipleChunks() throws {
-        let original = String(repeating: "Test data ", count: 100).data(using: .utf8)!
+        let original = try XCTUnwrap(String(repeating: "Test data ", count: 100).data(using: .utf8))
         let compressed = try compressBrotli(original)
 
         let decoder = StreamingBrotliDecoder()
@@ -64,7 +63,7 @@ final class StreamingBrotliDecoderTests: XCTestCase {
         var offset = 0
         while offset < compressed.count {
             let end = min(offset + chunkSize, compressed.count)
-            let chunk = compressed[offset..<end]
+            let chunk = compressed[offset ..< end]
             let decompressed = try decoder.decompress(chunk: chunk)
             output.append(decompressed)
             offset = end
@@ -93,7 +92,7 @@ final class StreamingBrotliDecoderTests: XCTestCase {
     }
 
     func testStreamingBrotliMediumData() throws {
-        let medium = String(repeating: "Medium test data. ", count: 50).data(using: .utf8)!
+        let medium = try XCTUnwrap(String(repeating: "Medium test data. ", count: 50).data(using: .utf8))
         let compressed = try compressBrotli(medium)
 
         let decoder = StreamingBrotliDecoder()
@@ -107,7 +106,7 @@ final class StreamingBrotliDecoderTests: XCTestCase {
     }
 
     func testStreamingBrotliLargeData() throws {
-        let large = String(repeating: "Lorem ipsum dolor sit amet. ", count: 3000).data(using: .utf8)!
+        let large = try XCTUnwrap(String(repeating: "Lorem ipsum dolor sit amet. ", count: 3000).data(using: .utf8))
         let compressed = try compressBrotli(large)
 
         let decoder = StreamingBrotliDecoder()
@@ -122,7 +121,7 @@ final class StreamingBrotliDecoderTests: XCTestCase {
     }
 
     func testStreamingBrotliVeryLargeData() throws {
-        let veryLarge = Data(repeating: 0x42, count: 100000)
+        let veryLarge = Data(repeating: 0x42, count: 100_000)
         let compressed = try compressBrotli(veryLarge)
 
         let decoder = StreamingBrotliDecoder()
@@ -161,7 +160,7 @@ final class StreamingBrotliDecoderTests: XCTestCase {
 
     func testStreamingBrotliGarbageData() throws {
         // Deterministic non-Brotli payload.
-        let garbage = Data((0..<128).map { UInt8($0) })
+        let garbage = Data((0 ..< 128).map { UInt8($0) })
 
         let decoder = StreamingBrotliDecoder()
         try decoder.initialize()
@@ -232,7 +231,7 @@ final class StreamingBrotliDecoderTests: XCTestCase {
     func testStreamingBrotliCustomConfig() throws {
         let config = StreamingDecoderConfig(
             chunkSize: 1024,
-            maxOutputSize: 100000
+            maxOutputSize: 100_000
         )
 
         let decoder = StreamingBrotliDecoder(config: config)
@@ -273,7 +272,7 @@ final class StreamingBrotliDecoderTests: XCTestCase {
 
     func testStreamingBrotliBinaryData() throws {
         var binaryData = Data()
-        for i in 0..<1000 {
+        for i in 0 ..< 1000 {
             binaryData.append(UInt8(i % 256))
         }
 

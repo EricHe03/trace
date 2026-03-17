@@ -5,12 +5,12 @@
 //  Updated for NIO HTTP/2 pipeline primitives used by NIOMITM.
 //
 
-import XCTest
 import NIOCore
 import NIOEmbedded
 import NIOHTTP1
 import NIOHTTP2
 @testable import TraceCore
+import XCTest
 
 final class HTTP2StreamManagerTests: XCTestCase {
     func testHTTP2FramePayloadToHTTP1ServerCodecCanBeAddedToPipeline() throws {

@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TracePacket
+import XCTest
 
 final class UDPPacketTests: XCTestCase {
-
     // MARK: - Initialization Tests
 
     func testUDPPacketInitialization() {
@@ -55,15 +54,15 @@ final class UDPPacketTests: XCTestCase {
 
     func testWellKnownPorts() {
         let ports: [UInt16] = [
-            53,    // DNS
-            67,    // DHCP server
-            68,    // DHCP client
-            123,   // NTP
-            161,   // SNMP
-            162,   // SNMP trap
-            514,   // Syslog
-            1900,  // SSDP
-            5353   // mDNS
+            53, // DNS
+            67, // DHCP server
+            68, // DHCP client
+            123, // NTP
+            161, // SNMP
+            162, // SNMP trap
+            514, // Syslog
+            1900, // SSDP
+            5353 // mDNS
         ]
 
         for port in ports {
@@ -174,7 +173,7 @@ final class UDPPacketTests: XCTestCase {
 
     func testPayloadWithAllByteValues() {
         var payload = Data()
-        for byte: UInt8 in 0...255 {
+        for byte: UInt8 in 0 ... 255 {
             payload.append(byte)
         }
 
@@ -197,9 +196,9 @@ final class UDPPacketTests: XCTestCase {
         let packet = createUDPPacket()
 
         await withTaskGroup(of: UInt16.self) { group in
-            for _ in 0..<10 {
+            for _ in 0 ..< 10 {
                 group.addTask {
-                    return packet.sourcePort
+                    packet.sourcePort
                 }
             }
 
@@ -259,7 +258,7 @@ final class UDPPacketTests: XCTestCase {
             0x00, 0x01, // Questions
             0x00, 0x00, // Answer RRs
             0x00, 0x00, // Authority RRs
-            0x00, 0x00  // Additional RRs
+            0x00, 0x00 // Additional RRs
         ])
 
         let packet = UDPPacket(
@@ -280,7 +279,7 @@ final class UDPPacketTests: XCTestCase {
             0x00, 0x01, // Questions
             0x00, 0x01, // Answer RRs
             0x00, 0x00, // Authority RRs
-            0x00, 0x00  // Additional RRs
+            0x00, 0x00 // Additional RRs
         ])
 
         let packet = UDPPacket(
@@ -346,7 +345,7 @@ final class UDPPacketTests: XCTestCase {
             0x00, 0x01, // Questions
             0x00, 0x00, // Answer RRs
             0x00, 0x00, // Authority RRs
-            0x00, 0x00  // Additional RRs
+            0x00, 0x00 // Additional RRs
         ])
 
         let packet = UDPPacket(
@@ -462,7 +461,7 @@ final class UDPPacketTests: XCTestCase {
 
     func testCreateManyPackets() {
         measure {
-            for i in 0..<1000 {
+            for i in 0 ..< 1000 {
                 let payload = Data([UInt8(i % 256)])
                 _ = createUDPPacket(
                     sourcePort: UInt16(i % 65536),
@@ -477,7 +476,7 @@ final class UDPPacketTests: XCTestCase {
         let packet = createUDPPacket()
 
         measure {
-            for _ in 0..<10000 {
+            for _ in 0 ..< 10000 {
                 _ = packet.sourcePort
                 _ = packet.destinationPort
                 _ = packet.length

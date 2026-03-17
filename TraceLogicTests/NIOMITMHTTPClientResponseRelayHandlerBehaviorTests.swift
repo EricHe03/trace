@@ -7,8 +7,8 @@
 
 import NIOCore
 import NIOEmbedded
-import XCTest
 @testable import TraceProxy
+import XCTest
 
 final class NIOMITMHTTPClientResponseRelayHandlerBehaviorTests: XCTestCase {
     func testHandlerIsRemovableByName() throws {

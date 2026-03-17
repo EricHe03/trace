@@ -6,9 +6,9 @@
 //
 
 import Foundation
-import XCTest
 import libzstd
 @testable import TraceCompression
+import XCTest
 
 enum ZstdTestSupportError: Error {
     case compressionFailed(String)

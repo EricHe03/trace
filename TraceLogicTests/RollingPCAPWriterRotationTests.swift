@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
-@testable import TraceProxy
 @testable import TraceCore
+@testable import TraceProxy
+import XCTest
 
 final class RollingPCAPWriterRotationTests: XCTestCase {
-
     // MARK: - File Rotation Tests
 
     func testFileRotationSequence() throws {
@@ -26,7 +25,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
             )
 
             // Write enough packets to trigger rotation
-            for i in 0..<20 {
+            for i in 0 ..< 20 {
                 let packet = Data(repeating: UInt8(i), count: 100)
                 writer.writePacket(packet)
             }
@@ -51,7 +50,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
 
                 // Cleanup
                 try? FileManager.default.removeItem(at: container.appendingPathComponent(fileName))
-                for i in 1...3 {
+                for i in 1 ... 3 {
                     let rotatedURL = container.appendingPathComponent("\(stem)_\(i).pcap")
                     try? FileManager.default.removeItem(at: rotatedURL)
                 }
@@ -74,7 +73,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
             )
 
             // Write enough to trigger multiple rotations
-            for i in 0..<30 {
+            for i in 0 ..< 30 {
                 let packet = Data(repeating: UInt8(i), count: 100)
                 writer.writePacket(packet)
             }
@@ -105,7 +104,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
 
                 // Cleanup
                 try? FileManager.default.removeItem(at: container.appendingPathComponent(fileName))
-                for i in 1...5 {
+                for i in 1 ... 5 {
                     let rotatedURL = container.appendingPathComponent("capture_\(i).pcap")
                     try? FileManager.default.removeItem(at: rotatedURL)
                 }
@@ -128,7 +127,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
             )
 
             // Write enough to trigger many rotations
-            for i in 0..<50 {
+            for i in 0 ..< 50 {
                 let packet = Data(repeating: UInt8(i), count: 100)
                 writer.writePacket(packet)
             }
@@ -144,7 +143,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
                 let stem = fileName.replacingOccurrences(of: ".pcap", with: "")
                 var rotatedFileCount = 0
 
-                for i in 1...5 {
+                for i in 1 ... 5 {
                     let url = container.appendingPathComponent("\(stem)_\(i).pcap")
                     if FileManager.default.fileExists(atPath: url.path) {
                         rotatedFileCount += 1
@@ -156,7 +155,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
 
                 // Cleanup
                 try? FileManager.default.removeItem(at: container.appendingPathComponent(fileName))
-                for i in 1...5 {
+                for i in 1 ... 5 {
                     let rotatedURL = container.appendingPathComponent("\(stem)_\(i).pcap")
                     try? FileManager.default.removeItem(at: rotatedURL)
                 }
@@ -178,7 +177,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
             )
 
             // Write enough to trigger rotation
-            for i in 0..<15 {
+            for i in 0 ..< 15 {
                 let packet = Data(repeating: UInt8(i), count: 100)
                 writer.writePacket(packet)
             }
@@ -194,7 +193,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
                 let stem = fileName.replacingOccurrences(of: ".pcap", with: "")
 
                 // Check that no rotated files exist
-                for i in 1...3 {
+                for i in 1 ... 3 {
                     let url = container.appendingPathComponent("\(stem)_\(i).pcap")
                     let exists = FileManager.default.fileExists(atPath: url.path)
                     // Should not exist (maxFiles=1 means only active file)
@@ -228,7 +227,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.1)
 
             // Write many more to trigger rotation
-            for i in 0..<20 {
+            for i in 0 ..< 20 {
                 let packet = Data(repeating: UInt8(i), count: 100)
                 writer.writePacket(packet)
             }
@@ -255,7 +254,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
                 // Cleanup
                 try? FileManager.default.removeItem(at: mainURL)
                 let stem = fileName.replacingOccurrences(of: ".pcap", with: "")
-                for i in 1...3 {
+                for i in 1 ... 3 {
                     let rotatedURL = container.appendingPathComponent("\(stem)_\(i).pcap")
                     try? FileManager.default.removeItem(at: rotatedURL)
                 }
@@ -295,7 +294,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
             ) {
                 try? FileManager.default.removeItem(at: container.appendingPathComponent(fileName))
                 let stem = fileName.replacingOccurrences(of: ".pcap", with: "")
-                for i in 1...5 {
+                for i in 1 ... 5 {
                     let rotatedURL = container.appendingPathComponent("\(stem)_\(i).pcap")
                     try? FileManager.default.removeItem(at: rotatedURL)
                 }
@@ -317,7 +316,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
             )
 
             // Write many packets
-            for i in 0..<50 {
+            for i in 0 ..< 50 {
                 let packet = Data(repeating: UInt8(i), count: 100)
                 writer.writePacket(packet)
             }
@@ -335,7 +334,7 @@ final class RollingPCAPWriterRotationTests: XCTestCase {
             ) {
                 let stem = fileName.replacingOccurrences(of: ".pcap", with: "")
 
-                for i in 1...3 {
+                for i in 1 ... 3 {
                     let url = container.appendingPathComponent("\(stem)_\(i).pcap")
                     let exists = FileManager.default.fileExists(atPath: url.path)
                     XCTAssertFalse(exists, "No rotation should occur with maxFileSize=0")

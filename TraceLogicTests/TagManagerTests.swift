@@ -5,9 +5,9 @@
 //  Created by Justin on 2026-02-01.
 //
 
-import XCTest
-@testable import TraceFeatures
 @testable import TraceCore
+@testable import TraceFeatures
+import XCTest
 
 @MainActor
 final class TagManagerTests: XCTestCase {

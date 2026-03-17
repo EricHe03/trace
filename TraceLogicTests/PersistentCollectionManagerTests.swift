@@ -5,12 +5,12 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 import Combine
 import OSLog
 @testable import TraceCore
+import XCTest
 
-// Test model conforming to required protocols
+/// Test model conforming to required protocols
 private struct TestItem: Codable, Identifiable, Equatable, Toggleable, URLMatchable, ModificationTrackable {
     let id: UUID
     var name: String
@@ -140,15 +140,15 @@ final class PersistentCollectionManagerTests: XCTestCase {
         XCTAssertEqual(newManager.items.first?.name, "Test Item")
     }
 
-    func testReloadIfNeeded() {
+    func testReloadIfNeeded() throws {
         let item1 = TestItem(name: "Item 1", pattern: "example.com")
         manager.add(item1)
 
         // Simulate external modification
         let item2 = TestItem(name: "Item 2", pattern: "other.com")
         let items = [item1, item2]
-        let data = try! JSONEncoder().encode(items)
-        try! AppGroupStorage.shared.saveData(data, to: testFileName)
+        let data = try JSONEncoder().encode(items)
+        try AppGroupStorage.shared.saveData(data, to: testFileName)
 
         manager.reloadIfNeeded()
 
@@ -157,14 +157,14 @@ final class PersistentCollectionManagerTests: XCTestCase {
 
     // MARK: - Import/Export Tests
 
-    func testExportData() {
+    func testExportData() throws {
         manager.add(TestItem(name: "Item 1", pattern: "example1.com"))
         manager.add(TestItem(name: "Item 2", pattern: "example2.com"))
 
         let data = manager.exportData()
 
         XCTAssertNotNil(data)
-        let decoded = try? JSONCoding.decode([TestItem].self, from: data!)
+        let decoded = try? JSONCoding.decode([TestItem].self, from: try XCTUnwrap(data))
         XCTAssertEqual(decoded?.count, 2)
     }
 
@@ -352,7 +352,7 @@ final class PersistentCollectionManagerTests: XCTestCase {
 
     // MARK: - Modification Tracking Tests
 
-    func testModificationTracking() {
+    func testModificationTracking() throws {
         var item = TestItem(name: "Original", pattern: "example.com")
         let originalModifiedAt = item.modifiedAt
         manager.add(item)
@@ -363,7 +363,7 @@ final class PersistentCollectionManagerTests: XCTestCase {
         item.name = "Updated"
         manager.update(item)
 
-        let updatedItem = manager.items.first!
+        let updatedItem = try XCTUnwrap(manager.items.first)
         XCTAssertNotEqual(updatedItem.modifiedAt, originalModifiedAt)
         XCTAssertGreaterThan(updatedItem.modifiedAt, originalModifiedAt)
     }

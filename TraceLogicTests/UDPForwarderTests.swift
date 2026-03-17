@@ -5,13 +5,12 @@
 //  Created by Justin on 2026/01/27.
 //
 
-import XCTest
 import Network
-@testable import TraceVPNKit
 @testable import TracePacket
+@testable import TraceVPNKit
+import XCTest
 
 final class UDPForwarderTests: XCTestCase {
-
     // MARK: - Checksum Calculation Tests
 
     func testIPv4HeaderChecksumCalculation() {
@@ -21,11 +20,11 @@ final class UDPForwarderTests: XCTestCase {
             0x00, 0x1C, // Total Length: 28 (20 header + 8 UDP)
             0x00, 0x00, // Identification: 0
             0x00, 0x00, // Flags=0, Fragment Offset=0
-            0x40,       // TTL: 64
-            0x11,       // Protocol: 17 (UDP)
+            0x40, // TTL: 64
+            0x11, // Protocol: 17 (UDP)
             0x00, 0x00, // Checksum: 0 (to be calculated)
             0xC0, 0xA8, 0x01, 0x01, // Source IP: 192.168.1.1
-            0xC0, 0xA8, 0x01, 0x02, // Dest IP: 192.168.1.2
+            0xC0, 0xA8, 0x01, 0x02 // Dest IP: 192.168.1.2
         ])
 
         // Calculate checksum manually
@@ -58,11 +57,11 @@ final class UDPForwarderTests: XCTestCase {
             0x00, 0x54, // Total Length: 84
             0x41, 0x0E, // Identification
             0x40, 0x00, // Flags, Fragment Offset
-            0x40,       // TTL: 64
-            0x11,       // Protocol: UDP
+            0x40, // TTL: 64
+            0x11, // Protocol: UDP
             0x76, 0x37, // Checksum (known correct value)
             0xC0, 0xA8, 0x01, 0x01, // Source IP
-            0xC0, 0xA8, 0x01, 0x02, // Dest IP
+            0xC0, 0xA8, 0x01, 0x02 // Dest IP
         ])
 
         // Calculate checksum for verification
@@ -81,8 +80,8 @@ final class UDPForwarderTests: XCTestCase {
     }
 
     func testUDPChecksumIPv4Calculation() {
-        let sourceIP = Data([192, 168, 1, 1])      // 192.168.1.1
-        let destIP = Data([192, 168, 1, 2])        // 192.168.1.2
+        let sourceIP = Data([192, 168, 1, 1]) // 192.168.1.1
+        let destIP = Data([192, 168, 1, 2]) // 192.168.1.2
         let sourcePort: UInt16 = 12345
         let destPort: UInt16 = 53
         let payload = Data("test".utf8)
@@ -92,12 +91,12 @@ final class UDPForwarderTests: XCTestCase {
 
         // Build pseudo-header for IPv4 UDP checksum
         var pseudoHeader = Data()
-        pseudoHeader.append(sourceIP)                           // Source IP (4 bytes)
-        pseudoHeader.append(destIP)                             // Dest IP (4 bytes)
-        pseudoHeader.append(0x00)                               // Zero (1 byte)
-        pseudoHeader.append(0x11)                               // Protocol: UDP (1 byte)
-        pseudoHeader.append(UInt8(udpLength >> 8))              // UDP length high byte
-        pseudoHeader.append(UInt8(udpLength & 0xFF))            // UDP length low byte
+        pseudoHeader.append(sourceIP) // Source IP (4 bytes)
+        pseudoHeader.append(destIP) // Dest IP (4 bytes)
+        pseudoHeader.append(0x00) // Zero (1 byte)
+        pseudoHeader.append(0x11) // Protocol: UDP (1 byte)
+        pseudoHeader.append(UInt8(udpLength >> 8)) // UDP length high byte
+        pseudoHeader.append(UInt8(udpLength & 0xFF)) // UDP length low byte
 
         // Build UDP header (without checksum)
         var udpHeader = Data()
@@ -107,7 +106,7 @@ final class UDPForwarderTests: XCTestCase {
         udpHeader.append(UInt8(destPort & 0xFF))
         udpHeader.append(UInt8(udpLength >> 8))
         udpHeader.append(UInt8(udpLength & 0xFF))
-        udpHeader.append(0x00)                                  // Checksum placeholder
+        udpHeader.append(0x00) // Checksum placeholder
         udpHeader.append(0x00)
 
         // Combine for checksum calculation
@@ -140,10 +139,42 @@ final class UDPForwarderTests: XCTestCase {
 
     func testUDPChecksumIPv6Calculation() {
         // IPv6 addresses (16 bytes each)
-        let sourceIP = Data([0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
-                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01])
-        let destIP = Data([0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
-                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02])
+        let sourceIP = Data([
+            0x20,
+            0x01,
+            0x0D,
+            0xB8,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x01
+        ])
+        let destIP = Data([
+            0x20,
+            0x01,
+            0x0D,
+            0xB8,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x02
+        ])
         let sourcePort: UInt16 = 12345
         let destPort: UInt16 = 53
         let payload = Data("test".utf8)
@@ -152,16 +183,16 @@ final class UDPForwarderTests: XCTestCase {
 
         // IPv6 pseudo-header
         var pseudoHeader = Data()
-        pseudoHeader.append(sourceIP)                           // Source IP (16 bytes)
-        pseudoHeader.append(destIP)                             // Dest IP (16 bytes)
-        pseudoHeader.append(0x00)                               // Upper-layer packet length (4 bytes)
+        pseudoHeader.append(sourceIP) // Source IP (16 bytes)
+        pseudoHeader.append(destIP) // Dest IP (16 bytes)
+        pseudoHeader.append(0x00) // Upper-layer packet length (4 bytes)
         pseudoHeader.append(0x00)
         pseudoHeader.append(UInt8(udpLength >> 8))
         pseudoHeader.append(UInt8(udpLength & 0xFF))
-        pseudoHeader.append(0x00)                               // Zeros (3 bytes)
+        pseudoHeader.append(0x00) // Zeros (3 bytes)
         pseudoHeader.append(0x00)
         pseudoHeader.append(0x00)
-        pseudoHeader.append(0x11)                               // Next Header: UDP
+        pseudoHeader.append(0x11) // Next Header: UDP
 
         // Build UDP header
         var udpHeader = Data()
@@ -209,17 +240,17 @@ final class UDPForwarderTests: XCTestCase {
 
         // Build IPv4 header
         var ipHeader = Data()
-        ipHeader.append(0x45)                                   // Version=4, IHL=5
-        ipHeader.append(0x00)                                   // DSCP=0, ECN=0
-        ipHeader.append(UInt8(totalLength >> 8))                // Total Length
+        ipHeader.append(0x45) // Version=4, IHL=5
+        ipHeader.append(0x00) // DSCP=0, ECN=0
+        ipHeader.append(UInt8(totalLength >> 8)) // Total Length
         ipHeader.append(UInt8(totalLength & 0xFF))
-        ipHeader.append(0x00)                                   // Identification
+        ipHeader.append(0x00) // Identification
         ipHeader.append(0x00)
-        ipHeader.append(0x40)                                   // Flags=0x4 (Don't Fragment)
-        ipHeader.append(0x00)                                   // Fragment Offset=0
-        ipHeader.append(0x40)                                   // TTL=64
-        ipHeader.append(0x11)                                   // Protocol=17 (UDP)
-        ipHeader.append(0x00)                                   // Checksum placeholder
+        ipHeader.append(0x40) // Flags=0x4 (Don't Fragment)
+        ipHeader.append(0x00) // Fragment Offset=0
+        ipHeader.append(0x40) // TTL=64
+        ipHeader.append(0x11) // Protocol=17 (UDP)
+        ipHeader.append(0x00) // Checksum placeholder
         ipHeader.append(0x00)
         ipHeader.append(contentsOf: sourceIP)
         ipHeader.append(contentsOf: destIP)
@@ -232,8 +263,8 @@ final class UDPForwarderTests: XCTestCase {
         XCTAssertEqual(ipHeader[8], 0x40, "TTL should be 64")
 
         // Verify IP addresses
-        XCTAssertEqual(Data(ipHeader[12..<16]), sourceIP)
-        XCTAssertEqual(Data(ipHeader[16..<20]), destIP)
+        XCTAssertEqual(Data(ipHeader[12 ..< 16]), sourceIP)
+        XCTAssertEqual(Data(ipHeader[16 ..< 20]), destIP)
     }
 
     func testBuildIPv4PacketTotalLength() {
@@ -257,23 +288,55 @@ final class UDPForwarderTests: XCTestCase {
     // MARK: - IPv6 Packet Construction Tests
 
     func testBuildIPv6PacketHeaderStructure() {
-        let sourceIP = Data([0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
-                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01])
-        let destIP = Data([0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
-                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02])
+        let sourceIP = Data([
+            0x20,
+            0x01,
+            0x0D,
+            0xB8,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x01
+        ])
+        let destIP = Data([
+            0x20,
+            0x01,
+            0x0D,
+            0xB8,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x02
+        ])
         let udpPayload = Data("test".utf8)
         let payloadLength = 8 + udpPayload.count // UDP header + payload
 
         // Build IPv6 header
         var ipHeader = Data()
-        ipHeader.append(0x60)                                   // Version=6, Traffic Class=0
-        ipHeader.append(0x00)                                   // Traffic Class, Flow Label
-        ipHeader.append(0x00)                                   // Flow Label
-        ipHeader.append(0x00)                                   // Flow Label
-        ipHeader.append(UInt8(payloadLength >> 8))              // Payload Length
+        ipHeader.append(0x60) // Version=6, Traffic Class=0
+        ipHeader.append(0x00) // Traffic Class, Flow Label
+        ipHeader.append(0x00) // Flow Label
+        ipHeader.append(0x00) // Flow Label
+        ipHeader.append(UInt8(payloadLength >> 8)) // Payload Length
         ipHeader.append(UInt8(payloadLength & 0xFF))
-        ipHeader.append(0x11)                                   // Next Header: UDP
-        ipHeader.append(0x40)                                   // Hop Limit: 64
+        ipHeader.append(0x11) // Next Header: UDP
+        ipHeader.append(0x40) // Hop Limit: 64
         ipHeader.append(contentsOf: sourceIP)
         ipHeader.append(contentsOf: destIP)
 
@@ -284,8 +347,8 @@ final class UDPForwarderTests: XCTestCase {
         XCTAssertEqual(ipHeader[7], 0x40, "Hop Limit should be 64")
 
         // Verify IP addresses
-        XCTAssertEqual(Data(ipHeader[8..<24]), sourceIP)
-        XCTAssertEqual(Data(ipHeader[24..<40]), destIP)
+        XCTAssertEqual(Data(ipHeader[8 ..< 24]), sourceIP)
+        XCTAssertEqual(Data(ipHeader[24 ..< 40]), destIP)
     }
 
     func testBuildIPv6PacketPayloadLength() {
@@ -324,7 +387,7 @@ final class UDPForwarderTests: XCTestCase {
         udpDatagram.append(UInt8(destPort & 0xFF))
         udpDatagram.append(UInt8(udpLength >> 8))
         udpDatagram.append(UInt8(udpLength & 0xFF))
-        udpDatagram.append(0x00)                                // Checksum placeholder
+        udpDatagram.append(0x00) // Checksum placeholder
         udpDatagram.append(0x00)
         udpDatagram.append(contentsOf: payload)
 
@@ -352,12 +415,24 @@ final class UDPForwarderTests: XCTestCase {
             let destPort: UInt16
         }
 
-        let key1 = TestFlowKey(sourceIP: "192.168.1.1", sourcePort: 12345,
-                               destIP: "8.8.8.8", destPort: 53)
-        let key2 = TestFlowKey(sourceIP: "192.168.1.1", sourcePort: 12345,
-                               destIP: "8.8.8.8", destPort: 53)
-        let key3 = TestFlowKey(sourceIP: "192.168.1.1", sourcePort: 12346,
-                               destIP: "8.8.8.8", destPort: 53)
+        let key1 = TestFlowKey(
+            sourceIP: "192.168.1.1",
+            sourcePort: 12345,
+            destIP: "8.8.8.8",
+            destPort: 53
+        )
+        let key2 = TestFlowKey(
+            sourceIP: "192.168.1.1",
+            sourcePort: 12345,
+            destIP: "8.8.8.8",
+            destPort: 53
+        )
+        let key3 = TestFlowKey(
+            sourceIP: "192.168.1.1",
+            sourcePort: 12346,
+            destIP: "8.8.8.8",
+            destPort: 53
+        )
 
         XCTAssertEqual(key1, key2, "Identical flow keys should be equal")
         XCTAssertNotEqual(key1, key3, "Different source ports should create different keys")
@@ -373,10 +448,18 @@ final class UDPForwarderTests: XCTestCase {
 
         var flowSet = Set<TestFlowKey>()
 
-        let key1 = TestFlowKey(sourceIP: "192.168.1.1", sourcePort: 12345,
-                               destIP: "8.8.8.8", destPort: 53)
-        let key2 = TestFlowKey(sourceIP: "192.168.1.1", sourcePort: 12345,
-                               destIP: "8.8.8.8", destPort: 53)
+        let key1 = TestFlowKey(
+            sourceIP: "192.168.1.1",
+            sourcePort: 12345,
+            destIP: "8.8.8.8",
+            destPort: 53
+        )
+        let key2 = TestFlowKey(
+            sourceIP: "192.168.1.1",
+            sourcePort: 12345,
+            destIP: "8.8.8.8",
+            destPort: 53
+        )
 
         flowSet.insert(key1)
         flowSet.insert(key2)

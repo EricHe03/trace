@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCompression
+import XCTest
 
 final class CompressionErrorsTests: XCTestCase {
-
     // MARK: - CompressionError Tests
 
     func testCompressionErrorInvalidInput() {
@@ -80,7 +79,7 @@ final class CompressionErrorsTests: XCTestCase {
         let error = CompressionError.invalidInput("Test")
 
         switch error {
-        case .invalidInput(let message):
+        case let .invalidInput(message):
             XCTAssertEqual(message, "Test")
         default:
             XCTFail("Expected invalidInput case")
@@ -91,7 +90,7 @@ final class CompressionErrorsTests: XCTestCase {
         let error = CompressionError.invalidFormat("Test")
 
         switch error {
-        case .invalidFormat(let message):
+        case let .invalidFormat(message):
             XCTAssertEqual(message, "Test")
         default:
             XCTFail("Expected invalidFormat case")
@@ -102,7 +101,7 @@ final class CompressionErrorsTests: XCTestCase {
         let error = CompressionError.initializationFailed("Test")
 
         switch error {
-        case .initializationFailed(let message):
+        case let .initializationFailed(message):
             XCTAssertEqual(message, "Test")
         default:
             XCTFail("Expected initializationFailed case")
@@ -113,7 +112,7 @@ final class CompressionErrorsTests: XCTestCase {
         let error = CompressionError.decompressionFailed("Test")
 
         switch error {
-        case .decompressionFailed(let message):
+        case let .decompressionFailed(message):
             XCTAssertEqual(message, "Test")
         default:
             XCTFail("Expected decompressionFailed case")
@@ -124,7 +123,7 @@ final class CompressionErrorsTests: XCTestCase {
         let error = CompressionError.notInitialized("Test")
 
         switch error {
-        case .notInitialized(let message):
+        case let .notInitialized(message):
             XCTAssertEqual(message, "Test")
         default:
             XCTFail("Expected notInitialized case")
@@ -135,7 +134,7 @@ final class CompressionErrorsTests: XCTestCase {
         let error = CompressionError.bufferTooSmall("Test")
 
         switch error {
-        case .bufferTooSmall(let message):
+        case let .bufferTooSmall(message):
             XCTAssertEqual(message, "Test")
         default:
             XCTFail("Expected bufferTooSmall case")
@@ -146,7 +145,7 @@ final class CompressionErrorsTests: XCTestCase {
         let error = CompressionError.unknownError("Test")
 
         switch error {
-        case .unknownError(let message):
+        case let .unknownError(message):
             XCTAssertEqual(message, "Test")
         default:
             XCTFail("Expected unknownError case")
@@ -155,7 +154,7 @@ final class CompressionErrorsTests: XCTestCase {
 
     // MARK: - Error Description Content Tests
 
-    func testCompressionErrorDescriptionsAreNotEmpty() {
+    func testCompressionErrorDescriptionsAreNotEmpty() throws {
         let errors: [CompressionError] = [
             .invalidInput("message"),
             .invalidFormat("message"),
@@ -168,7 +167,7 @@ final class CompressionErrorsTests: XCTestCase {
 
         for error in errors {
             XCTAssertNotNil(error.errorDescription)
-            XCTAssertFalse(error.errorDescription!.isEmpty)
+            XCTAssertFalse(try XCTUnwrap(error.errorDescription?.isEmpty))
         }
     }
 
@@ -191,7 +190,7 @@ final class CompressionErrorsTests: XCTestCase {
             XCTFail("Expected error to be thrown")
         } catch let error as CompressionError {
             switch error {
-            case .bufferTooSmall(let message):
+            case let .bufferTooSmall(message):
                 XCTAssertTrue(message.contains("10000"))
                 XCTAssertTrue(message.contains("bytes"))
             default:
@@ -201,5 +200,4 @@ final class CompressionErrorsTests: XCTestCase {
             XCTFail("Expected CompressionError")
         }
     }
-
 }

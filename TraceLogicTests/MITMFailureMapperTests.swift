@@ -5,9 +5,9 @@
 //  Created by Justin on 2026/02/24.
 //
 
-import XCTest
 @testable import TraceCore
 @testable import TraceProxy
+import XCTest
 
 final class MITMFailureMapperTests: XCTestCase {
     func testMapsTransparentFailureKinds() {

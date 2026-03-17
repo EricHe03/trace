@@ -5,10 +5,10 @@
 //  Created by Justin on 2026-02-01.
 //
 
-import XCTest
 import Combine
-@testable import TraceFeatures
 @testable import TraceCore
+@testable import TraceFeatures
+import XCTest
 
 @MainActor
 final class ProfileManagerTests: XCTestCase {
@@ -669,7 +669,7 @@ final class ProfileManagerTests: XCTestCase {
 
     func testProfileWithManyRuleGroups() {
         // Arrange
-        let manyRuleGroups = (0..<100).map { _ in UUID() }
+        let manyRuleGroups = (0 ..< 100).map { _ in UUID() }
         let profile = makeProfile(name: "Profile with many rules", ruleGroupIds: manyRuleGroups)
 
         // Act
@@ -682,7 +682,7 @@ final class ProfileManagerTests: XCTestCase {
 
     func testConcurrentProfileOperations() async {
         // Arrange
-        let profiles = (0..<10).map { i in
+        let profiles = (0 ..< 10).map { i in
             makeProfile(name: "Profile \(i)")
         }
 

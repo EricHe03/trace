@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 import OSLog
 @testable import TraceCore
+import XCTest
 
 final class CoreLogTests: XCTestCase {
-
     // MARK: - Logger Creation Tests
 
     func testStorageLoggerCreation() {
@@ -98,7 +97,9 @@ final class CoreLogTests: XCTestCase {
 
     func testLifecycleLogEventWithError() {
         struct TestError: Error, CustomStringConvertible {
-            var description: String { "test error" }
+            var description: String {
+                "test error"
+            }
         }
 
         let event = LogEvent.lifecycle("init")
@@ -199,7 +200,7 @@ final class CoreLogTests: XCTestCase {
         let logger = CoreLog.storage
 
         await withTaskGroup(of: Void.self) { group in
-            for i in 0..<100 {
+            for i in 0 ..< 100 {
                 group.addTask {
                     let event = LogEvent.storage("test").count(i)
                     logger.info(event)
@@ -212,7 +213,7 @@ final class CoreLogTests: XCTestCase {
 
     func testLogEventCreationPerformance() {
         measure {
-            for i in 0..<1000 {
+            for i in 0 ..< 1000 {
                 let event = LogEvent.storage("test")
                     .success()
                     .count(i)
@@ -226,7 +227,7 @@ final class CoreLogTests: XCTestCase {
         let logger = CoreLog.storage
 
         measure {
-            for i in 0..<1000 {
+            for i in 0 ..< 1000 {
                 let event = LogEvent.storage("test").count(i)
                 logger.info(event)
             }

@@ -5,8 +5,8 @@
 //  Updated for NIO-based HTTP/2 capture models.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class HTTP2ConnectionTests: XCTestCase {
     func testHTTP2ConnectionInfoActiveAndDuration() throws {

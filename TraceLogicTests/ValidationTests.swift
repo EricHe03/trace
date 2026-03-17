@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class ValidationTests: XCTestCase {
-
     // MARK: - isValidDomainPattern Tests - Valid Domains
 
     func testIsValidDomainPatternWithSimpleDomain() {
@@ -400,7 +399,7 @@ final class ValidationTests: XCTestCase {
 
     func testDomainValidationPerformance() {
         measure {
-            for _ in 0..<1000 {
+            for _ in 0 ..< 1000 {
                 _ = Validation.isValidDomainPattern("example.com")
             }
         }
@@ -408,7 +407,7 @@ final class ValidationTests: XCTestCase {
 
     func testIPv4ValidationPerformance() {
         measure {
-            for _ in 0..<1000 {
+            for _ in 0 ..< 1000 {
                 _ = Validation.isValidIPv4("192.168.1.1")
             }
         }
@@ -416,7 +415,7 @@ final class ValidationTests: XCTestCase {
 
     func testIPv6ValidationPerformance() {
         measure {
-            for _ in 0..<1000 {
+            for _ in 0 ..< 1000 {
                 _ = Validation.isValidIPv6("::1")
             }
         }

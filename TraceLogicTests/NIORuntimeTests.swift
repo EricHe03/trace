@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/02/13.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class NIORuntimeTests: XCTestCase {
     override func tearDownWithError() throws {
@@ -42,4 +42,3 @@ final class NIORuntimeTests: XCTestCase {
         XCTAssertNil(NIORuntime.shared.currentResources())
     }
 }
-

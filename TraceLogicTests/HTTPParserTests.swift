@@ -5,10 +5,10 @@
 //  Updated for NIO HTTP codec migration.
 //
 
-import XCTest
 import NIOCore
 import NIOEmbedded
 import NIOHTTP1
+import XCTest
 
 final class HTTPParserTests: XCTestCase {
     func testHTTPRequestDecoderParsesSimpleGet() throws {

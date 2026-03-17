@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/02/24.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class DualMITMPolicyEngineTests: XCTestCase {
     func testPlanNewTCPTransparentFlowReturnsMITMWhenEligible() {
@@ -440,8 +440,13 @@ private final class SpyCircuitBreakerController: CircuitBreakerController, @unch
         return _quicCalls
     }
 
-    func shouldForceTCPDirect(port _: UInt16, now _: Date) -> Bool { false }
-    func shouldForceQUICPassThrough(now _: Date) -> Bool { false }
+    func shouldForceTCPDirect(port _: UInt16, now _: Date) -> Bool {
+        false
+    }
+
+    func shouldForceQUICPassThrough(now _: Date) -> Bool {
+        false
+    }
 
     func recordTCPClientHandshake(failed: Bool, now: Date) {
         lock.lock()

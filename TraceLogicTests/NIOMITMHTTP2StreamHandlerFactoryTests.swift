@@ -5,9 +5,9 @@
 
 import NIOCore
 import NIOTransportServices
-import XCTest
 @testable import TraceCore
 @testable import TraceProxy
+import XCTest
 
 final class NIOMITMHTTP2StreamHandlerFactoryTests: XCTestCase {
     func testFactoryCreatesHTTP2StreamHandlerAfterSetupHandlerIsReleased() throws {

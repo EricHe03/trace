@@ -5,8 +5,8 @@
 //  Updated for HPACK event encoding semantics.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class HPACKEncoderTests: XCTestCase {
     func testHPACKTableEventEntryAddedCodableRoundTrip() throws {

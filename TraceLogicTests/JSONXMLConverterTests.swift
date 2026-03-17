@@ -5,14 +5,13 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class JSONXMLConverterTests: XCTestCase {
-
     // MARK: - JSON to XML Tests - Basic Objects
 
-    func testJSONToXMLWithSimpleObject() {
+    func testJSONToXMLWithSimpleObject() throws {
         let json = """
         {
             "name": "John",
@@ -23,14 +22,14 @@ final class JSONXMLConverterTests: XCTestCase {
         let xmlData = JSONXMLConverter.jsonToXML(data: json)
         XCTAssertNotNil(xmlData)
 
-        let xmlString = String(data: xmlData!, encoding: .utf8)!
+        let xmlString = try XCTUnwrap(try String(data: XCTUnwrap(xmlData), encoding: .utf8))
         XCTAssertTrue(xmlString.contains("<root>"))
         XCTAssertTrue(xmlString.contains("</root>"))
         XCTAssertTrue(xmlString.contains("<name>John</name>"))
         XCTAssertTrue(xmlString.contains("<age>30</age>"))
     }
 
-    func testJSONToXMLWithNestedObject() {
+    func testJSONToXMLWithNestedObject() throws {
         let json = """
         {
             "user": {
@@ -45,26 +44,26 @@ final class JSONXMLConverterTests: XCTestCase {
         let xmlData = JSONXMLConverter.jsonToXML(data: json)
         XCTAssertNotNil(xmlData)
 
-        let xmlString = String(data: xmlData!, encoding: .utf8)!
+        let xmlString = try XCTUnwrap(try String(data: XCTUnwrap(xmlData), encoding: .utf8))
         XCTAssertTrue(xmlString.contains("<user>"))
         XCTAssertTrue(xmlString.contains("<name>John</name>"))
         XCTAssertTrue(xmlString.contains("<address>"))
         XCTAssertTrue(xmlString.contains("<city>New York</city>"))
     }
 
-    func testJSONToXMLWithEmptyObject() {
+    func testJSONToXMLWithEmptyObject() throws {
         let json = "{}".data(using: .utf8)!
 
         let xmlData = JSONXMLConverter.jsonToXML(data: json)
         XCTAssertNotNil(xmlData)
 
-        let xmlString = String(data: xmlData!, encoding: .utf8)!
+        let xmlString = try XCTUnwrap(try String(data: XCTUnwrap(xmlData), encoding: .utf8))
         XCTAssertEqual(xmlString, "<root></root>")
     }
 
     // MARK: - JSON to XML Tests - Arrays
 
-    func testJSONToXMLWithArray() {
+    func testJSONToXMLWithArray() throws {
         let json = """
         [1, 2, 3]
         """.data(using: .utf8)!
@@ -72,13 +71,13 @@ final class JSONXMLConverterTests: XCTestCase {
         let xmlData = JSONXMLConverter.jsonToXML(data: json)
         XCTAssertNotNil(xmlData)
 
-        let xmlString = String(data: xmlData!, encoding: .utf8)!
+        let xmlString = try XCTUnwrap(try String(data: XCTUnwrap(xmlData), encoding: .utf8))
         XCTAssertTrue(xmlString.contains("<item>1</item>"))
         XCTAssertTrue(xmlString.contains("<item>2</item>"))
         XCTAssertTrue(xmlString.contains("<item>3</item>"))
     }
 
-    func testJSONToXMLWithObjectArray() {
+    func testJSONToXMLWithObjectArray() throws {
         let json = """
         {
             "users": [
@@ -91,14 +90,14 @@ final class JSONXMLConverterTests: XCTestCase {
         let xmlData = JSONXMLConverter.jsonToXML(data: json)
         XCTAssertNotNil(xmlData)
 
-        let xmlString = String(data: xmlData!, encoding: .utf8)!
+        let xmlString = try XCTUnwrap(try String(data: XCTUnwrap(xmlData), encoding: .utf8))
         XCTAssertTrue(xmlString.contains("<users>"))
         XCTAssertTrue(xmlString.contains("<item>"))
         XCTAssertTrue(xmlString.contains("<name>John</name>"))
         XCTAssertTrue(xmlString.contains("<name>Jane</name>"))
     }
 
-    func testJSONToXMLWithEmptyArray() {
+    func testJSONToXMLWithEmptyArray() throws {
         let json = """
         {"items": []}
         """.data(using: .utf8)!
@@ -106,13 +105,13 @@ final class JSONXMLConverterTests: XCTestCase {
         let xmlData = JSONXMLConverter.jsonToXML(data: json)
         XCTAssertNotNil(xmlData)
 
-        let xmlString = String(data: xmlData!, encoding: .utf8)!
+        let xmlString = try XCTUnwrap(try String(data: XCTUnwrap(xmlData), encoding: .utf8))
         XCTAssertTrue(xmlString.contains("<items></items>"))
     }
 
     // MARK: - JSON to XML Tests - Data Types
 
-    func testJSONToXMLWithString() {
+    func testJSONToXMLWithString() throws {
         let json = """
         {"text": "Hello World"}
         """.data(using: .utf8)!
@@ -120,11 +119,11 @@ final class JSONXMLConverterTests: XCTestCase {
         let xmlData = JSONXMLConverter.jsonToXML(data: json)
         XCTAssertNotNil(xmlData)
 
-        let xmlString = String(data: xmlData!, encoding: .utf8)!
+        let xmlString = try XCTUnwrap(try String(data: XCTUnwrap(xmlData), encoding: .utf8))
         XCTAssertTrue(xmlString.contains("<text>Hello World</text>"))
     }
 
-    func testJSONToXMLWithNumber() {
+    func testJSONToXMLWithNumber() throws {
         let json = """
         {"count": 42, "price": 19.99}
         """.data(using: .utf8)!
@@ -132,12 +131,12 @@ final class JSONXMLConverterTests: XCTestCase {
         let xmlData = JSONXMLConverter.jsonToXML(data: json)
         XCTAssertNotNil(xmlData)
 
-        let xmlString = String(data: xmlData!, encoding: .utf8)!
+        let xmlString = try XCTUnwrap(try String(data: XCTUnwrap(xmlData), encoding: .utf8))
         XCTAssertTrue(xmlString.contains("<count>42</count>"))
         XCTAssertTrue(xmlString.contains("<price>19.99</price>"))
     }
 
-    func testJSONToXMLWithBoolean() {
+    func testJSONToXMLWithBoolean() throws {
         let json = """
         {"active": true, "deleted": false}
         """.data(using: .utf8)!
@@ -145,12 +144,12 @@ final class JSONXMLConverterTests: XCTestCase {
         let xmlData = JSONXMLConverter.jsonToXML(data: json)
         XCTAssertNotNil(xmlData)
 
-        let xmlString = String(data: xmlData!, encoding: .utf8)!
+        let xmlString = try XCTUnwrap(try String(data: XCTUnwrap(xmlData), encoding: .utf8))
         XCTAssertTrue(xmlString.contains("<active>1</active>"))
         XCTAssertTrue(xmlString.contains("<deleted>0</deleted>"))
     }
 
-    func testJSONToXMLWithNull() {
+    func testJSONToXMLWithNull() throws {
         let json = """
         {"value": null}
         """.data(using: .utf8)!
@@ -158,13 +157,13 @@ final class JSONXMLConverterTests: XCTestCase {
         let xmlData = JSONXMLConverter.jsonToXML(data: json)
         XCTAssertNotNil(xmlData)
 
-        let xmlString = String(data: xmlData!, encoding: .utf8)!
+        let xmlString = try XCTUnwrap(try String(data: XCTUnwrap(xmlData), encoding: .utf8))
         XCTAssertTrue(xmlString.contains("<value></value>"))
     }
 
     // MARK: - JSON to XML Tests - Special Characters
 
-    func testJSONToXMLWithXMLSpecialCharacters() {
+    func testJSONToXMLWithXMLSpecialCharacters() throws {
         let json = """
         {"text": "<tag> & \\"quote\\" & 'apostrophe' & > symbol"}
         """.data(using: .utf8)!
@@ -172,14 +171,14 @@ final class JSONXMLConverterTests: XCTestCase {
         let xmlData = JSONXMLConverter.jsonToXML(data: json)
         XCTAssertNotNil(xmlData)
 
-        let xmlString = String(data: xmlData!, encoding: .utf8)!
+        let xmlString = try XCTUnwrap(try String(data: XCTUnwrap(xmlData), encoding: .utf8))
         XCTAssertTrue(xmlString.contains("&lt;tag&gt;"))
         XCTAssertTrue(xmlString.contains("&amp;"))
         XCTAssertTrue(xmlString.contains("&quot;"))
         XCTAssertTrue(xmlString.contains("&apos;"))
     }
 
-    func testJSONToXMLWithSpecialKeyCharacters() {
+    func testJSONToXMLWithSpecialKeyCharacters() throws {
         let json = """
         {"key-with-dash": "value", "key.with.dot": "value", "key with space": "value"}
         """.data(using: .utf8)!
@@ -187,7 +186,7 @@ final class JSONXMLConverterTests: XCTestCase {
         let xmlData = JSONXMLConverter.jsonToXML(data: json)
         XCTAssertNotNil(xmlData)
 
-        let xmlString = String(data: xmlData!, encoding: .utf8)!
+        let xmlString = try XCTUnwrap(try String(data: XCTUnwrap(xmlData), encoding: .utf8))
         // Special characters in keys should be sanitized
         XCTAssertTrue(xmlString.contains("<key-with-dash>value</key-with-dash>"))
         XCTAssertTrue(xmlString.contains("<key_with_dot>value</key_with_dot>"))
@@ -212,7 +211,7 @@ final class JSONXMLConverterTests: XCTestCase {
 
     // MARK: - XML to JSON Tests - Basic
 
-    func testXMLToJSONWithSimpleElement() {
+    func testXMLToJSONWithSimpleElement() throws {
         let xml = """
         <root>
             <name>John</name>
@@ -223,12 +222,12 @@ final class JSONXMLConverterTests: XCTestCase {
         let jsonData = JSONXMLConverter.xmlToJSON(data: xml)
         XCTAssertNotNil(jsonData)
 
-        let json = try? JSONSerialization.jsonObject(with: jsonData!, options: []) as? [String: Any]
+        let json = try? JSONSerialization.jsonObject(with: try XCTUnwrap(jsonData), options: []) as? [String: Any]
         XCTAssertNotNil(json)
         XCTAssertNotNil(json?["root"])
     }
 
-    func testXMLToJSONWithNestedElements() {
+    func testXMLToJSONWithNestedElements() throws {
         let xml = """
         <root>
             <user>
@@ -240,11 +239,11 @@ final class JSONXMLConverterTests: XCTestCase {
         let jsonData = JSONXMLConverter.xmlToJSON(data: xml)
         XCTAssertNotNil(jsonData)
 
-        let json = try? JSONSerialization.jsonObject(with: jsonData!, options: [])
+        let json = try? JSONSerialization.jsonObject(with: try XCTUnwrap(jsonData), options: [])
         XCTAssertNotNil(json)
     }
 
-    func testXMLToJSONWithAttributes() {
+    func testXMLToJSONWithAttributes() throws {
         let xml = """
         <root id="123" type="test">
             <item>value</item>
@@ -254,11 +253,11 @@ final class JSONXMLConverterTests: XCTestCase {
         let jsonData = JSONXMLConverter.xmlToJSON(data: xml)
         XCTAssertNotNil(jsonData)
 
-        let json = try? JSONSerialization.jsonObject(with: jsonData!, options: [])
+        let json = try? JSONSerialization.jsonObject(with: try XCTUnwrap(jsonData), options: [])
         XCTAssertNotNil(json)
     }
 
-    func testXMLToJSONWithTextContent() {
+    func testXMLToJSONWithTextContent() throws {
         let xml = """
         <root>
             <message>Hello World</message>
@@ -268,11 +267,11 @@ final class JSONXMLConverterTests: XCTestCase {
         let jsonData = JSONXMLConverter.xmlToJSON(data: xml)
         XCTAssertNotNil(jsonData)
 
-        let json = try? JSONSerialization.jsonObject(with: jsonData!, options: [])
+        let json = try? JSONSerialization.jsonObject(with: try XCTUnwrap(jsonData), options: [])
         XCTAssertNotNil(json)
     }
 
-    func testXMLToJSONWithRepeatingElements() {
+    func testXMLToJSONWithRepeatingElements() throws {
         let xml = """
         <root>
             <item>1</item>
@@ -284,7 +283,7 @@ final class JSONXMLConverterTests: XCTestCase {
         let jsonData = JSONXMLConverter.xmlToJSON(data: xml)
         XCTAssertNotNil(jsonData)
 
-        let json = try? JSONSerialization.jsonObject(with: jsonData!, options: [])
+        let json = try? JSONSerialization.jsonObject(with: try XCTUnwrap(jsonData), options: [])
         XCTAssertNotNil(json)
     }
 
@@ -306,7 +305,7 @@ final class JSONXMLConverterTests: XCTestCase {
 
     // MARK: - JSONPath Set Tests
 
-    func testJSONPathSetSimpleValue() {
+    func testJSONPathSetSimpleValue() throws {
         let json = """
         {"name": "John", "age": 30}
         """.data(using: .utf8)!
@@ -314,7 +313,7 @@ final class JSONXMLConverterTests: XCTestCase {
         let result = JSONXMLConverter.jsonPathSet(data: json, path: "$.name", rawValue: "Jane")
         XCTAssertNotNil(result)
 
-        let updated = try? JSONSerialization.jsonObject(with: result!, options: []) as? [String: Any]
+        let updated = try? JSONSerialization.jsonObject(with: try XCTUnwrap(result), options: []) as? [String: Any]
         XCTAssertEqual(updated?["name"] as? String, "Jane")
     }
 
@@ -489,7 +488,7 @@ final class JSONXMLConverterTests: XCTestCase {
 
     // MARK: - Integration Tests
 
-    func testRoundTripJSONToXMLToJSON() {
+    func testRoundTripJSONToXMLToJSON() throws {
         let originalJSON = """
         {"name": "John", "age": 30, "items": [1, 2, 3]}
         """.data(using: .utf8)!
@@ -499,11 +498,11 @@ final class JSONXMLConverterTests: XCTestCase {
         XCTAssertNotNil(xmlData)
 
         // Convert back to JSON
-        let jsonData = JSONXMLConverter.xmlToJSON(data: xmlData!)
+        let jsonData = try JSONXMLConverter.xmlToJSON(data: XCTUnwrap(xmlData))
         XCTAssertNotNil(jsonData)
     }
 
-    func testComplexJSONToXMLConversion() {
+    func testComplexJSONToXMLConversion() throws {
         let json = """
         {
             "user": {
@@ -524,26 +523,26 @@ final class JSONXMLConverterTests: XCTestCase {
         let xmlData = JSONXMLConverter.jsonToXML(data: json)
         XCTAssertNotNil(xmlData)
 
-        let xmlString = String(data: xmlData!, encoding: .utf8)!
+        let xmlString = try XCTUnwrap(try String(data: XCTUnwrap(xmlData), encoding: .utf8))
         XCTAssertTrue(xmlString.contains("<user>"))
         XCTAssertTrue(xmlString.contains("<name>John Doe</name>"))
         XCTAssertTrue(xmlString.contains("<address>"))
         XCTAssertTrue(xmlString.contains("<hobbies>"))
     }
 
-    func testMultipleJSONPathOperations() {
+    func testMultipleJSONPathOperations() throws {
         var json = """
         {"a": 1, "b": 2, "c": 3}
         """.data(using: .utf8)!
 
         // Set a value
-        json = JSONXMLConverter.jsonPathSet(data: json, path: "$.a", rawValue: "10")!
+        json = try XCTUnwrap(JSONXMLConverter.jsonPathSet(data: json, path: "$.a", rawValue: "10"))
 
         // Delete a value
-        json = JSONXMLConverter.jsonPathDelete(data: json, path: "$.b")!
+        json = try XCTUnwrap(JSONXMLConverter.jsonPathDelete(data: json, path: "$.b"))
 
         // Set another value
-        json = JSONXMLConverter.jsonPathSet(data: json, path: "$.d", rawValue: "4")!
+        json = try XCTUnwrap(JSONXMLConverter.jsonPathSet(data: json, path: "$.d", rawValue: "4"))
 
         let result = try? JSONSerialization.jsonObject(with: json, options: []) as? [String: Any]
         XCTAssertNotNil(result)

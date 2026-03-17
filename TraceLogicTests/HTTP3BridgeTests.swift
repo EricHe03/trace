@@ -6,8 +6,8 @@
 //
 
 import Foundation
-import XCTest
 @testable import TraceQUIC
+import XCTest
 
 final class HTTP3BridgeTests: XCTestCase {
     func testRequestHeadParsesPseudoHeaders() throws {

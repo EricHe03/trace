@@ -6,10 +6,10 @@
 //
 
 import Foundation
-import XCTest
 @testable import TraceCore
 @testable import TraceProxy
 @testable import TraceVPNKit
+import XCTest
 
 final class PacketThrottlerTests: XCTestCase {
     var sut: PacketThrottler!
@@ -269,8 +269,8 @@ final class PacketThrottlerTests: XCTestCase {
         let state = makeThrottlingState(
             enabled: true,
             latency: latencyMs,
-            downloadSpeed: 100000,
-            uploadSpeed: 100000,
+            downloadSpeed: 100_000,
+            uploadSpeed: 100_000,
             packetLoss: 0.0
         )
         sut.updateState(state)
@@ -305,8 +305,8 @@ final class PacketThrottlerTests: XCTestCase {
         let state = makeThrottlingState(
             enabled: true,
             latency: 0,
-            downloadSpeed: 100000,
-            uploadSpeed: 100000
+            downloadSpeed: 100_000,
+            uploadSpeed: 100_000
         )
         sut.updateState(state)
 

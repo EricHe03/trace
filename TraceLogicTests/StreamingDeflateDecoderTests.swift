@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
+@testable import TraceCompression
 import XCTest
 import zlib
-@testable import TraceCompression
 
 final class StreamingDeflateDecoderTests: XCTestCase {
-
     // MARK: - Round-Trip Tests
 
     func testStreamingDeflateRoundTrip() throws {
@@ -21,7 +20,7 @@ final class StreamingDeflateDecoderTests: XCTestCase {
         ]
 
         for testString in testStrings {
-            let input = testString.data(using: .utf8)!
+            let input = try XCTUnwrap(testString.data(using: .utf8))
 
             let compressed = try compressGzip(input)
             XCTAssertNotNil(compressed, "Failed to compress: \(testString.prefix(20))")
@@ -52,7 +51,7 @@ final class StreamingDeflateDecoderTests: XCTestCase {
     }
 
     func testStreamingDeflateMultipleChunks() throws {
-        let original = String(repeating: "Test data ", count: 100).data(using: .utf8)!
+        let original = try XCTUnwrap(String(repeating: "Test data ", count: 100).data(using: .utf8))
         let compressed = try compressGzip(original)
 
         let decoder = StreamingDeflateDecoder()
@@ -64,7 +63,7 @@ final class StreamingDeflateDecoderTests: XCTestCase {
         var offset = 0
         while offset < compressed.count {
             let end = min(offset + chunkSize, compressed.count)
-            let chunk = compressed[offset..<end]
+            let chunk = compressed[offset ..< end]
             let decompressed = try decoder.decompress(chunk: chunk)
             output.append(decompressed)
             offset = end
@@ -93,7 +92,7 @@ final class StreamingDeflateDecoderTests: XCTestCase {
     }
 
     func testStreamingDeflateMediumData() throws {
-        let medium = String(repeating: "Medium test data. ", count: 50).data(using: .utf8)!
+        let medium = try XCTUnwrap(String(repeating: "Medium test data. ", count: 50).data(using: .utf8))
         let compressed = try compressGzip(medium)
 
         let decoder = StreamingDeflateDecoder()
@@ -107,7 +106,7 @@ final class StreamingDeflateDecoderTests: XCTestCase {
     }
 
     func testStreamingDeflateLargeData() throws {
-        let large = String(repeating: "Lorem ipsum dolor sit amet. ", count: 3000).data(using: .utf8)!
+        let large = try XCTUnwrap(String(repeating: "Lorem ipsum dolor sit amet. ", count: 3000).data(using: .utf8))
         let compressed = try compressGzip(large)
 
         let decoder = StreamingDeflateDecoder()
@@ -122,7 +121,7 @@ final class StreamingDeflateDecoderTests: XCTestCase {
     }
 
     func testStreamingDeflateVeryLargeData() throws {
-        let veryLarge = Data(repeating: 0x42, count: 100000)
+        let veryLarge = Data(repeating: 0x42, count: 100_000)
         let compressed = try compressGzip(veryLarge)
 
         let decoder = StreamingDeflateDecoder()
@@ -160,7 +159,7 @@ final class StreamingDeflateDecoderTests: XCTestCase {
     }
 
     func testStreamingDeflateGarbageData() throws {
-        let garbage = Data((0..<100).map { _ in UInt8.random(in: 0...255) })
+        let garbage = Data((0 ..< 100).map { _ in UInt8.random(in: 0 ... 255) })
 
         let decoder = StreamingDeflateDecoder()
         try decoder.initialize()
@@ -225,7 +224,7 @@ final class StreamingDeflateDecoderTests: XCTestCase {
     func testStreamingDeflateCustomConfig() throws {
         let config = StreamingDecoderConfig(
             chunkSize: 1024,
-            maxOutputSize: 100000
+            maxOutputSize: 100_000
         )
 
         let decoder = StreamingDeflateDecoder(config: config)
@@ -266,7 +265,7 @@ final class StreamingDeflateDecoderTests: XCTestCase {
 
     func testStreamingDeflateBinaryData() throws {
         var binaryData = Data()
-        for i in 0..<1000 {
+        for i in 0 ..< 1000 {
             binaryData.append(UInt8(i % 256))
         }
 

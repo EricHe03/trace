@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class DNSMessageTests: XCTestCase {
-
     // MARK: - DNSMessage Initialization Tests
 
     func testDNSMessageInit() {
@@ -89,7 +88,7 @@ final class DNSMessageTests: XCTestCase {
             type: .aaaa,
             ttl: 300,
             dataLength: 16,
-            data: Data([0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
+            data: Data([0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
         )
         let cnameRecord = DNSResourceRecord(
             name: "alias.example.com",
@@ -238,7 +237,7 @@ final class DNSMessageTests: XCTestCase {
 
     func testParseIPv6() {
         let ipv6Data = Data([
-            0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
+            0x20, 0x01, 0x0D, 0xB8, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
         ])
         let record = DNSResourceRecord(
@@ -259,7 +258,7 @@ final class DNSMessageTests: XCTestCase {
             type: .aaaa,
             ttl: 300,
             dataLength: 8,
-            data: Data([0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00])
+            data: Data([0x20, 0x01, 0x0D, 0xB8, 0x00, 0x00, 0x00, 0x00])
         )
 
         XCTAssertEqual(record.dataString, "Invalid IPv6")

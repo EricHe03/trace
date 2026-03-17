@@ -5,8 +5,8 @@
 //  Updated for NetworkRequest HTTP/2 HPACK metadata round-trip.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class HPACKHuffmanTests: XCTestCase {
     func testNetworkRequestCodableWithHPACKMetadata() throws {

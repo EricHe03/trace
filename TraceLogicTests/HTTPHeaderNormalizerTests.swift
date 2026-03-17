@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class HTTPHeaderNormalizerTests: XCTestCase {
-
     // MARK: - Basic Flattening Tests
 
     func testFlattenEmptyHeaders() {
@@ -37,7 +36,7 @@ final class HTTPHeaderNormalizerTests: XCTestCase {
 
         XCTAssertEqual(result.count, 3, "Should have three headers")
 
-        let keys = result.map { $0.key }
+        let keys = result.map(\.key)
         XCTAssertTrue(keys.contains("Content-Type"))
         XCTAssertTrue(keys.contains("Authorization"))
         XCTAssertTrue(keys.contains("User-Agent"))
@@ -54,7 +53,7 @@ final class HTTPHeaderNormalizerTests: XCTestCase {
         XCTAssertEqual(result.count, 2, "Should have two headers for array value")
         XCTAssertTrue(result.allSatisfy { $0.key == "Set-Cookie" })
 
-        let values = result.map { $0.value }
+        let values = result.map(\.value)
         XCTAssertTrue(values.contains("session=abc123"))
         XCTAssertTrue(values.contains("user=john"))
     }
@@ -88,7 +87,7 @@ final class HTTPHeaderNormalizerTests: XCTestCase {
         XCTAssertEqual(result.count, 3, "Should have three headers for three array items")
         XCTAssertTrue(result.allSatisfy { $0.key == "Accept" })
 
-        let values = result.map { $0.value }
+        let values = result.map(\.value)
         XCTAssertTrue(values.contains("text/html"))
         XCTAssertTrue(values.contains("application/json"))
         XCTAssertTrue(values.contains("application/xml"))
@@ -106,7 +105,7 @@ final class HTTPHeaderNormalizerTests: XCTestCase {
         XCTAssertEqual(result.count, 2, "NSArray should be flattened")
         XCTAssertTrue(result.allSatisfy { $0.key == "X-Custom" })
 
-        let values = result.map { $0.value }
+        let values = result.map(\.value)
         XCTAssertTrue(values.contains("value1"))
         XCTAssertTrue(values.contains("value2"))
     }
@@ -256,7 +255,7 @@ final class HTTPHeaderNormalizerTests: XCTestCase {
         XCTAssertEqual(result.count, 4, "Should have four headers for four array items")
         XCTAssertTrue(result.allSatisfy { $0.key == "X-Mixed" })
 
-        let values = result.map { $0.value }
+        let values = result.map(\.value)
         XCTAssertTrue(values.contains("string"))
         XCTAssertTrue(values.contains("123"))
         XCTAssertTrue(values.contains("true"))
@@ -280,7 +279,7 @@ final class HTTPHeaderNormalizerTests: XCTestCase {
         XCTAssertEqual(result.count, 7, "Should have seven headers")
 
         // Verify all expected headers are present
-        let keys = Set(result.map { $0.key })
+        let keys = Set(result.map(\.key))
         XCTAssertTrue(keys.contains("Host"))
         XCTAssertTrue(keys.contains("User-Agent"))
         XCTAssertTrue(keys.contains("Accept"))
@@ -331,7 +330,7 @@ final class HTTPHeaderNormalizerTests: XCTestCase {
         // Should have three separate headers (case-sensitive keys)
         XCTAssertEqual(result.count, 3, "Should preserve case-sensitive keys")
 
-        let keys = result.map { $0.key }
+        let keys = result.map(\.key)
         XCTAssertTrue(keys.contains("Content-Type"))
         XCTAssertTrue(keys.contains("content-type"))
         XCTAssertTrue(keys.contains("CONTENT-TYPE"))
@@ -356,7 +355,7 @@ final class HTTPHeaderNormalizerTests: XCTestCase {
 
     func testFlattenLargeNumberOfHeaders() {
         var headers: [AnyHashable: Any] = [:]
-        for i in 0..<1000 {
+        for i in 0 ..< 1000 {
             headers["Header-\(i)"] = "Value-\(i)"
         }
 
@@ -366,7 +365,7 @@ final class HTTPHeaderNormalizerTests: XCTestCase {
 
     func testFlattenHeaderWithLargeArray() {
         var arrayValues: [String] = []
-        for i in 0..<100 {
+        for i in 0 ..< 100 {
             arrayValues.append("value-\(i)")
         }
 

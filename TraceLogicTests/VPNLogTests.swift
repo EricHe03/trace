@@ -14,13 +14,12 @@ final class VPNLogTests: XCTestCase {
     }
 }
 #else
-import XCTest
 import OSLog
-@testable import TraceVPNKit
 @testable import TraceCore
+@testable import TraceVPNKit
+import XCTest
 
 final class VPNLogTests: XCTestCase {
-
     // MARK: - Logger Instance Tests
 
     func testTunnelLoggerExists() {

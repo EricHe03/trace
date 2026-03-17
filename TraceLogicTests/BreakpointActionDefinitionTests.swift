@@ -5,12 +5,11 @@
 //  Created by Justin on 2026-02-01.
 //
 
-import XCTest
-@testable import TraceFeatures
 @testable import TraceCore
+@testable import TraceFeatures
+import XCTest
 
 final class BreakpointActionDefinitionTests: XCTestCase {
-
     // MARK: - Initialization Tests
 
     func testInit_WithDefaultParameters_CreatesInstanceWithEmptyParameters() {
@@ -331,7 +330,7 @@ final class BreakpointActionDefinitionTests: XCTestCase {
         // Act & Assert - Should compile without warnings
         await withCheckedContinuation { continuation in
             Task {
-                let _ = definition
+                _ = definition
                 continuation.resume()
             }
         }

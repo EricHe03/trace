@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
-@testable import TraceFeatures
 @testable import TraceCore
+@testable import TraceFeatures
+import XCTest
 
 final class RuleIndexTests: XCTestCase {
-
     // MARK: - Initialization Tests
 
     func testInitialization() async {
@@ -439,7 +438,7 @@ final class RuleIndexTests: XCTestCase {
         // Arrange
         let index = RuleIndex()
         var rules: [RewriteRule] = []
-        for i in 0..<100 {
+        for i in 0 ..< 100 {
             rules.append(makeRewriteRule(
                 id: UUID(),
                 matchURL: "https://api\(i).example.com",
@@ -504,10 +503,10 @@ final class RuleIndexTests: XCTestCase {
 
     // MARK: - Performance Tests
 
-    func testBuildIndexPerformance() async {
+    func testBuildIndexPerformance() {
         let index = RuleIndex()
         var rules: [RewriteRule] = []
-        for i in 0..<1000 {
+        for i in 0 ..< 1000 {
             rules.append(makeRewriteRule(
                 id: UUID(),
                 matchURL: "https://api\(i).example.com",
@@ -525,7 +524,7 @@ final class RuleIndexTests: XCTestCase {
     func testLookupPerformance() async {
         let index = RuleIndex()
         var rules: [RewriteRule] = []
-        for i in 0..<1000 {
+        for i in 0 ..< 1000 {
             rules.append(makeRewriteRule(
                 id: UUID(),
                 matchURL: "https://api\(i).example.com",

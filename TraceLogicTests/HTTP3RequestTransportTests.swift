@@ -6,15 +6,15 @@
 //
 
 import Foundation
-import XCTest
 @testable import TraceCore
 @testable import TraceFeatures
 @testable import TraceQUIC
+import XCTest
 
 final class HTTP3RequestTransportTests: XCTestCase {
     func testExecuteDoesNotFollowRedirectWhenDisabled() async throws {
-        let startURL = URL(string: "https://start.example/path")!
-        let nextURL = URL(string: "https://next.example/path")!
+        let startURL = try XCTUnwrap(URL(string: "https://start.example/path"))
+        let nextURL = try XCTUnwrap(URL(string: "https://next.example/path"))
         let client = ScriptedHTTP3Client(
             responsesByURL: [
                 startURL.absoluteString: [
@@ -53,8 +53,8 @@ final class HTTP3RequestTransportTests: XCTestCase {
     }
 
     func testExecuteFollowsRedirectAndSanitizesCrossOriginHeaders() async throws {
-        let startURL = URL(string: "https://a.example/path")!
-        let nextURL = URL(string: "https://b.example/final")!
+        let startURL = try XCTUnwrap(URL(string: "https://a.example/path"))
+        let nextURL = try XCTUnwrap(URL(string: "https://b.example/final"))
         let client = ScriptedHTTP3Client(
             responsesByURL: [
                 startURL.absoluteString: [
@@ -121,8 +121,8 @@ final class HTTP3RequestTransportTests: XCTestCase {
     }
 
     func testExecuteThrowsOnRedirectCycle() async throws {
-        let firstURL = URL(string: "https://a.example/start")!
-        let secondURL = URL(string: "https://b.example/next")!
+        let firstURL = try XCTUnwrap(URL(string: "https://a.example/start"))
+        let secondURL = try XCTUnwrap(URL(string: "https://b.example/next"))
         let client = ScriptedHTTP3Client(
             responsesByURL: [
                 firstURL.absoluteString: [

@@ -5,9 +5,9 @@
 //  Created by Justin on 2026-02-01.
 //
 
-import XCTest
-@testable import TraceProxy
 @testable import TraceCore
+@testable import TraceProxy
+import XCTest
 
 @MainActor
 final class HardeningConfigTests: XCTestCase {

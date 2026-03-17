@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TracePacket
+import XCTest
 
 final class PCAPReaderTests: XCTestCase {
-
     var tempDirectory: URL!
 
     override func setUp() {
@@ -124,7 +123,7 @@ final class PCAPReaderTests: XCTestCase {
     // MARK: - Timestamp Tests
 
     func testTimestampAccuracy() throws {
-        let timestamp = Date(timeIntervalSince1970: 1234567890.123456)
+        let timestamp = Date(timeIntervalSince1970: 1_234_567_890.123456)
         let data = Data([0xFF])
 
         let url = try createMockPCAPFile(withPackets: [(timestamp, data)])
@@ -137,7 +136,7 @@ final class PCAPReaderTests: XCTestCase {
         }
 
         XCTAssertNotNil(capturedTimestamp)
-        XCTAssertEqual(capturedTimestamp!.timeIntervalSince1970, timestamp.timeIntervalSince1970, accuracy: 0.000001)
+        XCTAssertEqual(try XCTUnwrap(capturedTimestamp?.timeIntervalSince1970), timestamp.timeIntervalSince1970, accuracy: 0.000001)
     }
 
     // MARK: - Large Packet Tests
@@ -165,7 +164,7 @@ final class PCAPReaderTests: XCTestCase {
     func testInvalidMagicNumber() throws {
         let url = tempDirectory.appendingPathComponent("invalid.pcap")
         var invalidHeader = Data()
-        invalidHeader.appendUInt32LE(0xDEADBEEF) // Invalid magic
+        invalidHeader.appendUInt32LE(0xDEAD_BEEF) // Invalid magic
         // Fill out the rest of the 24-byte global header so this exercises magic parsing (not truncation).
         invalidHeader.appendUInt16LE(2) // Version major
         invalidHeader.appendUInt16LE(4) // Version minor

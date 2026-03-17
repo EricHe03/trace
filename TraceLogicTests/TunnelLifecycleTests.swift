@@ -6,8 +6,8 @@
 //
 
 #if !targetEnvironment(simulator)
-import XCTest
 @testable import TraceVPNKit
+import XCTest
 
 final class TunnelLifecycleTests: XCTestCase {
     var sut: TunnelLifecycle!
@@ -260,7 +260,7 @@ final class TunnelLifecycleTests: XCTestCase {
 
     // MARK: - Concurrent Operations Tests
 
-    func testConcurrentStarts_DeduplicatesCorrectly() async throws {
+    func testConcurrentStarts_DeduplicatesCorrectly() async {
         // Given
         var callCount = 0
         let lock = NSLock()
@@ -274,7 +274,7 @@ final class TunnelLifecycleTests: XCTestCase {
 
         // When - Multiple concurrent starts
         await withTaskGroup(of: Void.self) { group in
-            for i in 0..<5 {
+            for i in 0 ..< 5 {
                 group.addTask {
                     try? await self.sut.start(invocationID: "test-\(i)", startImpl)
                 }
@@ -396,7 +396,7 @@ final class TunnelLifecycleTests: XCTestCase {
 
     func testMultipleLifecycles_MaintainCorrectState() async throws {
         // Test multiple start-stop cycles
-        for i in 0..<10 {
+        for i in 0 ..< 10 {
             // Start
             try await sut.start(invocationID: "test-\(i)") {}
             var invocationID = await sut.currentInvocationID()
@@ -411,7 +411,7 @@ final class TunnelLifecycleTests: XCTestCase {
 
     // MARK: - Performance Tests
 
-    func testStart_Performance() async throws {
+    func testStart_Performance() {
         measure {
             let expectation = self.expectation(description: "Start completes")
 

@@ -6,9 +6,9 @@
 //
 
 import Foundation
-import XCTest
 @testable import TraceCore
 @testable import TraceQUIC
+import XCTest
 
 final class HTTP3MitmPipelineTests: XCTestCase {
     private var originalCaptureConfiguration: CaptureConfiguration?
@@ -44,9 +44,9 @@ final class HTTP3MitmPipelineTests: XCTestCase {
     }
 
     func testProcessRunsInterceptionAndReturnsModifiedResponse() async throws {
-        let client = MockHTTP3Client(
+        let client = try MockHTTP3Client(
             response: HTTP3ClientResponse(
-                finalURL: URL(string: "https://example.com/final")!,
+                finalURL: XCTUnwrap(URL(string: "https://example.com/final")),
                 statusCode: 201,
                 headers: [
                     HTTP3HeaderField(name: "content-type", value: "text/plain")
@@ -94,10 +94,10 @@ final class HTTP3MitmPipelineTests: XCTestCase {
         )
     }
 
-    func testProcessThrowsWhenInterceptorBlocksRequest() async {
-        let client = MockHTTP3Client(
+    func testProcessThrowsWhenInterceptorBlocksRequest() async throws {
+        let client = try MockHTTP3Client(
             response: HTTP3ClientResponse(
-                finalURL: URL(string: "https://example.com")!,
+                finalURL: XCTUnwrap(URL(string: "https://example.com")),
                 statusCode: 200,
                 headers: [],
                 body: Data(),
@@ -133,9 +133,9 @@ final class HTTP3MitmPipelineTests: XCTestCase {
     }
 
     func testProcessPreservesRepeatedSetCookieHeaders() async throws {
-        let client = MockHTTP3Client(
+        let client = try MockHTTP3Client(
             response: HTTP3ClientResponse(
-                finalURL: URL(string: "https://example.com/cookies")!,
+                finalURL: XCTUnwrap(URL(string: "https://example.com/cookies")),
                 statusCode: 200,
                 headers: [
                     HTTP3HeaderField(name: "Set-Cookie", value: "a=1; Path=/"),

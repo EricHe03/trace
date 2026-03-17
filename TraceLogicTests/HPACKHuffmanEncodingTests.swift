@@ -5,8 +5,8 @@
 //  Updated for HPACK integration with HTTP/2 connection info.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class HPACKHuffmanEncodingTests: XCTestCase {
     func testHTTP2ConnectionInfoCarriesHPACKSnapshot() {

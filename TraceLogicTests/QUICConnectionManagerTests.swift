@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/02/18.
 //
 
-import XCTest
 @testable import TraceQUIC
+import XCTest
 
 final class QUICConnectionManagerTests: XCTestCase {
     func testSnapshotTracksOutcomeCounters() async {

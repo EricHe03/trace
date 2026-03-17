@@ -5,9 +5,9 @@
 //  Updated for NIOMITM proxy behavior.
 //
 
-import XCTest
 @testable import TraceCore
 @testable import TraceProxy
+import XCTest
 
 final class ProxyConnectionTLSTests: XCTestCase {
     override func tearDownWithError() throws {

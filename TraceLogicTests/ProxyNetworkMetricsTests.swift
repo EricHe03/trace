@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceProxy
+import XCTest
 
 final class ProxyNetworkMetricsTests: XCTestCase {
-
     // MARK: - Initial State Tests
 
     func testInitialMetrics() async {
@@ -240,7 +239,7 @@ final class ProxyNetworkMetricsTests: XCTestCase {
         await ProxyNetworkMetrics.shared.reset()
 
         await withTaskGroup(of: Void.self) { group in
-            for _ in 0..<100 {
+            for _ in 0 ..< 100 {
                 group.addTask {
                     await ProxyNetworkMetrics.shared.recordPacketForwarded()
                 }

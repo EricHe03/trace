@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TracePacket
+import XCTest
 
 final class TCPPacketTests: XCTestCase {
-
     // MARK: - Initialization Tests
 
     func testTCPPacketInitialization() {
@@ -400,7 +399,7 @@ final class TCPPacketTests: XCTestCase {
         let flags = TCPPacket.Flags.syn
 
         Task {
-            let _ = flags.rawValue // Should compile without warnings
+            _ = flags.rawValue // Should compile without warnings
         }
     }
 
@@ -458,7 +457,7 @@ final class TCPPacketTests: XCTestCase {
     // MARK: - Window Scale Values
 
     func testWindowScaleValues() {
-        for scale: UInt8 in 0...14 {
+        for scale: UInt8 in 0 ... 14 {
             let options = TCPPacket.Options(mss: nil, windowScale: scale, sackPermitted: false, timestamps: nil)
             XCTAssertEqual(options.windowScale, scale)
         }

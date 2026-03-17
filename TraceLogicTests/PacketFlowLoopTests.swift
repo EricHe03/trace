@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/01/27.
 //
 
-import XCTest
-@testable import TraceVPNKit
 @testable import TracePacket
+@testable import TraceVPNKit
+import XCTest
 
 final class PacketFlowLoopTests: XCTestCase {
-
     // MARK: - UDP Forwarding Mode Tests
 
     func testUDPForwardingModeDirect() {
@@ -161,7 +160,7 @@ final class PacketFlowLoopTests: XCTestCase {
         let ipv4Header = Data([
             0x45, 0x00, 0x00, 0x3C, // Version, IHL, DSCP, ECN, Total Length
             0x00, 0x00, 0x00, 0x00, // ID, Flags, Fragment Offset
-            0x40, 0x06, // TTL, Protocol (6 = TCP)
+            0x40, 0x06 // TTL, Protocol (6 = TCP)
         ])
 
         let proto = ipv4Header[9]
@@ -174,7 +173,7 @@ final class PacketFlowLoopTests: XCTestCase {
         let ipv4Header = Data([
             0x45, 0x00, 0x00, 0x3C,
             0x00, 0x00, 0x00, 0x00,
-            0x40, 0x11, // TTL, Protocol (17 = UDP)
+            0x40, 0x11 // TTL, Protocol (17 = UDP)
         ])
 
         let proto = ipv4Header[9]
@@ -230,7 +229,7 @@ final class PacketFlowLoopTests: XCTestCase {
     func testMultiplePacketReads() {
         var packetsRead = 0
 
-        for _ in 0..<5 {
+        for _ in 0 ..< 5 {
             packetsRead += 1
         }
 
@@ -244,7 +243,7 @@ final class PacketFlowLoopTests: XCTestCase {
         var pendingCount = 0
 
         // Simulate adding to pending queue
-        for _ in 0..<150 {
+        for _ in 0 ..< 150 {
             if pendingCount < maxPending {
                 pendingCount += 1
             }
@@ -305,7 +304,7 @@ final class PacketFlowLoopTests: XCTestCase {
             var activeFlows: Int
 
             func summary() -> String {
-                return "UDP: \(totalPackets) pkts, \(port443Packets) on :443, \(activeFlows) flows"
+                "UDP: \(totalPackets) pkts, \(port443Packets) on :443, \(activeFlows) flows"
             }
         }
 
@@ -508,7 +507,7 @@ final class PacketFlowLoopTests: XCTestCase {
         let expectedPackets = 100
 
         // Simulate concurrent processing
-        for _ in 0..<expectedPackets {
+        for _ in 0 ..< expectedPackets {
             packetsProcessed += 1
         }
 
@@ -518,7 +517,7 @@ final class PacketFlowLoopTests: XCTestCase {
     func testPacketOrdering() {
         var packetSequence: [Int] = []
 
-        for i in 1...5 {
+        for i in 1 ... 5 {
             packetSequence.append(i)
         }
 

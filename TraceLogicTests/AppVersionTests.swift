@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class AppVersionTests: XCTestCase {
-
     // MARK: - Version Tests
 
     func testVersionIsNotEmpty() {
@@ -20,7 +19,7 @@ final class AppVersionTests: XCTestCase {
     func testVersionFormat() {
         let version = AppVersion.version
         // Version should contain at least one dot for semantic versioning
-        XCTAssertTrue(version.contains(".") || version.count > 0, "Version should follow semantic versioning format")
+        XCTAssertTrue(version.contains(".") || !version.isEmpty, "Version should follow semantic versioning format")
     }
 
     func testVersionFallback() {
@@ -39,7 +38,7 @@ final class AppVersionTests: XCTestCase {
     func testBuildIsNumeric() {
         let build = AppVersion.build
         // Build should be numeric or fallback to "1"
-        XCTAssertTrue(build.allSatisfy { $0.isNumber } || build == "1", "Build should be numeric")
+        XCTAssertTrue(build.allSatisfy(\.isNumber) || build == "1", "Build should be numeric")
     }
 
     func testBuildFallback() {

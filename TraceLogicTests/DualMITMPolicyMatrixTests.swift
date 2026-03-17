@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/02/24.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class DualMITMPolicyMatrixTests: XCTestCase {
     func testStrictEligibleTCPFailureAlwaysFailClosed() {
@@ -54,7 +54,7 @@ final class DualMITMPolicyMatrixTests: XCTestCase {
         XCTAssertEqual(plan.action, .failOpenPassThrough(reason: "client_rejected_mitm_or_pinning"))
         XCTAssertEqual(plan.bypassDomain, .tcpMITM)
         XCTAssertEqual(plan.bypassReason, .certificatePinning)
-        XCTAssertEqual(plan.bypassTTLSeconds, 86_400)
+        XCTAssertEqual(plan.bypassTTLSeconds, 86400)
     }
 
     func testStrictQUICFailureBlocks() {

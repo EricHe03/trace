@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class NetworkRequestTagsTests: XCTestCase {
-
     // MARK: - Protocol Detection Tests
 
     func testIsHTTP3() {

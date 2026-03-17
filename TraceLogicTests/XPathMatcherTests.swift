@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class XPathMatcherTests: XCTestCase {
-
     // MARK: - Basic Matching Tests
 
     func testMatchesSimpleElement() {
@@ -259,7 +258,7 @@ final class XPathMatcherTests: XCTestCase {
 
     func testPerformanceWithLargeXML() {
         var xml = "<root>"
-        for i in 0..<1000 {
+        for i in 0 ..< 1000 {
             xml += "<item id=\"\(i)\">value\(i)</item>"
         }
         xml += "</root>"
@@ -273,11 +272,11 @@ final class XPathMatcherTests: XCTestCase {
 
     func testPerformanceWithDeeplyNestedXML() {
         var xml = "<root>"
-        for _ in 0..<100 {
+        for _ in 0 ..< 100 {
             xml += "<level>"
         }
         xml += "<target>value</target>"
-        for _ in 0..<100 {
+        for _ in 0 ..< 100 {
             xml += "</level>"
         }
         xml += "</root>"

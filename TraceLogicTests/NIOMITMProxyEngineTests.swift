@@ -12,10 +12,10 @@ import NIOFoundationCompat
 import NIOSSL
 import NIOTLS
 import NIOTransportServices
-import XCTest
 @testable import TraceCore
 @testable import TraceProxy
 @testable import TraceSecurity
+import XCTest
 
 final class NIOMITMProxyEngineTests: XCTestCase {
     private enum TestError: Error {
@@ -1131,7 +1131,7 @@ private extension NIOMITMProxyEngineTests {
 
     static func waitForReadable(_ fd: Int32, timeout: TimeInterval) throws -> Bool {
         var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-        let timeoutMilliseconds = Int32(max(0, timeout * 1_000))
+        let timeoutMilliseconds = Int32(max(0, timeout * 1000))
         let pollResult = withUnsafeMutablePointer(to: &descriptor) {
             Darwin.poll($0, 1, timeoutMilliseconds)
         }
@@ -1200,7 +1200,7 @@ private extension NIOMITMProxyEngineTests {
         do {
             var pendingBytes = Data()
             _ = try readHTTPRequestHead(from: clientFD, pendingBytes: &pendingBytes)
-            usleep(50_000)
+            usleep(50000)
             let body = "delayed"
             let response = """
             HTTP/1.1 200 OK\r

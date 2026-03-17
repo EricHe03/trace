@@ -3,11 +3,10 @@
 //  TraceTests
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class HostBypassStoreTests: XCTestCase {
-
     // MARK: - InMemoryHostBypassStore
 
     func testRecordAndLookupRoundTrip() {

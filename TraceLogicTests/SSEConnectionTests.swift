@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class SSEConnectionTests: XCTestCase {
-
     // MARK: - SSEConnectionStatus Tests
 
     func testSSEConnectionStatusRawValues() {
@@ -115,14 +114,14 @@ final class SSEConnectionTests: XCTestCase {
         XCTAssertEqual(connection.host, "invalid-url")
     }
 
-    func testDurationWhenClosed() {
+    func testDurationWhenClosed() throws {
         let startTime = Date()
         let endTime = startTime.addingTimeInterval(5.5)
         var connection = SSEConnection(url: "https://example.com/events", startTime: startTime)
         connection.endTime = endTime
 
         XCTAssertNotNil(connection.duration)
-        XCTAssertEqual(connection.duration!, 5.5, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(connection.duration), 5.5, accuracy: 0.001)
     }
 
     func testDurationWhenActive() {
@@ -194,7 +193,7 @@ final class SSEConnectionTests: XCTestCase {
         XCTAssertEqual(connection.events[2].data, "event3")
     }
 
-    func testClose() {
+    func testClose() throws {
         let startTime = Date()
         var connection = SSEConnection(url: "https://example.com/events", startTime: startTime, status: .streaming)
 
@@ -202,7 +201,7 @@ final class SSEConnectionTests: XCTestCase {
 
         XCTAssertEqual(connection.status, .closed)
         XCTAssertNotNil(connection.endTime)
-        XCTAssertGreaterThanOrEqual(connection.endTime!, startTime)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(connection.endTime), startTime)
     }
 
     // MARK: - SSEConnection Codable Tests

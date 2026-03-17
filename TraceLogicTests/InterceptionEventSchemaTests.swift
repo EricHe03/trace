@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/02/24.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class InterceptionEventSchemaTests: XCTestCase {
     func testEventCodableIncludesRequiredFields() throws {

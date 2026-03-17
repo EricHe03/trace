@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class ProfileTests: XCTestCase {
-
     // MARK: - Initialization Tests
 
     func testProfileInitialization() {
@@ -218,7 +217,7 @@ final class ProfileTests: XCTestCase {
     }
 
     func testProfileWithManyRuleGroups() throws {
-        let manyRuleGroups = (0..<1000).map { _ in UUID() }
+        let manyRuleGroups = (0 ..< 1000).map { _ in UUID() }
         let profile = Profile(name: "Many Rules", ruleGroups: manyRuleGroups)
 
         XCTAssertEqual(profile.ruleGroups.count, 1000)

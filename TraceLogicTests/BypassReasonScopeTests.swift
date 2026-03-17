@@ -5,13 +5,13 @@
 //  Created by Justin on 2026/02/24.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class BypassReasonScopeTests: XCTestCase {
     func testInMemoryStoreSeparatesTCPAndQUICDomains() {
         let store = InMemoryHostBypassStore()
-        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+        let now = Date(timeIntervalSinceReferenceDate: 1000)
 
         store.record(
             host: "example.com",

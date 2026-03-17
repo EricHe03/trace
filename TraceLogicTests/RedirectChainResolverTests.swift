@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/01/23.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class RedirectChainResolverTests: XCTestCase {
     func testEnrichAddsRedirectChainWhenFollowed() {

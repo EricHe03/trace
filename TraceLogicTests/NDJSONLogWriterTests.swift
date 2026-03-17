@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
-@testable import TraceProxy
 @testable import TraceCore
+@testable import TraceProxy
+import XCTest
 
 final class NDJSONLogWriterTests: XCTestCase {
-
     var tempDirectory: URL!
 
     override func setUp() {
@@ -29,7 +28,7 @@ final class NDJSONLogWriterTests: XCTestCase {
     // MARK: - NDJSONLogEvent Tests
 
     func testNDJSONLogEventCodable() throws {
-        let event = NDJSONLogEvent(ts: 1234567890.123, msg: "Test message", type: "test")
+        let event = NDJSONLogEvent(ts: 1_234_567_890.123, msg: "Test message", type: "test")
 
         let encoder = JSONEncoder()
         let data = try encoder.encode(event)
@@ -43,7 +42,7 @@ final class NDJSONLogWriterTests: XCTestCase {
     }
 
     func testNDJSONLogEventProperties() {
-        let timestamp = 1640000000.5
+        let timestamp = 1_640_000_000.5
         let event = NDJSONLogEvent(ts: timestamp, msg: "Hello World", type: "info")
 
         XCTAssertEqual(event.ts, timestamp)
@@ -118,7 +117,7 @@ final class NDJSONLogWriterTests: XCTestCase {
                 XCTAssertGreaterThan(data?.count ?? 0, 0)
 
                 // Verify JSON format
-                if let data = data, let jsonString = String(data: data, encoding: .utf8) {
+                if let data, let jsonString = String(data: data, encoding: .utf8) {
                     XCTAssertTrue(jsonString.contains("\"type\":\"info\""))
                     XCTAssertTrue(jsonString.contains("\"msg\":\"Test log entry\""))
                 }
@@ -157,7 +156,7 @@ final class NDJSONLogWriterTests: XCTestCase {
                 let fileURL = container.appendingPathComponent(fileName)
                 let data = try? Data(contentsOf: fileURL)
 
-                if let data = data, let content = String(data: data, encoding: .utf8) {
+                if let data, let content = String(data: data, encoding: .utf8) {
                     let lines = content.components(separatedBy: "\n").filter { !$0.isEmpty }
                     XCTAssertEqual(lines.count, 3)
 
@@ -263,7 +262,7 @@ final class NDJSONLogWriterTests: XCTestCase {
 
                 for line in lines where !line.isEmpty {
                     // Each line should be valid JSON
-                    let lineData = line.data(using: .utf8)!
+                    let lineData = try XCTUnwrap(line.data(using: .utf8))
                     XCTAssertNoThrow(try JSONDecoder().decode(NDJSONLogEvent.self, from: lineData))
                 }
 
@@ -280,7 +279,7 @@ final class NDJSONLogWriterTests: XCTestCase {
         let writer = try NDJSONLogWriter(
             logFileURL: fileURL,
             flushEventThreshold: 3,
-            flushByteThreshold: 1_024 * 1_024,
+            flushByteThreshold: 1024 * 1024,
             flushInterval: 60
         )
 
@@ -302,7 +301,7 @@ final class NDJSONLogWriterTests: XCTestCase {
         let writer = try NDJSONLogWriter(
             logFileURL: fileURL,
             flushEventThreshold: 64,
-            flushByteThreshold: 64 * 1_024,
+            flushByteThreshold: 64 * 1024,
             flushInterval: 60
         )
 
@@ -320,7 +319,7 @@ final class NDJSONLogWriterTests: XCTestCase {
         let writer = try NDJSONLogWriter(
             logFileURL: fileURL,
             flushEventThreshold: 64,
-            flushByteThreshold: 64 * 1_024,
+            flushByteThreshold: 64 * 1024,
             flushInterval: 60
         )
 

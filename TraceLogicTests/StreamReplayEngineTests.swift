@@ -5,13 +5,13 @@
 //  Created by Justin on 2026/03/03.
 //
 
-import XCTest
 import NIOCore
 import NIOEmbedded
 import NIOFoundationCompat
 import NIOWebSocket
 @testable import TraceCore
 @testable import TraceProxy
+import XCTest
 
 final class StreamReplayEngineTests: XCTestCase {
     private let storage = AppGroupStorage.shared

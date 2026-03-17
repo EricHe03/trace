@@ -5,9 +5,9 @@
 //  Created by Justin on 2026/02/24.
 //
 
-import XCTest
 @testable import TraceCore
 @testable import TraceVPNKit
+import XCTest
 
 final class CaptureRuntimeControllerTests: XCTestCase {
     func testClassifyReturnsNonDisruptiveWhenModeUnchanged() async {

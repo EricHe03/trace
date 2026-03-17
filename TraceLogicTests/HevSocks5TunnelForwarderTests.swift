@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/01/27.
 //
 
-import XCTest
 import Network
 @testable import TraceVPNKit
+import XCTest
 
 final class HevSocks5TunnelForwarderTests: XCTestCase {
-
     // MARK: - Configuration Tests
 
     func testSocks5ConfigurationBasic() {
@@ -42,7 +41,7 @@ final class HevSocks5TunnelForwarderTests: XCTestCase {
             let ipv6Enabled: Bool
 
             func toConfigString() -> String {
-                return """
+                """
                 tunnel:
                   mtu: \(mtu)
                   ipv6: \(ipv6Enabled)
@@ -172,7 +171,7 @@ final class HevSocks5TunnelForwarderTests: XCTestCase {
         let packets = [
             Data([0x01]),
             Data([0x02]),
-            Data([0x03]),
+            Data([0x03])
         ]
 
         queue.enqueue(packets)
@@ -202,7 +201,7 @@ final class HevSocks5TunnelForwarderTests: XCTestCase {
         let maxPending = 200
         var pendingCount = 0
 
-        for _ in 0..<250 {
+        for _ in 0 ..< 250 {
             if pendingCount < maxPending {
                 pendingCount += 1
             }
@@ -297,7 +296,7 @@ final class HevSocks5TunnelForwarderTests: XCTestCase {
         var packetsReceived = 0
 
         // Simulate receiving packets
-        for _ in 0..<10 {
+        for _ in 0 ..< 10 {
             packetsReceived += 1
         }
 
@@ -349,7 +348,7 @@ final class HevSocks5TunnelForwarderTests: XCTestCase {
             let port: UInt16
 
             func validate() -> Bool {
-                return !host.isEmpty && port > 0
+                !host.isEmpty && port > 0
             }
         }
 
@@ -491,7 +490,7 @@ final class HevSocks5TunnelForwarderTests: XCTestCase {
     func testTUNPacketRead() {
         let receivedPackets = [
             Data([0x45, 0x00]), // IPv4
-            Data([0x60, 0x00]), // IPv6
+            Data([0x60, 0x00]) // IPv6
         ]
 
         XCTAssertEqual(receivedPackets.count, 2)
@@ -505,7 +504,7 @@ final class HevSocks5TunnelForwarderTests: XCTestCase {
         var queuedPackets = 0
         let packetsToQueue = 100
 
-        for _ in 0..<packetsToQueue {
+        for _ in 0 ..< packetsToQueue {
             queuedPackets += 1
         }
 

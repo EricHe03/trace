@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class BodyStorageTests: XCTestCase {
-
     // MARK: - CompressionInfo Tests
 
     func testCompressionInfoRatio() {
@@ -117,9 +116,9 @@ final class BodyStorageTests: XCTestCase {
 
     // MARK: - Compression/Decompression Tests
 
-    func testGzipDecompression() {
+    func testGzipDecompression() throws {
         let original = "Test data for gzip compression".data(using: .utf8)!
-        let compressed = CompressionHelper.compress(data: original, algorithm: "gzip")!
+        let compressed = try XCTUnwrap(CompressionHelper.compress(data: original, algorithm: "gzip"))
 
         let storage = BodyStorage.from(data: compressed, contentEncoding: "gzip")
 
@@ -145,19 +144,19 @@ final class BodyStorageTests: XCTestCase {
         XCTAssertNotNil(storage.getData())
     }
 
-    func testDeflateDecompression() {
+    func testDeflateDecompression() throws {
         let original = "Test data for deflate".data(using: .utf8)!
-        let compressed = CompressionHelper.compress(data: original, algorithm: "deflate")!
+        let compressed = try XCTUnwrap(CompressionHelper.compress(data: original, algorithm: "deflate"))
 
         let storage = BodyStorage.from(data: compressed, contentEncoding: "deflate")
 
         XCTAssertEqual(storage.getData(), original)
     }
 
-    func testChainedEncodingDecompression() {
+    func testChainedEncodingDecompression() throws {
         let original = "Test data for chained encoding".data(using: .utf8)!
-        let compressed1 = CompressionHelper.compress(data: original, algorithm: "gzip")!
-        let compressed2 = CompressionHelper.compress(data: compressed1, algorithm: "deflate")!
+        let compressed1 = try XCTUnwrap(CompressionHelper.compress(data: original, algorithm: "gzip"))
+        let compressed2 = try XCTUnwrap(CompressionHelper.compress(data: compressed1, algorithm: "deflate"))
 
         let storage = BodyStorage.from(data: compressed2, contentEncoding: "gzip, deflate")
 
@@ -166,9 +165,9 @@ final class BodyStorageTests: XCTestCase {
         XCTAssertNotNil(storage.getData())
     }
 
-    func testAutoDetectGzipByMagicBytes() {
+    func testAutoDetectGzipByMagicBytes() throws {
         let original = "Auto-detect test".data(using: .utf8)!
-        let gzipped = CompressionHelper.compress(data: original, algorithm: "gzip")!
+        let gzipped = try XCTUnwrap(CompressionHelper.compress(data: original, algorithm: "gzip"))
 
         let storage = BodyStorage.from(data: gzipped, contentEncoding: nil)
 
@@ -215,32 +214,32 @@ final class BodyStorageTests: XCTestCase {
         XCTAssertEqual(storage.getString(), testString)
     }
 
-    func testGetStringWithCharset() {
+    func testGetStringWithCharset() throws {
         let testString = "Hello"
-        let data = testString.data(using: .utf8)!
+        let data = try XCTUnwrap(testString.data(using: .utf8))
         let storage = BodyStorage.inline(data, charset: "utf-8")
 
         XCTAssertEqual(storage.getString(), testString)
     }
 
-    func testGetStringWithMaxBytes() {
+    func testGetStringWithMaxBytes() throws {
         let testString = String(repeating: "A", count: 2000)
         let storage = BodyStorage.from(string: testString)
 
         let preview = storage.getString(maxBytes: 100)
         XCTAssertNotNil(preview)
-        XCTAssertLessThanOrEqual(preview!.count, 100)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(preview?.count), 100)
     }
 
-    func testDecodeTextWithVariousEncodings() {
+    func testDecodeTextWithVariousEncodings() throws {
         // UTF-8
         let utf8String = "Hello World"
-        let utf8Data = utf8String.data(using: .utf8)!
+        let utf8Data = try XCTUnwrap(utf8String.data(using: .utf8))
         XCTAssertEqual(BodyStorage.decodeText(from: utf8Data, charset: "utf-8"), utf8String)
 
         // Latin1
         let latin1String = "Café"
-        let latin1Data = latin1String.data(using: .isoLatin1)!
+        let latin1Data = try XCTUnwrap(latin1String.data(using: .isoLatin1))
         XCTAssertEqual(BodyStorage.decodeText(from: latin1Data, charset: "iso-8859-1"), latin1String)
     }
 
@@ -486,7 +485,7 @@ final class BodyStorageTests: XCTestCase {
 
     func testBinaryData() {
         var binaryData = Data()
-        for i in 0..<256 {
+        for i in 0 ..< 256 {
             binaryData.append(UInt8(i))
         }
 

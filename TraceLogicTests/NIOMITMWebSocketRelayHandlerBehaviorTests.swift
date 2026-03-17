@@ -5,12 +5,12 @@
 //  Created by Justin on 2026/03/05.
 //
 
-import XCTest
 import NIOCore
 import NIOEmbedded
 import NIOWebSocket
 @testable import TraceCore
 @testable import TraceProxy
+import XCTest
 
 final class NIOMITMWebSocketRelayHandlerBehaviorTests: XCTestCase {
     func testMaskedClientFrameForwardsWithCorrectPayload() throws {

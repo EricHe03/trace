@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class LogLevelTests: XCTestCase {
-
     // MARK: - Enum Cases Tests
 
     func testLogLevelCases() {
@@ -123,7 +122,7 @@ final class LogLevelTests: XCTestCase {
         let level = LogLevel.info
 
         await withTaskGroup(of: LogLevel.self) { group in
-            for _ in 0..<10 {
+            for _ in 0 ..< 10 {
                 group.addTask {
                     level
                 }
@@ -237,7 +236,7 @@ final class LogLevelTests: XCTestCase {
     func testJSONArrayDecoding() throws {
         let decoder = JSONDecoder()
         let json = "[\"debug\",\"info\",\"warning\",\"error\"]"
-        let data = json.data(using: .utf8)!
+        let data = try XCTUnwrap(json.data(using: .utf8))
 
         let levels = try decoder.decode([LogLevel].self, from: data)
 
@@ -272,7 +271,7 @@ final class LogLevelTests: XCTestCase {
 
         let decoder = JSONDecoder()
         let json = "{\"level\":\"warning\",\"message\":\"Test warning\"}"
-        let data = json.data(using: .utf8)!
+        let data = try XCTUnwrap(json.data(using: .utf8))
 
         let container = try decoder.decode(Container.self, from: data)
 
@@ -284,7 +283,7 @@ final class LogLevelTests: XCTestCase {
 
     func testLogLevelCreationPerformance() {
         measure {
-            for _ in 0..<10000 {
+            for _ in 0 ..< 10000 {
                 _ = LogLevel.debug
                 _ = LogLevel.info
                 _ = LogLevel.warning
@@ -298,7 +297,7 @@ final class LogLevelTests: XCTestCase {
         let level2 = LogLevel.info
 
         measure {
-            for _ in 0..<10000 {
+            for _ in 0 ..< 10000 {
                 _ = level1 == level2
             }
         }

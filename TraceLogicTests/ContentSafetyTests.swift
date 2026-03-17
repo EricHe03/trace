@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class ContentSafetyTests: XCTestCase {
-
     // MARK: - isBinary Tests - Empty Data
 
     func testIsBinaryWithEmptyData() {
@@ -110,36 +109,36 @@ final class ContentSafetyTests: XCTestCase {
     func testIsBinaryWithHighNonTextRatio() {
         // Create data with >30% non-text characters
         var mixedData = Data()
-        for _ in 0..<70 {
+        for _ in 0 ..< 70 {
             mixedData.append(0x41) // 'A'
         }
-        for _ in 0..<30 {
+        for _ in 0 ..< 30 {
             mixedData.append(0xFF) // Binary byte
         }
         XCTAssertFalse(ContentSafety.isBinary(mixedData), "30% non-text should be at threshold")
 
         // Now test with 31% non-text
         var moreBinary = Data()
-        for _ in 0..<69 {
+        for _ in 0 ..< 69 {
             moreBinary.append(0x41) // 'A'
         }
-        for _ in 0..<31 {
+        for _ in 0 ..< 31 {
             moreBinary.append(0xFF) // Binary byte
         }
         XCTAssertTrue(ContentSafety.isBinary(moreBinary), "31% non-text should be considered binary")
     }
 
-    func testIsBinaryWithLargeTextData() {
+    func testIsBinaryWithLargeTextData() throws {
         // Create large text data (>4096 bytes) to test sampling
-        let largeText = String(repeating: "Hello, World! ", count: 1000).data(using: .utf8)!
+        let largeText = try XCTUnwrap(String(repeating: "Hello, World! ", count: 1000).data(using: .utf8))
         XCTAssertFalse(ContentSafety.isBinary(largeText), "Large text data should not be considered binary")
     }
 
     func testIsBinaryWithLargeBinaryData() {
         // Create large binary data (>4096 bytes) to test sampling
         var largeBinary = Data(count: 5000)
-        for i in 0..<5000 {
-            largeBinary[i] = UInt8.random(in: 128...255)
+        for i in 0 ..< 5000 {
+            largeBinary[i] = UInt8.random(in: 128 ... 255)
         }
         XCTAssertTrue(ContentSafety.isBinary(largeBinary), "Large binary data should be considered binary")
     }

@@ -5,9 +5,9 @@
 //  Created by Justin on 2026-02-01.
 //
 
-import XCTest
 @testable import TraceCore
 @testable import TraceProxy
+import XCTest
 
 final class MITMAutoBypassCacheTests: XCTestCase {
     // MARK: - Properties
@@ -402,26 +402,26 @@ final class MITMAutoBypassCacheTests: XCTestCase {
     }
 
     func testReasonSpecificTTLPinningPersistsBeyondDefaultHour() {
-        var now = Date(timeIntervalSince1970: 1_000)
+        var now = Date(timeIntervalSince1970: 1000)
         let cache = MITMAutoBypassCache(
-            ttl: 3_600,
+            ttl: 3600,
             nowProvider: { now },
             aliasResolver: { _ in [] },
             resolveAliasesAsynchronously: false
         )
 
         cache.record(host: "pin.example.com", reason: "client_rejected_mitm_or_pinning")
-        now = now.addingTimeInterval(4_000)
+        now = now.addingTimeInterval(4000)
         XCTAssertTrue(cache.shouldBypass(host: "pin.example.com"))
 
-        now = now.addingTimeInterval(83_000)
+        now = now.addingTimeInterval(83000)
         XCTAssertFalse(cache.shouldBypass(host: "pin.example.com"))
     }
 
     func testReasonSpecificTTLConnectionClosedEarlyExpiresQuickly() {
-        var now = Date(timeIntervalSince1970: 2_000)
+        var now = Date(timeIntervalSince1970: 2000)
         let cache = MITMAutoBypassCache(
-            ttl: 3_600,
+            ttl: 3600,
             nowProvider: { now },
             aliasResolver: { _ in [] },
             resolveAliasesAsynchronously: false
@@ -433,9 +433,9 @@ final class MITMAutoBypassCacheTests: XCTestCase {
     }
 
     func testReasonSpecificTTLUpstreamTimeoutExpiresQuickly() {
-        var now = Date(timeIntervalSince1970: 3_000)
+        var now = Date(timeIntervalSince1970: 3000)
         let cache = MITMAutoBypassCache(
-            ttl: 3_600,
+            ttl: 3600,
             nowProvider: { now },
             aliasResolver: { _ in [] },
             resolveAliasesAsynchronously: false
@@ -448,7 +448,7 @@ final class MITMAutoBypassCacheTests: XCTestCase {
 
     func testRecordingRelatedHostsUsesSharedLookupKeyspace() {
         let cache = MITMAutoBypassCache(
-            ttl: 3_600,
+            ttl: 3600,
             aliasResolver: { _ in [] },
             resolveAliasesAsynchronously: false
         )

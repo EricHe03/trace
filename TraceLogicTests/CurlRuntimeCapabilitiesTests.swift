@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/08.
 //
 
-import XCTest
 @testable import TraceFeatures
+import XCTest
 
 final class CurlRuntimeCapabilitiesTests: XCTestCase {
-
     func testResolvedDefaultUsesSwiftNIOBackendIdentity() {
         let capabilities = CurlRuntimeCapabilities.resolvedDefault
 

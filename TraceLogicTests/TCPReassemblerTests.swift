@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/01/21.
 //
 
-import XCTest
 @testable import TracePacket
+import XCTest
 
 final class TCPReassemblerTests: XCTestCase {
     var reassembler: TCPReassembler!
@@ -17,8 +17,8 @@ final class TCPReassemblerTests: XCTestCase {
         super.setUp()
         reassembler = TCPReassembler(idleTimeout: 60, maxBufferedPerFlow: 256)
         testFlow = FlowKey(
-            sourceIP: .v4(0xC0A80101),
-            destinationIP: .v4(0xC0A80102),
+            sourceIP: .v4(0xC0A8_0101),
+            destinationIP: .v4(0xC0A8_0102),
             sourcePort: 12345,
             destinationPort: 80
         )
@@ -30,8 +30,8 @@ final class TCPReassemblerTests: XCTestCase {
             hopLimit: 64,
             fragmentOffset: 0,
             moreFragments: false,
-            source: .v4(0xC0A80101),
-            destination: .v4(0xC0A80102),
+            source: .v4(0xC0A8_0101),
+            destination: .v4(0xC0A8_0102),
             payload: Data()
         )
     }
@@ -47,20 +47,20 @@ final class TCPReassemblerTests: XCTestCase {
 
     func testFlowKeyEquality() {
         let flow1 = FlowKey(
-            sourceIP: .v4(0xC0A80101),
-            destinationIP: .v4(0xC0A80102),
+            sourceIP: .v4(0xC0A8_0101),
+            destinationIP: .v4(0xC0A8_0102),
             sourcePort: 12345,
             destinationPort: 80
         )
         let flow2 = FlowKey(
-            sourceIP: .v4(0xC0A80101),
-            destinationIP: .v4(0xC0A80102),
+            sourceIP: .v4(0xC0A8_0101),
+            destinationIP: .v4(0xC0A8_0102),
             sourcePort: 12345,
             destinationPort: 80
         )
         let flow3 = FlowKey(
-            sourceIP: .v4(0xC0A80103),
-            destinationIP: .v4(0xC0A80102),
+            sourceIP: .v4(0xC0A8_0103),
+            destinationIP: .v4(0xC0A8_0102),
             sourcePort: 12345,
             destinationPort: 80
         )
@@ -71,8 +71,8 @@ final class TCPReassemblerTests: XCTestCase {
 
     func testFlowKeyDescription() {
         let flow = FlowKey(
-            sourceIP: .v4(0xC0A80101),
-            destinationIP: .v4(0xC0A80102),
+            sourceIP: .v4(0xC0A8_0101),
+            destinationIP: .v4(0xC0A8_0102),
             sourcePort: 12345,
             destinationPort: 80
         )
@@ -82,14 +82,14 @@ final class TCPReassemblerTests: XCTestCase {
 
     func testFlowKeyHashable() {
         let flow1 = FlowKey(
-            sourceIP: .v4(0xC0A80101),
-            destinationIP: .v4(0xC0A80102),
+            sourceIP: .v4(0xC0A8_0101),
+            destinationIP: .v4(0xC0A8_0102),
             sourcePort: 12345,
             destinationPort: 80
         )
         let flow2 = FlowKey(
-            sourceIP: .v4(0xC0A80101),
-            destinationIP: .v4(0xC0A80102),
+            sourceIP: .v4(0xC0A8_0101),
+            destinationIP: .v4(0xC0A8_0102),
             sourcePort: 12345,
             destinationPort: 80
         )
@@ -396,8 +396,8 @@ final class TCPReassemblerTests: XCTestCase {
             hopLimit: 64,
             fragmentOffset: 0,
             moreFragments: false,
-            source: .v4(0xC0A80103),
-            destination: .v4(0xC0A80104),
+            source: .v4(0xC0A8_0103),
+            destination: .v4(0xC0A8_0104),
             payload: Data()
         )
 
@@ -429,7 +429,7 @@ final class TCPReassemblerTests: XCTestCase {
         let smallReassembler = TCPReassembler(idleTimeout: 60, maxBufferedPerFlow: 3)
 
         // Send 4 out-of-order segments (max is 3, so 4th should be dropped)
-        for i in 1...4 {
+        for i in 1 ... 4 {
             let packet = TCPPacket(
                 sourcePort: 12345,
                 destinationPort: 80,
@@ -493,7 +493,7 @@ final class TCPReassemblerTests: XCTestCase {
         let packet1 = TCPPacket(
             sourcePort: 12345,
             destinationPort: 80,
-            sequenceNumber: 0xFFFFFFFE,
+            sequenceNumber: 0xFFFF_FFFE,
             acknowledgmentNumber: 0,
             dataOffset: 20,
             flags: [],

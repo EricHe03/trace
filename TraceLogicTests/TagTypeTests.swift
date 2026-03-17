@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 import SwiftUI
 @testable import TraceCore
+import XCTest
 
 final class TagTypeTests: XCTestCase {
-
     // MARK: - TagPriority Tests
 
     func testTagPriorityRawValues() {
@@ -183,7 +182,7 @@ final class TagTypeTests: XCTestCase {
     }
 
     func testTagTypeTooltipAnalysis() {
-        let largeTooltip = TagType.large(size: 10485760).tooltip // 10MB
+        let largeTooltip = TagType.large(size: 10_485_760).tooltip // 10MB
         XCTAssertTrue(largeTooltip.contains("10"))
 
         XCTAssertEqual(TagType.binary.tooltip, "Binary Content")

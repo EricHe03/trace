@@ -5,11 +5,11 @@
 //  Created by Justin on 2026/02/18.
 //
 
-import XCTest
 @testable import TraceCore
 @testable import TracePacket
 @testable import TraceQUIC
 @testable import TraceVPNKit
+import XCTest
 
 final class QUICFlowRouterTests: XCTestCase {
     func testResolveInterceptRouteFirstAttemptConsumesForIntercept() {
@@ -316,7 +316,7 @@ final class QUICFlowRouterTests: XCTestCase {
         )
 
         var failureReason: String?
-        for _ in 0..<40 {
+        for _ in 0 ..< 40 {
             let route = router.resolveInterceptRoute(
                 ipPacket: ipPacket,
                 udpPacket: udpPacket,
@@ -617,9 +617,9 @@ final class QUICFlowRouterTests: XCTestCase {
     func testScheduleAuthorityRetryRequeuesBufferedClientDatagrams() {
         let router = QUICFlowRouter(maxAuthorityRetryAttempts: 1)
         let flowKey = QUICFlowRouter.FlowKey(
-            sourceIP: .v4(0x0A000001),
-            sourcePort: 50_000,
-            destinationIP: .v4(0xC0A80101),
+            sourceIP: .v4(0x0A00_0001),
+            sourcePort: 50000,
+            destinationIP: .v4(0xC0A8_0101),
             destinationPort: 443
         )
         let datagram1 = Data([0xC0, 0x00, 0x01])
@@ -630,9 +630,9 @@ final class QUICFlowRouterTests: XCTestCase {
             flowID: UUID(),
             host: "192.0.2.10",
             port: 443,
-            clientIP: .v4(0x0A000001),
-            clientPort: 50_000,
-            serverIP: .v4(0xC0A80101),
+            clientIP: .v4(0x0A00_0001),
+            clientPort: 50000,
+            serverIP: .v4(0xC0A8_0101),
             serverPort: 443,
             upstreamForwardingDecision: .forwardDirect,
             now: Date(),
@@ -673,9 +673,9 @@ final class QUICFlowRouterTests: XCTestCase {
     func testScheduleAuthorityRetryKeepsAttemptCountAfterRetryBootstrap() {
         let router = QUICFlowRouter(maxAuthorityRetryAttempts: 1)
         let flowKey = QUICFlowRouter.FlowKey(
-            sourceIP: .v4(0x0A000001),
-            sourcePort: 50_000,
-            destinationIP: .v4(0xC0A80101),
+            sourceIP: .v4(0x0A00_0001),
+            sourcePort: 50000,
+            destinationIP: .v4(0xC0A8_0101),
             destinationPort: 443
         )
         let session = QUICMitmSession(flowID: UUID(), host: "192.0.2.10", port: 443)
@@ -683,9 +683,9 @@ final class QUICFlowRouterTests: XCTestCase {
             flowID: UUID(),
             host: "example.com",
             port: 443,
-            clientIP: .v4(0x0A000001),
-            clientPort: 50_000,
-            serverIP: .v4(0xC0A80101),
+            clientIP: .v4(0x0A00_0001),
+            clientPort: 50000,
+            serverIP: .v4(0xC0A8_0101),
             serverPort: 443,
             upstreamForwardingDecision: .forwardDirect,
             now: Date(),
@@ -733,8 +733,8 @@ private extension QUICFlowRouterTests {
             hopLimit: 64,
             fragmentOffset: 0,
             moreFragments: false,
-            source: .v4(0x0A000001),
-            destination: .v4(0xC0A80101),
+            source: .v4(0x0A00_0001),
+            destination: .v4(0xC0A8_0101),
             payload: Data()
         )
     }
@@ -749,7 +749,7 @@ private extension QUICFlowRouterTests {
             0x09, 0x0A, 0x0B, 0x0C // scid
         ])
         return UDPPacket(
-            sourcePort: 50_000,
+            sourcePort: 50000,
             destinationPort: destinationPort,
             length: UInt16(8 + payload.count),
             payload: payload
@@ -765,8 +765,8 @@ private extension QUICFlowRouterTests {
             hopLimit: 64,
             fragmentOffset: 0,
             moreFragments: false,
-            source: .v4(0xC0A80101),
-            destination: .v4(0x0A000001),
+            source: .v4(0xC0A8_0101),
+            destination: .v4(0x0A00_0001),
             payload: Data()
         )
     }

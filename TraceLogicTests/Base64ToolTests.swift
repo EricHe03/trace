@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceUI
+import XCTest
 
 final class Base64ToolTests: XCTestCase {
-
     // MARK: - Base64 Encoding Tests
 
     func testBase64Encoding() {
@@ -159,7 +158,7 @@ final class Base64ToolTests: XCTestCase {
     func testURLSafeBase64PaddingCalculation() {
         // Test padding calculation for different lengths
         let testCases: [(input: String, expectedPadding: Int)] = [
-            ("ABC", 1),  // 3 chars, needs 1 padding
+            ("ABC", 1), // 3 chars, needs 1 padding
             ("ABCD", 0), // 4 chars, needs 0 padding
             ("ABCDE", 3), // 5 chars, needs 3 padding
             ("ABCDEF", 2), // 6 chars, needs 2 padding

@@ -6,9 +6,9 @@
 import Foundation
 import NIOCore
 import NIOTransportServices
-import XCTest
 @testable import TraceCore
 @testable import TraceProxy
+import XCTest
 
 final class NIOMITMInitialIngressHandlerTests: XCTestCase {
     func testShouldRecordTCPHandshakeFailureSkipsClientRejectedMITM() {
@@ -40,7 +40,7 @@ final class NIOMITMInitialIngressHandlerTests: XCTestCase {
             code: 0,
             userInfo: [
                 NSLocalizedDescriptionKey: "NIOSSL.NIOSSLError error 0",
-                NSUnderlyingErrorKey: underlying,
+                NSUnderlyingErrorKey: underlying
             ]
         )
 

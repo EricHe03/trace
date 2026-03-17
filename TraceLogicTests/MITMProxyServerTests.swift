@@ -5,9 +5,9 @@
 //  Updated for NIO MITM server lifecycle.
 //
 
-import XCTest
 @testable import TraceCore
 @testable import TraceProxy
+import XCTest
 
 final class MITMProxyServerTests: XCTestCase {
     override func tearDownWithError() throws {

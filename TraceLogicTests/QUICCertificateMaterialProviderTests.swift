@@ -6,9 +6,9 @@
 //
 
 import Foundation
-import XCTest
 @testable import TraceQUIC
 @testable import TraceVPNKit
+import XCTest
 
 final class QUICCertificateMaterialProviderTests: XCTestCase {
     func testCacheHitReturnsWithoutDuplicateGeneration() async {
@@ -20,7 +20,7 @@ final class QUICCertificateMaterialProviderTests: XCTestCase {
                 return Self.material(seed: seed)
             }
         )
-        let now = Date(timeIntervalSinceReferenceDate: 10_000)
+        let now = Date(timeIntervalSinceReferenceDate: 10000)
 
         let first = await provider.material(for: "example.com", now: now)
         let second = await provider.material(for: "example.com", now: now.addingTimeInterval(5))
@@ -40,11 +40,11 @@ final class QUICCertificateMaterialProviderTests: XCTestCase {
                 return Self.material(seed: seed)
             }
         )
-        let now = Date(timeIntervalSinceReferenceDate: 20_000)
+        let now = Date(timeIntervalSinceReferenceDate: 20000)
 
         var results: [QUICMitmCertificateMaterial?] = []
         await withTaskGroup(of: QUICMitmCertificateMaterial?.self) { group in
-            for _ in 0..<8 {
+            for _ in 0 ..< 8 {
                 group.addTask {
                     await provider.material(for: "example.com", now: now)
                 }
@@ -69,7 +69,7 @@ final class QUICCertificateMaterialProviderTests: XCTestCase {
                 return Self.material(seed: seed)
             }
         )
-        let now = Date(timeIntervalSinceReferenceDate: 30_000)
+        let now = Date(timeIntervalSinceReferenceDate: 30000)
 
         let first = await provider.material(for: "example.com", now: now)
         let second = await provider.material(for: "example.com", now: now.addingTimeInterval(30))
@@ -92,7 +92,7 @@ final class QUICCertificateMaterialProviderTests: XCTestCase {
                 return Self.material(seed: seed)
             }
         )
-        let now = Date(timeIntervalSinceReferenceDate: 40_000)
+        let now = Date(timeIntervalSinceReferenceDate: 40000)
 
         let first = await provider.material(for: "example.com", now: now)
         let second = await provider.material(for: "example.com", now: now.addingTimeInterval(1))

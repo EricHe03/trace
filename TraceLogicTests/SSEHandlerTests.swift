@@ -5,8 +5,8 @@
 //  Updated for NIO-era SSE parser/capture models.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class SSEHandlerTests: XCTestCase {
     func testSSEParserParsesSingleEvent() {

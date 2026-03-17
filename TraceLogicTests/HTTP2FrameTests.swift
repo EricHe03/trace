@@ -5,8 +5,8 @@
 //  Updated for NIO-era HTTP/2 frame metadata models.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class HTTP2FrameTests: XCTestCase {
     func testHTTP2DataFrameCodableRoundTrip() throws {

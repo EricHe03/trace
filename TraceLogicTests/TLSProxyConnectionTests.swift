@@ -5,8 +5,8 @@
 //  Updated for NIO TLS data-plane models.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class TLSProxyConnectionTests: XCTestCase {
     func testTLSConnectionInfoStoresALPNMetadata() {

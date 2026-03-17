@@ -9,9 +9,9 @@ import NIOCore
 import NIOEmbedded
 import NIOHTTP1
 import NIOTransportServices
-import XCTest
 @testable import TraceCore
 @testable import TraceProxy
+import XCTest
 
 final class NIOMITMStreamingUpstreamPipelineTests: XCTestCase {
     func testStreamingUpstreamPipelineEncodesHTTPRequestParts() throws {
@@ -60,4 +60,3 @@ final class NIOMITMStreamingUpstreamPipelineTests: XCTestCase {
         XCTAssertTrue(text.lowercased().contains("host: sse.dev"))
     }
 }
-

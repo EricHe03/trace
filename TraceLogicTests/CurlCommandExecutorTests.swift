@@ -5,13 +5,12 @@
 //  Created by Justin on 2026/02/08.
 //
 
-import XCTest
 @testable import TraceCore
 @testable import TraceFeatures
+import XCTest
 
 @MainActor
 final class CurlCommandExecutorTests: XCTestCase {
-
     func testExecuteBlocksWhenAnalyzerHasErrors() async {
         let mockExecutor = MockTransferExecutor()
         let executor = CurlCommandExecutor(

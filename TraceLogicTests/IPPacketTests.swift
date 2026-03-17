@@ -5,16 +5,15 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TracePacket
+import XCTest
 
 final class IPPacketTests: XCTestCase {
-
     // MARK: - Initialization Tests
 
     func testIPv4PacketInitialization() {
-        let source = IPAddress.v4(0xC0A80001) // 192.168.0.1
-        let destination = IPAddress.v4(0xC0A80002) // 192.168.0.2
+        let source = IPAddress.v4(0xC0A8_0001) // 192.168.0.1
+        let destination = IPAddress.v4(0xC0A8_0002) // 192.168.0.2
         let payload = Data([0x01, 0x02, 0x03, 0x04])
 
         let packet = IPPacket(
@@ -40,8 +39,8 @@ final class IPPacketTests: XCTestCase {
     }
 
     func testIPv6PacketInitialization() {
-        let source = IPAddress.v6((0x2001_0db8_0000_0000, 0x0000_0000_0000_0001))
-        let destination = IPAddress.v6((0x2001_0db8_0000_0000, 0x0000_0000_0000_0002))
+        let source = IPAddress.v6((0x2001_0DB8_0000_0000, 0x0000_0000_0000_0001))
+        let destination = IPAddress.v6((0x2001_0DB8_0000_0000, 0x0000_0000_0000_0002))
         let payload = Data([0xFF, 0xFE])
 
         let packet = IPPacket(
@@ -94,42 +93,42 @@ final class IPPacketTests: XCTestCase {
     // MARK: - IPv4 Address Tests
 
     func testIPv4AddressCreation() {
-        let address = IPAddress.v4(0xC0A80001) // 192.168.0.1
+        let address = IPAddress.v4(0xC0A8_0001) // 192.168.0.1
 
         if case let .v4(value) = address {
-            XCTAssertEqual(value, 0xC0A80001)
+            XCTAssertEqual(value, 0xC0A8_0001)
         } else {
             XCTFail("Expected IPv4 address")
         }
     }
 
     func testIPv4AddressDescription() {
-        let address = IPAddress.v4(0xC0A80001) // 192.168.0.1
+        let address = IPAddress.v4(0xC0A8_0001) // 192.168.0.1
         XCTAssertEqual(address.description, "192.168.0.1")
     }
 
     func testIPv4AddressLocalhostDescription() {
-        let address = IPAddress.v4(0x7F000001) // 127.0.0.1
+        let address = IPAddress.v4(0x7F00_0001) // 127.0.0.1
         XCTAssertEqual(address.description, "127.0.0.1")
     }
 
     func testIPv4AddressBroadcastDescription() {
-        let address = IPAddress.v4(0xFFFFFFFF) // 255.255.255.255
+        let address = IPAddress.v4(0xFFFF_FFFF) // 255.255.255.255
         XCTAssertEqual(address.description, "255.255.255.255")
     }
 
     func testIPv4AddressZeroDescription() {
-        let address = IPAddress.v4(0x00000000) // 0.0.0.0
+        let address = IPAddress.v4(0x0000_0000) // 0.0.0.0
         XCTAssertEqual(address.description, "0.0.0.0")
     }
 
     // MARK: - IPv6 Address Tests
 
     func testIPv6AddressCreation() {
-        let address = IPAddress.v6((0x2001_0db8_0000_0000, 0x0000_0000_0000_0001))
+        let address = IPAddress.v6((0x2001_0DB8_0000_0000, 0x0000_0000_0000_0001))
 
         if case let .v6((hi, lo)) = address {
-            XCTAssertEqual(hi, 0x2001_0db8_0000_0000)
+            XCTAssertEqual(hi, 0x2001_0DB8_0000_0000)
             XCTAssertEqual(lo, 0x0000_0000_0000_0001)
         } else {
             XCTFail("Expected IPv6 address")
@@ -137,7 +136,7 @@ final class IPPacketTests: XCTestCase {
     }
 
     func testIPv6AddressDescription() {
-        let address = IPAddress.v6((0x2001_0db8_0000_0000, 0x0000_0000_0000_0001))
+        let address = IPAddress.v6((0x2001_0DB8_0000_0000, 0x0000_0000_0000_0001))
         XCTAssertEqual(address.description, "2001:0db8:0000:0000:0000:0000:0000:0001")
     }
 
@@ -154,35 +153,35 @@ final class IPPacketTests: XCTestCase {
     // MARK: - IP Address Equality Tests
 
     func testIPv4AddressEquality() {
-        let address1 = IPAddress.v4(0xC0A80001)
-        let address2 = IPAddress.v4(0xC0A80001)
+        let address1 = IPAddress.v4(0xC0A8_0001)
+        let address2 = IPAddress.v4(0xC0A8_0001)
 
         XCTAssertEqual(address1, address2)
     }
 
     func testIPv4AddressInequality() {
-        let address1 = IPAddress.v4(0xC0A80001)
-        let address2 = IPAddress.v4(0xC0A80002)
+        let address1 = IPAddress.v4(0xC0A8_0001)
+        let address2 = IPAddress.v4(0xC0A8_0002)
 
         XCTAssertNotEqual(address1, address2)
     }
 
     func testIPv6AddressEquality() {
-        let address1 = IPAddress.v6((0x2001_0db8_0000_0000, 0x0000_0000_0000_0001))
-        let address2 = IPAddress.v6((0x2001_0db8_0000_0000, 0x0000_0000_0000_0001))
+        let address1 = IPAddress.v6((0x2001_0DB8_0000_0000, 0x0000_0000_0000_0001))
+        let address2 = IPAddress.v6((0x2001_0DB8_0000_0000, 0x0000_0000_0000_0001))
 
         XCTAssertEqual(address1, address2)
     }
 
     func testIPv6AddressInequality() {
-        let address1 = IPAddress.v6((0x2001_0db8_0000_0000, 0x0000_0000_0000_0001))
-        let address2 = IPAddress.v6((0x2001_0db8_0000_0000, 0x0000_0000_0000_0002))
+        let address1 = IPAddress.v6((0x2001_0DB8_0000_0000, 0x0000_0000_0000_0001))
+        let address2 = IPAddress.v6((0x2001_0DB8_0000_0000, 0x0000_0000_0000_0002))
 
         XCTAssertNotEqual(address1, address2)
     }
 
     func testIPv4AndIPv6AddressInequality() {
-        let address1 = IPAddress.v4(0xC0A80001)
+        let address1 = IPAddress.v4(0xC0A8_0001)
         let address2 = IPAddress.v6((0x0000_0000_0000_0000, 0x0000_0000_C0A8_0001))
 
         XCTAssertNotEqual(address1, address2)
@@ -191,7 +190,7 @@ final class IPPacketTests: XCTestCase {
     // MARK: - IP Address Hashing Tests
 
     func testIPv4AddressHashing() {
-        let address = IPAddress.v4(0xC0A80001)
+        let address = IPAddress.v4(0xC0A8_0001)
         var hasher = Hasher()
         address.hash(into: &hasher)
 
@@ -200,7 +199,7 @@ final class IPPacketTests: XCTestCase {
     }
 
     func testIPv6AddressHashing() {
-        let address = IPAddress.v6((0x2001_0db8_0000_0000, 0x0000_0000_0000_0001))
+        let address = IPAddress.v6((0x2001_0DB8_0000_0000, 0x0000_0000_0000_0001))
         var hasher = Hasher()
         address.hash(into: &hasher)
 
@@ -208,8 +207,8 @@ final class IPPacketTests: XCTestCase {
     }
 
     func testIPAddressHashConsistency() {
-        let address1 = IPAddress.v4(0xC0A80001)
-        let address2 = IPAddress.v4(0xC0A80001)
+        let address1 = IPAddress.v4(0xC0A8_0001)
+        let address2 = IPAddress.v4(0xC0A8_0001)
 
         var hasher1 = Hasher()
         var hasher2 = Hasher()
@@ -278,7 +277,7 @@ final class IPPacketTests: XCTestCase {
     }
 
     func testIPAddressIsSendable() {
-        let address = IPAddress.v4(0xC0A80001)
+        let address = IPAddress.v4(0xC0A8_0001)
 
         Task {
             let _ = address.description // Should compile without warnings
@@ -289,7 +288,7 @@ final class IPPacketTests: XCTestCase {
         let proto = TransportProtocol.tcp
 
         Task {
-            let _ = proto.rawValue // Should compile without warnings
+            _ = proto.rawValue // Should compile without warnings
         }
     }
 
@@ -333,9 +332,9 @@ final class IPPacketTests: XCTestCase {
 
     func testPrivateNetworkAddresses() {
         let addresses = [
-            IPAddress.v4(0x0A000001),    // 10.0.0.1
-            IPAddress.v4(0xAC100001),    // 172.16.0.1
-            IPAddress.v4(0xC0A80001)     // 192.168.0.1
+            IPAddress.v4(0x0A00_0001), // 10.0.0.1
+            IPAddress.v4(0xAC10_0001), // 172.16.0.1
+            IPAddress.v4(0xC0A8_0001) // 192.168.0.1
         ]
 
         for address in addresses {
@@ -348,7 +347,7 @@ final class IPPacketTests: XCTestCase {
                 fragmentOffset: 0,
                 moreFragments: false,
                 source: address,
-                destination: IPAddress.v4(0x08080808),
+                destination: IPAddress.v4(0x0808_0808),
                 payload: Data()
             )
 
@@ -358,8 +357,8 @@ final class IPPacketTests: XCTestCase {
 
     func testPublicIPAddresses() {
         let addresses = [
-            IPAddress.v4(0x08080808),    // 8.8.8.8 (Google DNS)
-            IPAddress.v4(0x01010101)     // 1.1.1.1 (Cloudflare DNS)
+            IPAddress.v4(0x0808_0808), // 8.8.8.8 (Google DNS)
+            IPAddress.v4(0x0101_0101) // 1.1.1.1 (Cloudflare DNS)
         ]
 
         for address in addresses {
@@ -384,8 +383,8 @@ final class IPPacketTests: XCTestCase {
             hopLimit: 64,
             fragmentOffset: 0,
             moreFragments: false,
-            source: IPAddress.v4(0xC0A80001),
-            destination: IPAddress.v4(0xC0A80002),
+            source: IPAddress.v4(0xC0A8_0001),
+            destination: IPAddress.v4(0xC0A8_0002),
             payload: payload
         )
     }
@@ -404,8 +403,8 @@ final class IPPacketTests: XCTestCase {
             hopLimit: 64,
             fragmentOffset: 0,
             moreFragments: false,
-            source: IPAddress.v6((0x2001_0db8_0000_0000, 0x0000_0000_0000_0001)),
-            destination: IPAddress.v6((0x2001_0db8_0000_0000, 0x0000_0000_0000_0002)),
+            source: IPAddress.v6((0x2001_0DB8_0000_0000, 0x0000_0000_0000_0001)),
+            destination: IPAddress.v6((0x2001_0DB8_0000_0000, 0x0000_0000_0000_0002)),
             payload: payload
         )
     }

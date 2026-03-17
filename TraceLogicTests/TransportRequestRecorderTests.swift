@@ -6,10 +6,10 @@
 //
 
 import Foundation
-import XCTest
 @testable import TraceCore
 @testable import TracePacket
 @testable import TraceVPNKit
+import XCTest
 
 final class TransportRequestRecorderTests: XCTestCase {
     private var storage: AppGroupStorage!

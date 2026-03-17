@@ -6,8 +6,8 @@
 //
 
 import NIOCore
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class TransparentProxyMetadataTests: XCTestCase {
     func testEncodeDecodeRoundTrip_DomainHost() {

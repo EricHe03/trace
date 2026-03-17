@@ -5,10 +5,10 @@
 //  Created by Justin on 2026-02-01.
 //
 
-import XCTest
-@testable import TraceProxy
 @testable import TraceCore
 @testable import TraceFeatures
+@testable import TraceProxy
+import XCTest
 
 @MainActor
 final class RequestInterceptorTests: XCTestCase {
@@ -252,7 +252,7 @@ final class RequestInterceptorTests: XCTestCase {
         let flowId = UUID()
         let url = "https://api.example.com/test"
         let method = "GET"
-        let headers: [String: String] = ["User-Agent": "Test"]
+        let headers = ["User-Agent": "Test"]
         let body: Data? = nil
 
         // When
@@ -273,7 +273,7 @@ final class RequestInterceptorTests: XCTestCase {
         let flowId = UUID()
         let url = "https://api.example.com/test"
         let method = "POST"
-        let headers: [String: String] = ["Content-Type": "application/json"]
+        let headers = ["Content-Type": "application/json"]
         let body = "{\"key\":\"value\"}".data(using: .utf8)
 
         // When

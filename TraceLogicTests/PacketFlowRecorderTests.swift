@@ -5,13 +5,12 @@
 //  Created by Justin on 2026/01/27.
 //
 
-import XCTest
-@testable import TraceVPNKit
-@testable import TracePacket
 @testable import TraceCore
+@testable import TracePacket
+@testable import TraceVPNKit
+import XCTest
 
 final class PacketFlowRecorderTests: XCTestCase {
-
     // MARK: - Flow Identification Tests
 
     func testTCPFlowIdentification() {
@@ -186,7 +185,7 @@ final class PacketFlowRecorderTests: XCTestCase {
     }
 
     func testSequenceNumberWrapAround() {
-        var sequenceNumber: UInt32 = UInt32.max - 50
+        var sequenceNumber = UInt32.max - 50
 
         // Add 100 bytes (should wrap around)
         let (newSeq, overflow) = sequenceNumber.addingReportingOverflow(100)
@@ -245,7 +244,7 @@ final class PacketFlowRecorderTests: XCTestCase {
         var recentSegments: [RecentSegment] = [
             RecentSegment(sequenceNumber: 1000, timestamp: Date(timeIntervalSinceNow: -0.1)),
             RecentSegment(sequenceNumber: 1100, timestamp: Date(timeIntervalSinceNow: -0.05)),
-            RecentSegment(sequenceNumber: 1200, timestamp: Date()),
+            RecentSegment(sequenceNumber: 1200, timestamp: Date())
         ]
 
         let ackNumber: UInt32 = 1100
@@ -306,7 +305,7 @@ final class PacketFlowRecorderTests: XCTestCase {
         var samples: [ThroughputSample] = []
 
         // Add samples every second
-        for i in 0..<5 {
+        for i in 0 ..< 5 {
             samples.append(ThroughputSample(
                 timestamp: Date(timeIntervalSinceNow: Double(-i)),
                 bytes: 1000
@@ -336,13 +335,13 @@ final class PacketFlowRecorderTests: XCTestCase {
             0x16, // Content Type: Handshake (22)
             0x03, 0x03, // Version: TLS 1.2
             0x00, 0x10, // Length: 16 bytes
-            0x01, // Handshake Type: ClientHello
+            0x01 // Handshake Type: ClientHello
             // ... rest of ClientHello
         ])
 
         let isTLS = tlsClientHello.count >= 3 &&
-                    tlsClientHello[0] == 0x16 &&
-                    tlsClientHello[1] == 0x03
+            tlsClientHello[0] == 0x16 &&
+            tlsClientHello[1] == 0x03
 
         XCTAssertTrue(isTLS, "Should detect TLS ClientHello")
     }
@@ -368,12 +367,12 @@ final class PacketFlowRecorderTests: XCTestCase {
 
             var description: String {
                 switch (major, minor) {
-                case (3, 0): return "SSL 3.0"
-                case (3, 1): return "TLS 1.0"
-                case (3, 2): return "TLS 1.1"
-                case (3, 3): return "TLS 1.2"
-                case (3, 4): return "TLS 1.3"
-                default: return "Unknown"
+                case (3, 0): "SSL 3.0"
+                case (3, 1): "TLS 1.0"
+                case (3, 2): "TLS 1.1"
+                case (3, 3): "TLS 1.2"
+                case (3, 4): "TLS 1.3"
+                default: "Unknown"
                 }
             }
         }
@@ -478,7 +477,7 @@ final class PacketFlowRecorderTests: XCTestCase {
             destPort: 443,
             proto: 6,
             packets: 100,
-            bytes: 150000
+            bytes: 150_000
         )
 
         let encoder = JSONEncoder()

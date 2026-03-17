@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
+@testable import TraceCompression
 import XCTest
 import zlib
-@testable import TraceCompression
 
 final class DeflateDecoderTests: XCTestCase {
-
     // MARK: - Round-Trip Tests (Zlib Wrapped)
 
     func testDeflateZlibRoundTrip() throws {
@@ -21,7 +20,7 @@ final class DeflateDecoderTests: XCTestCase {
         ]
 
         for testString in testStrings {
-            let input = testString.data(using: .utf8)!
+            let input = try XCTUnwrap(testString.data(using: .utf8))
 
             let compressed = try compressZlib(input)
             XCTAssertNotNil(compressed, "Failed to compress: \(testString.prefix(20))")
@@ -42,7 +41,7 @@ final class DeflateDecoderTests: XCTestCase {
         ]
 
         for testString in testStrings {
-            let input = testString.data(using: .utf8)!
+            let input = try XCTUnwrap(testString.data(using: .utf8))
 
             let compressed = try compressRawDeflate(input)
             XCTAssertNotNil(compressed, "Failed to compress: \(testString.prefix(20))")
@@ -83,7 +82,7 @@ final class DeflateDecoderTests: XCTestCase {
     }
 
     func testDeflateZlibMediumData() throws {
-        let medium = String(repeating: "Medium test data. ", count: 50).data(using: .utf8)!
+        let medium = try XCTUnwrap(String(repeating: "Medium test data. ", count: 50).data(using: .utf8))
 
         let compressed = try compressZlib(medium)
         let decompressed = try DeflateDecoder.decompress(compressed)
@@ -93,7 +92,7 @@ final class DeflateDecoderTests: XCTestCase {
 
     func testDeflateZlibLargeData() throws {
         let largeString = String(repeating: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ", count: 2000)
-        let large = largeString.data(using: .utf8)!
+        let large = try XCTUnwrap(largeString.data(using: .utf8))
 
         let compressed = try compressZlib(large)
         let decompressed = try DeflateDecoder.decompress(compressed)
@@ -103,7 +102,7 @@ final class DeflateDecoderTests: XCTestCase {
     }
 
     func testDeflateZlibVeryLargeData() throws {
-        let veryLarge = Data(repeating: 0x42, count: 100000)
+        let veryLarge = Data(repeating: 0x42, count: 100_000)
 
         let compressed = try compressZlib(veryLarge)
         let decompressed = try DeflateDecoder.decompress(compressed)
@@ -124,7 +123,7 @@ final class DeflateDecoderTests: XCTestCase {
     }
 
     func testDeflateRawMediumData() throws {
-        let medium = String(repeating: "Medium test data. ", count: 50).data(using: .utf8)!
+        let medium = try XCTUnwrap(String(repeating: "Medium test data. ", count: 50).data(using: .utf8))
 
         let compressed = try compressRawDeflate(medium)
         let decompressed = try DeflateDecoder.decompress(compressed)
@@ -133,7 +132,7 @@ final class DeflateDecoderTests: XCTestCase {
     }
 
     func testDeflateRawLargeData() throws {
-        let large = Data(repeating: 0x42, count: 100000)
+        let large = Data(repeating: 0x42, count: 100_000)
 
         let compressed = try compressRawDeflate(large)
         let decompressed = try DeflateDecoder.decompress(compressed)
@@ -162,14 +161,14 @@ final class DeflateDecoderTests: XCTestCase {
     }
 
     func testDeflateDecompressGarbageData() {
-        let garbage = Data((0..<100).map { _ in UInt8.random(in: 0...255) })
+        let garbage = Data((0 ..< 100).map { _ in UInt8.random(in: 0 ... 255) })
 
         XCTAssertThrowsError(try DeflateDecoder.decompress(garbage))
     }
 
-    func testDeflateDecompressCorruptedZlibData() {
+    func testDeflateDecompressCorruptedZlibData() throws {
         let original = "Test data".data(using: .utf8)!
-        var compressed = try! compressZlib(original)
+        var compressed = try compressZlib(original)
 
         if compressed.count > 10 {
             compressed[5] = compressed[5] ^ 0xFF
@@ -178,9 +177,9 @@ final class DeflateDecoderTests: XCTestCase {
         XCTAssertThrowsError(try DeflateDecoder.decompress(compressed))
     }
 
-    func testDeflateDecompressCorruptedRawData() {
+    func testDeflateDecompressCorruptedRawData() throws {
         let original = "Test data".data(using: .utf8)!
-        var compressed = try! compressRawDeflate(original)
+        var compressed = try compressRawDeflate(original)
 
         if compressed.count > 10 {
             compressed[5] = compressed[5] ^ 0xFF
@@ -198,7 +197,7 @@ final class DeflateDecoderTests: XCTestCase {
 
     func testDeflateBinaryDataZlib() throws {
         var binaryData = Data()
-        for i in 0..<1000 {
+        for i in 0 ..< 1000 {
             binaryData.append(UInt8(i % 256))
         }
 
@@ -210,7 +209,7 @@ final class DeflateDecoderTests: XCTestCase {
 
     func testDeflateBinaryDataRaw() throws {
         var binaryData = Data()
-        for i in 0..<1000 {
+        for i in 0 ..< 1000 {
             binaryData.append(UInt8(i % 256))
         }
 
@@ -233,8 +232,8 @@ final class DeflateDecoderTests: XCTestCase {
 
     func testDeflateCompressionRatioRandomData() throws {
         var randomData = Data()
-        for _ in 0..<1000 {
-            randomData.append(UInt8.random(in: 0...255))
+        for _ in 0 ..< 1000 {
+            randomData.append(UInt8.random(in: 0 ... 255))
         }
 
         let compressed = try compressZlib(randomData)

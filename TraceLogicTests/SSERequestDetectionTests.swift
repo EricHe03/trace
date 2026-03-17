@@ -5,9 +5,9 @@
 //  Created by Justin on 2026/03/04.
 //
 
-import XCTest
 import NIOHTTP1
 @testable import TraceProxy
+import XCTest
 
 final class SSERequestDetectionTests: XCTestCase {
     func testIsSSERequest_AcceptExactMatch_ReturnsTrue() {
@@ -41,4 +41,3 @@ final class SSERequestDetectionTests: XCTestCase {
         XCTAssertTrue(NIOMITMHTTPConnectHandler.isSSERequest(headers: headers))
     }
 }
-

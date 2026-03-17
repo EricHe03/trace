@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 import CryptoKit
 @testable import TraceUI
+import XCTest
 
 final class HashToolTests: XCTestCase {
-
     // MARK: - MD5 Tests
 
     func testMD5Hash() {
@@ -294,7 +293,7 @@ final class HashToolTests: XCTestCase {
     // MARK: - Large Input Tests
 
     func testHashingLargeInput() {
-        let largeInput = String(repeating: "A", count: 100000)
+        let largeInput = String(repeating: "A", count: 100_000)
         guard let data = largeInput.data(using: .utf8) else {
             XCTFail("Failed to create data")
             return

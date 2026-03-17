@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceFeatures
+import XCTest
 
 final class CurlOptionRegistryTests: XCTestCase {
-
     // MARK: - All Options Tests
 
     func testAllOptionsIsNotEmpty() {
@@ -469,8 +468,10 @@ final class CurlOptionRegistryTests: XCTestCase {
         let requiringValue = CurlOptionRegistry.optionsRequiringValue
 
         // Act & Assert
-        XCTAssertTrue(requiringValue.isSubset(of: allOptions),
-                     "All options requiring value should be in allOptions")
+        XCTAssertTrue(
+            requiringValue.isSubset(of: allOptions),
+            "All options requiring value should be in allOptions"
+        )
     }
 
     func testOptionsWithOptionalValueIsSubsetOfAllOptions() {
@@ -479,8 +480,10 @@ final class CurlOptionRegistryTests: XCTestCase {
         let optionalValue = CurlOptionRegistry.optionsWithOptionalValue
 
         // Act & Assert
-        XCTAssertTrue(optionalValue.isSubset(of: allOptions),
-                     "All options with optional value should be in allOptions")
+        XCTAssertTrue(
+            optionalValue.isSubset(of: allOptions),
+            "All options with optional value should be in allOptions"
+        )
     }
 
     func testOptionsRequiringAndOptionalAreDisjoint() {
@@ -558,8 +561,10 @@ final class CurlOptionRegistryTests: XCTestCase {
 
         // Act & Assert
         for option in optionsWithWhitespace {
-            XCTAssertFalse(CurlOptionRegistry.isKnown(option),
-                          "Option with whitespace should not be recognized: '\(option)'")
+            XCTAssertFalse(
+                CurlOptionRegistry.isKnown(option),
+                "Option with whitespace should not be recognized: '\(option)'"
+            )
         }
     }
 
@@ -629,7 +634,7 @@ final class CurlOptionRegistryTests: XCTestCase {
 
     func testIsKnownPerformance() {
         measure {
-            for _ in 0..<10000 {
+            for _ in 0 ..< 10000 {
                 _ = CurlOptionRegistry.isKnown("--header")
                 _ = CurlOptionRegistry.isKnown("--not-a-real-option")
             }
@@ -638,7 +643,7 @@ final class CurlOptionRegistryTests: XCTestCase {
 
     func testRequiresValuePerformance() {
         measure {
-            for _ in 0..<10000 {
+            for _ in 0 ..< 10000 {
                 _ = CurlOptionRegistry.requiresValue("--header")
                 _ = CurlOptionRegistry.requiresValue("--verbose")
             }
@@ -647,7 +652,7 @@ final class CurlOptionRegistryTests: XCTestCase {
 
     func testHasOptionalValuePerformance() {
         measure {
-            for _ in 0..<10000 {
+            for _ in 0 ..< 10000 {
                 _ = CurlOptionRegistry.hasOptionalValue("--data-binary")
                 _ = CurlOptionRegistry.hasOptionalValue("--header")
             }

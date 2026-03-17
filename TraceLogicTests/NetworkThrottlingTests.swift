@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class NetworkThrottlingTests: XCTestCase {
-
     // MARK: - NetworkCondition Tests
 
     func testNetworkConditionDisplayNames() {
@@ -200,7 +199,7 @@ final class NetworkThrottlingTests: XCTestCase {
         XCTAssertEqual(dict?["enabled"] as? Bool, true)
 
         // Test round-trip
-        if let dict = dict {
+        if let dict {
             let restored = NetworkThrottlingState.fromJSONDictionary(dict)
             XCTAssertNotNil(restored)
             XCTAssertEqual(restored?.enabled, state.enabled)
@@ -214,7 +213,7 @@ final class NetworkThrottlingTests: XCTestCase {
 
         XCTAssertNotNil(dict)
 
-        if let dict = dict {
+        if let dict {
             let restored = NetworkThrottlingState.fromJSONDictionary(dict)
             XCTAssertNotNil(restored)
             XCTAssertEqual(restored?.enabled, state.enabled)
@@ -352,8 +351,8 @@ final class NetworkThrottlingTests: XCTestCase {
         XCTAssertEqual(allProfiles.count, 9)
 
         // First 7 should be presets
-        XCTAssertTrue(allProfiles[0..<7].contains { $0.condition == .wifi })
-        XCTAssertTrue(allProfiles[0..<7].contains { $0.condition == .cellular5G })
+        XCTAssertTrue(allProfiles[0 ..< 7].contains { $0.condition == .wifi })
+        XCTAssertTrue(allProfiles[0 ..< 7].contains { $0.condition == .cellular5G })
 
         // Last 2 should be custom
         XCTAssertTrue(allProfiles.contains { $0.name == "Custom 1" })

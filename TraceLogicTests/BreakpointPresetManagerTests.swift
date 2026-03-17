@@ -5,14 +5,13 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 import Combine
-@testable import TraceFeatures
 @testable import TraceCore
+@testable import TraceFeatures
+import XCTest
 
 @MainActor
 final class BreakpointPresetManagerTests: XCTestCase {
-
     // MARK: - Initialization Tests
 
     func testSharedInstance() {
@@ -504,7 +503,7 @@ final class BreakpointPresetManagerTests: XCTestCase {
     func testSavePresetWithManyStatusCodes() {
         // Arrange
         let manager = BreakpointPresetManager.shared
-        let statusCodes: Set<Int> = Set(100...599)
+        let statusCodes: Set<Int> = Set(100 ... 599)
         let configuration = BreakpointConfiguration(statusCodes: statusCodes)
         let preset = BreakpointPreset(name: "Many Status Codes", configuration: configuration)
 
@@ -581,7 +580,7 @@ final class BreakpointPresetManagerTests: XCTestCase {
         // Arrange
         let manager = BreakpointPresetManager.shared
         var conditions: [BreakpointCondition] = []
-        for i in 0..<50 {
+        for i in 0 ..< 50 {
             conditions.append(BreakpointCondition(type: .headerExists, parameter: "Header\(i)", value: ""))
         }
         let configuration = BreakpointConfiguration(conditions: conditions)

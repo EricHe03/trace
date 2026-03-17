@@ -5,8 +5,8 @@
 //  Updated to validate legacy-compatible HPACK snapshot decoding.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class HPACKHuffmanDataTests: XCTestCase {
     func testHPACKSnapshotDecodesLegacyStaticEntryFormat() throws {

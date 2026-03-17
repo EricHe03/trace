@@ -6,11 +6,10 @@
 //
 
 import Foundation
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class NetworkRequestCurlMetadataCodableTests: XCTestCase {
-
     func testNetworkRequestCodableRoundTripWithCurlExecutionMetadata() throws {
         let original = makeRequest(
             requestMethodRaw: "PURGE",

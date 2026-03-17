@@ -5,9 +5,9 @@
 //  Created by Justin on 2026-02-01.
 //
 
-import XCTest
-@testable import TraceFeatures
 @testable import TraceCore
+@testable import TraceFeatures
+import XCTest
 
 final class NetworkSimulatorTests: XCTestCase {
     var sut: NetworkSimulator!
@@ -87,7 +87,7 @@ final class NetworkSimulatorTests: XCTestCase {
     func testApplyThrottle_WithLargeBandwidth_ProcessesDataQuickly() async {
         // Arrange
         let testData = Data(count: 10000)
-        let bandwidth = 1000000 // 1 MB/s
+        let bandwidth = 1_000_000 // 1 MB/s
         let startTime = Date()
 
         // Act
@@ -439,7 +439,7 @@ final class NetworkSimulatorTests: XCTestCase {
 
         // Act
         await withTaskGroup(of: Data.self) { group in
-            for _ in 0..<10 {
+            for _ in 0 ..< 10 {
                 group.addTask {
                     await self.sut.applyThrottle(bandwidth: bandwidth, to: testData)
                 }
@@ -459,7 +459,7 @@ final class NetworkSimulatorTests: XCTestCase {
 
         // Act & Assert - should not crash
         await withTaskGroup(of: Void.self) { group in
-            for _ in 0..<10 {
+            for _ in 0 ..< 10 {
                 group.addTask {
                     await self.sut.applyJitter(baseDelay: baseDelay, variance: variance)
                 }

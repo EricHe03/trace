@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class LogRedactionTests: XCTestCase {
-
     // MARK: - Basic Hash Tests
 
     func testHashBasicString() {
@@ -224,7 +223,7 @@ final class LogRedactionTests: XCTestCase {
     }
 
     func testHashVeryLongString() {
-        let veryLongString = String(repeating: "test", count: 100000)
+        let veryLongString = String(repeating: "test", count: 100_000)
         let hash = LogRedaction.hash(veryLongString)
 
         XCTAssertNotEqual(hash, "invalid")
@@ -288,7 +287,7 @@ final class LogRedactionTests: XCTestCase {
         let requestId = "req-abc123"
 
         // Simulate multiple log entries with same request ID
-        let hashes = (0..<10).map { _ in
+        let hashes = (0 ..< 10).map { _ in
             LogRedaction.hash(requestId)
         }
 
@@ -322,7 +321,7 @@ final class LogRedactionTests: XCTestCase {
         // Generate many hashes and check for collisions
         var hashes = Set<String>()
 
-        for i in 0..<1000 {
+        for i in 0 ..< 1000 {
             let hash = LogRedaction.hash("input-\(i)")
             XCTAssertFalse(hashes.contains(hash), "Collision detected at iteration \(i)")
             hashes.insert(hash)
@@ -373,7 +372,7 @@ final class LogRedactionTests: XCTestCase {
 
     func testHashPerformance() {
         measure {
-            for i in 0..<1000 {
+            for i in 0 ..< 1000 {
                 _ = LogRedaction.hash("test-string-\(i)")
             }
         }
@@ -383,7 +382,7 @@ final class LogRedactionTests: XCTestCase {
         let longString = String(repeating: "a", count: 10000)
 
         measure {
-            for _ in 0..<100 {
+            for _ in 0 ..< 100 {
                 _ = LogRedaction.hash(longString)
             }
         }
@@ -393,7 +392,7 @@ final class LogRedactionTests: XCTestCase {
         let input = "test-value"
 
         measure {
-            for _ in 0..<1000 {
+            for _ in 0 ..< 1000 {
                 _ = LogRedaction.hash(input, prefixLength: 4)
                 _ = LogRedaction.hash(input, prefixLength: 8)
                 _ = LogRedaction.hash(input, prefixLength: 12)
@@ -408,7 +407,7 @@ final class LogRedactionTests: XCTestCase {
         let input = "test-concurrent"
 
         await withTaskGroup(of: String.self) { group in
-            for _ in 0..<100 {
+            for _ in 0 ..< 100 {
                 group.addTask {
                     LogRedaction.hash(input)
                 }
@@ -427,7 +426,7 @@ final class LogRedactionTests: XCTestCase {
 
     func testHashConcurrentDifferentInputs() async {
         await withTaskGroup(of: (Int, String).self) { group in
-            for i in 0..<100 {
+            for i in 0 ..< 100 {
                 group.addTask {
                     (i, LogRedaction.hash("input-\(i)"))
                 }

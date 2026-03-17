@@ -5,8 +5,8 @@
 //  Updated for HPACK model snapshots/events after parser migration.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class HPACKCoderTests: XCTestCase {
     func testHPACKSampleSnapshotHasExpectedStructure() {

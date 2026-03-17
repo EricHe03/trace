@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCompression
+import XCTest
 
 final class StreamingZstdDecoderTests: XCTestCase {
     override func setUpWithError() throws {
@@ -25,7 +25,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
         ]
 
         for testString in testStrings {
-            let input = testString.data(using: .utf8)!
+            let input = try XCTUnwrap(testString.data(using: .utf8))
 
             let compressed = try compressZstd(input)
             XCTAssertNotNil(compressed, "Failed to compress: \(testString.prefix(20))")
@@ -81,7 +81,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     func testStreamingZstdMultipleChunks() throws {
         try requireZstdSupport()
 
-        let original = String(repeating: "Test data ", count: 100).data(using: .utf8)!
+        let original = try XCTUnwrap(String(repeating: "Test data ", count: 100).data(using: .utf8))
         let compressed = try compressZstd(original)
 
         let decoder = StreamingZstdDecoder()
@@ -93,7 +93,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
         var offset = 0
         while offset < compressed.count {
             let end = min(offset + chunkSize, compressed.count)
-            let chunk = compressed[offset..<end]
+            let chunk = compressed[offset ..< end]
             let decompressed = try decoder.decompress(chunk: chunk)
             output.append(decompressed)
             offset = end
@@ -126,7 +126,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     func testStreamingZstdMediumData() throws {
         try requireZstdSupport()
 
-        let medium = String(repeating: "Medium test data. ", count: 50).data(using: .utf8)!
+        let medium = try XCTUnwrap(String(repeating: "Medium test data. ", count: 50).data(using: .utf8))
         let compressed = try compressZstd(medium)
 
         let decoder = StreamingZstdDecoder()
@@ -142,7 +142,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     func testStreamingZstdLargeData() throws {
         try requireZstdSupport()
 
-        let large = String(repeating: "Lorem ipsum dolor sit amet. ", count: 3000).data(using: .utf8)!
+        let large = try XCTUnwrap(String(repeating: "Lorem ipsum dolor sit amet. ", count: 3000).data(using: .utf8))
         let compressed = try compressZstd(large)
 
         let decoder = StreamingZstdDecoder()
@@ -159,7 +159,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     func testStreamingZstdVeryLargeData() throws {
         try requireZstdSupport()
 
-        let veryLarge = Data(repeating: 0x42, count: 100000)
+        let veryLarge = Data(repeating: 0x42, count: 100_000)
         let compressed = try compressZstd(veryLarge)
 
         let decoder = StreamingZstdDecoder()
@@ -203,7 +203,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     func testStreamingZstdGarbageData() throws {
         try requireZstdSupport()
 
-        let garbage = Data((0..<100).map { _ in UInt8.random(in: 0...255) })
+        let garbage = Data((0 ..< 100).map { _ in UInt8.random(in: 0 ... 255) })
 
         let decoder = StreamingZstdDecoder()
         try decoder.initialize()
@@ -214,7 +214,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     func testStreamingZstdTruncatedDataFailsOnFinalize() throws {
         try requireZstdSupport()
 
-        let original = String(repeating: "stream truncate", count: 300).data(using: .utf8)!
+        let original = try XCTUnwrap(String(repeating: "stream truncate", count: 300).data(using: .utf8))
         let compressed = try compressZstd(original)
         let truncated = Data(compressed.dropLast(max(1, compressed.count / 8)))
 
@@ -231,7 +231,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
     func testStreamingZstdCorruptedDataThrows() throws {
         try requireZstdSupport()
 
-        let original = String(repeating: "stream corrupt", count: 300).data(using: .utf8)!
+        let original = try XCTUnwrap(String(repeating: "stream corrupt", count: 300).data(using: .utf8))
         var compressed = try compressZstd(original)
         compressed[compressed.startIndex + 8] ^= 0xAA
 
@@ -308,7 +308,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
 
         let config = StreamingDecoderConfig(
             chunkSize: 1024,
-            maxOutputSize: 100000
+            maxOutputSize: 100_000
         )
 
         let decoder = StreamingZstdDecoder(config: config)
@@ -353,7 +353,7 @@ final class StreamingZstdDecoderTests: XCTestCase {
         try requireZstdSupport()
 
         var binaryData = Data()
-        for i in 0..<1000 {
+        for i in 0 ..< 1000 {
             binaryData.append(UInt8(i % 256))
         }
 

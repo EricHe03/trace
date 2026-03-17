@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/08.
 //
 
-import XCTest
 @testable import TraceFeatures
+import XCTest
 
 final class CurlCommandAnalyzerTests: XCTestCase {
-
     func testAnalyzeRecognizesEveryRegisteredOption() {
         let analyzer = CurlCommandAnalyzer(capabilities: .parityValidation)
 
@@ -19,9 +18,9 @@ final class CurlCommandAnalyzerTests: XCTestCase {
             let parseErrors = plan.diagnostics.filter {
                 $0.severity == .error && (
                     $0.message.contains("Unsupported cURL option") ||
-                    $0.message.contains("requires a value") ||
-                    $0.message.contains("has no URL") ||
-                    $0.message.contains("Missing URL")
+                        $0.message.contains("requires a value") ||
+                        $0.message.contains("has no URL") ||
+                        $0.message.contains("Missing URL")
                 )
             }
             XCTAssertTrue(parseErrors.isEmpty, "Option \(option) was not parsed cleanly: \(parseErrors.map(\.message))")
@@ -178,7 +177,7 @@ final class CurlCommandAnalyzerTests: XCTestCase {
                 "-X", "POST",
                 "-H", "Content-Type: application/json",
                 "-d", "{\"hello\":\"world\"}",
-                "https://httpbin.org/post",
+                "https://httpbin.org/post"
             ]
         )
         XCTAssertFalse(plan.transfers[0].argv.contains(""))

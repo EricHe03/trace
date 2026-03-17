@@ -7,9 +7,9 @@
 
 import Darwin
 import Foundation
-import XCTest
 @testable import TraceCore
 @testable import TraceVPNKit
+import XCTest
 
 final class LocalSocks5ServerTests: XCTestCase {
     private final class EventLogStore: @unchecked Sendable {
@@ -310,7 +310,7 @@ final class LocalSocks5ServerTests: XCTestCase {
         var endpoints: [LocalSocks5Server.Endpoint] = []
         var errors: [Error] = []
 
-        for _ in 0..<6 {
+        for _ in 0 ..< 6 {
             group.enter()
             DispatchQueue.global(qos: .userInitiated).async {
                 defer { group.leave() }
@@ -457,10 +457,10 @@ final class LocalSocks5ServerTests: XCTestCase {
             cooldownSeconds: 300,
             tcpWindowSize: 100
         )
-        for _ in 0..<40 {
+        for _ in 0 ..< 40 {
             DualMITMCircuitBreaker.shared.recordTCPClientHandshake(success: false)
         }
-        for _ in 0..<60 {
+        for _ in 0 ..< 60 {
             DualMITMCircuitBreaker.shared.recordTCPClientHandshake(success: true)
         }
 
@@ -878,7 +878,7 @@ private extension LocalSocks5ServerTests {
             let bytes = try readExact(count: 4, from: tcpFD)
             host = bytes.map(String.init).joined(separator: ".")
         case 0x03:
-            let length = Int(try readExact(count: 1, from: tcpFD)[0])
+            let length = try Int(readExact(count: 1, from: tcpFD)[0])
             let bytes = try readExact(count: length, from: tcpFD)
             guard let domain = String(bytes: bytes, encoding: .utf8) else {
                 throw TestError.invalidUTF8Domain
@@ -924,7 +924,7 @@ private extension LocalSocks5ServerTests {
         case 0x01:
             _ = try readExact(count: 4, from: tcpFD)
         case 0x03:
-            let length = Int(try readExact(count: 1, from: tcpFD)[0])
+            let length = try Int(readExact(count: 1, from: tcpFD)[0])
             _ = try readExact(count: length, from: tcpFD)
         case 0x04:
             _ = try readExact(count: 16, from: tcpFD)

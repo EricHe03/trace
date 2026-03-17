@@ -5,35 +5,34 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class CompressionHelperTests: XCTestCase {
-
     // MARK: - Deflate Compression Tests
 
-    func testDeflateCompress() {
+    func testDeflateCompress() throws {
         let input = "Hello, World!".data(using: .utf8)!
 
         let compressed = CompressionHelper.compress(data: input, algorithm: "deflate")
 
         XCTAssertNotNil(compressed)
-        XCTAssertGreaterThan(compressed!.count, 0)
+        XCTAssertGreaterThan(try XCTUnwrap(compressed?.count), 0)
         XCTAssertNotEqual(compressed, input)
     }
 
-    func testDeflateDecompress() {
+    func testDeflateDecompress() throws {
         let input = "Hello, World! This is a test string for compression.".data(using: .utf8)!
 
         let compressed = CompressionHelper.compress(data: input, algorithm: "deflate")
         XCTAssertNotNil(compressed)
 
-        let decompressed = CompressionHelper.decompress(data: compressed!, algorithm: "deflate")
+        let decompressed = try CompressionHelper.decompress(data: XCTUnwrap(compressed), algorithm: "deflate")
         XCTAssertNotNil(decompressed)
         XCTAssertEqual(decompressed, input)
     }
 
-    func testDeflateRoundTrip() {
+    func testDeflateRoundTrip() throws {
         let testStrings = [
             "Short",
             "Medium length string for testing",
@@ -41,12 +40,12 @@ final class CompressionHelperTests: XCTestCase {
         ]
 
         for testString in testStrings {
-            let input = testString.data(using: .utf8)!
+            let input = try XCTUnwrap(testString.data(using: .utf8))
 
             let compressed = CompressionHelper.compress(data: input, algorithm: "deflate")
             XCTAssertNotNil(compressed, "Failed to compress: \(testString.prefix(20))")
 
-            let decompressed = CompressionHelper.decompress(data: compressed!, algorithm: "deflate")
+            let decompressed = try CompressionHelper.decompress(data: XCTUnwrap(compressed), algorithm: "deflate")
             XCTAssertNotNil(decompressed, "Failed to decompress: \(testString.prefix(20))")
             XCTAssertEqual(decompressed, input, "Round-trip failed for: \(testString.prefix(20))")
         }
@@ -54,57 +53,57 @@ final class CompressionHelperTests: XCTestCase {
 
     // MARK: - Zlib Tests
 
-    func testZlibCompress() {
+    func testZlibCompress() throws {
         let input = "Test data for zlib compression".data(using: .utf8)!
 
         let compressed = CompressionHelper.compress(data: input, algorithm: "zlib")
 
         XCTAssertNotNil(compressed)
-        XCTAssertGreaterThan(compressed!.count, 0)
+        XCTAssertGreaterThan(try XCTUnwrap(compressed?.count), 0)
     }
 
-    func testZlibDecompress() {
+    func testZlibDecompress() throws {
         let input = "Test data for zlib decompression".data(using: .utf8)!
 
         let compressed = CompressionHelper.compress(data: input, algorithm: "zlib")
-        let decompressed = CompressionHelper.decompress(data: compressed!, algorithm: "zlib")
+        let decompressed = try CompressionHelper.decompress(data: XCTUnwrap(compressed), algorithm: "zlib")
 
         XCTAssertEqual(decompressed, input)
     }
 
     // MARK: - Gzip Tests
 
-    func testGzipCompress() {
+    func testGzipCompress() throws {
         let input = "Hello, World!".data(using: .utf8)!
 
         let compressed = CompressionHelper.compress(data: input, algorithm: "gzip")
 
         XCTAssertNotNil(compressed)
-        XCTAssertGreaterThan(compressed!.count, 10) // Should have gzip header/footer
+        XCTAssertGreaterThan(try XCTUnwrap(compressed?.count), 10) // Should have gzip header/footer
 
         // Verify gzip magic bytes
-        XCTAssertEqual(compressed![0], 0x1F)
-        XCTAssertEqual(compressed![1], 0x8B)
+        XCTAssertEqual(compressed?[0], 0x1F)
+        XCTAssertEqual(compressed?[1], 0x8B)
     }
 
-    func testGzipDecompress() {
+    func testGzipDecompress() throws {
         let input = "Hello, World! Testing gzip compression.".data(using: .utf8)!
 
         let compressed = CompressionHelper.compress(data: input, algorithm: "gzip")
         XCTAssertNotNil(compressed)
 
-        let decompressed = CompressionHelper.decompress(data: compressed!, algorithm: "gzip")
+        let decompressed = try CompressionHelper.decompress(data: XCTUnwrap(compressed), algorithm: "gzip")
         XCTAssertNotNil(decompressed)
         XCTAssertEqual(decompressed, input)
     }
 
-    func testGzipRoundTrip() {
+    func testGzipRoundTrip() throws {
         let input = "This is a test string for gzip round-trip compression.".data(using: .utf8)!
 
         let compressed = CompressionHelper.compress(data: input, algorithm: "gzip")
         XCTAssertNotNil(compressed)
 
-        let decompressed = CompressionHelper.decompress(data: compressed!, algorithm: "gzip")
+        let decompressed = try CompressionHelper.decompress(data: XCTUnwrap(compressed), algorithm: "gzip")
         XCTAssertNotNil(decompressed)
         XCTAssertEqual(decompressed, input)
     }
@@ -131,37 +130,37 @@ final class CompressionHelperTests: XCTestCase {
 
     // MARK: - Large Data Tests
 
-    func testCompressLargeData() {
-        let largeData = Data(repeating: 0x42, count: 100000)
+    func testCompressLargeData() throws {
+        let largeData = Data(repeating: 0x42, count: 100_000)
 
         let compressed = CompressionHelper.compress(data: largeData, algorithm: "deflate")
 
         XCTAssertNotNil(compressed)
-        XCTAssertLessThan(compressed!.count, largeData.count) // Should compress well
+        XCTAssertLessThan(try XCTUnwrap(compressed?.count), largeData.count) // Should compress well
     }
 
-    func testLargeDataRoundTrip() {
+    func testLargeDataRoundTrip() throws {
         let largeData = Data(repeating: 0x42, count: 50000)
 
         let compressed = CompressionHelper.compress(data: largeData, algorithm: "deflate")
         XCTAssertNotNil(compressed)
 
-        let decompressed = CompressionHelper.decompress(data: compressed!, algorithm: "deflate")
+        let decompressed = try CompressionHelper.decompress(data: XCTUnwrap(compressed), algorithm: "deflate")
         XCTAssertEqual(decompressed, largeData)
     }
 
     // MARK: - Binary Data Tests
 
-    func testBinaryDataCompression() {
+    func testBinaryDataCompression() throws {
         var binaryData = Data()
-        for i in 0..<1000 {
+        for i in 0 ..< 1000 {
             binaryData.append(UInt8(i % 256))
         }
 
         let compressed = CompressionHelper.compress(data: binaryData, algorithm: "deflate")
         XCTAssertNotNil(compressed)
 
-        let decompressed = CompressionHelper.decompress(data: compressed!, algorithm: "deflate")
+        let decompressed = try CompressionHelper.decompress(data: XCTUnwrap(compressed), algorithm: "deflate")
         XCTAssertEqual(decompressed, binaryData)
     }
 
@@ -179,14 +178,14 @@ final class CompressionHelperTests: XCTestCase {
         XCTAssertNotNil(deflate3)
     }
 
-    func testDefaultAlgorithm() {
+    func testDefaultAlgorithm() throws {
         let input = "Test".data(using: .utf8)!
 
         let compressed = CompressionHelper.compress(data: input, algorithm: nil)
 
         XCTAssertNotNil(compressed)
 
-        let decompressed = CompressionHelper.decompress(data: compressed!, algorithm: nil)
+        let decompressed = try CompressionHelper.decompress(data: XCTUnwrap(compressed), algorithm: nil)
         XCTAssertEqual(decompressed, input)
     }
 
@@ -214,7 +213,7 @@ final class CompressionHelperTests: XCTestCase {
     }
 
     func testDecompressGarbageData() {
-        let garbage = Data((0..<100).map { _ in UInt8.random(in: 0...255) })
+        let garbage = Data((0 ..< 100).map { _ in UInt8.random(in: 0 ... 255) })
 
         let decompressed = CompressionHelper.decompress(data: garbage, algorithm: "deflate")
 
@@ -224,46 +223,46 @@ final class CompressionHelperTests: XCTestCase {
 
     // MARK: - Compression Ratio Tests
 
-    func testCompressionRatioForRepetitiveData() {
+    func testCompressionRatioForRepetitiveData() throws {
         let repetitiveData = Data(repeating: 0x41, count: 10000)
 
         let compressed = CompressionHelper.compress(data: repetitiveData, algorithm: "deflate")
 
         XCTAssertNotNil(compressed)
-        XCTAssertLessThan(compressed!.count, repetitiveData.count / 10) // Should compress very well
+        XCTAssertLessThan(try XCTUnwrap(compressed?.count), repetitiveData.count / 10) // Should compress very well
     }
 
-    func testCompressionRatioForRandomData() {
+    func testCompressionRatioForRandomData() throws {
         var randomData = Data()
-        for _ in 0..<1000 {
-            randomData.append(UInt8.random(in: 0...255))
+        for _ in 0 ..< 1000 {
+            randomData.append(UInt8.random(in: 0 ... 255))
         }
 
         let compressed = CompressionHelper.compress(data: randomData, algorithm: "deflate")
 
         XCTAssertNotNil(compressed)
         // Random data doesn't compress well, might even be larger
-        XCTAssertGreaterThan(compressed!.count, 0)
+        XCTAssertGreaterThan(try XCTUnwrap(compressed?.count), 0)
     }
 
     // MARK: - Unicode and Special Characters Tests
 
-    func testUnicodeStringCompression() {
+    func testUnicodeStringCompression() throws {
         let unicode = "Hello 世界 🌍 مرحبا".data(using: .utf8)!
 
         let compressed = CompressionHelper.compress(data: unicode, algorithm: "deflate")
         XCTAssertNotNil(compressed)
 
-        let decompressed = CompressionHelper.decompress(data: compressed!, algorithm: "deflate")
+        let decompressed = try CompressionHelper.decompress(data: XCTUnwrap(compressed), algorithm: "deflate")
         XCTAssertEqual(decompressed, unicode)
 
-        let reconstructed = String(data: decompressed!, encoding: .utf8)
+        let reconstructed = try String(data: XCTUnwrap(decompressed), encoding: .utf8)
         XCTAssertEqual(reconstructed, "Hello 世界 🌍 مرحبا")
     }
 
     // MARK: - JSON Data Tests
 
-    func testJSONCompression() {
+    func testJSONCompression() throws {
         let json = """
         {
             "name": "Test",
@@ -278,7 +277,7 @@ final class CompressionHelperTests: XCTestCase {
         let compressed = CompressionHelper.compress(data: json, algorithm: "gzip")
         XCTAssertNotNil(compressed)
 
-        let decompressed = CompressionHelper.decompress(data: compressed!, algorithm: "gzip")
+        let decompressed = try CompressionHelper.decompress(data: XCTUnwrap(compressed), algorithm: "gzip")
         XCTAssertEqual(decompressed, json)
     }
 }

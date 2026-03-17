@@ -5,10 +5,10 @@
 //  Created by Justin on 2026-02-01.
 //
 
-import XCTest
 import OSLog
-@testable import TraceProxy
 @testable import TraceCore
+@testable import TraceProxy
+import XCTest
 
 final class ProxyLogTests: XCTestCase {
     // MARK: - Logger Initialization Tests

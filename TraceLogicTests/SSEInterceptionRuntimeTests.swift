@@ -5,11 +5,11 @@
 //  Validates that SSE stream interception preserves buffered tail bytes when rewriting.
 //
 
-import XCTest
 import NIOCore
 import NIOEmbedded
 @testable import TraceCore
 @testable import TraceProxy
+import XCTest
 
 final class SSEInterceptionRuntimeTests: XCTestCase {
     func testInterceptChunkPreservesBufferedTailForPartialLineWhenModified() throws {
@@ -120,4 +120,3 @@ final class SSEInterceptionRuntimeTests: XCTestCase {
         XCTAssertEqual(events[1].data, "sec")
     }
 }
-

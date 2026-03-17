@@ -5,8 +5,8 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class InterceptionTests: XCTestCase {
     private struct TestInterceptor: InterceptionProviding {
@@ -48,7 +48,7 @@ final class InterceptionTests: XCTestCase {
         let result = InterceptionResult.failed(.timeout)
 
         switch result {
-        case .failed(let failure):
+        case let .failed(failure):
             XCTAssertEqual(failure, .timeout)
         default:
             XCTFail("Expected failed result")
@@ -60,7 +60,7 @@ final class InterceptionTests: XCTestCase {
         let result = InterceptionResult.mocked(request)
 
         switch result {
-        case .mocked(let mockedRequest):
+        case let .mocked(mockedRequest):
             XCTAssertEqual(mockedRequest.id, request.id)
         default:
             XCTFail("Expected mocked result")
@@ -72,7 +72,7 @@ final class InterceptionTests: XCTestCase {
         let result = InterceptionResult.modified(request)
 
         switch result {
-        case .modified(let modifiedRequest):
+        case let .modified(modifiedRequest):
             XCTAssertEqual(modifiedRequest.id, request.id)
         default:
             XCTFail("Expected modified result")
@@ -145,7 +145,7 @@ final class InterceptionTests: XCTestCase {
     func testPatternMatchingOnFailedResult() {
         let result = InterceptionResult.failed(.connectionReset)
 
-        if case .failed(let failure) = result {
+        if case let .failed(failure) = result {
             XCTAssertEqual(failure, .connectionReset)
         } else {
             XCTFail("Pattern matching failed for failed result")
@@ -156,7 +156,7 @@ final class InterceptionTests: XCTestCase {
         let request = NetworkRequest.sample
         let result = InterceptionResult.mocked(request)
 
-        if case .mocked(let mockedRequest) = result {
+        if case let .mocked(mockedRequest) = result {
             XCTAssertEqual(mockedRequest.id, request.id)
         } else {
             XCTFail("Pattern matching failed for mocked result")
@@ -167,7 +167,7 @@ final class InterceptionTests: XCTestCase {
         let request = NetworkRequest.sample
         let result = InterceptionResult.modified(request)
 
-        if case .modified(let modifiedRequest) = result {
+        if case let .modified(modifiedRequest) = result {
             XCTAssertEqual(modifiedRequest.id, request.id)
         } else {
             XCTFail("Pattern matching failed for modified result")
@@ -182,7 +182,7 @@ final class InterceptionTests: XCTestCase {
         let result: InterceptionResult = .blocked
 
         Task {
-            let _ = result
+            _ = result
         }
 
         XCTAssertTrue(true, "InterceptionResult is Sendable")
@@ -193,7 +193,7 @@ final class InterceptionTests: XCTestCase {
         let failure: RequestInterceptionFailure = .timeout
 
         Task {
-            let _ = failure
+            _ = failure
         }
 
         XCTAssertTrue(true, "RequestInterceptionFailure is Sendable")
@@ -204,7 +204,7 @@ final class InterceptionTests: XCTestCase {
         let pipeline: ResponsePipeline = .bufferAndIntercept
 
         Task {
-            let _ = pipeline
+            _ = pipeline
         }
 
         XCTAssertTrue(true, "ResponsePipeline is Sendable")
@@ -217,7 +217,7 @@ final class InterceptionTests: XCTestCase {
         let decision = StreamInterceptionDecision.modify(mutation)
 
         switch decision {
-        case .modify(let extracted):
+        case let .modify(extracted):
             XCTAssertEqual(extracted.payload?.text, "patched")
         default:
             XCTFail("Expected modify decision")
@@ -229,7 +229,7 @@ final class InterceptionTests: XCTestCase {
         let decision = StreamInterceptionDecision.replay(spec)
 
         switch decision {
-        case .replay(let extracted):
+        case let .replay(extracted):
             XCTAssertEqual(extracted.sessionID, spec.sessionID)
             XCTAssertEqual(extracted.eventIDs, spec.eventIDs)
         default:
@@ -273,7 +273,7 @@ final class InterceptionTests: XCTestCase {
         for failure in failures {
             let result = InterceptionResult.failed(failure)
 
-            if case .failed(let extractedFailure) = result {
+            if case let .failed(extractedFailure) = result {
                 XCTAssertEqual(extractedFailure, failure)
             } else {
                 XCTFail("Failed to extract failure type: \(failure)")
@@ -291,13 +291,13 @@ final class InterceptionTests: XCTestCase {
         let result1 = InterceptionResult.mocked(request1)
         let result2 = InterceptionResult.modified(request2)
 
-        if case .mocked(let mockedRequest) = result1 {
+        if case let .mocked(mockedRequest) = result1 {
             XCTAssertEqual(mockedRequest.url, "https://example1.com")
         } else {
             XCTFail("Expected mocked result")
         }
 
-        if case .modified(let modifiedRequest) = result2 {
+        if case let .modified(modifiedRequest) = result2 {
             XCTAssertEqual(modifiedRequest.url, "https://example2.com")
         } else {
             XCTFail("Expected modified result")

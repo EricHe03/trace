@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class WebSocketConnectionTests: XCTestCase {
-
     // MARK: - WebSocketConnectionStatus Tests
 
     func testWebSocketConnectionStatusRawValues() {
@@ -119,14 +118,14 @@ final class WebSocketConnectionTests: XCTestCase {
         XCTAssertEqual(connection.host, "invalid-url")
     }
 
-    func testDurationWhenClosed() {
+    func testDurationWhenClosed() throws {
         let startTime = Date()
         let endTime = startTime.addingTimeInterval(5.5)
         var connection = WebSocketConnection(url: "wss://example.com/ws", startTime: startTime)
         connection.endTime = endTime
 
         XCTAssertNotNil(connection.duration)
-        XCTAssertEqual(connection.duration!, 5.5, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(connection.duration), 5.5, accuracy: 0.001)
     }
 
     func testDurationWhenActive() {
@@ -192,13 +191,13 @@ final class WebSocketConnectionTests: XCTestCase {
 
     // MARK: - WebSocketConnection Mutating Methods Tests
 
-    func testAddMessage() {
+    func testAddMessage() throws {
         var connection = WebSocketConnection(url: "wss://example.com/ws")
         XCTAssertEqual(connection.messages.count, 0)
 
-        let message = WebSocketMessage(
+        let message = try WebSocketMessage(
             direction: .sent,
-            payload: "Hello".data(using: .utf8)!,
+            payload: XCTUnwrap("Hello".data(using: .utf8)),
             messageType: .text
         )
         connection.addMessage(message)
@@ -217,7 +216,7 @@ final class WebSocketConnectionTests: XCTestCase {
         XCTAssertEqual(connection.messages.count, 3)
     }
 
-    func testCloseWithoutCodeOrReason() {
+    func testCloseWithoutCodeOrReason() throws {
         let startTime = Date()
         var connection = WebSocketConnection(url: "wss://example.com/ws", startTime: startTime, status: .open)
 
@@ -225,7 +224,7 @@ final class WebSocketConnectionTests: XCTestCase {
 
         XCTAssertEqual(connection.status, .closed)
         XCTAssertNotNil(connection.endTime)
-        XCTAssertGreaterThanOrEqual(connection.endTime!, startTime)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(connection.endTime), startTime)
         XCTAssertNil(connection.closeCode)
         XCTAssertNil(connection.closeReason)
     }

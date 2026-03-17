@@ -5,11 +5,10 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class RulePackTests: XCTestCase {
-
     // MARK: - RulePackMetadata Tests
 
     func testRulePackMetadataInitialization() {
@@ -28,7 +27,7 @@ final class RulePackTests: XCTestCase {
     }
 
     func testRulePackMetadataWithCustomDate() {
-        let customDate = Date(timeIntervalSince1970: 1000000)
+        let customDate = Date(timeIntervalSince1970: 1_000_000)
         let metadata = RulePackMetadata(
             name: "Test",
             version: "2.0",
@@ -201,7 +200,7 @@ final class RulePackTests: XCTestCase {
             description: "Pack with many rules"
         )
 
-        let rules = (0..<100).map { i in
+        let rules = (0 ..< 100).map { i in
             RewriteRule(
                 name: "Rule \(i)",
                 ruleType: .block,

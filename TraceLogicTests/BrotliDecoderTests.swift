@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
 import Compression
 @testable import TraceCompression
+import XCTest
 
 final class BrotliDecoderTests: XCTestCase {
-
     // MARK: - Round-Trip Tests
 
     func testBrotliRoundTrip() throws {
@@ -21,7 +20,7 @@ final class BrotliDecoderTests: XCTestCase {
         ]
 
         for testString in testStrings {
-            let input = testString.data(using: .utf8)!
+            let input = try XCTUnwrap(testString.data(using: .utf8))
 
             let compressed = try compressBrotli(input)
             XCTAssertNotNil(compressed, "Failed to compress: \(testString.prefix(20))")
@@ -53,7 +52,7 @@ final class BrotliDecoderTests: XCTestCase {
     }
 
     func testBrotliMediumData() throws {
-        let medium = String(repeating: "Medium test data. ", count: 50).data(using: .utf8)!
+        let medium = try XCTUnwrap(String(repeating: "Medium test data. ", count: 50).data(using: .utf8))
 
         let compressed = try compressBrotli(medium)
         let decompressed = try BrotliDecoder.decompress(compressed)
@@ -63,7 +62,7 @@ final class BrotliDecoderTests: XCTestCase {
 
     func testBrotliLargeData() throws {
         let largeString = String(repeating: "Lorem ipsum dolor sit amet. ", count: 3000)
-        let large = largeString.data(using: .utf8)!
+        let large = try XCTUnwrap(largeString.data(using: .utf8))
 
         let compressed = try compressBrotli(large)
         let decompressed = try BrotliDecoder.decompress(compressed)
@@ -73,7 +72,7 @@ final class BrotliDecoderTests: XCTestCase {
     }
 
     func testBrotliVeryLargeData() throws {
-        let veryLarge = Data(repeating: 0x42, count: 100000)
+        let veryLarge = Data(repeating: 0x42, count: 100_000)
 
         let compressed = try compressBrotli(veryLarge)
         let decompressed = try BrotliDecoder.decompress(compressed)
@@ -103,14 +102,14 @@ final class BrotliDecoderTests: XCTestCase {
     }
 
     func testBrotliDecompressGarbageData() {
-        let garbage = Data((0..<100).map { _ in UInt8.random(in: 0...255) })
+        let garbage = Data((0 ..< 100).map { _ in UInt8.random(in: 0 ... 255) })
 
         XCTAssertThrowsError(try BrotliDecoder.decompress(garbage))
     }
 
-    func testBrotliDecompressCorruptedData() {
+    func testBrotliDecompressCorruptedData() throws {
         let original = "Test data".data(using: .utf8)!
-        var compressed = try! compressBrotli(original)
+        var compressed = try compressBrotli(original)
 
         if compressed.count > 10 {
             compressed[5] = compressed[5] ^ 0xFF
@@ -128,7 +127,7 @@ final class BrotliDecoderTests: XCTestCase {
 
     func testBrotliBinaryData() throws {
         var binaryData = Data()
-        for i in 0..<1000 {
+        for i in 0 ..< 1000 {
             binaryData.append(UInt8(i % 256))
         }
 
@@ -151,8 +150,8 @@ final class BrotliDecoderTests: XCTestCase {
 
     func testBrotliCompressionRatioRandomData() throws {
         var randomData = Data()
-        for _ in 0..<1000 {
-            randomData.append(UInt8.random(in: 0...255))
+        for _ in 0 ..< 1000 {
+            randomData.append(UInt8.random(in: 0 ... 255))
         }
 
         let compressed = try compressBrotli(randomData)

@@ -5,12 +5,11 @@
 //  Created by Justin on 2026/02/01.
 //
 
-import XCTest
-@testable import TraceFeatures
 @testable import TraceCore
+@testable import TraceFeatures
+import XCTest
 
 final class RuleImportersTests: XCTestCase {
-
     // MARK: - ProxymanRuleParser Tests
 
     func testProxymanParserWithEmptyData() {
@@ -57,14 +56,14 @@ final class RuleImportersTests: XCTestCase {
         XCTAssertEqual(rules.count, 0, "Invalid JSON should return empty array")
     }
 
-    func testProxymanParserWithLargeData() {
+    func testProxymanParserWithLargeData() throws {
         // Arrange
         var largeJSON = "{"
-        for i in 0..<1000 {
+        for i in 0 ..< 1000 {
             largeJSON += "\"key\(i)\": \"value\(i)\","
         }
         largeJSON += "\"last\": \"value\"}"
-        let largeData = largeJSON.data(using: .utf8)!
+        let largeData = try XCTUnwrap(largeJSON.data(using: .utf8))
 
         // Act
         let rules = ProxymanRuleParser.parse(largeData)
@@ -380,7 +379,7 @@ final class RuleImportersTests: XCTestCase {
     func testHARConverterWithVeryLargeHAR() {
         // Arrange
         var entries = ""
-        for i in 0..<100 {
+        for i in 0 ..< 100 {
             entries += """
             {
                 "request": {

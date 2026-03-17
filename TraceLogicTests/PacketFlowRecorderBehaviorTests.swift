@@ -5,10 +5,10 @@
 //  Created by Justin on 2026/02/17.
 //
 
-import XCTest
 @testable import TraceCore
 @testable import TracePacket
 @testable import TraceVPNKit
+import XCTest
 
 final class PacketFlowRecorderBehaviorTests: XCTestCase {
     override func setUpWithError() throws {
@@ -25,9 +25,9 @@ final class PacketFlowRecorderBehaviorTests: XCTestCase {
 
     func testProcessReassembledFinalWithoutPayloadClosesFlow() throws {
         let recorder = PacketFlowRecorder(idleTimeout: 60, flushInterval: 60, maxFlows: 16)
-        let sourceIP: UInt32 = 0x0A000001 // 10.0.0.1
-        let destinationIP: UInt32 = 0x5DB8D822 // 93.184.216.34
-        let sourcePort: UInt16 = 50_000
+        let sourceIP: UInt32 = 0x0A00_0001 // 10.0.0.1
+        let destinationIP: UInt32 = 0x5DB8_D822 // 93.184.216.34
+        let sourcePort: UInt16 = 50000
         let destinationPort: UInt16 = 443
 
         let initialPacket = makeTCPIPPacket(
@@ -35,7 +35,7 @@ final class PacketFlowRecorderBehaviorTests: XCTestCase {
             destinationIP: destinationIP,
             sourcePort: sourcePort,
             destinationPort: destinationPort,
-            sequence: 1_000,
+            sequence: 1000,
             flags: 0x18,
             payload: Data("hello".utf8)
         )
@@ -57,23 +57,23 @@ final class PacketFlowRecorderBehaviorTests: XCTestCase {
     }
 
     func testMaxFlowsIsStrictlyEnforced() {
-        let recorder = PacketFlowRecorder(idleTimeout: 3_600, flushInterval: 3_600, maxFlows: 1)
+        let recorder = PacketFlowRecorder(idleTimeout: 3600, flushInterval: 3600, maxFlows: 1)
 
         let firstPacket = makeTCPIPPacket(
-            sourceIP: 0x0A000001,
-            destinationIP: 0x08080808,
-            sourcePort: 40_001,
+            sourceIP: 0x0A00_0001,
+            destinationIP: 0x0808_0808,
+            sourcePort: 40001,
             destinationPort: 80,
-            sequence: 1_000,
+            sequence: 1000,
             flags: 0x18,
             payload: Data("flow-1".utf8)
         )
         let secondPacket = makeTCPIPPacket(
-            sourceIP: 0x0A000002,
-            destinationIP: 0x01010101,
-            sourcePort: 40_002,
+            sourceIP: 0x0A00_0002,
+            destinationIP: 0x0101_0101,
+            sourcePort: 40002,
             destinationPort: 443,
-            sequence: 2_000,
+            sequence: 2000,
             flags: 0x18,
             payload: Data("flow-2".utf8)
         )
@@ -87,12 +87,12 @@ final class PacketFlowRecorderBehaviorTests: XCTestCase {
 
     func testUDP443DoesNotReceiveTLSProtocolHint() throws {
         let recorder = PacketFlowRecorder(idleTimeout: 60, flushInterval: 0, maxFlows: 16)
-        let sourcePort: UInt16 = 56_000
+        let sourcePort: UInt16 = 56000
         let destinationPort: UInt16 = 443
         let payload = Data([0xC0, 0x00, 0x00, 0x00])
         let udpPacket = makeUDPIPPacket(
-            sourceIP: 0x0A000001,
-            destinationIP: 0x08080808,
+            sourceIP: 0x0A00_0001,
+            destinationIP: 0x0808_0808,
             sourcePort: sourcePort,
             destinationPort: destinationPort,
             payload: payload

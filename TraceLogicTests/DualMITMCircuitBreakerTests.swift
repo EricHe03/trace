@@ -3,23 +3,23 @@
 //  TraceTests
 //
 
-import XCTest
 @testable import TraceCore
+import XCTest
 
 final class DualMITMCircuitBreakerTests: XCTestCase {
     func testTripsOnTCPClientHandshakeFailureRateOverThreshold() {
         let breaker = DualMITMCircuitBreaker()
-        let now = Date(timeIntervalSince1970: 10_000)
+        let now = Date(timeIntervalSince1970: 10000)
         breaker.configure(
             enabled: true,
             cooldownSeconds: 300,
             tcpWindowSize: 100
         )
 
-        for _ in 0..<40 {
+        for _ in 0 ..< 40 {
             breaker.recordTCPClientHandshake(success: false, now: now)
         }
-        for _ in 0..<60 {
+        for _ in 0 ..< 60 {
             breaker.recordTCPClientHandshake(success: true, now: now)
         }
 
@@ -34,7 +34,7 @@ final class DualMITMCircuitBreakerTests: XCTestCase {
 
     func testTripsOnQUICFailureRateWindowThreshold() {
         let breaker = DualMITMCircuitBreaker()
-        let now = Date(timeIntervalSince1970: 20_000)
+        let now = Date(timeIntervalSince1970: 20000)
         breaker.configure(
             enabled: true,
             cooldownSeconds: 300,
@@ -58,7 +58,7 @@ final class DualMITMCircuitBreakerTests: XCTestCase {
 
     func testCooldownExitClearsDegradedMode() {
         let breaker = DualMITMCircuitBreaker()
-        let now = Date(timeIntervalSince1970: 30_000)
+        let now = Date(timeIntervalSince1970: 30000)
         breaker.configure(
             enabled: true,
             cooldownSeconds: 30,
@@ -75,7 +75,7 @@ final class DualMITMCircuitBreakerTests: XCTestCase {
 
     func testDoesNotTripQUICBeforeMinimumSamples() {
         let breaker = DualMITMCircuitBreaker()
-        let now = Date(timeIntervalSince1970: 35_000)
+        let now = Date(timeIntervalSince1970: 35000)
         breaker.configure(
             enabled: true,
             cooldownSeconds: 300,
@@ -84,7 +84,7 @@ final class DualMITMCircuitBreakerTests: XCTestCase {
             quicFailureThreshold: 0.4
         )
 
-        for _ in 0..<5 {
+        for _ in 0 ..< 5 {
             breaker.recordQUICInterceptSample(failed: true, now: now)
         }
 
@@ -94,17 +94,17 @@ final class DualMITMCircuitBreakerTests: XCTestCase {
 
     func testConfigureResetsCollectedSamplesAndDegradedState() {
         let breaker = DualMITMCircuitBreaker()
-        let now = Date(timeIntervalSince1970: 40_000)
+        let now = Date(timeIntervalSince1970: 40000)
         breaker.configure(
             enabled: true,
             cooldownSeconds: 300,
             tcpWindowSize: 100
         )
 
-        for _ in 0..<40 {
+        for _ in 0 ..< 40 {
             breaker.recordTCPClientHandshake(success: false, now: now)
         }
-        for _ in 0..<60 {
+        for _ in 0 ..< 60 {
             breaker.recordTCPClientHandshake(success: true, now: now)
         }
 
@@ -128,7 +128,7 @@ final class DualMITMCircuitBreakerTests: XCTestCase {
 
     func testAllowsSmallTCPWindowForFastFailOpen() {
         let breaker = DualMITMCircuitBreaker()
-        let now = Date(timeIntervalSince1970: 50_000)
+        let now = Date(timeIntervalSince1970: 50000)
         breaker.configure(
             enabled: true,
             cooldownSeconds: 300,
@@ -136,10 +136,10 @@ final class DualMITMCircuitBreakerTests: XCTestCase {
             tcpFailureThreshold: 0.40
         )
 
-        for _ in 0..<7 {
+        for _ in 0 ..< 7 {
             breaker.recordTCPClientHandshake(success: false, now: now)
         }
-        for _ in 0..<9 {
+        for _ in 0 ..< 9 {
             breaker.recordTCPClientHandshake(success: true, now: now)
         }
 
@@ -154,7 +154,7 @@ final class DualMITMCircuitBreakerTests: XCTestCase {
 
     func testTCPDegradationDoesNotForceQUICPassThrough() {
         let breaker = DualMITMCircuitBreaker()
-        let now = Date(timeIntervalSince1970: 60_000)
+        let now = Date(timeIntervalSince1970: 60000)
         breaker.configure(
             enabled: true,
             cooldownSeconds: 300,
@@ -163,10 +163,10 @@ final class DualMITMCircuitBreakerTests: XCTestCase {
             tcpFailureThreshold: 0.4
         )
 
-        for _ in 0..<5 {
+        for _ in 0 ..< 5 {
             breaker.recordTCPClientHandshake(success: false, now: now)
         }
-        for _ in 0..<5 {
+        for _ in 0 ..< 5 {
             breaker.recordTCPClientHandshake(success: true, now: now)
         }
 
@@ -179,7 +179,7 @@ final class DualMITMCircuitBreakerTests: XCTestCase {
 
     func testQUICDegradationDoesNotForceTCPDirect() {
         let breaker = DualMITMCircuitBreaker()
-        let now = Date(timeIntervalSince1970: 70_000)
+        let now = Date(timeIntervalSince1970: 70000)
         breaker.configure(
             enabled: true,
             cooldownSeconds: 300,
