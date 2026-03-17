@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5F13A8A6316A2B7800A7E321 /* TraceVPNKit in Frameworks */ = {isa = PBXBuildFile; productRef = 5F13A8A7316A2B7800A7E321 /* TraceVPNKit */; };
 		5F4B02D42F31783F00DE50A3 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 5F4B02D32F31783F00DE50A3 /* AppIcon.icon */; };
 		5F4B07A62F149B1000D9933A /* TraceCompression in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07A52F149B1000D9933A /* TraceCompression */; };
 		5F4B07A82F149B1000D9933A /* TraceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07A72F149B1000D9933A /* TraceCore */; };
@@ -193,6 +194,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5F13A8A6316A2B7800A7E321 /* TraceVPNKit in Frameworks */,
 				5F8AABB32F30A40C000ED152 /* TraceUI in Frameworks */,
 				5F8AABAD2F30A40C000ED152 /* TraceCore in Frameworks */,
 				5F8AABAF2F30A40C000ED152 /* TraceSecurity in Frameworks */,
@@ -334,6 +336,7 @@
 			buildPhases = (
 				5FCEEC0C2F0152E600D3CD59 /* Sources */,
 				5FCEEC0D2F0152E600D3CD59 /* Frameworks */,
+				5F13A7F5316A1B6700A7E321 /* Rewrite Package Product Symlinks */,
 				5FCEEC0E2F0152E600D3CD59 /* Resources */,
 			);
 			buildRules = (
@@ -354,6 +357,7 @@
 				5F4B07C92F149C0000D9933A /* TraceProxy */,
 				5F4B07CB2F149C0000D9933A /* TraceFeatures */,
 				5F4B07B12F149B1000D9933A /* TraceUI */,
+				5F13A8A7316A2B7800A7E321 /* TraceVPNKit */,
 				5F4B07CD2F149C0000D9933A /* TracePacket */,
 				5F4B07CF2F149C0000D9933A /* HevSocks5Tunnel */,
 			);
@@ -507,6 +511,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		5F13A7F5316A1B6700A7E321 /* Rewrite Package Product Symlinks */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Rewrite Package Product Symlinks";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\n\nrewrite_symlinks_in_dir() {\n  frameworks_dir=\"$1\"\n  if [ ! -d \"$frameworks_dir\" ]; then\n    return 0\n  fi\n\n  find \"$frameworks_dir\" -maxdepth 1 -type d -name '*_PackageProduct.framework' | while IFS= read -r framework; do\n    binary_name=\"$(basename \"$framework\" .framework)\"\n    binary_path=\"$framework/$binary_name\"\n    if [ ! -L \"$binary_path\" ]; then\n      continue\n    fi\n\n    link_target=\"$(readlink \"$binary_path\")\"\n    case \"$link_target\" in\n      /*)\n        resolved_path=\"$link_target\"\n        ;;\n      *)\n        resolved_path=\"$(cd \"$(dirname \"$binary_path\")\" && cd \"$(dirname \"$link_target\")\" && pwd)/$(basename \"$link_target\")\"\n        ;;\n    esac\n\n    if [ ! -f \"$resolved_path\" ]; then\n      continue\n    fi\n\n    tmp_path=\"$framework/.${binary_name}.tmp\"\n    cp \"$resolved_path\" \"$tmp_path\"\n    chmod 755 \"$tmp_path\"\n    rm -f \"$binary_path\"\n    mv \"$tmp_path\" \"$binary_path\"\n  done\n}\n\nrewrite_symlinks_in_dir \"${BUILT_PRODUCTS_DIR}/PackageFrameworks\"\nrewrite_symlinks_in_dir \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Frameworks\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		5F6EDD1E2F081F82002BB89C /* Sources */ = {
@@ -1046,6 +1072,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		5F13A8A7316A2B7800A7E321 /* TraceVPNKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceVPNKit;
+		};
 		5F4B07A52F149B1000D9933A /* TraceCompression */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = TraceCompression;

@@ -6,6 +6,24 @@
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES"
       buildArchitectures = "Automatic">
+      <PreActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptExecutionAction">
+            <ActionContent
+               title = "Fix Crypto Package Product (Xcode 26 beta workaround)"
+               scriptText = "# Xcode 26 beta bug: Crypto_*_PackageProduct.framework binary is never linked&#10;# because the swift-crypto package product name equals its target name.&#10;# Workaround: copy Crypto.framework binary into the package product wrapper.&#10;&#10;FRAMEWORKS=&quot;${BUILD_DIR}/PackageFrameworks&quot;&#10;CRYPTO_BINARY=&quot;${FRAMEWORKS}/Crypto.framework/Crypto&quot;&#10;PRODUCT_DIR=&quot;${FRAMEWORKS}/Crypto_17A3B1FFC41E47_PackageProduct.framework&quot;&#10;PRODUCT_BINARY=&quot;${PRODUCT_DIR}/Crypto_17A3B1FFC41E47_PackageProduct&quot;&#10;PRODUCT_PLIST=&quot;${PRODUCT_DIR}/Info.plist&quot;&#10;&#10;if [ -f &quot;${CRYPTO_BINARY}&quot; ] &amp;&amp; [ ! -f &quot;${PRODUCT_BINARY}&quot; ]; then&#10;    cp &quot;${CRYPTO_BINARY}&quot; &quot;${PRODUCT_BINARY}&quot;&#10;    [ -f &quot;${PRODUCT_PLIST}&quot; ] &amp;&amp; \&#10;        plutil -replace CFBundleIdentifier -string &quot;swift-crypto.Crypto.PackageProduct&quot; &quot;${PRODUCT_PLIST}&quot; 2&gt;/dev/null || true&#10;fi&#10;&#10;# Also fix any already-embedded copy in Trace.app&#10;APP_PLIST=&quot;${BUILT_PRODUCTS_DIR}/Trace.app/Frameworks/Crypto_17A3B1FFC41E47_PackageProduct.framework/Info.plist&quot;&#10;if [ -f &quot;${APP_PLIST}&quot; ]; then&#10;    plutil -replace CFBundleIdentifier -string &quot;swift-crypto.Crypto.PackageProduct&quot; &quot;${APP_PLIST}&quot; 2&gt;/dev/null || true&#10;fi">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "5FCEEC002F0152E400D3CD59"
+                     BuildableName = "Trace.app"
+                     BlueprintName = "Trace"
+                     ReferencedContainer = "container:Trace.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PreActions>
       <BuildActionEntries>
          <BuildActionEntry
             buildForTesting = "YES"
@@ -53,6 +71,7 @@
    </BuildAction>
    <TestAction
       buildConfiguration = "Debug"
+      codeCoverageEnabled = "NO"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">

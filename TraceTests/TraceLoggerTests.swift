@@ -15,7 +15,7 @@ import XCTest
 @testable import TraceProxy
 @testable import TraceSecurity
 #if !targetEnvironment(simulator)
-@testable import TraceVPN
+@testable import TraceVPNKit
 #endif
 
 final class TraceLoggerTests: XCTestCase {

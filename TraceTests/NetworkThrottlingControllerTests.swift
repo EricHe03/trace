@@ -9,7 +9,7 @@ import Foundation
 import XCTest
 @testable import Trace
 @testable import TraceCore
-@testable import TraceVPN
+@testable import TraceVPNKit
 
 final class NetworkThrottlingControllerTests: XCTestCase {
     var sut: NetworkThrottlingController!
