@@ -9,7 +9,7 @@ import Foundation
 import GRDB
 
 public extension AppGroupStorage {
-    func saveSessions(_ sessions: [CaptureSession]) async throws {
+    func saveSessionsImpl(_ sessions: [CaptureSession]) async throws {
         guard !sessions.isEmpty else { return }
         let encoder = makeEncoder()
         do {
@@ -37,7 +37,7 @@ public extension AppGroupStorage {
         }
     }
 
-    func loadSessions() async throws -> [CaptureSession] {
+    func loadSessionsImpl() async throws -> [CaptureSession] {
         try loadAllSessions()
     }
 

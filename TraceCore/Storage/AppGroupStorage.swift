@@ -10,7 +10,7 @@ import GRDB
 
 /// Manages storage in the shared App Group container
 /// This allows the main app and Network Extension to share captured request data
-public class AppGroupStorage: @unchecked Sendable {
+open class AppGroupStorage: @unchecked Sendable {
     public static let shared = AppGroupStorage()
 
     /// Shared App Group identifier (must match entitlements for app + extension).
@@ -134,6 +134,62 @@ public class AppGroupStorage: @unchecked Sendable {
 
     func makeDecoder() -> JSONDecoder {
         JSONCoding.makeDecoder()
+    }
+
+    open func saveSessions(_ sessions: [CaptureSession]) async throws {
+        try await saveSessionsImpl(sessions)
+    }
+
+    open func loadSessions() async throws -> [CaptureSession] {
+        try await loadSessionsImpl()
+    }
+
+    open func saveRewriteRules(_ rules: [RewriteRule]) async throws {
+        try await saveRewriteRulesImpl(rules)
+    }
+
+    open func loadRewriteRules() async throws -> [RewriteRule] {
+        try await loadRewriteRulesImpl()
+    }
+
+    open func saveRequestMaps(_ maps: [RequestMap]) async throws {
+        try await saveRequestMapsImpl(maps)
+    }
+
+    open func loadRequestMaps() async throws -> [RequestMap] {
+        try await loadRequestMapsImpl()
+    }
+
+    open func saveHostEntries(_ entries: [HostEntry]) async throws {
+        try await saveHostEntriesImpl(entries)
+    }
+
+    open func loadHostEntries() async throws -> [HostEntry] {
+        try await loadHostEntriesImpl()
+    }
+
+    open func saveScripts(_ scripts: [Script]) async throws {
+        try await saveScriptsImpl(scripts)
+    }
+
+    open func loadScripts() async throws -> [Script] {
+        try await loadScriptsImpl()
+    }
+
+    open func saveBreakpoints(_ breakpoints: [Breakpoint]) async throws {
+        try await saveBreakpointsImpl(breakpoints)
+    }
+
+    open func loadBreakpoints() async throws -> [Breakpoint] {
+        try await loadBreakpointsImpl()
+    }
+
+    open func saveFavorites(_ favorites: [Favorite]) async throws {
+        try await saveFavoritesImpl(favorites)
+    }
+
+    open func loadFavorites() async throws -> [Favorite] {
+        try await loadFavoritesImpl()
     }
 
     /// Clears DB-backed settings (does not delete captured requests).

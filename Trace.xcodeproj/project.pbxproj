@@ -7,6 +7,18 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5F13A8A6316A2B7800A7E321 /* TraceVPNKit in Frameworks */ = {isa = PBXBuildFile; productRef = 5F13A8A7316A2B7800A7E321 /* TraceVPNKit */; };
+		5F13B00B316A9C1100A7E321 /* TraceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C12F149C0000D9933A /* TraceCore */; };
+		5F13B00C316A9C1100A7E321 /* TraceCompression in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C32F149C0000D9933A /* TraceCompression */; };
+		5F13B00D316A9C1100A7E321 /* TraceSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C52F149C0000D9933A /* TraceSecurity */; };
+		5F13B00E316A9C1100A7E321 /* TraceNetworking in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C72F149C0000D9933A /* TraceNetworking */; };
+		5F13B00F316A9C1100A7E321 /* TraceProxy in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07C92F149C0000D9933A /* TraceProxy */; };
+		5F13B010316A9C1100A7E321 /* TraceFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07CB2F149C0000D9933A /* TraceFeatures */; };
+		5F13B011316A9C1100A7E321 /* TracePacket in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07CD2F149C0000D9933A /* TracePacket */; };
+		5F13B012316A9C1100A7E321 /* HevSocks5Tunnel in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07CF2F149C0000D9933A /* HevSocks5Tunnel */; };
+		5F13B013316A9C1100A7E321 /* TraceUI in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07B12F149B1000D9933A /* TraceUI */; };
+		5F13B014316A9C1100A7E321 /* TraceVPNKit in Frameworks */ = {isa = PBXBuildFile; productRef = 5F13A8A7316A2B7800A7E321 /* TraceVPNKit */; };
+		5F13B015316A9C1100A7E321 /* TraceQUIC in Frameworks */ = {isa = PBXBuildFile; productRef = 5F13B00A316A9C1100A7E321 /* TraceQUIC */; };
 		5F4B02D42F31783F00DE50A3 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 5F4B02D32F31783F00DE50A3 /* AppIcon.icon */; };
 		5F4B07A62F149B1000D9933A /* TraceCompression in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07A52F149B1000D9933A /* TraceCompression */; };
 		5F4B07A82F149B1000D9933A /* TraceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5F4B07A72F149B1000D9933A /* TraceCore */; };
@@ -89,6 +101,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		5F13B002316A9C1100A7E321 /* TraceLogicTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TraceLogicTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F4B02D32F31783F00DE50A3 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		5F6EDD222F081F82002BB89C /* TraceWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TraceWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F6EDD232F081F82002BB89C /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
@@ -109,6 +122,15 @@
 			);
 			target = 5FCEEC002F0152E400D3CD59 /* Trace */;
 		};
+		5F13B016316A9C1100A7E321 /* Exceptions for "TraceLogicTests" folder in "TraceLogicTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				LocalSocks5ServerTests.swift,
+				NIOMITMProxyEngineTests.swift,
+				NIOMITMWebSocketRelayHandlerBehaviorTests.swift,
+			);
+			target = 5F13B006316A9C1100A7E321 /* TraceLogicTests */;
+		};
 		5F6EDD3B2F081F83002BB89C /* Exceptions for "TraceWidget" folder in "TraceWidgetExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -126,6 +148,14 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		5F13B001316A9C1100A7E321 /* TraceLogicTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5F13B016316A9C1100A7E321 /* Exceptions for "TraceLogicTests" folder in "TraceLogicTests" target */,
+			);
+			path = TraceLogicTests;
+			sourceTree = "<group>";
+		};
 		5F6EDD272F081F82002BB89C /* TraceWidget */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -163,6 +193,24 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		5F13B004316A9C1100A7E321 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5F13B013316A9C1100A7E321 /* TraceUI in Frameworks */,
+				5F13B00B316A9C1100A7E321 /* TraceCore in Frameworks */,
+				5F13B00D316A9C1100A7E321 /* TraceSecurity in Frameworks */,
+				5F13B00F316A9C1100A7E321 /* TraceProxy in Frameworks */,
+				5F13B010316A9C1100A7E321 /* TraceFeatures in Frameworks */,
+				5F13B00E316A9C1100A7E321 /* TraceNetworking in Frameworks */,
+				5F13B00C316A9C1100A7E321 /* TraceCompression in Frameworks */,
+				5F13B011316A9C1100A7E321 /* TracePacket in Frameworks */,
+				5F13B014316A9C1100A7E321 /* TraceVPNKit in Frameworks */,
+				5F13B012316A9C1100A7E321 /* HevSocks5Tunnel in Frameworks */,
+				5F13B015316A9C1100A7E321 /* TraceQUIC in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		5F6EDD1F2F081F82002BB89C /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -193,6 +241,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5F13A8A6316A2B7800A7E321 /* TraceVPNKit in Frameworks */,
 				5F8AABB32F30A40C000ED152 /* TraceUI in Frameworks */,
 				5F8AABAD2F30A40C000ED152 /* TraceCore in Frameworks */,
 				5F8AABAF2F30A40C000ED152 /* TraceSecurity in Frameworks */,
@@ -237,6 +286,7 @@
 				5F9567E82F28DEF100CBBAC3 /* Trace.xctestplan */,
 				5FCEEC032F0152E400D3CD59 /* Trace */,
 				5FCEEC132F0152E600D3CD59 /* TraceTests */,
+				5F13B001316A9C1100A7E321 /* TraceLogicTests */,
 				5FCEEC1D2F0152E600D3CD59 /* TraceUITests */,
 				5FCEECDD2F02AE4500D3CD59 /* TraceVPN */,
 				5F6EDD272F081F82002BB89C /* TraceWidget */,
@@ -251,6 +301,7 @@
 			children = (
 				5FCEEC012F0152E400D3CD59 /* Trace.app */,
 				5FCEEC102F0152E600D3CD59 /* TraceTests.xctest */,
+				5F13B002316A9C1100A7E321 /* TraceLogicTests.xctest */,
 				5FCEEC1A2F0152E600D3CD59 /* TraceUITests.xctest */,
 				5FCEECD92F02AE4500D3CD59 /* TraceVPN.appex */,
 				5F6EDD222F081F82002BB89C /* TraceWidgetExtension.appex */,
@@ -271,6 +322,39 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		5F13B006316A9C1100A7E321 /* TraceLogicTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5F13B007316A9C1100A7E321 /* Build configuration list for PBXNativeTarget "TraceLogicTests" */;
+			buildPhases = (
+				5F13B003316A9C1100A7E321 /* Sources */,
+				5F13B004316A9C1100A7E321 /* Frameworks */,
+				5F13B005316A9C1100A7E321 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				5F13B001316A9C1100A7E321 /* TraceLogicTests */,
+			);
+			name = TraceLogicTests;
+			packageProductDependencies = (
+				5F4B07C12F149C0000D9933A /* TraceCore */,
+				5F4B07C32F149C0000D9933A /* TraceCompression */,
+				5F4B07C52F149C0000D9933A /* TraceSecurity */,
+				5F4B07C72F149C0000D9933A /* TraceNetworking */,
+				5F4B07C92F149C0000D9933A /* TraceProxy */,
+				5F4B07CB2F149C0000D9933A /* TraceFeatures */,
+				5F4B07B12F149B1000D9933A /* TraceUI */,
+				5F13B00A316A9C1100A7E321 /* TraceQUIC */,
+				5F13A8A7316A2B7800A7E321 /* TraceVPNKit */,
+				5F4B07CD2F149C0000D9933A /* TracePacket */,
+				5F4B07CF2F149C0000D9933A /* HevSocks5Tunnel */,
+			);
+			productName = TraceLogicTests;
+			productReference = 5F13B002316A9C1100A7E321 /* TraceLogicTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		5F6EDD212F081F82002BB89C /* TraceWidgetExtension */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 5F6EDD3A2F081F83002BB89C /* Build configuration list for PBXNativeTarget "TraceWidgetExtension" */;
@@ -334,6 +418,7 @@
 			buildPhases = (
 				5FCEEC0C2F0152E600D3CD59 /* Sources */,
 				5FCEEC0D2F0152E600D3CD59 /* Frameworks */,
+				5F13A7F5316A1B6700A7E321 /* Rewrite Package Product Symlinks */,
 				5FCEEC0E2F0152E600D3CD59 /* Resources */,
 			);
 			buildRules = (
@@ -354,6 +439,7 @@
 				5F4B07C92F149C0000D9933A /* TraceProxy */,
 				5F4B07CB2F149C0000D9933A /* TraceFeatures */,
 				5F4B07B12F149B1000D9933A /* TraceUI */,
+				5F13A8A7316A2B7800A7E321 /* TraceVPNKit */,
 				5F4B07CD2F149C0000D9933A /* TracePacket */,
 				5F4B07CF2F149C0000D9933A /* HevSocks5Tunnel */,
 			);
@@ -424,6 +510,9 @@
 				LastSwiftUpdateCheck = 2620;
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
+					5F13B006316A9C1100A7E321 = {
+						CreatedOnToolsVersion = 26.2;
+					};
 					5F6EDD212F081F82002BB89C = {
 						CreatedOnToolsVersion = 26.2;
 					};
@@ -462,6 +551,7 @@
 			targets = (
 				5FCEEC002F0152E400D3CD59 /* Trace */,
 				5FCEEC0F2F0152E600D3CD59 /* TraceTests */,
+				5F13B006316A9C1100A7E321 /* TraceLogicTests */,
 				5FCEEC192F0152E600D3CD59 /* TraceUITests */,
 				5FCEECD82F02AE4500D3CD59 /* TraceVPN */,
 				5F6EDD212F081F82002BB89C /* TraceWidgetExtension */,
@@ -470,6 +560,13 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		5F13B005316A9C1100A7E321 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		5F6EDD202F081F82002BB89C /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -508,7 +605,36 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		5F13A7F5316A1B6700A7E321 /* Rewrite Package Product Symlinks */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Rewrite Package Product Symlinks";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\n\nrewrite_symlinks_in_dir() {\n  frameworks_dir=\"$1\"\n  if [ ! -d \"$frameworks_dir\" ]; then\n    return 0\n  fi\n\n  find \"$frameworks_dir\" -maxdepth 1 -type d -name '*_PackageProduct.framework' | while IFS= read -r framework; do\n    binary_name=\"$(basename \"$framework\" .framework)\"\n    binary_path=\"$framework/$binary_name\"\n    if [ ! -L \"$binary_path\" ]; then\n      continue\n    fi\n\n    link_target=\"$(readlink \"$binary_path\")\"\n    case \"$link_target\" in\n      /*)\n        resolved_path=\"$link_target\"\n        ;;\n      *)\n        resolved_path=\"$(cd \"$(dirname \"$binary_path\")\" && cd \"$(dirname \"$link_target\")\" && pwd)/$(basename \"$link_target\")\"\n        ;;\n    esac\n\n    if [ ! -f \"$resolved_path\" ]; then\n      continue\n    fi\n\n    tmp_path=\"$framework/.${binary_name}.tmp\"\n    cp \"$resolved_path\" \"$tmp_path\"\n    chmod 755 \"$tmp_path\"\n    rm -f \"$binary_path\"\n    mv \"$tmp_path\" \"$binary_path\"\n  done\n}\n\nrewrite_symlinks_in_dir \"${BUILT_PRODUCTS_DIR}/PackageFrameworks\"\nrewrite_symlinks_in_dir \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Frameworks\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
+		5F13B003316A9C1100A7E321 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		5F6EDD1E2F081F82002BB89C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -575,6 +701,54 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		5F13B008316A9C1100A7E321 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = 5M6X766FSQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.justin.trace.logic-tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		5F13B009316A9C1100A7E321 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = 5M6X766FSQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.justin.trace.logic-tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		5F6EDD382F081F83002BB89C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -982,6 +1156,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		5F13B007316A9C1100A7E321 /* Build configuration list for PBXNativeTarget "TraceLogicTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5F13B008316A9C1100A7E321 /* Debug */,
+				5F13B009316A9C1100A7E321 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		5F6EDD3A2F081F83002BB89C /* Build configuration list for PBXNativeTarget "TraceWidgetExtension" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -1046,6 +1229,14 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		5F13A8A7316A2B7800A7E321 /* TraceVPNKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceVPNKit;
+		};
+		5F13B00A316A9C1100A7E321 /* TraceQUIC */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TraceQUIC;
+		};
 		5F4B07A52F149B1000D9933A /* TraceCompression */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = TraceCompression;

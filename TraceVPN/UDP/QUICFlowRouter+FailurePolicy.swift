@@ -130,9 +130,13 @@ extension QUICFlowRouter {
              let .retry(reason):
             policyDecision = true
             policyReason = reason
-        case let .failClosedBlock(reason):
+        case let .failClosedBlock(blockedReason):
             policyDecision = false
-            policyReason = reason
+            if blockedReason == QUICMitmFailureReason.internalError.rawValue {
+                policyReason = reason
+            } else {
+                policyReason = blockedReason
+            }
         case .noop:
             policyDecision = legacyDecision
             policyReason = reason

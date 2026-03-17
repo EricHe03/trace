@@ -210,14 +210,14 @@ public extension AppGroupStorage {
         return ["*"]
     }
 
-    func saveRewriteRules(_ rules: [RewriteRule]) async throws {
+    func saveRewriteRulesImpl(_ rules: [RewriteRule]) async throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(rules)
         try saveData(data, to: "rewrite_rules.json")
     }
 
-    func loadRewriteRules() async throws -> [RewriteRule] {
+    func loadRewriteRulesImpl() async throws -> [RewriteRule] {
         do {
             let data = try loadData(from: "rewrite_rules.json")
             let decoder = JSONDecoder()
@@ -228,14 +228,14 @@ public extension AppGroupStorage {
         }
     }
 
-    func saveRequestMaps(_ maps: [RequestMap]) async throws {
+    func saveRequestMapsImpl(_ maps: [RequestMap]) async throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(maps)
         try saveData(data, to: "request_maps.json")
     }
 
-    func loadRequestMaps() async throws -> [RequestMap] {
+    func loadRequestMapsImpl() async throws -> [RequestMap] {
         do {
             let data = try loadData(from: "request_maps.json")
             let decoder = JSONDecoder()
@@ -246,14 +246,14 @@ public extension AppGroupStorage {
         }
     }
 
-    func saveHostEntries(_ entries: [HostEntry]) async throws {
+    func saveHostEntriesImpl(_ entries: [HostEntry]) async throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(entries)
         try saveData(data, to: "host_entries.json")
     }
 
-    func loadHostEntries() async throws -> [HostEntry] {
+    func loadHostEntriesImpl() async throws -> [HostEntry] {
         do {
             let data = try loadData(from: "host_entries.json")
             let decoder = JSONDecoder()
@@ -264,14 +264,14 @@ public extension AppGroupStorage {
         }
     }
 
-    func saveScripts(_ scripts: [Script]) async throws {
+    func saveScriptsImpl(_ scripts: [Script]) async throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(scripts)
         try saveData(data, to: "scripts.json")
     }
 
-    func loadScripts() async throws -> [Script] {
+    func loadScriptsImpl() async throws -> [Script] {
         do {
             let data = try loadData(from: "scripts.json")
             let decoder = JSONDecoder()
@@ -282,14 +282,14 @@ public extension AppGroupStorage {
         }
     }
 
-    func saveBreakpoints(_ breakpoints: [Breakpoint]) async throws {
+    func saveBreakpointsImpl(_ breakpoints: [Breakpoint]) async throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(breakpoints)
         try saveData(data, to: "breakpoints.json")
     }
 
-    func loadBreakpoints() async throws -> [Breakpoint] {
+    func loadBreakpointsImpl() async throws -> [Breakpoint] {
         do {
             let data = try loadData(from: "breakpoints.json")
             let decoder = JSONDecoder()
@@ -300,14 +300,14 @@ public extension AppGroupStorage {
         }
     }
 
-    func saveFavorites(_ favorites: [Favorite]) async throws {
+    func saveFavoritesImpl(_ favorites: [Favorite]) async throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(favorites)
         try saveData(data, to: "favorites.json")
     }
 
-    func loadFavorites() async throws -> [Favorite] {
+    func loadFavoritesImpl() async throws -> [Favorite] {
         do {
             let data = try loadData(from: "favorites.json")
             let decoder = JSONDecoder()

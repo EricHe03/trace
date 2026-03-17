@@ -602,7 +602,7 @@ final class RequestExecutorTests: XCTestCase {
     // MARK: - HTTP Methods Tests
 
     func testDifferentHTTPMethods() {
-        let getMethods: [HTTPMethod] = [.get, .post, .put, .delete, .patch, .head, .options]
+        let getMethods: [TraceCore.HTTPMethod] = [.get, .post, .put, .delete, .patch, .head, .options]
 
         for method in getMethods {
             let builder = RequestBuilder(

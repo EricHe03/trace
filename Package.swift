@@ -202,8 +202,10 @@ let traceProxyDependencies: [Target.Dependency] = [
     "TraceFeatures",
     "TraceQUIC",
     .product(name: "NIOCore", package: "swift-nio"),
+    .product(name: "NIOFoundationCompat", package: "swift-nio"),
     .product(name: "NIOHTTP1", package: "swift-nio"),
     .product(name: "NIOHTTP2", package: "swift-nio-http2"),
+    .product(name: "NIOTLS", package: "swift-nio"),
     .product(name: "NIOWebSocket", package: "swift-nio"),
     .product(name: "NIOSSL", package: "swift-nio-ssl"),
     .product(name: "NIOTransportServices", package: "swift-nio-transport-services")
@@ -287,8 +289,8 @@ let packageProducts: [Product] = appProducts + [
     // App Targets
     // ═══════════════════════════════════════════════════════
     .library(
-        name: "TraceVPN",
-        targets: ["TraceVPN"]
+        name: "TraceVPNKit",
+        targets: ["TraceVPNKit"]
     )
 ]
 
@@ -461,7 +463,7 @@ let packageTargets: [Target] = quicheBinaryTargets + [
             "TraceFeatures",
             "TraceQUIC",
             "TraceUI",
-            "TraceVPN",
+            "TraceVPNKit",
             "TracePacket"
         ],
         path: "Trace",
@@ -472,7 +474,7 @@ let packageTargets: [Target] = quicheBinaryTargets + [
 
     // VPN Network Extension
     .target(
-        name: "TraceVPN",
+        name: "TraceVPNKit",
         dependencies: traceVPNDependencies,
         path: "TraceVPN"
     ),
@@ -512,7 +514,7 @@ let packageTargets: [Target] = quicheBinaryTargets + [
             .product(name: "NIOWebSocket", package: "swift-nio"),
             .product(name: "NIOSSL", package: "swift-nio-ssl"),
             .product(name: "NIOTransportServices", package: "swift-nio-transport-services"),
-            "TraceVPN",
+            "TraceVPNKit",
             "TraceWidget"
         ],
         path: "TraceTests"
