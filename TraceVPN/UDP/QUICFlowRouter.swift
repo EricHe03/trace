@@ -502,6 +502,11 @@ final class QUICFlowRouter: @unchecked Sendable {
             normalized = hostOnly
         }
 
+        if normalized.hasSuffix("."),
+           normalized.count > 1 {
+            normalized.removeLast()
+        }
+
         return normalized
     }
 
