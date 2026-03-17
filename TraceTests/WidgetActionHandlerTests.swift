@@ -292,8 +292,8 @@ final class WidgetActionHandlerTests: XCTestCase {
         let newDefaults = WidgetActionStoreAdapter()
 
         // Then
-        XCTAssertEqual(newDefaults?.string(forKey: WidgetActionKey.action), "toggleCapture")
-        XCTAssertEqual(newDefaults?.string(forKey: WidgetActionKey.actionView), "capture")
+        XCTAssertEqual(newDefaults.string(forKey: WidgetActionKey.action), "toggleCapture")
+        XCTAssertEqual(newDefaults.string(forKey: WidgetActionKey.actionView), "capture")
     }
 
     // MARK: - Edge Cases
