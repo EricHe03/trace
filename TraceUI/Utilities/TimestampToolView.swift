@@ -123,7 +123,7 @@ public struct TimestampToolView: View {
                     }
 
                     TextEditor(text: $isoDateTime)
-                        .frame(height: 80)
+                        .frame(minHeight: 88)
                         .font(DesignSystem.Typography.monospacedFont)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
