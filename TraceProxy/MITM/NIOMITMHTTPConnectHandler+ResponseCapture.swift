@@ -420,6 +420,31 @@ extension NIOMITMHTTPConnectHandler {
         let elapsed = Date().timeIntervalSince(request.timestamp)
         guard elapsed.isFinite else { return }
         request.duration = max(request.duration, max(0, elapsed))
+
+        // Compute timing phases for proxy path (heuristic estimates without precise timestamps)
+        // Proxy path doesn't have granular DNS/TCP/TLS timing, so we estimate based on response size
+        request.timingPhases = computeProxyPathTimingPhases(duration: request.duration, responseSize: request.responseBody.totalSize)
+    }
+
+    /// Compute heuristic timing phases for proxy path
+    /// Since we don't have precise TTFB/content-download boundaries, we estimate based on response size
+    private func computeProxyPathTimingPhases(duration: TimeInterval, responseSize: Int) -> NetworkTimingPhases? {
+        guard duration > 0.001 else { return nil }
+
+        // Conservative estimate: assume smaller responses are faster
+        // Larger responses spend more time in content-download
+        let responseSizeMB = Double(responseSize) / (1024 * 1024)
+        let contentDownloadRatio = min(0.8, max(0.3, responseSizeMB * 0.5))
+
+        let requestSent = duration * 0.1        // ~10% for request transmission
+        let ttfb = duration * (0.4 - contentDownloadRatio * 0.2)  // 20-40% waiting
+        let contentDownload = duration - requestSent - ttfb
+
+        return NetworkTimingPhases(
+            requestSent: requestSent > 0.001 ? requestSent : nil,
+            ttfb: ttfb > 0.001 ? ttfb : nil,
+            contentDownload: contentDownload > 0.001 ? contentDownload : nil
+        )
     }
 
     func throttle(

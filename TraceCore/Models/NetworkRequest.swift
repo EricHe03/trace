@@ -79,6 +79,11 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public var timingPhases: NetworkTimingPhases?
     public var tlsInfo: TLSConnectionInfo?
 
+    // Initiator Tracking
+    public var initiatorStackTrace: String?        // Call stack at request creation
+    public var initiatorBundleId: String?          // App bundle ID if identifiable
+    public var initiatorDisplayName: String?       // User-friendly app name
+
     // Network Throttling
     public var wasThrottled: Bool = false
     public var throttlingProfile: String?
@@ -224,6 +229,9 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         captureMetadataVersion: UInt8? = nil,
         timingPhases: NetworkTimingPhases? = nil,
         tlsInfo: TLSConnectionInfo? = nil,
+        initiatorStackTrace: String? = nil,
+        initiatorBundleId: String? = nil,
+        initiatorDisplayName: String? = nil,
         wasThrottled: Bool = false,
         throttlingProfile: String? = nil,
         executionLog: [ExecutionLogEntry] = [],
@@ -251,6 +259,9 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         self.captureMetadataVersion = captureMetadataVersion
         self.timingPhases = timingPhases
         self.tlsInfo = tlsInfo
+        self.initiatorStackTrace = initiatorStackTrace
+        self.initiatorBundleId = initiatorBundleId
+        self.initiatorDisplayName = initiatorDisplayName
         self.wasThrottled = wasThrottled
         self.throttlingProfile = throttlingProfile
         self.executionLog = executionLog
