@@ -112,7 +112,7 @@ extension NIOMITMHTTPConnectHandler {
                 return fallbackRequest
             }
 
-            await interceptor.interceptResponse(
+            return await interceptor.interceptResponse(
                 request: fallbackRequest,
                 statusCode: statusCode,
                 statusMessage: statusMessage,

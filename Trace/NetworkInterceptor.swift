@@ -206,8 +206,8 @@ class NetworkInterceptor: URLProtocol {
             responseHeaders: responseHeaders,
             requestBody: requestBodyStorage,
             responseBody: responseBodyStorage,
-            initiatorStackTrace: captureInitiatorStackTrace(),
-            timingPhases: computeTimingPhases(duration: duration, statusCode: statusCode)
+            timingPhases: computeTimingPhases(duration: duration, statusCode: statusCode),
+            initiatorStackTrace: captureInitiatorStackTrace()
         )
 
         // Concurrency: NetworkCaptureStore updates run on the MainActor.

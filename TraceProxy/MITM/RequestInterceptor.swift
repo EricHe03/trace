@@ -674,9 +674,9 @@ public actor RequestInterceptor {
         let hasEnabledRequestMaps = configSnapshot.requestMaps.contains { $0.enabled }
         let hasEnabledScripts = configSnapshot.scripts.contains { $0.enabled }
         let breakpointsEnabled = await breakpointManager.isEnabled()
-        let activeProfile = configSnapshot.activeProfile != nil && (configSnapshot.activeProfile?.enabled ?? false)
+        let activeProfileEnabled = configSnapshot.activeProfile != nil
 
-        return hasEnabledRewriteRules || hasEnabledRequestMaps || hasEnabledScripts || breakpointsEnabled || activeProfile
+        return hasEnabledRewriteRules || hasEnabledRequestMaps || hasEnabledScripts || breakpointsEnabled || activeProfileEnabled
     }
 
     // MARK: - Response Pipeline Decision

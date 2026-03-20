@@ -5,6 +5,7 @@
 //  Created by Codex on 2026/03/17.
 //
 
+import os
 import Foundation
 
 final class CompletionHandlerBox<T>: @unchecked Sendable {

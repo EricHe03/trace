@@ -24,6 +24,24 @@ final class LocalSocks5Server: @unchecked Sendable {
             case direct(reason: String)
         }
 
+        private final class DecisionCache: @unchecked Sendable {
+            private let lock = NSLock()
+            private var values: [String: RouteDecisionEvaluation] = [:]
+
+            func value(for key: String) -> RouteDecisionEvaluation? {
+                lock.withLock { values[key] }
+            }
+
+            func store(_ evaluation: RouteDecisionEvaluation, for key: String) {
+                lock.withLock {
+                    if values.count >= 1000 {
+                        values.removeAll(keepingCapacity: true)
+                    }
+                    values[key] = evaluation
+                }
+            }
+        }
+
         struct RouteDecisionEvaluation: Sendable, Equatable {
             let effectiveDecision: RouteDecision
             let legacyDecision: RouteDecision
@@ -46,12 +64,7 @@ final class LocalSocks5Server: @unchecked Sendable {
         let policyEngine: DualMITMPolicyEngine?
         let shouldBypassHost: @Sendable (String) -> Bool
         let bypassReasonForHost: @Sendable (String) -> String?
-
-        // Simple decision cache: maps "host:port" key to cached RouteDecisionEvaluation
-        // Protected by nonisolated(unsafe) since TCPConnectRoutingPolicy is Sendable struct
-        // Cache is thread-safe via synchronization in evaluateRouteDecision
-        private nonisolated(unsafe) var decisionCache: [String: RouteDecisionEvaluation] = [:]
-        private nonisolated(unsafe) let cacheLock = NSLock()
+        private let decisionCache = DecisionCache()
 
         init(
             enabled: Bool,
@@ -98,7 +111,7 @@ final class LocalSocks5Server: @unchecked Sendable {
             let cacheKey = "\(destinationHost):\(destinationPort)"
 
             // Fast-path: check cache
-            if let cached = cacheLock.withLock({ decisionCache[cacheKey] }) {
+            if let cached = decisionCache.value(for: cacheKey) {
                 return cached
             }
 
@@ -115,10 +128,7 @@ final class LocalSocks5Server: @unchecked Sendable {
                     shadowEnabled: false,
                     policyEnforced: false
                 )
-                // Cache simple decisions (no policy engine)
-                cacheLock.withLock {
-                    decisionCache[cacheKey] = evaluation
-                }
+                decisionCache.store(evaluation, for: cacheKey)
                 return evaluation
             }
 
@@ -137,14 +147,7 @@ final class LocalSocks5Server: @unchecked Sendable {
                 policyEnforced: policyPlan.enforceTCPRouting
             )
 
-            // Cache policy-based decisions
-            cacheLock.withLock {
-                // Limit cache size to 1000 entries to prevent unbounded growth
-                if decisionCache.count >= 1000 {
-                    decisionCache.removeAll(keepingCapacity: true)
-                }
-                decisionCache[cacheKey] = evaluation
-            }
+            decisionCache.store(evaluation, for: cacheKey)
 
             return evaluation
         }

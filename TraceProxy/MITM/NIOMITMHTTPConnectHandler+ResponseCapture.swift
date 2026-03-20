@@ -133,7 +133,7 @@ extension NIOMITMHTTPConnectHandler {
         captureConfig: CaptureConfiguration,
         decodeCompressedContent: Bool = true
     ) -> BodyStorage {
-        guard captureConfig.captureBody, captureConfig.maxBodySize > 0, !buffer.isEmpty else { return .empty }
+        guard captureConfig.captureBody, captureConfig.maxBodySize > 0, buffer.readableBytes > 0 else { return .empty }
         // Convert once here, avoiding separate byteBufferToData call upstream
         var mutableBuffer = buffer
         let data = mutableBuffer.readData(length: mutableBuffer.readableBytes) ?? Data()
