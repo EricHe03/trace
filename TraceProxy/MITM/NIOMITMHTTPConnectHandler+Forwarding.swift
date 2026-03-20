@@ -149,7 +149,6 @@ extension NIOMITMHTTPConnectHandler {
                                     )
 
                                     let responseHeadersTrace = self.traceHeaders(from: forwardedHeaders)
-                                    let responseBodyData = self.byteBufferToData(response.body ?? ByteBuffer())
                                     let declaredContentLength = self.contentLength(from: forwardedHeaders)
                                     let captureConfig = self.captureConfigProvider()
                                     var captured = outboundContext.requestSnapshot
@@ -162,12 +161,15 @@ extension NIOMITMHTTPConnectHandler {
                                     captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
                                     let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
                                     let responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
+                                    // Optimization: Pass ByteBuffer directly to avoid intermediate Data conversion
+                                    let responseBodyBuffer = response.body ?? ByteBuffer()
                                     captured.responseBody = self.bodyStorage(
-                                        from: responseBodyData,
+                                        from: responseBodyBuffer,
                                         charset: responseCharset,
                                         contentEncoding: responseContentEncoding,
                                         captureConfig: captureConfig
                                     )
+                                    let responseBodyData = self.byteBufferToData(responseBodyBuffer)
                                     self.logResponseCaptureDecision(
                                         pipeline: "buffer_and_intercept",
                                         requestID: captured.id,

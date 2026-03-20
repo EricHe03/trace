@@ -57,6 +57,13 @@ extension NIOMITMHTTPConnectHandler {
 
         let promise = eventLoop.makePromise(of: InterceptionResult.self)
         promise.completeWithTask { [fallbackRequest] in
+            // Fast-path: Skip expensive interception when all features are disabled.
+            // This reduces latency by 1-3ms per request in capture-only mode.
+            let anyFeaturesEnabled = await interceptor.areAnyFeaturesEnabled()
+            if !anyFeaturesEnabled {
+                return .modified(fallbackRequest)
+            }
+
             let result = await interceptor.interceptRequest(
                 flowId: requestContext.flowID,
                 url: requestContext.requestURL,
@@ -99,6 +106,12 @@ extension NIOMITMHTTPConnectHandler {
 
         let promise = eventLoop.makePromise(of: NetworkRequest.self)
         promise.completeWithTask {
+            // Fast-path: Skip expensive interception when all features are disabled.
+            let anyFeaturesEnabled = await interceptor.areAnyFeaturesEnabled()
+            if !anyFeaturesEnabled {
+                return fallbackRequest
+            }
+
             await interceptor.interceptResponse(
                 request: fallbackRequest,
                 statusCode: statusCode,

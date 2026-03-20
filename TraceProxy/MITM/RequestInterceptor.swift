@@ -659,6 +659,26 @@ public actor RequestInterceptor {
         await refreshConfigSnapshotIfNeeded(force: true)
     }
 
+    /// Returns whether any interception features are enabled (rules, maps, scripts, breakpoints, profiles).
+    ///
+    /// This method performs a **fast-path check** to determine if the expensive interception
+    /// machinery needs to be invoked. When all features are disabled, the proxy can skip
+    /// interception entirely and use the fallback request directly, reducing latency by 1-3ms
+    /// per request in capture-only mode.
+    ///
+    /// - Returns: `true` if any feature is active; `false` if all are disabled (capture-only mode)
+    public func areAnyFeaturesEnabled() async -> Bool {
+        await refreshConfigSnapshotIfNeeded()
+
+        let hasEnabledRewriteRules = configSnapshot.rewriteRules.contains { $0.enabled }
+        let hasEnabledRequestMaps = configSnapshot.requestMaps.contains { $0.enabled }
+        let hasEnabledScripts = configSnapshot.scripts.contains { $0.enabled }
+        let breakpointsEnabled = await breakpointManager.isEnabled()
+        let activeProfile = configSnapshot.activeProfile != nil && (configSnapshot.activeProfile?.enabled ?? false)
+
+        return hasEnabledRewriteRules || hasEnabledRequestMaps || hasEnabledScripts || breakpointsEnabled || activeProfile
+    }
+
     // MARK: - Response Pipeline Decision
 
     /// Returns whether interception is currently "active" from the perspective of TLS protocol

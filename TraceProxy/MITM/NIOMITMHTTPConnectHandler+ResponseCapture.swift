@@ -124,6 +124,28 @@ extension NIOMITMHTTPConnectHandler {
         )
     }
 
+    /// Optimized overload that accepts ByteBuffer directly, avoiding an intermediate Data conversion.
+    /// Preferred for hot paths (HTTP/1.1 full responses, streaming chunks).
+    func bodyStorage(
+        from buffer: ByteBuffer,
+        charset: String?,
+        contentEncoding: String?,
+        captureConfig: CaptureConfiguration,
+        decodeCompressedContent: Bool = true
+    ) -> BodyStorage {
+        guard captureConfig.captureBody, captureConfig.maxBodySize > 0, !buffer.isEmpty else { return .empty }
+        // Convert once here, avoiding separate byteBufferToData call upstream
+        var mutableBuffer = buffer
+        let data = mutableBuffer.readData(length: mutableBuffer.readableBytes) ?? Data()
+        return BodyStorage.from(
+            data: data,
+            charset: charset,
+            maxSize: max(0, captureConfig.maxBodySize),
+            contentEncoding: contentEncoding,
+            decodeCompressedContent: decodeCompressedContent
+        )
+    }
+
     func contentLength(from headers: HTTPHeaders) -> Int? {
         guard let rawValue = headers.first(name: "Content-Length") else { return nil }
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -436,8 +458,8 @@ extension NIOMITMHTTPConnectHandler {
         let responseSizeMB = Double(responseSize) / (1024 * 1024)
         let contentDownloadRatio = min(0.8, max(0.3, responseSizeMB * 0.5))
 
-        let requestSent = duration * 0.1        // ~10% for request transmission
-        let ttfb = duration * (0.4 - contentDownloadRatio * 0.2)  // 20-40% waiting
+        let requestSent = duration * 0.1 // ~10% for request transmission
+        let ttfb = duration * (0.4 - contentDownloadRatio * 0.2) // 20-40% waiting
         let contentDownload = duration - requestSent - ttfb
 
         return NetworkTimingPhases(

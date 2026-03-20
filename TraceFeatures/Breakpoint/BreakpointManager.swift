@@ -13,7 +13,7 @@ import TraceCore
 /// Manages breakpoint evaluation and pause/resume flows.
 public actor BreakpointManager {
     public static let shared = BreakpointManager()
-    private nonisolated static let presetStore = PersistentCollectionManager(
+    private nonisolated static let presetStore: PersistentCollectionManager<BreakpointPreset> = PersistentCollectionManager(
         descriptor: .breakpointPresets,
         logger: FeatureLog.breakpoint
     )
