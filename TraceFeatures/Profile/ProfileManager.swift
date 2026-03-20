@@ -23,10 +23,8 @@ public final class ProfileManager: ObservableObject {
 
     private init() {
         self.baseManager = PersistentCollectionManager(
-            fileName: "Profiles.json",
-            notificationName: "ProfilesChanged",
-            logger: FeatureLog.profile,
-            itemName: "profile"
+            descriptor: .profiles,
+            logger: FeatureLog.profile
         )
 
         baseManager.objectWillChange
@@ -46,7 +44,7 @@ public final class ProfileManager: ObservableObject {
         for index in updated.indices {
             updated[index].isActive = updated[index].id == profileId
         }
-        baseManager.importItems(updated, merge: false)
+        baseManager.replaceAll(updated)
     }
 
     public func deactivateProfile() {
@@ -54,7 +52,7 @@ public final class ProfileManager: ObservableObject {
         for index in updated.indices {
             updated[index].isActive = false
         }
-        baseManager.importItems(updated, merge: false)
+        baseManager.replaceAll(updated)
     }
 
     public func getActiveProfile() -> Profile? {

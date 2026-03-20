@@ -13,6 +13,10 @@ import TraceCore
 /// Manages breakpoint evaluation and pause/resume flows.
 public actor BreakpointManager {
     public static let shared = BreakpointManager()
+    private nonisolated static let presetStore = PersistentCollectionManager(
+        descriptor: .breakpointPresets,
+        logger: FeatureLog.breakpoint
+    )
 
     private var configuration: BreakpointConfiguration
     private var pausedRequests: [String: PausedRequest] = [:]
@@ -32,6 +36,31 @@ public actor BreakpointManager {
         Task {
             await self.loadConfiguration()
         }
+    }
+
+    // MARK: - Presets
+
+    public nonisolated var presets: [BreakpointPreset] {
+        Self.presetStore.items
+    }
+
+    public nonisolated func savePreset(_ preset: BreakpointPreset) {
+        Self.presetStore.add(preset)
+    }
+
+    public nonisolated func loadPreset(_ presetId: UUID) -> BreakpointPreset? {
+        presets.first { $0.id == presetId }
+    }
+
+    public nonisolated func applyPreset(_ presetId: UUID) {
+        guard let preset = loadPreset(presetId) else { return }
+        Task {
+            await self.updateConfiguration(preset.configuration)
+        }
+    }
+
+    public nonisolated func clearPresets() {
+        Self.presetStore.clearAll()
     }
 
     // MARK: - Configuration Management

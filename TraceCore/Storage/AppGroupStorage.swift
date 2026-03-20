@@ -466,7 +466,7 @@ open class AppGroupStorage: @unchecked Sendable {
         }
 
         if let configURL = configFileURL(for: "")?.deletingLastPathComponent() {
-            let knownLegacyFiles = [
+            let knownLegacyFiles: [String] = [
                 configurationFileName,
                 captureOptionsFileName,
                 bodyStorageConfigFileName,
@@ -480,17 +480,9 @@ open class AppGroupStorage: @unchecked Sendable {
                 "host_entries.json",
                 "scripts.json",
                 "breakpoints.json",
-                "favorites.json",
-                "RewriteRules.json",
-                "RequestMaps.json",
-                "HostEntries.json",
-                "Scripts.json",
-                "RuleGroups.json",
-                "Profiles.json",
-                "BreakpointPresets.json",
-                "Favorites.json"
+                "favorites.json"
             ]
-            for fileName in knownLegacyFiles {
+            for fileName in knownLegacyFiles + PersistentCollectionDescriptor.all.map(\.fileName) {
                 try? FileManager.default.removeItem(at: configURL.appendingPathComponent(fileName))
             }
         }

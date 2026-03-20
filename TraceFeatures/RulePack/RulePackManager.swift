@@ -40,13 +40,13 @@ public final class RulePackManager {
         switch strategy {
         case .replace:
             RewriteManager.shared.importRules(pack.rules, merge: false)
-            RuleGroupManager.shared.importGroups(pack.groups, merge: false)
+            RewriteManager.shared.importGroups(pack.groups, merge: false)
         case .merge:
             RewriteManager.shared.importRules(pack.rules, merge: true)
-            RuleGroupManager.shared.importGroups(pack.groups, merge: true)
+            RewriteManager.shared.importGroups(pack.groups, merge: true)
         case .ask:
             RewriteManager.shared.importRules(pack.rules, merge: true)
-            RuleGroupManager.shared.importGroups(pack.groups, merge: true)
+            RewriteManager.shared.importGroups(pack.groups, merge: true)
         }
     }
 }

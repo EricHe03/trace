@@ -40,10 +40,8 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
 
     private init() {
         self.baseManager = PersistentCollectionManager(
-            fileName: "Scripts.json",
-            notificationName: "ScriptsChanged",
-            logger: FeatureLog.script,
-            itemName: "script"
+            descriptor: .scripts,
+            logger: FeatureLog.script
         )
         self.scriptEngine = ScriptEngine()
         if scriptEngine == nil {
@@ -111,7 +109,7 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
         guard changed else { return }
 
         // Rationale: persist execution counts in a single write to avoid per-request I/O.
-        baseManager.importItems(updated, merge: false)
+        baseManager.replaceAll(updated)
     }
 
     // MARK: - Script Execution

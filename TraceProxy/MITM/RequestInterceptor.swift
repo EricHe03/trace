@@ -64,9 +64,7 @@ public actor RequestInterceptor {
 
     // MARK: - Notification Observers
 
-    private nonisolated(unsafe) var rulesObserver: NSObjectProtocol?
-    private nonisolated(unsafe) var mapsObserver: NSObjectProtocol?
-    private nonisolated(unsafe) var scriptsObserver: NSObjectProtocol?
+    private nonisolated(unsafe) var notificationObservers: [NSObjectProtocol] = []
 
     // MARK: - Initialization
 
@@ -82,13 +80,7 @@ public actor RequestInterceptor {
     }
 
     deinit {
-        if let observer = rulesObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = mapsObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = scriptsObserver {
+        for observer in notificationObservers {
             NotificationCenter.default.removeObserver(observer)
         }
     }
@@ -100,31 +92,23 @@ public actor RequestInterceptor {
         queue.name = "com.trace.interceptor.notifications"
         queue.maxConcurrentOperationCount = 1
 
-        rulesObserver = NotificationCenter.default.addObserver(
-            forName: Notification.Name("RewriteRulesChanged"),
-            object: nil,
-            queue: queue
-        ) { [weak dirtyFlags] _ in
-            dirtyFlags?.markRulesDirty()
-            ProxyLog.interceptor.debug("event=intercept.rules_dirty outcome=flagged")
-        }
+        let observedCollections: [(Notification.Name, String)] = [
+            (.rewriteRulesUpdated, "rules"),
+            (.requestMapsUpdated, "maps"),
+            (.scriptsUpdated, "scripts"),
+            (.ruleGroupsUpdated, "rule_groups"),
+            (.profilesUpdated, "profiles")
+        ]
 
-        mapsObserver = NotificationCenter.default.addObserver(
-            forName: Notification.Name("RequestMapsChanged"),
-            object: nil,
-            queue: queue
-        ) { [weak dirtyFlags] _ in
-            dirtyFlags?.markMapsDirty()
-            ProxyLog.interceptor.debug("event=intercept.maps_dirty outcome=flagged")
-        }
-
-        scriptsObserver = NotificationCenter.default.addObserver(
-            forName: Notification.Name("ScriptsChanged"),
-            object: nil,
-            queue: queue
-        ) { [weak dirtyFlags] _ in
-            dirtyFlags?.markScriptsDirty()
-            ProxyLog.interceptor.debug("event=intercept.scripts_dirty outcome=flagged")
+        notificationObservers = observedCollections.map { notificationName, label in
+            NotificationCenter.default.addObserver(
+                forName: notificationName,
+                object: nil,
+                queue: queue
+            ) { [weak dirtyFlags] _ in
+                dirtyFlags?.markDirty()
+                ProxyLog.interceptor.debug("event=intercept.\(label, privacy: .public)_dirty outcome=flagged")
+            }
         }
     }
 
@@ -163,8 +147,8 @@ public actor RequestInterceptor {
             return RequestMapManager.shared.maps
         }
         let groups = await MainActor.run {
-            RuleGroupManager.shared.reloadIfNeeded()
-            return RuleGroupManager.shared.groups
+            RewriteManager.shared.reloadGroupsIfNeeded()
+            return RewriteManager.shared.groups
         }
         let activeProfile = await MainActor.run {
             ProfileManager.shared.reloadIfNeeded()
@@ -182,11 +166,11 @@ public actor RequestInterceptor {
             activeProfile: activeProfile
         )
 
-        lastRulesFileDate = AppGroupStorage.shared.configFileModificationDate(for: "RewriteRules.json")
-        lastMapsFileDate = AppGroupStorage.shared.configFileModificationDate(for: "RequestMaps.json")
-        lastScriptsFileDate = AppGroupStorage.shared.configFileModificationDate(for: "Scripts.json")
-        lastGroupsFileDate = AppGroupStorage.shared.configFileModificationDate(for: "RuleGroups.json")
-        lastProfilesFileDate = AppGroupStorage.shared.configFileModificationDate(for: "Profiles.json")
+        lastRulesFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.rewriteRules.fileName)
+        lastMapsFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.requestMaps.fileName)
+        lastScriptsFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.scripts.fileName)
+        lastGroupsFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.ruleGroups.fileName)
+        lastProfilesFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.profiles.fileName)
 
         lastConfigRefresh = now
         metrics.configReloadCount += 1
@@ -643,11 +627,11 @@ public actor RequestInterceptor {
     private func configFilesChanged() -> Bool {
         let storage = AppGroupStorage.shared
 
-        let rulesDate = storage.configFileModificationDate(for: "RewriteRules.json")
-        let mapsDate = storage.configFileModificationDate(for: "RequestMaps.json")
-        let scriptsDate = storage.configFileModificationDate(for: "Scripts.json")
-        let groupsDate = storage.configFileModificationDate(for: "RuleGroups.json")
-        let profilesDate = storage.configFileModificationDate(for: "Profiles.json")
+        let rulesDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.rewriteRules.fileName)
+        let mapsDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.requestMaps.fileName)
+        let scriptsDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.scripts.fileName)
+        let groupsDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.ruleGroups.fileName)
+        let profilesDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.profiles.fileName)
 
         let rulesChanged = (rulesDate ?? .distantPast) > (lastRulesFileDate ?? .distantPast)
         let mapsChanged = (mapsDate ?? .distantPast) > (lastMapsFileDate ?? .distantPast)

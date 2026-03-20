@@ -14,74 +14,47 @@ import TraceCore
 public final class RuleGroupManager: ObservableObject {
     public static let shared = RuleGroupManager()
 
-    private let baseManager: PersistentCollectionManager<RuleGroup>
-    private var cancellables: Set<AnyCancellable> = []
     public nonisolated(unsafe) let objectWillChange = ObservableObjectPublisher()
 
     public var groups: [RuleGroup] {
-        baseManager.items.sorted { $0.priority < $1.priority }
+        RewriteManager.shared.groups
     }
 
     private init() {
-        self.baseManager = PersistentCollectionManager(
-            fileName: "RuleGroups.json",
-            notificationName: "RuleGroupsChanged",
-            logger: FeatureLog.rewrite,
-            itemName: "group"
-        )
-
-        baseManager.objectWillChange
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.objectWillChange.send()
-            }
-            .store(in: &cancellables)
+        NotificationCenter.default.addObserver(
+            forName: .ruleGroupsUpdated,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     public func addGroup(_ group: RuleGroup) {
-        var newGroup = group
-        newGroup.priority = groups.count
-        baseManager.add(newGroup)
-        updatePriorities()
+        RewriteManager.shared.addGroup(group)
     }
 
     public func updateGroup(_ group: RuleGroup) {
-        baseManager.update(group)
+        RewriteManager.shared.updateGroup(group)
     }
 
     public func deleteGroup(_ group: RuleGroup) {
-        baseManager.delete(group)
+        RewriteManager.shared.deleteGroup(group)
     }
 
     public func toggleGroup(_ group: RuleGroup) {
-        baseManager.toggle(group)
+        RewriteManager.shared.toggleGroup(group)
     }
 
     public func moveGroups(from source: IndexSet, to destination: Int) {
-        var current = groups
-        let itemsToMove = source.sorted().reversed().map { current.remove(at: $0) }.reversed()
-        let adjustedDestination = destination - source.count(where: { $0 < destination })
-        for (offset, item) in itemsToMove.enumerated() {
-            current.insert(item, at: adjustedDestination + offset)
-        }
-        baseManager.importItems(current, merge: false)
-        updatePriorities()
-    }
-
-    public func updatePriorities() {
-        var updated = groups
-        for index in updated.indices {
-            updated[index].priority = index
-        }
-        baseManager.importItems(updated, merge: false)
+        RewriteManager.shared.moveGroups(from: source, to: destination)
     }
 
     public func reloadIfNeeded() {
-        baseManager.reloadIfNeeded()
+        RewriteManager.shared.reloadGroupsIfNeeded()
     }
 
     public func importGroups(_ groups: [RuleGroup], merge: Bool = true) {
-        baseManager.importItems(groups, merge: merge)
-        updatePriorities()
+        RewriteManager.shared.importGroups(groups, merge: merge)
     }
 }

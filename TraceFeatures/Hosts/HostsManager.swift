@@ -26,15 +26,10 @@ public final class HostsManager: ObservableObject {
         baseManager.items
     }
 
-    /// Notification for cross-process updates
-    private let hostsUpdatedNotificationName = Notification.Name.hostsUpdated
-
     private init() {
         self.baseManager = PersistentCollectionManager(
-            fileName: "HostEntries.json",
-            notificationName: Notification.Name.hostsUpdated.rawValue,
-            logger: FeatureLog.storage,
-            itemName: "entry"
+            descriptor: .hostEntries,
+            logger: FeatureLog.storage
         )
 
         // Forward changes from the underlying store for SwiftUI observation.
@@ -44,8 +39,6 @@ public final class HostsManager: ObservableObject {
                 self?.objectWillChange.send()
             }
             .store(in: &cancellables)
-
-        setupNotifications()
     }
 
     // MARK: - Entry Management (Delegate to Base Manager)
@@ -168,17 +161,6 @@ public final class HostsManager: ObservableObject {
         baseManager.disabledCount
     }
 
-    // MARK: - Notifications
-
-    private func setupNotifications() {
-        NotificationCenter.default.addObserver(
-            forName: hostsUpdatedNotificationName,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.reloadEntries()
-        }
-    }
 }
 
 // MARK: - Convenience Methods
@@ -191,7 +173,7 @@ public extension HostsManager {
 
     /// Create sample entries for testing
     func loadSampleEntries() {
-        baseManager.importItems(HostEntry.samples, merge: false)
+        baseManager.replaceAll(HostEntry.samples)
     }
 
     /// Get entries filtered by status

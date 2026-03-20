@@ -138,10 +138,8 @@ public final class RequestMapManager: ObservableObject {
 
     private init() {
         self.baseManager = PersistentCollectionManager(
-            fileName: "RequestMaps.json",
-            notificationName: "RequestMapsChanged",
-            logger: FeatureLog.requestMap,
-            itemName: "map"
+            descriptor: .requestMaps,
+            logger: FeatureLog.requestMap
         )
 
         // Forward changes from the underlying store for SwiftUI observation.
