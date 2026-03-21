@@ -81,10 +81,12 @@ extension NIOMITMHTTPConnectHandler {
         let methodRaw = HTTPMethod(rawValue: uppercasedMethod) == nil ? methodToken : nil
         let traceHeaders = captureConfig.captureHeaders ? traceHeaders(from: requestHeaders) : []
         let requestCharset = BodyStorage.extractCharset(from: requestHeaders)
+        let requestContentType = requestHeaders.first(where: { $0.key.lowercased() == "content-type" })?.value
         let requestContentEncoding = requestHeaders.first(where: { $0.key.lowercased() == "content-encoding" })?.value
         let requestBody = bodyStorage(
             from: requestBodyData,
             charset: requestCharset,
+            contentType: requestContentType,
             contentEncoding: requestContentEncoding,
             captureConfig: captureConfig
         )
@@ -110,15 +112,21 @@ extension NIOMITMHTTPConnectHandler {
     func bodyStorage(
         from data: Data,
         charset: String?,
+        contentType: String? = nil,
         contentEncoding: String?,
         captureConfig: CaptureConfiguration,
         decodeCompressedContent: Bool = true
     ) -> BodyStorage {
-        guard captureConfig.captureBody, captureConfig.maxBodySize > 0, !data.isEmpty else { return .empty }
+        let effectiveMaxBodySize = effectiveBodyCaptureLimit(
+            captureConfig: captureConfig,
+            contentType: contentType,
+            contentEncoding: contentEncoding
+        )
+        guard captureConfig.captureBody, effectiveMaxBodySize > 0, !data.isEmpty else { return .empty }
         return BodyStorage.from(
             data: data,
             charset: charset,
-            maxSize: max(0, captureConfig.maxBodySize),
+            maxSize: effectiveMaxBodySize,
             contentEncoding: contentEncoding,
             decodeCompressedContent: decodeCompressedContent
         )
@@ -129,20 +137,38 @@ extension NIOMITMHTTPConnectHandler {
     func bodyStorage(
         from buffer: ByteBuffer,
         charset: String?,
+        contentType: String? = nil,
         contentEncoding: String?,
         captureConfig: CaptureConfiguration,
         decodeCompressedContent: Bool = true
     ) -> BodyStorage {
-        guard captureConfig.captureBody, captureConfig.maxBodySize > 0, buffer.readableBytes > 0 else { return .empty }
+        let effectiveMaxBodySize = effectiveBodyCaptureLimit(
+            captureConfig: captureConfig,
+            contentType: contentType,
+            contentEncoding: contentEncoding
+        )
+        guard captureConfig.captureBody, effectiveMaxBodySize > 0, buffer.readableBytes > 0 else { return .empty }
         // Convert once here, avoiding separate byteBufferToData call upstream
         var mutableBuffer = buffer
         let data = mutableBuffer.readData(length: mutableBuffer.readableBytes) ?? Data()
         return BodyStorage.from(
             data: data,
             charset: charset,
-            maxSize: max(0, captureConfig.maxBodySize),
+            maxSize: effectiveMaxBodySize,
             contentEncoding: contentEncoding,
             decodeCompressedContent: decodeCompressedContent
+        )
+    }
+
+    func effectiveBodyCaptureLimit(
+        captureConfig: CaptureConfiguration,
+        contentType: String?,
+        contentEncoding: String?
+    ) -> Int {
+        CaptureBodyPolicy.effectiveCaptureLimit(
+            configuredLimit: captureConfig.maxBodySize,
+            contentType: contentType,
+            contentEncoding: contentEncoding
         )
     }
 

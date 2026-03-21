@@ -53,7 +53,8 @@ public enum BodyStorage: Codable, Equatable {
 
     /// Default size thresholds
     public static var inlineThreshold: Int {
-        AppGroupStorage.shared.loadBodyStorageConfig().inlineThreshold
+        let configuredThreshold = AppGroupStorage.shared.loadBodyStorageConfig().inlineThreshold
+        return CaptureBodyPolicy.effectiveInlineThreshold(configuredThreshold: configuredThreshold)
     }
 
     public static var truncationThreshold: Int {

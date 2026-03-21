@@ -8,6 +8,49 @@ import XCTest
 @testable import TraceVPNKit
 
 final class FullTunnelRegressionTests: XCTestCase {
+    func testCaptureBodyPolicyCapsBinaryBodiesForPacketTunnelExtension() {
+        XCTAssertEqual(
+            CaptureBodyPolicy.effectiveCaptureLimit(
+                configuredLimit: 10 * 1024 * 1024,
+                contentType: "application/octet-stream",
+                contentEncoding: nil,
+                memoryConstrained: true
+            ),
+            64 * 1024
+        )
+    }
+
+    func testCaptureBodyPolicyCapsCompressedBodiesForPacketTunnelExtension() {
+        XCTAssertEqual(
+            CaptureBodyPolicy.effectiveCaptureLimit(
+                configuredLimit: 10 * 1024 * 1024,
+                contentType: "application/json",
+                contentEncoding: "br",
+                memoryConstrained: true
+            ),
+            128 * 1024
+        )
+    }
+
+    func testCaptureBodyPolicyKeepsConfiguredLimitOutsidePacketTunnelExtension() {
+        XCTAssertEqual(
+            CaptureBodyPolicy.effectiveCaptureLimit(
+                configuredLimit: 512 * 1024,
+                contentType: "application/json",
+                contentEncoding: nil,
+                memoryConstrained: false
+            ),
+            512 * 1024
+        )
+        XCTAssertEqual(
+            CaptureBodyPolicy.effectiveInlineThreshold(
+                configuredThreshold: 512 * 1024,
+                memoryConstrained: true
+            ),
+            128 * 1024
+        )
+    }
+
     func testMergedCapturedProtocolVersionPrefersUpstreamHTTP2() {
         let group = NIOTSEventLoopGroup()
         defer { try? group.syncShutdownGracefully() }
