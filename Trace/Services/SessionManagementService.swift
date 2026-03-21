@@ -29,7 +29,7 @@ class SessionManagementService: SessionManagementServiceProtocol {
 
     // MARK: - Initialization
 
-    nonisolated init(
+    init(
         sessionRepository: SessionRepository,
         requestRepository: NetworkRequestRepository
     ) {

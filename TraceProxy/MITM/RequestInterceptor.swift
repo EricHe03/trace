@@ -219,6 +219,7 @@ public actor RequestInterceptor {
             id: flowId,
             url: url,
             method: httpMethod,
+            requestMethodRaw: HTTPMethod(rawValue: method.uppercased()) == nil ? method.uppercased() : nil,
             statusCode: nil,
             statusMessage: nil,
             timestamp: Date(),
@@ -293,6 +294,10 @@ public actor RequestInterceptor {
         // Phase 4: Breakpoint (Request)
         let breakpointStart = DispatchTime.now()
         var didPauseForBreakpoint = false
+        let breakpointConfig = await breakpointManager.getConfiguration()
+        ProxyLog.interceptor.info(
+            "event=intercept.breakpoint_check enabled=\(breakpointConfig.enabled, privacy: .public) url=\(modifiedRequest.url, privacy: .private(mask: .hash)) method=\(httpMethod.rawValue, privacy: .public) breakpointType=\(String(describing: breakpointConfig.breakpointType), privacy: .public) matchType=\(String(describing: breakpointConfig.matchType), privacy: .public) matchPattern=\(breakpointConfig.matchPattern ?? "none", privacy: .public) request_id=\(flowIdString, privacy: .public)"
+        )
         if await breakpointManager.shouldBreakOnRequest(
             url: modifiedRequest.url,
             method: httpMethod,
@@ -310,6 +315,7 @@ public actor RequestInterceptor {
                 id: flowIdString,
                 url: modifiedRequest.url,
                 method: modifiedRequest.method,
+                methodToken: modifiedRequest.methodToken,
                 headers: modifiedRequest.requestHeaders,
                 body: modifiedRequest.requestBody.getData()
             )
@@ -330,14 +336,26 @@ public actor RequestInterceptor {
                 await breakpointManager.setEnabled(false)
                 fallthrough
 
+            case .cancel:
+                ProxyLog.interceptor.debug(
+                    "event=intercept.breakpoint_cancel outcome=success request_id=\(flowIdString, privacy: .public)"
+                )
+                fallthrough
+
             case .continue:
                 ProxyLog.interceptor.debug(
                     "event=intercept.breakpoint_continue outcome=success request_id=\(flowIdString, privacy: .public)"
                 )
-                if let pausedRequest = await breakpointManager.getPausedRequest(id: flowIdString) {
+                if let pausedRequest = await breakpointManager.consumeResumedRequest(id: flowIdString) {
+                    modifiedRequest.url = pausedRequest.effectiveUrl
+                    modifiedRequest.method = pausedRequest.effectiveMethod
+                    modifiedRequest.requestMethodRaw = pausedRequest.effectiveMethodToken == pausedRequest.effectiveMethod.rawValue
+                        ? nil
+                        : pausedRequest.effectiveMethodToken
                     modifiedRequest.requestHeaders = pausedRequest.effectiveHeaders
                     if let modifiedBody = pausedRequest.effectiveBody {
                         modifiedRequest.requestBody = BodyStorage.from(data: modifiedBody, charset: charset)
+                        modifiedRequest.requestBodyModified = true
                     }
                 }
             }
@@ -495,6 +513,7 @@ public actor RequestInterceptor {
                 id: flowIdString,
                 url: modifiedRequest.url,
                 method: modifiedRequest.method,
+                methodToken: modifiedRequest.methodToken,
                 statusCode: statusCode,
                 statusMessage: statusMessage,
                 headers: headers,
@@ -518,11 +537,17 @@ public actor RequestInterceptor {
                 await breakpointManager.setEnabled(false)
                 fallthrough
 
+            case .cancel:
+                ProxyLog.interceptor.debug(
+                    "event=intercept.response_breakpoint_cancel outcome=success request_id=\(flowIdString, privacy: .public)"
+                )
+                fallthrough
+
             case .continue:
                 ProxyLog.interceptor.debug(
                     "event=intercept.response_breakpoint_continue outcome=success request_id=\(flowIdString, privacy: .public)"
                 )
-                if let pausedRequest = await breakpointManager.getPausedRequest(id: flowIdString) {
+                if let pausedRequest = await breakpointManager.consumeResumedRequest(id: flowIdString) {
                     if let code = pausedRequest.effectiveStatusCode {
                         modifiedRequest.statusCode = code
                     }
@@ -768,11 +793,13 @@ public actor RequestInterceptor {
                 return .drop
             case .continueAndDisable:
                 await breakpointManager.setEnabled(false)
+            case .cancel:
+                break
             case .continue:
                 break
             }
 
-            if let pausedEvent = await breakpointManager.getPausedRequest(id: event.id.uuidString),
+            if let pausedEvent = await breakpointManager.consumeResumedRequest(id: event.id.uuidString),
                let modifiedBody = pausedEvent.effectiveBody {
                 payloadData = modifiedBody
                 metadata["breakpoint"] = "modified"

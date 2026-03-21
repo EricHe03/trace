@@ -219,11 +219,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
 // MARK: - UIApplication Extension for Shortcut Item Storage
 
-private var shortcutItemKey: UInt8 = 0
+private nonisolated(unsafe) var _shortcutItemKey: UInt8 = 0
 
 extension UIApplication {
     var shortcutItem: UIApplicationShortcutItem? {
-        get { objc_getAssociatedObject(self, &shortcutItemKey) as? UIApplicationShortcutItem }
-        set { objc_setAssociatedObject(self, &shortcutItemKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+        get { objc_getAssociatedObject(self, &_shortcutItemKey) as? UIApplicationShortcutItem }
+        set { objc_setAssociatedObject(self, &_shortcutItemKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
     }
 }

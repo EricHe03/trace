@@ -58,7 +58,7 @@ public enum NetworkCapturePath: String, Codable, Sendable, CaseIterable {
 public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public let id: UUID
     public var url: String
-    public let method: HTTPMethod
+    public var method: HTTPMethod
     /// Original method token when it cannot be represented by `HTTPMethod`.
     public var requestMethodRaw: String?
     public var statusCode: Int?
@@ -139,6 +139,11 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public var retryCount: Int {
         get { retryAttempts }
         set { retryAttempts = newValue }
+    }
+
+    /// The effective HTTP method token that should be placed on the wire.
+    public var methodToken: String {
+        requestMethodRaw ?? method.rawValue
     }
 
     /// Backward-compatible alias for `requestMethodRaw`.

@@ -14,6 +14,7 @@ import TraceSecurity
 import UIKit
 
 /// Handles Home Screen Quick Action interactions.
+@MainActor
 class QuickActionHandler {
     static let shared = QuickActionHandler()
 
@@ -24,7 +25,6 @@ class QuickActionHandler {
     ///   - shortcutItem: The Quick Action to handle.
     ///   - viewModel: The capture view model to update.
     /// - Returns: `true` when the action was handled.
-    @MainActor
     func handleShortcutItem(
         _ shortcutItem: UIApplicationShortcutItem,
         viewModel: CaptureViewModel
@@ -58,7 +58,6 @@ class QuickActionHandler {
 
     // MARK: - Action Handlers
 
-    @MainActor
     private func startCapture() async {
         let vpnManager = VPNManager.shared
 
@@ -101,7 +100,6 @@ class QuickActionHandler {
         )
     }
 
-    @MainActor
     private func exportData(viewModel: CaptureViewModel) async {
         guard let lastSession = viewModel.sessions.first else {
             CoreLog.lifecycle.warning("event=app.quick_action outcome=skipped action=export_har reason=no_sessions")

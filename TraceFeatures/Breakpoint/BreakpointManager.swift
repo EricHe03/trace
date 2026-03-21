@@ -20,6 +20,7 @@ public actor BreakpointManager {
 
     private var configuration: BreakpointConfiguration
     private var pausedRequests: [String: PausedRequest] = [:]
+    private var resumedRequests: [String: PausedRequest] = [:]
     private var continuations: [String: CheckedContinuation<BreakpointAction, Never>] = [:]
     private var totalHitCount: Int = 0
     private var storedRequestModifications: PausedRequest?
@@ -90,6 +91,7 @@ public actor BreakpointManager {
             storedRequestModifications = nil
             storedResponseModifications = nil
             storedStreamModifications = nil
+            resumedRequests.removeAll()
             editOnceApplied = false
             totalHitCount = 0
             Task {
@@ -196,6 +198,7 @@ public actor BreakpointManager {
         id: String,
         url: String,
         method: HTTPMethod,
+        methodToken: String? = nil,
         headers: [TraceHTTPHeader],
         body: Data?
     ) async -> BreakpointAction {
@@ -203,6 +206,7 @@ public actor BreakpointManager {
             id: id,
             url: url,
             method: method,
+            methodToken: methodToken,
             headers: headers,
             body: body,
             breakpointType: .request
@@ -244,6 +248,7 @@ public actor BreakpointManager {
         id: String,
         url: String,
         method: HTTPMethod,
+        methodToken: String? = nil,
         statusCode: Int,
         statusMessage: String,
         headers: [TraceHTTPHeader],
@@ -253,6 +258,7 @@ public actor BreakpointManager {
             id: id,
             url: url,
             method: method,
+            methodToken: methodToken,
             headers: headers,
             body: body,
             breakpointType: .response,
@@ -339,7 +345,9 @@ public actor BreakpointManager {
             pausedRequest.isPaused = false
             pausedRequest.state = action == .drop ? .dropped : .continuing
             pausedRequests[id] = pausedRequest
-            if action == .continue, pausedRequest.hasModifications {
+            if action.appliesModifications, pausedRequest.hasModifications {
+                pausedRequest.state = .modified
+                resumedRequests[id] = pausedRequest
                 if configuration.executionMode == .editOnce || configuration.executionMode == .alwaysApply {
                     switch pausedRequest.breakpointType {
                     case .response:
@@ -353,6 +361,8 @@ public actor BreakpointManager {
                         editOnceApplied = true
                     }
                 }
+            } else {
+                resumedRequests.removeValue(forKey: id)
             }
         }
 
@@ -380,29 +390,57 @@ public actor BreakpointManager {
         }
     }
 
+    public func consumeResumedRequest(id: String) -> PausedRequest? {
+        let resumedRequest = resumedRequests[id]
+        resumedRequests.removeValue(forKey: id)
+        return resumedRequest
+    }
+
     public func applyStoredRequestModifications(to request: inout NetworkRequest) -> Bool {
         guard let stored = storedRequestModifications else { return false }
-        request.requestHeaders = stored.effectiveHeaders
+        var didApply = false
+        if request.url != stored.effectiveUrl {
+            request.url = stored.effectiveUrl
+            didApply = true
+        }
+        if request.methodToken != stored.effectiveMethodToken {
+            request.method = stored.effectiveMethod
+            request.requestMethodRaw = stored.effectiveMethodToken == stored.effectiveMethod.rawValue
+                ? nil
+                : stored.effectiveMethodToken
+            didApply = true
+        }
+        if request.requestHeaders != stored.effectiveHeaders {
+            request.requestHeaders = stored.effectiveHeaders
+            didApply = true
+        }
         if let modifiedBody = stored.effectiveBody {
             request.requestBody = BodyStorage.from(data: modifiedBody)
-            return true
+            didApply = true
         }
-        return false
+        return didApply
     }
 
     public func applyStoredResponseModifications(to request: inout NetworkRequest) -> Bool {
         guard let stored = storedResponseModifications else { return false }
-        request.responseHeaders = stored.effectiveHeaders
+        var didApply = false
+        if request.responseHeaders != stored.effectiveHeaders {
+            request.responseHeaders = stored.effectiveHeaders
+            didApply = true
+        }
         if let modifiedBody = stored.effectiveBody {
             request.responseBody = BodyStorage.from(data: modifiedBody)
+            didApply = true
         }
         if let code = stored.effectiveStatusCode {
             request.statusCode = code
+            didApply = true
         }
         if let message = stored.effectiveStatusMessage {
             request.statusMessage = message
+            didApply = true
         }
-        return true
+        return didApply
     }
 
     public func applyStoredStreamModifications(to body: inout Data?) -> Bool {
@@ -423,12 +461,27 @@ public actor BreakpointManager {
                 if headerDict[condition.parameter.lowercased()] == nil { return false }
             case .headerEquals:
                 if headerDict[condition.parameter.lowercased()] != condition.value { return false }
+            case .headerContains:
+                guard let headerValue = headerDict[condition.parameter.lowercased()],
+                      headerValue.contains(condition.value) else { return false }
+            case .headerRegex:
+                guard let headerValue = headerDict[condition.parameter.lowercased()],
+                      RegexMatcher.safeMatch(pattern: condition.value, in: headerValue, caseSensitive: false) else { return false }
             case .bodyContains:
                 if !bodyString.contains(condition.value) { return false }
             case .bodyRegex:
                 if !RegexMatcher.safeMatch(pattern: condition.value, in: bodyString, caseSensitive: false) { return false }
             case .queryParamExists:
                 if !queryItems.contains(where: { $0.name == condition.parameter }) { return false }
+            case .queryParamEquals:
+                if !queryItems.contains(where: { $0.name == condition.parameter && $0.value == condition.value }) { return false }
+            case .queryParamContains:
+                if !queryItems.contains(where: { $0.name == condition.parameter && ($0.value?.contains(condition.value) ?? false) }) { return false }
+            case .queryParamRegex:
+                if !queryItems.contains(where: {
+                    $0.name == condition.parameter &&
+                        RegexMatcher.safeMatch(pattern: condition.value, in: $0.value ?? "", caseSensitive: false)
+                }) { return false }
             }
         }
         return true
@@ -444,7 +497,13 @@ public actor BreakpointManager {
         guard var pausedRequest = pausedRequests[id] else { return }
 
         pausedRequest.modifiedUrl = modifications.url
-        pausedRequest.modifiedMethod = modifications.method
+        if let methodToken = modifications.resolvedMethodToken {
+            pausedRequest.modifiedMethod = HTTPMethod(rawValue: methodToken.uppercased())
+            pausedRequest.modifiedMethodToken = methodToken
+        } else {
+            pausedRequest.modifiedMethod = modifications.method
+            pausedRequest.modifiedMethodToken = nil
+        }
         pausedRequest.modifiedHeaders = modifications.headers
         pausedRequest.modifiedBody = modifications.body
         pausedRequest.modifiedStatusCode = modifications.statusCode
@@ -502,6 +561,7 @@ public actor BreakpointManager {
 public struct PausedRequestModifications {
     public var url: String?
     public var method: HTTPMethod?
+    public var methodToken: String?
     public var headers: [TraceHTTPHeader]?
     public var body: Data?
     public var statusCode: Int?
@@ -510,6 +570,7 @@ public struct PausedRequestModifications {
     public init(
         url: String? = nil,
         method: HTTPMethod? = nil,
+        methodToken: String? = nil,
         headers: [TraceHTTPHeader]? = nil,
         body: Data? = nil,
         statusCode: Int? = nil,
@@ -517,9 +578,18 @@ public struct PausedRequestModifications {
     ) {
         self.url = url
         self.method = method
+        self.methodToken = methodToken
         self.headers = headers
         self.body = body
         self.statusCode = statusCode
         self.statusMessage = statusMessage
+    }
+
+    public var resolvedMethodToken: String? {
+        if let methodToken {
+            let trimmed = methodToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed.uppercased()
+        }
+        return method?.rawValue
     }
 }
