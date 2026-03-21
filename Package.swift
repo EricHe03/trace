@@ -123,6 +123,9 @@ let quicheArtifactsAvailable = quicheHeadersAvailable && (quicheXCFrameworkAvail
 let quicheSDKName = ProcessInfo.processInfo.environment["SDK_NAME"]?.lowercased() ?? ""
 let quichePlatformName = ProcessInfo.processInfo.environment["PLATFORM_NAME"]?.lowercased() ?? ""
 let quicheEffectivePlatformName = ProcessInfo.processInfo.environment["EFFECTIVE_PLATFORM_NAME"]?.lowercased() ?? ""
+let quicheRequiresArtifactsForBuild = quicheSDKName.contains("iphone") ||
+    quichePlatformName.contains("iphone") ||
+    quicheEffectivePlatformName.contains("iphone")
 let quichePreferredLibraryPath: String = if quicheSDKName.contains("iphonesimulator") ||
     quichePlatformName.contains("iphonesimulator") ||
     quicheEffectivePlatformName.contains("iphonesimulator") {
@@ -137,6 +140,33 @@ let quichePreferredLibraryPath: String = if quicheSDKName.contains("iphonesimula
 }
 
 let quicheLinkerFlags = [quichePreferredLibraryPath]
+
+if quicheRequiresArtifactsForBuild && !quicheArtifactsAvailable {
+    let availablePaths = [
+        quicheIncludePath,
+        quicheXCFrameworkPath,
+        quicheDeviceLibraryPath,
+        quicheSimulatorLibraryPath
+    ]
+        .filter { FileManager.default.fileExists(atPath: $0) }
+
+    let availableArtifactsDescription = if availablePaths.isEmpty {
+        "none"
+    } else {
+        availablePaths.joined(separator: ", ")
+    }
+
+    fatalError(
+        """
+        Missing quiche build artifacts required for iOS QUIC support.
+        Expected headers at: \(quicheIncludePath)
+        Expected XCFramework at: \(quicheXCFrameworkPath)
+        Expected static libraries at: \(quicheDeviceLibraryPath) and \(quicheSimulatorLibraryPath)
+        Available artifact paths: \(availableArtifactsDescription)
+        Run: ./Tools/QUIC/build_quiche_apple.sh
+        """
+    )
+}
 
 let cquicheFFICSettings: [CSetting] = quicheArtifactsAvailable
     ? [

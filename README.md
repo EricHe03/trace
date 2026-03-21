@@ -130,7 +130,7 @@ Trace/
 └── build/quiche/                 # Generated quiche artifacts consumed by TraceQUIC/CQuicheFFI
 ```
 
-Generated QUIC build artifacts live under `build/quiche/`. The package manifest detects those artifacts and wires `TraceQUIC` / `CQuicheFFI` to either the generated `quiche.xcframework` or the static libraries when present.
+Generated QUIC build artifacts live under `build/quiche/`. These artifacts are not tracked in git. iOS builds require them for QUIC/HTTP3 support, while package indexing on macOS can still resolve without them.
 
 ## Documentation
 

@@ -99,9 +99,9 @@ Trace stores all captured requests, responses, and events in a GRDB SQLite datab
 
 ## Build issues
 
-### `TraceQUIC` build fails with missing xcframework
+### `TraceQUIC` build fails with missing quiche artifacts
 
-The quiche xcframework at `build/quiche/quiche.xcframework` must exist before building. It is committed to the repository. If it is missing:
+The QUIC build artifacts under `build/quiche/` must exist before building for iOS. They are generated locally and are not committed to the repository. If they are missing:
 
 ```bash
 git submodule update --init --recursive
