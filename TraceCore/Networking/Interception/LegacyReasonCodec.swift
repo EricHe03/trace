@@ -151,6 +151,14 @@ public enum LegacyReasonCodec {
             )
         }
 
+        if normalized == "engineunavailable" || normalized == "engine_unavailable" {
+            return DecodedReason(
+                failure: .internalError(code: .quicInternal, context: token),
+                bypassReason: .internalError,
+                domain: .quicMITM
+            )
+        }
+
         if normalized == "certificatepinning" || normalized == "quic_certificate_pinning" {
             return DecodedReason(
                 failure: .quicCertificatePinning,
