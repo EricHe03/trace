@@ -140,6 +140,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     let transparentMITMPorts: Set<UInt16> = [80, 443]
     var currentCaptureMode: CaptureMode = .proxyOnly
 
+    var tunnelProviderEnvironment: TunnelProviderEnvironment {
+        TunnelProviderEnvironment(
+            proxy: .init(host: proxyHost, port: proxyPort),
+            localSocks: .init(host: localSocks5Host, preferredPort: localSocks5Port),
+            fullTunnelMTU: fullTunnelMTU,
+            transparentMITMPorts: transparentMITMPorts
+        )
+    }
+
     // MARK: - Diagnostics
 
     struct MemorySnapshot: Sendable {
@@ -226,12 +235,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         try validateSharedStorage()
 
-        let captureConfig = AppGroupStorage.shared.loadConfiguration()
-        self.currentCaptureMode = captureConfig.captureMode
+        let runtimeConfiguration = await loadTunnelProviderConfiguration()
+        let captureConfig = runtimeConfiguration.capture
+        currentCaptureMode = runtimeConfiguration.captureMode
 
         await HardeningConfig.shared.logCurrentConfig()
 
-        await configureCaptureSettings(for: captureConfig.captureMode)
+        await syncCaptureSettings(using: runtimeConfiguration)
         await initializeEventLog(mode: captureConfig.captureMode)
         await logProtocolRoutingConfiguration()
         await runtimeState.appendEventLog(
@@ -248,8 +258,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         do {
             VPNLog.proxy.info("event=vpn.proxy_start_begin port=\(self.proxyPort)")
-            try await startProxyServer()
-            await applyProxyIngressMode(for: captureConfig)
+            try await startProxyServer(using: runtimeConfiguration)
+            await applyProxyIngressMode(using: runtimeConfiguration)
             VPNLog.proxy.info("event=vpn.proxy_start outcome=success port=\(self.proxyPort)")
         } catch {
             VPNLog.proxy.error(
@@ -271,60 +281,23 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             throw error
         }
 
-        let rawCaptureEnabled = await HardeningConfig.shared.enableRawCapture
-        let rawCaptureLimit = await HardeningConfig.shared.maxRawCaptureSize
-        let dualMITMPolicyEngineShadow = await HardeningConfig.shared.dualMITMPolicyEngineShadow
-        let dualMITMPolicyEngineEnforcedTCP = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedTCP
-        let dualMITMPolicyEngineEnforcedProxy = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedProxy
-        let dualMITMPolicyEngineEnforcedQUIC = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedQUIC
-        let dualMITMHttp2MITMEnabled = await HardeningConfig.shared.dualMITMHttp2MITMEnabled
-        let dualMITMStrictEnforcementHardFail = await HardeningConfig.shared.dualMITMStrictEnforcementHardFail
         let packetCaptureWriter = createPacketCaptureWriterIfNeeded(
-            enabled: rawCaptureEnabled && captureConfig.captureMode.usesPacketTunnelRouting
+            enabled: runtimeConfiguration.packetCaptureEnabled
         )
-        let flowConfig = PacketTunnelRuntimeState.PacketFlowConfig(
-            packetFlow: self.packetFlow,
-            mode: captureConfig.captureMode,
-            mtu: self.fullTunnelMTU,
-            captureEnabled: rawCaptureEnabled,
-            captureLimit: rawCaptureLimit,
-            writer: packetCaptureWriter,
-            socks5Host: captureConfig.fullTunnelSocks5Host,
-            socks5Port: captureConfig.fullTunnelSocks5Port,
-            localSocks5Host: localSocks5Host,
-            localSocks5Port: localSocks5Port,
-            udpForwardingMode: captureConfig.fullTunnelUDPForwardingMode,
-            ipv6Enabled: captureConfig.fullTunnelIPv6Enabled,
-            tcpTransparentMITMEnabled: effectiveTransparentTCPMITMEnabled(for: captureConfig),
-            tcpTransparentMITMPorts: transparentMITMPorts,
-            mitmProxyHost: proxyHost,
-            mitmProxyPort: proxyPort,
-            dualMITMPolicy: captureConfig.dualMITMPolicy,
-            tcpBypassTTLSeconds: captureConfig.tcpBypassTTLSeconds,
-            quicHostFailOpenSeconds: captureConfig.quicHostFailOpenSeconds,
-            dualMITMCircuitBreakerEnabled: captureConfig.dualMITMCircuitBreakerEnabled,
-            quicNoProgressGraceMs: captureConfig.quicNoProgressGraceMs,
-            quicNoProgressIdleMs: captureConfig.quicNoProgressIdleMs,
-            quicNoProgressAbsoluteMs: captureConfig.quicNoProgressAbsoluteMs,
-            quicNoProgressMinClientDatagrams: captureConfig.quicNoProgressMinClientDatagrams,
-            quicAuthorityRetryAttempts: captureConfig.quicAuthorityRetryAttempts,
-            quicCertMaterialCacheTTLSeconds: captureConfig.quicCertMaterialCacheTTLSeconds,
-            dualMITMPolicyEngineShadowEnabled: dualMITMPolicyEngineShadow,
-            dualMITMPolicyEngineEnforcedTCP: dualMITMPolicyEngineEnforcedTCP,
-            dualMITMPolicyEngineEnforcedProxy: dualMITMPolicyEngineEnforcedProxy,
-            dualMITMPolicyEngineEnforcedQUIC: dualMITMPolicyEngineEnforcedQUIC,
-            dualMITMHttp2MITMEnabled: dualMITMHttp2MITMEnabled,
-            dualMITMStrictEnforcementHardFail: dualMITMStrictEnforcementHardFail
+        await runtimeState.configurePacketFlow(
+            runtimeConfiguration.makePacketFlowConfig(
+                packetFlow: packetFlow,
+                packetCaptureWriter: packetCaptureWriter
+            )
         )
-        await runtimeState.configurePacketFlow(flowConfig)
 
         startCertificateCleanupTask()
 
-        if await HardeningConfig.shared.enableMetrics {
+        if runtimeConfiguration.hardening.enableMetrics {
             startMetricsTask()
         }
 
-        let debugLoggingEnabled = await HardeningConfig.shared.enableDebugLogging
+        let debugLoggingEnabled = runtimeConfiguration.hardening.enableDebugLogging
         TLSLog.setVerboseEnabled(debugLoggingEnabled)
         if debugLoggingEnabled {
             startHeartbeatTask()

@@ -149,7 +149,6 @@ extension NIOMITMHTTPConnectHandler {
                                     )
 
                                     let responseHeadersTrace = self.traceHeaders(from: forwardedHeaders)
-                                    let responseBodyData = self.byteBufferToData(response.body ?? ByteBuffer())
                                     let declaredContentLength = self.contentLength(from: forwardedHeaders)
                                     let captureConfig = self.captureConfigProvider()
                                     var captured = outboundContext.requestSnapshot
@@ -161,13 +160,23 @@ extension NIOMITMHTTPConnectHandler {
                                     captured.statusMessage = response.status.reasonPhrase
                                     captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
                                     let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
+                                    let responseContentType = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-type" })?.value
                                     let responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
+                                    let effectiveCaptureBodyLimit = self.effectiveBodyCaptureLimit(
+                                        captureConfig: captureConfig,
+                                        contentType: responseContentType,
+                                        contentEncoding: responseContentEncoding
+                                    )
+                                    // Optimization: Pass ByteBuffer directly to avoid intermediate Data conversion
+                                    let responseBodyBuffer = response.body ?? ByteBuffer()
                                     captured.responseBody = self.bodyStorage(
-                                        from: responseBodyData,
+                                        from: responseBodyBuffer,
                                         charset: responseCharset,
+                                        contentType: responseContentType,
                                         contentEncoding: responseContentEncoding,
                                         captureConfig: captureConfig
                                     )
+                                    let responseBodyData = self.byteBufferToData(responseBodyBuffer)
                                     self.logResponseCaptureDecision(
                                         pipeline: "buffer_and_intercept",
                                         requestID: captured.id,
@@ -177,7 +186,7 @@ extension NIOMITMHTTPConnectHandler {
                                         observedBodyBytes: responseBodyData.count,
                                         declaredContentLength: declaredContentLength,
                                         captureBodyEnabled: captureConfig.captureBody,
-                                        captureBodyLimit: captureConfig.maxBodySize,
+                                        captureBodyLimit: effectiveCaptureBodyLimit,
                                         decodeCompressedContent: true,
                                         storageContentEncoding: responseContentEncoding
                                     )
@@ -792,10 +801,17 @@ extension NIOMITMHTTPConnectHandler {
                                 captured.statusMessage = head.status.reasonPhrase
                                 captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
                                 let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
+                                let responseContentType = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-type" })?.value
                                 let responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
+                                let effectiveCaptureBodyLimit = self.effectiveBodyCaptureLimit(
+                                    captureConfig: captureConfig,
+                                    contentType: responseContentType,
+                                    contentEncoding: responseContentEncoding
+                                )
                                 captured.responseBody = self.bodyStorage(
                                     from: responseBodyData,
                                     charset: responseCharset,
+                                    contentType: responseContentType,
                                     contentEncoding: responseContentEncoding,
                                     captureConfig: captureConfig
                                 )
@@ -808,7 +824,7 @@ extension NIOMITMHTTPConnectHandler {
                                     observedBodyBytes: responseBodyData.count,
                                     declaredContentLength: declaredContentLength,
                                     captureBodyEnabled: captureConfig.captureBody,
-                                    captureBodyLimit: captureConfig.maxBodySize,
+                                    captureBodyLimit: effectiveCaptureBodyLimit,
                                     decodeCompressedContent: true,
                                     storageContentEncoding: responseContentEncoding
                                 )
@@ -1179,7 +1195,11 @@ extension NIOMITMHTTPConnectHandler {
         metricsAsParsedResponse: Bool
     ) {
         let captureConfig = captureConfigProvider()
-        let maxCapturedBodyBytes = captureConfig.captureBody ? max(0, captureConfig.maxBodySize) : 0
+        var effectiveCapturedBodyLimit = effectiveBodyCaptureLimit(
+            captureConfig: captureConfig,
+            contentType: nil,
+            contentEncoding: nil
+        )
         var capturedBodyData = Data()
         var receivedBodyBytes = 0
         var didTruncateCapturedBody = false
@@ -1227,8 +1247,13 @@ extension NIOMITMHTTPConnectHandler {
                 }
                 closeAfterSend = self.shouldCloseConnection(requestHead: requestHead, responseHeaders: forwardedHeaders)
                 responseHeadersTrace = self.traceHeaders(from: forwardedHeaders)
-                responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
                 let responseContentType = self.responseHeaderValue(name: "content-type", in: responseHeadersTrace)
+                responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
+                effectiveCapturedBodyLimit = self.effectiveBodyCaptureLimit(
+                    captureConfig: captureConfig,
+                    contentType: responseContentType,
+                    contentEncoding: responseContentEncoding
+                )
                 if sseCapture == nil,
                    let responseContentType,
                    responseContentType.lowercased().contains("text/event-stream") {
@@ -1292,8 +1317,8 @@ extension NIOMITMHTTPConnectHandler {
                         captureConfig: captureConfig,
                         onRequestCaptured: self.onRequestCaptured
                     )
-                } else if maxCapturedBodyBytes > 0, chunkBytes > 0 {
-                    let remaining = maxCapturedBodyBytes - capturedBodyData.count
+                } else if effectiveCapturedBodyLimit > 0, chunkBytes > 0 {
+                    let remaining = effectiveCapturedBodyLimit - capturedBodyData.count
                     if remaining > 0 {
                         let chunkData = self.byteBufferToData(buffer)
                         if chunkData.count <= remaining {
@@ -1370,12 +1395,14 @@ extension NIOMITMHTTPConnectHandler {
                         charset: responseCharset,
                         contentEncoding: responseContentEncoding,
                         decodeCompressedContent: true,
-                        maxStoredBodyBytes: max(0, captureConfig.maxBodySize)
+                        maxStoredBodyBytes: effectiveCapturedBodyLimit
                     )
                 } else {
+                    let responseContentType = self.responseHeaderValue(name: "content-type", in: responseHeadersTrace)
                     capturedRequest.responseBody = self.bodyStorage(
                         from: capturedBodyData,
                         charset: responseCharset,
+                        contentType: responseContentType,
                         contentEncoding: responseContentEncoding,
                         captureConfig: captureConfig,
                         decodeCompressedContent: true
@@ -1390,7 +1417,7 @@ extension NIOMITMHTTPConnectHandler {
                     observedBodyBytes: observedResponseBodyBytes,
                     declaredContentLength: declaredResponseBodyBytes,
                     captureBodyEnabled: captureConfig.captureBody,
-                    captureBodyLimit: captureConfig.maxBodySize,
+                    captureBodyLimit: effectiveCapturedBodyLimit,
                     decodeCompressedContent: true,
                     storageContentEncoding: responseContentEncoding
                 )
@@ -1452,11 +1479,12 @@ extension NIOMITMHTTPConnectHandler {
                             charset: responseCharset,
                             contentEncoding: responseContentEncoding,
                             decodeCompressedContent: true,
-                            maxStoredBodyBytes: max(0, captureConfig.maxBodySize)
+                            maxStoredBodyBytes: effectiveCapturedBodyLimit
                         )
                         : self.bodyStorage(
                             from: capturedBodyData,
                             charset: responseCharset,
+                            contentType: self.responseHeaderValue(name: "content-type", in: responseHeadersTrace),
                             contentEncoding: responseContentEncoding,
                             captureConfig: captureConfig,
                             decodeCompressedContent: true

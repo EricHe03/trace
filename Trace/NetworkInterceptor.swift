@@ -99,6 +99,51 @@ class NetworkInterceptor: URLProtocol {
 
     // MARK: - Private Methods
 
+    /// Capture the initiator stack trace, filtering out framework internals
+    private func captureInitiatorStackTrace() -> String? {
+        let symbols = Thread.callStackSymbols
+
+        // Filter out framework internals and keep only app code frames
+        let appFrames = symbols.dropFirst(2).prefix(10).filter { symbol in
+            // Keep frames from the app/Trace targets, filter out Foundation/NIO
+            !symbol.contains("Foundation") &&
+            !symbol.contains("Darwin") &&
+            !symbol.contains("SwiftUI") &&
+            !symbol.contains("NIOCore") &&
+            !symbol.contains("AsyncHTTPClient") &&
+            !symbol.contains("CoreFoundation")
+        }
+
+        let filtered = Array(appFrames)
+        guard !filtered.isEmpty else { return nil }
+
+        // Format stack trace as readable string with line breaks
+        return filtered.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+    }
+
+    /// Compute timing phases from URLProtocol data
+    /// For URLProtocol, we can estimate phases based on response characteristics
+    private func computeTimingPhases(duration: TimeInterval, statusCode: Int?) -> NetworkTimingPhases? {
+        // URLProtocol measures wall-clock time, but doesn't break down DNS/TCP/TLS
+        // We distribute the duration heuristically:
+        // - requestSent: ~5-10% of total time (send to server)
+        // - ttfb: ~25-50% of total time (waiting for response)
+        // - contentDownload: remainder
+
+        guard duration > 0 else { return nil }
+
+        // Conservative estimates for timing breakdown
+        let requestSent = duration * 0.08  // ~8% for sending request
+        let ttfb = duration * 0.35         // ~35% waiting for first byte
+        let contentDownload = duration - requestSent - ttfb
+
+        return NetworkTimingPhases(
+            requestSent: requestSent > 0.001 ? requestSent : nil,
+            ttfb: ttfb > 0.001 ? ttfb : nil,
+            contentDownload: contentDownload > 0.001 ? contentDownload : nil
+        )
+    }
+
     private func captureRequest(error: Error? = nil) {
         let endTime = Date()
         let duration = endTime.timeIntervalSince(startTime ?? endTime)
@@ -160,7 +205,9 @@ class NetworkInterceptor: URLProtocol {
             requestHeaders: requestHeaders,
             responseHeaders: responseHeaders,
             requestBody: requestBodyStorage,
-            responseBody: responseBodyStorage
+            responseBody: responseBodyStorage,
+            timingPhases: computeTimingPhases(duration: duration, statusCode: statusCode),
+            initiatorStackTrace: captureInitiatorStackTrace()
         )
 
         // Concurrency: NetworkCaptureStore updates run on the MainActor.

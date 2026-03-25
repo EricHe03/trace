@@ -8,42 +8,26 @@
 import Foundation
 
 final class DirtyFlags: @unchecked Sendable {
-    private var rulesDirty = false
-    private var mapsDirty = false
-    private var scriptsDirty = false
+    private var dirty = false
     private let lock = NSLock()
 
     var isDirty: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return rulesDirty || mapsDirty || scriptsDirty
+        return dirty
     }
 
-    func markRulesDirty() {
+    func markDirty() {
         lock.lock()
         defer { lock.unlock() }
-        rulesDirty = true
-    }
-
-    func markMapsDirty() {
-        lock.lock()
-        defer { lock.unlock() }
-        mapsDirty = true
-    }
-
-    func markScriptsDirty() {
-        lock.lock()
-        defer { lock.unlock() }
-        scriptsDirty = true
+        dirty = true
     }
 
     func clearAll() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        let wasDirty = rulesDirty || mapsDirty || scriptsDirty
-        rulesDirty = false
-        mapsDirty = false
-        scriptsDirty = false
+        let wasDirty = dirty
+        dirty = false
         return wasDirty
     }
 }

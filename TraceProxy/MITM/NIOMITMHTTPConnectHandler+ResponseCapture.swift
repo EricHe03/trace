@@ -81,10 +81,12 @@ extension NIOMITMHTTPConnectHandler {
         let methodRaw = HTTPMethod(rawValue: uppercasedMethod) == nil ? methodToken : nil
         let traceHeaders = captureConfig.captureHeaders ? traceHeaders(from: requestHeaders) : []
         let requestCharset = BodyStorage.extractCharset(from: requestHeaders)
+        let requestContentType = requestHeaders.first(where: { $0.key.lowercased() == "content-type" })?.value
         let requestContentEncoding = requestHeaders.first(where: { $0.key.lowercased() == "content-encoding" })?.value
         let requestBody = bodyStorage(
             from: requestBodyData,
             charset: requestCharset,
+            contentType: requestContentType,
             contentEncoding: requestContentEncoding,
             captureConfig: captureConfig
         )
@@ -110,17 +112,63 @@ extension NIOMITMHTTPConnectHandler {
     func bodyStorage(
         from data: Data,
         charset: String?,
+        contentType: String? = nil,
         contentEncoding: String?,
         captureConfig: CaptureConfiguration,
         decodeCompressedContent: Bool = true
     ) -> BodyStorage {
-        guard captureConfig.captureBody, captureConfig.maxBodySize > 0, !data.isEmpty else { return .empty }
+        let effectiveMaxBodySize = effectiveBodyCaptureLimit(
+            captureConfig: captureConfig,
+            contentType: contentType,
+            contentEncoding: contentEncoding
+        )
+        guard captureConfig.captureBody, effectiveMaxBodySize > 0, !data.isEmpty else { return .empty }
         return BodyStorage.from(
             data: data,
             charset: charset,
-            maxSize: max(0, captureConfig.maxBodySize),
+            maxSize: effectiveMaxBodySize,
             contentEncoding: contentEncoding,
             decodeCompressedContent: decodeCompressedContent
+        )
+    }
+
+    /// Optimized overload that accepts ByteBuffer directly, avoiding an intermediate Data conversion.
+    /// Preferred for hot paths (HTTP/1.1 full responses, streaming chunks).
+    func bodyStorage(
+        from buffer: ByteBuffer,
+        charset: String?,
+        contentType: String? = nil,
+        contentEncoding: String?,
+        captureConfig: CaptureConfiguration,
+        decodeCompressedContent: Bool = true
+    ) -> BodyStorage {
+        let effectiveMaxBodySize = effectiveBodyCaptureLimit(
+            captureConfig: captureConfig,
+            contentType: contentType,
+            contentEncoding: contentEncoding
+        )
+        guard captureConfig.captureBody, effectiveMaxBodySize > 0, buffer.readableBytes > 0 else { return .empty }
+        // Convert once here, avoiding separate byteBufferToData call upstream
+        var mutableBuffer = buffer
+        let data = mutableBuffer.readData(length: mutableBuffer.readableBytes) ?? Data()
+        return BodyStorage.from(
+            data: data,
+            charset: charset,
+            maxSize: effectiveMaxBodySize,
+            contentEncoding: contentEncoding,
+            decodeCompressedContent: decodeCompressedContent
+        )
+    }
+
+    func effectiveBodyCaptureLimit(
+        captureConfig: CaptureConfiguration,
+        contentType: String?,
+        contentEncoding: String?
+    ) -> Int {
+        CaptureBodyPolicy.effectiveCaptureLimit(
+            configuredLimit: captureConfig.maxBodySize,
+            contentType: contentType,
+            contentEncoding: contentEncoding
         )
     }
 
@@ -420,6 +468,31 @@ extension NIOMITMHTTPConnectHandler {
         let elapsed = Date().timeIntervalSince(request.timestamp)
         guard elapsed.isFinite else { return }
         request.duration = max(request.duration, max(0, elapsed))
+
+        // Compute timing phases for proxy path (heuristic estimates without precise timestamps)
+        // Proxy path doesn't have granular DNS/TCP/TLS timing, so we estimate based on response size
+        request.timingPhases = computeProxyPathTimingPhases(duration: request.duration, responseSize: request.responseBody.totalSize)
+    }
+
+    /// Compute heuristic timing phases for proxy path
+    /// Since we don't have precise TTFB/content-download boundaries, we estimate based on response size
+    private func computeProxyPathTimingPhases(duration: TimeInterval, responseSize: Int) -> NetworkTimingPhases? {
+        guard duration > 0.001 else { return nil }
+
+        // Conservative estimate: assume smaller responses are faster
+        // Larger responses spend more time in content-download
+        let responseSizeMB = Double(responseSize) / (1024 * 1024)
+        let contentDownloadRatio = min(0.8, max(0.3, responseSizeMB * 0.5))
+
+        let requestSent = duration * 0.1 // ~10% for request transmission
+        let ttfb = duration * (0.4 - contentDownloadRatio * 0.2) // 20-40% waiting
+        let contentDownload = duration - requestSent - ttfb
+
+        return NetworkTimingPhases(
+            requestSent: requestSent > 0.001 ? requestSent : nil,
+            ttfb: ttfb > 0.001 ? ttfb : nil,
+            contentDownload: contentDownload > 0.001 ? contentDownload : nil
+        )
     }
 
     func throttle(

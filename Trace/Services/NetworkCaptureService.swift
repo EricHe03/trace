@@ -13,6 +13,7 @@ import TraceCore
 import TraceFeatures
 
 /// Defines network capture operations.
+@MainActor
 protocol NetworkCaptureServiceProtocol {
     var isCapturing: Bool { get }
     func startCapture() async throws
@@ -53,13 +54,14 @@ class NetworkCaptureService: NetworkCaptureServiceProtocol {
 
     func observeCaptureStatus() async -> AsyncStream<Bool> {
         AsyncStream { continuation in
-            let cancellable = vpnManager.isConnectedPublisher
+            var cancellable: AnyCancellable?
+            cancellable = vpnManager.isConnectedPublisher
                 .sink { isConnected in
                     continuation.yield(isConnected)
                 }
 
             continuation.onTermination = { _ in
-                cancellable.cancel()
+                cancellable?.cancel()
             }
         }
     }

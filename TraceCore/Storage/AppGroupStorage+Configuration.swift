@@ -9,6 +9,8 @@ import Foundation
 import GRDB
 
 private let configurationDirectoryName = "Configuration"
+private let breakpointPausedRequestPrefix = "BreakpointPausedRequest."
+private let breakpointResumeCommandPrefix = "BreakpointResumeCommand."
 
 public extension AppGroupStorage {
     func loadData(from fileName: String) throws -> Data {
@@ -333,9 +335,114 @@ public extension AppGroupStorage {
 
         return .disabled
     }
+
+    public func savePausedBreakpointRequest(_ request: PausedRequest) throws {
+        let data = try makeEncoder().encode(request)
+        try saveData(data, to: breakpointPausedRequestBlobName(for: request.id))
+        notifyBreakpointStateChanged()
+    }
+
+    public func loadPausedBreakpointRequest(id: String) throws -> PausedRequest {
+        let data = try loadData(from: breakpointPausedRequestBlobName(for: id))
+        do {
+            return try makeDecoder().decode(PausedRequest.self, from: data)
+        } catch {
+            throw StorageError.decodingFailed
+        }
+    }
+
+    public func loadAllPausedBreakpointRequests() throws -> [PausedRequest] {
+        do {
+            let rows: [Data] = try withDatabase { pool in
+                try pool.read { db in
+                    try Data.fetchAll(
+                        db,
+                        sql: """
+                        SELECT data
+                        FROM config_blobs
+                        WHERE name LIKE ?
+                        ORDER BY updated_at DESC
+                        """,
+                        arguments: ["\(breakpointPausedRequestPrefix)%"]
+                    )
+                }
+            }
+
+            let decoder = makeDecoder()
+            do {
+                return try rows.map { data in
+                    try decoder.decode(PausedRequest.self, from: data)
+                }
+            } catch {
+                throw StorageError.decodingFailed
+            }
+        } catch let error as StorageError {
+            throw error
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    public func deletePausedBreakpointRequest(id: String) throws {
+        try deleteConfigBlob(named: breakpointPausedRequestBlobName(for: id))
+        notifyBreakpointStateChanged()
+    }
+
+    public func saveBreakpointResumeCommand(_ command: BreakpointResumeCommand) throws {
+        let data = try makeEncoder().encode(command)
+        try saveData(data, to: breakpointResumeCommandBlobName(for: command.requestId))
+    }
+
+    public func loadBreakpointResumeCommand(requestId: String) throws -> BreakpointResumeCommand? {
+        do {
+            let data = try loadData(from: breakpointResumeCommandBlobName(for: requestId))
+            return try makeDecoder().decode(BreakpointResumeCommand.self, from: data)
+        } catch StorageError.fileNotFound {
+            return nil
+        } catch let error as StorageError {
+            throw error
+        } catch {
+            throw StorageError.decodingFailed
+        }
+    }
+
+    public func consumeBreakpointResumeCommand(requestId: String) throws -> BreakpointResumeCommand? {
+        let command = try loadBreakpointResumeCommand(requestId: requestId)
+        guard command != nil else { return nil }
+        try deleteBreakpointResumeCommand(requestId: requestId)
+        return command
+    }
+
+    public func deleteBreakpointResumeCommand(requestId: String) throws {
+        try deleteConfigBlob(named: breakpointResumeCommandBlobName(for: requestId))
+    }
 }
 
 private extension AppGroupStorage {
+    func deleteConfigBlob(named fileName: String) throws {
+        let key = canonicalConfigBlobName(for: fileName)
+        do {
+            try withDatabase { pool in
+                try pool.write { db in
+                    try db.execute(
+                        sql: "DELETE FROM config_blobs WHERE name = ?",
+                        arguments: [key]
+                    )
+                }
+            }
+        } catch {
+            throw mapDatabaseError(error)
+        }
+    }
+
+    func breakpointPausedRequestBlobName(for id: String) -> String {
+        "\(breakpointPausedRequestPrefix)\(id).json"
+    }
+
+    func breakpointResumeCommandBlobName(for id: String) -> String {
+        "\(breakpointResumeCommandPrefix)\(id).json"
+    }
+
     func canonicalConfigBlobName(for fileName: String) -> String {
         switch fileName.lowercased() {
         case "rewrite_rules.json", "rewriterules.json":

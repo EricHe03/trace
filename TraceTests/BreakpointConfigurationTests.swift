@@ -8,6 +8,7 @@
 import XCTest
 @testable import Trace
 @testable import TraceCore
+@testable import TraceFeatures
 
 final class BreakpointConfigurationTests: XCTestCase {
 
@@ -329,6 +330,46 @@ final class BreakpointConfigurationTests: XCTestCase {
         XCTAssertFalse(config.shouldBreakOnResponse(url: "https://api.example.com/api/users", statusCode: 200))
         XCTAssertFalse(config.shouldBreakOnResponse(url: "https://cdn.example.com/image.png", statusCode: 404))
     }
+
+    func testHeaderContainsConditionPasses() async {
+        let manager = BreakpointManager.shared
+        await manager.setEnabled(false)
+
+        var config = BreakpointConfiguration(enabled: true, breakpointType: .request)
+        config.conditions = [
+            BreakpointCondition(type: .headerContains, parameter: "Authorization", value: "Bearer")
+        ]
+        await manager.updateConfiguration(config)
+
+        let shouldBreak = await manager.shouldBreakOnRequest(
+            url: "https://api.example.com",
+            method: .get,
+            headers: [TraceHTTPHeader(key: "Authorization", value: "Bearer token")],
+            body: nil
+        )
+
+        XCTAssertTrue(shouldBreak)
+    }
+
+    func testQueryParamRegexConditionPasses() async {
+        let manager = BreakpointManager.shared
+        await manager.setEnabled(false)
+
+        var config = BreakpointConfiguration(enabled: true, breakpointType: .request)
+        config.conditions = [
+            BreakpointCondition(type: .queryParamRegex, parameter: "trace", value: "^[0-9]{4}$")
+        ]
+        await manager.updateConfiguration(config)
+
+        let shouldBreak = await manager.shouldBreakOnRequest(
+            url: "https://api.example.com?trace=1234",
+            method: .get,
+            headers: [],
+            body: nil
+        )
+
+        XCTAssertTrue(shouldBreak)
+    }
 }
 
 // MARK: - PausedRequest Tests
@@ -516,6 +557,20 @@ final class PausedRequestTests: XCTestCase {
         pausedRequest.modifiedMethod = .post
 
         XCTAssertEqual(pausedRequest.effectiveMethod, .post)
+    }
+
+    func testEffectiveMethodTokenModified() {
+        var pausedRequest = PausedRequest(
+            id: "req-123",
+            url: "https://api.example.com",
+            method: .get,
+            headers: [],
+            breakpointType: .request
+        )
+        pausedRequest.modifiedMethodToken = "PURGE"
+
+        XCTAssertEqual(pausedRequest.effectiveMethodToken, "PURGE")
+        XCTAssertEqual(pausedRequest.effectiveMethod, .get)
     }
 
     func testEffectiveHeadersOriginal() {

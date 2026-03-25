@@ -316,7 +316,7 @@ private struct QuickActionButton: View {
                 Image(systemName: icon)
                     .font(.system(size: 20))
                     .foregroundStyle(color)
-                    .frame(height: 20)
+                    .frame(height: 24)
 
                 Text(title)
                     .font(.caption)
@@ -357,7 +357,8 @@ public struct BottomActionBar: View {
                 HStack(spacing: DesignSystem.Spacing.sm) {
                     Circle()
                         .fill(isCapturing ? DesignSystem.Colors.success : DesignSystem.Colors.danger)
-                        .frame(width: 8, height: 8)
+                        .frame(width: 12, height: 12)
+                        .accessibilityHidden(true)
 
                     Text(isCapturing ? "Capturing" : "Stopped")
                         .font(.subheadline)

@@ -11,6 +11,7 @@ extension NetworkRequest: Codable {
         case requestHeaders, responseHeaders, requestBody, responseBody, protocolVersion, sessionId
         case capturePath, captureFlowID, capturePolicyModeRaw, captureMetadataVersion
         case timingPhases, tlsInfo
+        case initiatorStackTrace, initiatorBundleId, initiatorDisplayName
         case wasThrottled, throttlingProfile
         case isDuplicate, duplicateOfRequestId
         case isManual
@@ -77,6 +78,9 @@ extension NetworkRequest: Codable {
 
         self.timingPhases = try container.decodeIfPresent(NetworkTimingPhases.self, forKey: .timingPhases)
         self.tlsInfo = try container.decodeIfPresent(TLSConnectionInfo.self, forKey: .tlsInfo)
+        self.initiatorStackTrace = try container.decodeIfPresent(String.self, forKey: .initiatorStackTrace)
+        self.initiatorBundleId = try container.decodeIfPresent(String.self, forKey: .initiatorBundleId)
+        self.initiatorDisplayName = try container.decodeIfPresent(String.self, forKey: .initiatorDisplayName)
         self.wasThrottled = try container.decodeIfPresent(Bool.self, forKey: .wasThrottled) ?? false
         self.throttlingProfile = try container.decodeIfPresent(String.self, forKey: .throttlingProfile)
         self.isDuplicate = try container.decodeIfPresent(Bool.self, forKey: .isDuplicate) ?? false
@@ -177,6 +181,9 @@ extension NetworkRequest: Codable {
         try container.encodeIfPresent(sessionId, forKey: .sessionId)
         try container.encodeIfPresent(timingPhases, forKey: .timingPhases)
         try container.encodeIfPresent(tlsInfo, forKey: .tlsInfo)
+        try container.encodeIfPresent(initiatorStackTrace, forKey: .initiatorStackTrace)
+        try container.encodeIfPresent(initiatorBundleId, forKey: .initiatorBundleId)
+        try container.encodeIfPresent(initiatorDisplayName, forKey: .initiatorDisplayName)
         try container.encode(wasThrottled, forKey: .wasThrottled)
         try container.encodeIfPresent(throttlingProfile, forKey: .throttlingProfile)
         try container.encode(isDuplicate, forKey: .isDuplicate)

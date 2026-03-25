@@ -245,7 +245,29 @@ extension NIOMITMHTTPConnectHandler {
         current: HTTPProtocolVersion?,
         fallback version: HTTPVersion
     ) -> HTTPProtocolVersion {
-        current ?? httpProtocolVersion(from: version)
+        let fallbackVersion = httpProtocolVersion(from: version)
+        guard let current else { return fallbackVersion }
+        return preferredCapturedProtocolVersion(current: current, fallback: fallbackVersion)
+    }
+
+    func preferredCapturedProtocolVersion(
+        current: HTTPProtocolVersion,
+        fallback: HTTPProtocolVersion
+    ) -> HTTPProtocolVersion {
+        protocolPreferenceRank(fallback) > protocolPreferenceRank(current) ? fallback : current
+    }
+
+    private func protocolPreferenceRank(_ version: HTTPProtocolVersion) -> Int {
+        switch version {
+        case .http10:
+            0
+        case .http11:
+            1
+        case .http2:
+            2
+        case .http3:
+            3
+        }
     }
 
     func headerContainsToken(_ headerName: String, token: String, in headers: HTTPHeaders) -> Bool {

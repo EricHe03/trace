@@ -77,6 +77,10 @@ public protocol InterceptionProviding: Sendable {
     /// Intercept a stream close lifecycle event.
     func interceptStreamClose(session: StreamSession, reason: String?) async -> StreamInterceptionDecision
 
+    /// Returns `true` when any interception feature is active and request/response interception
+    /// should run instead of taking the capture-only fast path.
+    func areAnyFeaturesEnabled() async -> Bool
+
     /// Returns `true` when interception features are active and the TLS MITM layer should prefer
     /// negotiating HTTP/1.1 (to ensure request/response modification feature parity).
     ///
@@ -100,6 +104,12 @@ public extension InterceptionProviding {
 
     func interceptStreamClose(session _: StreamSession, reason _: String?) async -> StreamInterceptionDecision {
         .forward
+    }
+
+    func areAnyFeaturesEnabled() async -> Bool {
+        // Backwards-compatible default: if an interceptor is present and doesn't expose a more
+        // precise signal, keep interception enabled for correctness.
+        true
     }
 
     func requiresHTTP1Interception() async -> Bool {

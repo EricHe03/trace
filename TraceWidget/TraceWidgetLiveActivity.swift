@@ -30,7 +30,7 @@ struct TraceWidgetLiveActivity: Widget {
                             .foregroundColor(.blue)
 
                         Text(context.state.captureStartTime, style: .timer)
-                            .font(.system(size: 10))
+                            .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
                 }
@@ -42,7 +42,7 @@ struct TraceWidgetLiveActivity: Widget {
                             .foregroundColor(.primary)
 
                         Text("requests")
-                            .font(.system(size: 9))
+                            .font(.system(size: 10))
                             .foregroundColor(.secondary)
                     }
                 }
@@ -51,7 +51,7 @@ struct TraceWidgetLiveActivity: Widget {
                     if let method = context.state.lastRequestMethod {
                         HStack(spacing: 4) {
                             Text(method)
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 2)
@@ -59,13 +59,13 @@ struct TraceWidgetLiveActivity: Widget {
                                 .cornerRadius(3)
 
                             Text("Recent request")
-                                .font(.system(size: 10))
+                                .font(.system(size: 11))
                                 .foregroundColor(.primary)
                                 .lineLimit(1)
 
                             if let status = context.state.lastRequestStatus {
                                 Text("\(status)")
-                                    .font(.system(size: 9, weight: .semibold))
+                                    .font(.system(size: 10, weight: .semibold))
                                     .foregroundColor(statusColor(status))
                             }
                         }
@@ -87,7 +87,7 @@ struct TraceWidgetLiveActivity: Widget {
                                 Text("Last: N/A")
                             }
                         }
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 8)
@@ -157,7 +157,7 @@ struct LiveActivityLockScreenView: View {
                     .frame(width: 12, height: 12)
 
                 Text("LIVE")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.green)
             }
 
@@ -184,11 +184,11 @@ struct LiveActivityLockScreenView: View {
                 if let method = context.state.lastRequestMethod {
                     HStack(spacing: 4) {
                         Text("Last:")
-                            .font(.system(size: 10))
+                            .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
 
                         Text(method)
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)
@@ -196,7 +196,7 @@ struct LiveActivityLockScreenView: View {
                             .cornerRadius(3)
 
                         Text("Details hidden")
-                            .font(.system(size: 10))
+                            .font(.system(size: 11))
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
@@ -211,7 +211,7 @@ struct LiveActivityLockScreenView: View {
                     .foregroundColor(.primary)
 
                 Text("duration")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
         }

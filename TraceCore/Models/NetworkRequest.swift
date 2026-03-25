@@ -58,7 +58,7 @@ public enum NetworkCapturePath: String, Codable, Sendable, CaseIterable {
 public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public let id: UUID
     public var url: String
-    public let method: HTTPMethod
+    public var method: HTTPMethod
     /// Original method token when it cannot be represented by `HTTPMethod`.
     public var requestMethodRaw: String?
     public var statusCode: Int?
@@ -78,6 +78,11 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     // Advanced Performance Metrics
     public var timingPhases: NetworkTimingPhases?
     public var tlsInfo: TLSConnectionInfo?
+
+    // Initiator Tracking
+    public var initiatorStackTrace: String?        // Call stack at request creation
+    public var initiatorBundleId: String?          // App bundle ID if identifiable
+    public var initiatorDisplayName: String?       // User-friendly app name
 
     // Network Throttling
     public var wasThrottled: Bool = false
@@ -134,6 +139,11 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public var retryCount: Int {
         get { retryAttempts }
         set { retryAttempts = newValue }
+    }
+
+    /// The effective HTTP method token that should be placed on the wire.
+    public var methodToken: String {
+        requestMethodRaw ?? method.rawValue
     }
 
     /// Backward-compatible alias for `requestMethodRaw`.
@@ -224,6 +234,9 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         captureMetadataVersion: UInt8? = nil,
         timingPhases: NetworkTimingPhases? = nil,
         tlsInfo: TLSConnectionInfo? = nil,
+        initiatorStackTrace: String? = nil,
+        initiatorBundleId: String? = nil,
+        initiatorDisplayName: String? = nil,
         wasThrottled: Bool = false,
         throttlingProfile: String? = nil,
         executionLog: [ExecutionLogEntry] = [],
@@ -251,6 +264,9 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         self.captureMetadataVersion = captureMetadataVersion
         self.timingPhases = timingPhases
         self.tlsInfo = tlsInfo
+        self.initiatorStackTrace = initiatorStackTrace
+        self.initiatorBundleId = initiatorBundleId
+        self.initiatorDisplayName = initiatorDisplayName
         self.wasThrottled = wasThrottled
         self.throttlingProfile = throttlingProfile
         self.executionLog = executionLog

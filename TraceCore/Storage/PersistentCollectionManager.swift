@@ -35,33 +35,39 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
 
     @Published public private(set) var items: [T] = []
     private let storage: AppGroupStorage
-    private let fileName: String
-    private let notificationName: Notification.Name
+    private let descriptor: PersistentCollectionDescriptor
     private let logger: Logger
-    private let itemName: String // "script", "rule", "map", etc.
+    private var updateObserver: AnyCancellable?
     private var lastKnownFileModificationDate: Date?
 
     // MARK: - Initialization
 
-    /// Initialize with a Logger instance (new logging system)
-    ///
-    /// - Parameters:
-    ///   - fileName: The JSON file name for persistence
-    ///   - notificationName: Notification name for cross-process updates
-    ///   - logger: A Logger instance from CoreLog or module-specific logging
-    ///   - itemName: Human-readable item name for log messages
     public init(
+        descriptor: PersistentCollectionDescriptor,
+        logger: Logger
+    ) {
+        self.storage = AppGroupStorage.shared
+        self.descriptor = descriptor
+        self.logger = logger
+        loadItems()
+        observeUpdates()
+    }
+
+    @available(*, deprecated, message: "Use init(descriptor:logger:) instead.")
+    public convenience init(
         fileName: String,
         notificationName: String,
         logger: Logger,
         itemName: String
     ) {
-        self.storage = AppGroupStorage.shared
-        self.fileName = fileName
-        self.notificationName = Notification.Name(notificationName)
-        self.logger = logger
-        self.itemName = itemName
-        loadItems()
+        self.init(
+            descriptor: PersistentCollectionDescriptor(
+                fileName: fileName,
+                itemName: itemName,
+                notificationName: Notification.Name(notificationName)
+            ),
+            logger: logger
+        )
     }
 
     // MARK: - CRUD Operations
@@ -114,17 +120,17 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
 
     private func loadItems() {
         do {
-            let data = try storage.loadData(from: fileName)
+            let data = try storage.loadData(from: descriptor.fileName)
             items = try JSONCoding.decode([T].self, from: data)
             logger.info(
-                "\(LogEvent.storage("load").success().with("item_type", value: self.itemName).count(self.items.count))"
+                "\(LogEvent.storage("load").success().with("item_type", value: self.descriptor.itemName).count(self.items.count))"
             )
-            lastKnownFileModificationDate = storage.configFileModificationDate(for: fileName)
+            lastKnownFileModificationDate = storage.configFileModificationDate(for: descriptor.fileName)
         } catch {
             // Check if it's a file not found error (first launch)
             if let storageError = error as? StorageError, storageError == .fileNotFound {
                 logger.info(
-                    "\(LogEvent.storage("load").outcome(.skipped).with("item_type", value: self.itemName).with("reason", value: "first_launch"))"
+                    "\(LogEvent.storage("load").outcome(.skipped).with("item_type", value: self.descriptor.itemName).with("reason", value: "first_launch"))"
                 )
                 items = []
                 // Save empty array to create the file
@@ -133,7 +139,7 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
             }
 
             logger.error(
-                "\(LogEvent.storage("load").failure().with("item_type", value: self.itemName).error(error))"
+                "\(LogEvent.storage("load").failure().with("item_type", value: self.descriptor.itemName).error(error))"
             )
             // Leave items and backing file intact on load failures.
             return
@@ -143,25 +149,25 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
     private func saveItems() {
         do {
             let data = try JSONCoding.makeEncoder().encode(items)
-            try storage.saveData(data, to: fileName)
-            lastKnownFileModificationDate = storage.configFileModificationDate(for: fileName)
+            try storage.saveData(data, to: descriptor.fileName)
+            lastKnownFileModificationDate = storage.configFileModificationDate(for: descriptor.fileName)
 
-            // Notify extension of changes
-            NotificationCenter.default.post(name: notificationName, object: nil)
+            // Notifications keep same-process caches aligned; cross-process refresh remains file-based.
+            NotificationCenter.default.post(name: descriptor.notificationName, object: nil)
 
             logger.debug(
-                "\(LogEvent.storage("save").success().with("item_type", value: self.itemName).count(self.items.count))"
+                "\(LogEvent.storage("save").success().with("item_type", value: self.descriptor.itemName).count(self.items.count))"
             )
         } catch {
             logger.error(
-                "\(LogEvent.storage("save").failure().with("item_type", value: self.itemName).error(error))"
+                "\(LogEvent.storage("save").failure().with("item_type", value: self.descriptor.itemName).error(error))"
             )
         }
     }
 
     /// Reload items if the backing file has changed
     public func reloadIfNeeded() {
-        guard let fileDate = storage.configFileModificationDate(for: fileName) else {
+        guard let fileDate = storage.configFileModificationDate(for: descriptor.fileName) else {
             return
         }
 
@@ -188,7 +194,7 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
         let data = try JSONCoding.makeEncoder().encode(items)
         let timestamp = Date().timeIntervalSince1970
         let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(itemName.capitalized)s_\(timestamp).json")
+            .appendingPathComponent("\(descriptor.itemName.capitalized)s_\(timestamp).json")
         try data.write(to: tempURL)
         return tempURL
     }
@@ -210,10 +216,16 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
                 }
             }
         } else {
-            // Replace all items
-            items = importedItems
+            replaceAll(importedItems)
+            return
         }
 
+        saveItems()
+    }
+
+    /// Replace all items and persist them.
+    public func replaceAll(_ newItems: [T]) {
+        items = newItems
         saveItems()
     }
 
@@ -225,7 +237,7 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
             return try encoder.encode(items)
         } catch {
             logger.error(
-                "\(LogEvent.storage("export").failure().with("item_type", value: self.itemName).error(error))"
+                "\(LogEvent.storage("export").failure().with("item_type", value: self.descriptor.itemName).error(error))"
             )
             return nil
         }
@@ -241,6 +253,13 @@ public final class PersistentCollectionManager<T: Codable & Identifiable & Equat
     public func clearAll() {
         items.removeAll()
         saveItems()
+    }
+
+    private func observeUpdates() {
+        updateObserver = NotificationCenter.default.publisher(for: descriptor.notificationName)
+            .sink { [weak self] _ in
+                self?.reloadIfNeeded()
+            }
     }
 
     // MARK: - Queries

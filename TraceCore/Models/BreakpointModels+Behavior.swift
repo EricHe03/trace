@@ -57,6 +57,7 @@ public extension PausedRequest {
     var hasModifications: Bool {
         modifiedUrl != nil ||
             modifiedMethod != nil ||
+            modifiedMethodToken != nil ||
             modifiedHeaders != nil ||
             modifiedBody != nil ||
             modifiedStatusCode != nil ||
@@ -68,7 +69,23 @@ public extension PausedRequest {
     }
 
     var effectiveMethod: HTTPMethod {
-        modifiedMethod ?? method
+        if let modifiedMethod {
+            return modifiedMethod
+        }
+        if let modifiedMethodToken, let httpMethod = HTTPMethod(rawValue: modifiedMethodToken.uppercased()) {
+            return httpMethod
+        }
+        return method
+    }
+
+    var effectiveMethodToken: String {
+        if let modifiedMethodToken, !modifiedMethodToken.isEmpty {
+            return modifiedMethodToken
+        }
+        if let modifiedMethod {
+            return modifiedMethod.rawValue
+        }
+        return methodToken
     }
 
     var effectiveHeaders: [TraceHTTPHeader] {

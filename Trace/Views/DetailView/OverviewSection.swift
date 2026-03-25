@@ -68,6 +68,25 @@ struct OverviewSection: View {
                 }
             }
 
+            // Initiator Information
+            if request.initiatorBundleId != nil || request.initiatorDisplayName != nil || request.initiatorStackTrace != nil {
+                SectionCard(title: "Initiator") {
+                    if let bundleId = request.initiatorBundleId {
+                        InfoRow(label: "Bundle ID", value: bundleId)
+                        Divider()
+                    }
+
+                    if let displayName = request.initiatorDisplayName {
+                        InfoRow(label: "App Name", value: displayName)
+                        Divider()
+                    }
+
+                    if let stackTrace = request.initiatorStackTrace {
+                        StackTraceView(stackTrace: stackTrace)
+                    }
+                }
+            }
+
             // Redirect Information
             if !request.redirectChain.isEmpty {
                 SectionCard(title: request.redirectChain.count > 1 ? "Redirects" : "Redirect") {
@@ -392,5 +411,176 @@ struct OverviewSection: View {
         guard components.count == 2 else { return auth }
         let authType = String(components[0])
         return "\(authType) [REDACTED]"
+    }
+}
+
+// MARK: - Stack Trace View (Chrome DevTools Style)
+
+struct StackTraceView: View {
+    let stackTrace: String
+    @State private var isExpanded = false
+
+    private var stackFrames: [StackFrame] {
+        stackTrace.split(separator: "\n").compactMap { line in
+            StackFrame(rawLine: String(line))
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
+            // Header with initiator indicator
+            HStack(spacing: DesignSystem.Spacing.sm) {
+                Image(systemName: "arrow.up.right.square.fill")
+                    .font(.caption)
+                    .foregroundStyle(DesignSystem.Colors.accent)
+
+                Text("REQUEST INITIATED BY")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .fontWeight(.semibold)
+
+                Spacer()
+
+                Button(action: { isExpanded.toggle() }) {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(DesignSystem.Colors.accent)
+                }
+                .accessibilityLabel(isExpanded ? "Collapse call stack" : "Expand call stack")
+            }
+            .padding(.bottom, DesignSystem.Spacing.xs)
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
+                    ForEach(Array(stackFrames.enumerated()), id: \.offset) { index, frame in
+                        StackFrameView(frame: frame, index: index, totalFrames: stackFrames.count)
+
+                        if index < stackFrames.count - 1 {
+                            Divider()
+                                .opacity(0.3)
+                        }
+                    }
+                }
+                .padding(DesignSystem.Spacing.md)
+                .background(DesignSystem.Colors.surfaceMuted)
+                .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Stack Frame Data & View
+
+struct StackFrame {
+    let index: String
+    let function: String
+    let file: String
+    let lineInfo: String
+
+    init(rawLine: String) {
+        // Parse format: "1. 0x103c4a6d4 Trace.RequestManager.fetch(_:) + 456 at /path/to/RequestManager.swift:42"
+        let components = rawLine.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: true)
+
+        // Extract index (e.g., "1.")
+        self.index = components.first.map(String.init) ?? ""
+
+        // Function is usually the 3rd-4th component
+        var funcName = ""
+        var fileInfo = ""
+
+        if rawLine.contains(" at ") {
+            let parts = rawLine.split(separator: " at ", maxSplits: 1)
+            if let funcPart = parts.first {
+                // Extract function name (skip address and keep function)
+                let funcComponents = funcPart.split(separator: " ")
+                if funcComponents.count >= 2 {
+                    funcName = funcComponents.dropFirst().joined(separator: " ")
+                        .replacingOccurrences(of: "+ \\d+", with: "", options: .regularExpression)
+                        .trimmingCharacters(in: .whitespaces)
+                }
+            }
+            if parts.count > 1 {
+                fileInfo = String(parts[1]).trimmingCharacters(in: .whitespaces)
+            }
+        } else {
+            funcName = rawLine
+                .replacingOccurrences(of: "^\\d+\\.", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+        }
+
+        self.function = funcName.isEmpty ? "Unknown" : funcName
+        self.file = fileInfo.isEmpty ? "Unknown" : fileInfo
+        self.lineInfo = Self.extractLineInfo(from: fileInfo)
+    }
+
+    private static func extractLineInfo(from file: String) -> String {
+        // Extract line number like ":42" from path
+        if let colonIndex = file.lastIndex(of: ":") {
+            return String(file[colonIndex...])
+        }
+        return ""
+    }
+}
+
+struct StackFrameView: View {
+    let frame: StackFrame
+    let index: Int
+    let totalFrames: Int
+
+    private var isFirstFrame: Bool { index == 0 }
+    private var fileName: String {
+        let components = frame.file.split(separator: "/")
+        return components.last.map(String.init) ?? frame.file
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
+            HStack(alignment: .top, spacing: DesignSystem.Spacing.sm) {
+                // Index indicator
+                Text("\(index + 1)")
+                    .font(.caption.bold())
+                    .foregroundStyle(isFirstFrame ? DesignSystem.Colors.accent : .secondary)
+                    .frame(width: 20, alignment: .center)
+
+                VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
+                    // Function name
+                    Text(frame.function)
+                        .font(.caption.bold())
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+
+                    // File info
+                    HStack(spacing: DesignSystem.Spacing.xs) {
+                        Text(fileName)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+
+                        if !frame.lineInfo.isEmpty {
+                            Text(frame.lineInfo)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(DesignSystem.Colors.info)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Badge for first frame
+                if isFirstFrame {
+                    Text("INITIATOR")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, DesignSystem.Spacing.sm)
+                        .padding(.vertical, 2)
+                        .background(DesignSystem.Colors.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .textSelection(.enabled)
     }
 }

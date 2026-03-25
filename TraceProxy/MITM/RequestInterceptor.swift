@@ -64,9 +64,7 @@ public actor RequestInterceptor {
 
     // MARK: - Notification Observers
 
-    private nonisolated(unsafe) var rulesObserver: NSObjectProtocol?
-    private nonisolated(unsafe) var mapsObserver: NSObjectProtocol?
-    private nonisolated(unsafe) var scriptsObserver: NSObjectProtocol?
+    private nonisolated(unsafe) var notificationObservers: [NSObjectProtocol] = []
 
     // MARK: - Initialization
 
@@ -82,13 +80,7 @@ public actor RequestInterceptor {
     }
 
     deinit {
-        if let observer = rulesObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = mapsObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = scriptsObserver {
+        for observer in notificationObservers {
             NotificationCenter.default.removeObserver(observer)
         }
     }
@@ -100,31 +92,23 @@ public actor RequestInterceptor {
         queue.name = "com.trace.interceptor.notifications"
         queue.maxConcurrentOperationCount = 1
 
-        rulesObserver = NotificationCenter.default.addObserver(
-            forName: Notification.Name("RewriteRulesChanged"),
-            object: nil,
-            queue: queue
-        ) { [weak dirtyFlags] _ in
-            dirtyFlags?.markRulesDirty()
-            ProxyLog.interceptor.debug("event=intercept.rules_dirty outcome=flagged")
-        }
+        let observedCollections: [(Notification.Name, String)] = [
+            (.rewriteRulesUpdated, "rules"),
+            (.requestMapsUpdated, "maps"),
+            (.scriptsUpdated, "scripts"),
+            (.ruleGroupsUpdated, "rule_groups"),
+            (.profilesUpdated, "profiles")
+        ]
 
-        mapsObserver = NotificationCenter.default.addObserver(
-            forName: Notification.Name("RequestMapsChanged"),
-            object: nil,
-            queue: queue
-        ) { [weak dirtyFlags] _ in
-            dirtyFlags?.markMapsDirty()
-            ProxyLog.interceptor.debug("event=intercept.maps_dirty outcome=flagged")
-        }
-
-        scriptsObserver = NotificationCenter.default.addObserver(
-            forName: Notification.Name("ScriptsChanged"),
-            object: nil,
-            queue: queue
-        ) { [weak dirtyFlags] _ in
-            dirtyFlags?.markScriptsDirty()
-            ProxyLog.interceptor.debug("event=intercept.scripts_dirty outcome=flagged")
+        notificationObservers = observedCollections.map { notificationName, label in
+            NotificationCenter.default.addObserver(
+                forName: notificationName,
+                object: nil,
+                queue: queue
+            ) { [weak dirtyFlags] _ in
+                dirtyFlags?.markDirty()
+                ProxyLog.interceptor.debug("event=intercept.\(label, privacy: .public)_dirty outcome=flagged")
+            }
         }
     }
 
@@ -163,8 +147,8 @@ public actor RequestInterceptor {
             return RequestMapManager.shared.maps
         }
         let groups = await MainActor.run {
-            RuleGroupManager.shared.reloadIfNeeded()
-            return RuleGroupManager.shared.groups
+            RewriteManager.shared.reloadGroupsIfNeeded()
+            return RewriteManager.shared.groups
         }
         let activeProfile = await MainActor.run {
             ProfileManager.shared.reloadIfNeeded()
@@ -182,11 +166,11 @@ public actor RequestInterceptor {
             activeProfile: activeProfile
         )
 
-        lastRulesFileDate = AppGroupStorage.shared.configFileModificationDate(for: "RewriteRules.json")
-        lastMapsFileDate = AppGroupStorage.shared.configFileModificationDate(for: "RequestMaps.json")
-        lastScriptsFileDate = AppGroupStorage.shared.configFileModificationDate(for: "Scripts.json")
-        lastGroupsFileDate = AppGroupStorage.shared.configFileModificationDate(for: "RuleGroups.json")
-        lastProfilesFileDate = AppGroupStorage.shared.configFileModificationDate(for: "Profiles.json")
+        lastRulesFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.rewriteRules.fileName)
+        lastMapsFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.requestMaps.fileName)
+        lastScriptsFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.scripts.fileName)
+        lastGroupsFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.ruleGroups.fileName)
+        lastProfilesFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.profiles.fileName)
 
         lastConfigRefresh = now
         metrics.configReloadCount += 1
@@ -235,6 +219,7 @@ public actor RequestInterceptor {
             id: flowId,
             url: url,
             method: httpMethod,
+            requestMethodRaw: HTTPMethod(rawValue: method.uppercased()) == nil ? method.uppercased() : nil,
             statusCode: nil,
             statusMessage: nil,
             timestamp: Date(),
@@ -309,6 +294,10 @@ public actor RequestInterceptor {
         // Phase 4: Breakpoint (Request)
         let breakpointStart = DispatchTime.now()
         var didPauseForBreakpoint = false
+        let breakpointConfig = await breakpointManager.getConfiguration()
+        ProxyLog.interceptor.info(
+            "event=intercept.breakpoint_check enabled=\(breakpointConfig.enabled, privacy: .public) url=\(modifiedRequest.url, privacy: .private(mask: .hash)) method=\(httpMethod.rawValue, privacy: .public) breakpointType=\(String(describing: breakpointConfig.breakpointType), privacy: .public) matchType=\(String(describing: breakpointConfig.matchType), privacy: .public) matchPattern=\(breakpointConfig.matchPattern ?? "none", privacy: .public) request_id=\(flowIdString, privacy: .public)"
+        )
         if await breakpointManager.shouldBreakOnRequest(
             url: modifiedRequest.url,
             method: httpMethod,
@@ -326,6 +315,7 @@ public actor RequestInterceptor {
                 id: flowIdString,
                 url: modifiedRequest.url,
                 method: modifiedRequest.method,
+                methodToken: modifiedRequest.methodToken,
                 headers: modifiedRequest.requestHeaders,
                 body: modifiedRequest.requestBody.getData()
             )
@@ -346,14 +336,26 @@ public actor RequestInterceptor {
                 await breakpointManager.setEnabled(false)
                 fallthrough
 
+            case .cancel:
+                ProxyLog.interceptor.debug(
+                    "event=intercept.breakpoint_cancel outcome=success request_id=\(flowIdString, privacy: .public)"
+                )
+                fallthrough
+
             case .continue:
                 ProxyLog.interceptor.debug(
                     "event=intercept.breakpoint_continue outcome=success request_id=\(flowIdString, privacy: .public)"
                 )
-                if let pausedRequest = await breakpointManager.getPausedRequest(id: flowIdString) {
+                if let pausedRequest = await breakpointManager.consumeResumedRequest(id: flowIdString) {
+                    modifiedRequest.url = pausedRequest.effectiveUrl
+                    modifiedRequest.method = pausedRequest.effectiveMethod
+                    modifiedRequest.requestMethodRaw = pausedRequest.effectiveMethodToken == pausedRequest.effectiveMethod.rawValue
+                        ? nil
+                        : pausedRequest.effectiveMethodToken
                     modifiedRequest.requestHeaders = pausedRequest.effectiveHeaders
                     if let modifiedBody = pausedRequest.effectiveBody {
                         modifiedRequest.requestBody = BodyStorage.from(data: modifiedBody, charset: charset)
+                        modifiedRequest.requestBodyModified = true
                     }
                 }
             }
@@ -511,6 +513,7 @@ public actor RequestInterceptor {
                 id: flowIdString,
                 url: modifiedRequest.url,
                 method: modifiedRequest.method,
+                methodToken: modifiedRequest.methodToken,
                 statusCode: statusCode,
                 statusMessage: statusMessage,
                 headers: headers,
@@ -534,11 +537,17 @@ public actor RequestInterceptor {
                 await breakpointManager.setEnabled(false)
                 fallthrough
 
+            case .cancel:
+                ProxyLog.interceptor.debug(
+                    "event=intercept.response_breakpoint_cancel outcome=success request_id=\(flowIdString, privacy: .public)"
+                )
+                fallthrough
+
             case .continue:
                 ProxyLog.interceptor.debug(
                     "event=intercept.response_breakpoint_continue outcome=success request_id=\(flowIdString, privacy: .public)"
                 )
-                if let pausedRequest = await breakpointManager.getPausedRequest(id: flowIdString) {
+                if let pausedRequest = await breakpointManager.consumeResumedRequest(id: flowIdString) {
                     if let code = pausedRequest.effectiveStatusCode {
                         modifiedRequest.statusCode = code
                     }
@@ -643,11 +652,11 @@ public actor RequestInterceptor {
     private func configFilesChanged() -> Bool {
         let storage = AppGroupStorage.shared
 
-        let rulesDate = storage.configFileModificationDate(for: "RewriteRules.json")
-        let mapsDate = storage.configFileModificationDate(for: "RequestMaps.json")
-        let scriptsDate = storage.configFileModificationDate(for: "Scripts.json")
-        let groupsDate = storage.configFileModificationDate(for: "RuleGroups.json")
-        let profilesDate = storage.configFileModificationDate(for: "Profiles.json")
+        let rulesDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.rewriteRules.fileName)
+        let mapsDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.requestMaps.fileName)
+        let scriptsDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.scripts.fileName)
+        let groupsDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.ruleGroups.fileName)
+        let profilesDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.profiles.fileName)
 
         let rulesChanged = (rulesDate ?? .distantPast) > (lastRulesFileDate ?? .distantPast)
         let mapsChanged = (mapsDate ?? .distantPast) > (lastMapsFileDate ?? .distantPast)
@@ -673,6 +682,26 @@ public actor RequestInterceptor {
     /// Forces a configuration refresh.
     public func forceConfigRefresh() async {
         await refreshConfigSnapshotIfNeeded(force: true)
+    }
+
+    /// Returns whether any interception features are enabled (rules, maps, scripts, breakpoints, profiles).
+    ///
+    /// This method performs a **fast-path check** to determine if the expensive interception
+    /// machinery needs to be invoked. When all features are disabled, the proxy can skip
+    /// interception entirely and use the fallback request directly, reducing latency by 1-3ms
+    /// per request in capture-only mode.
+    ///
+    /// - Returns: `true` if any feature is active; `false` if all are disabled (capture-only mode)
+    public func areAnyFeaturesEnabled() async -> Bool {
+        await refreshConfigSnapshotIfNeeded()
+
+        let hasEnabledRewriteRules = configSnapshot.rewriteRules.contains { $0.enabled }
+        let hasEnabledRequestMaps = configSnapshot.requestMaps.contains { $0.enabled }
+        let hasEnabledScripts = configSnapshot.scripts.contains { $0.enabled }
+        let breakpointsEnabled = await breakpointManager.isEnabled()
+        let activeProfileEnabled = configSnapshot.activeProfile != nil
+
+        return hasEnabledRewriteRules || hasEnabledRequestMaps || hasEnabledScripts || breakpointsEnabled || activeProfileEnabled
     }
 
     // MARK: - Response Pipeline Decision
@@ -764,11 +793,13 @@ public actor RequestInterceptor {
                 return .drop
             case .continueAndDisable:
                 await breakpointManager.setEnabled(false)
+            case .cancel:
+                break
             case .continue:
                 break
             }
 
-            if let pausedEvent = await breakpointManager.getPausedRequest(id: event.id.uuidString),
+            if let pausedEvent = await breakpointManager.consumeResumedRequest(id: event.id.uuidString),
                let modifiedBody = pausedEvent.effectiveBody {
                 payloadData = modifiedBody
                 metadata["breakpoint"] = "modified"

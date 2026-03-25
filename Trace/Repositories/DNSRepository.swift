@@ -11,6 +11,7 @@ import TraceCore
 import TraceNetworking
 
 /// Repository for storing and managing DNS messages
+@MainActor
 public final class DNSRepository {
     public static let shared = DNSRepository()
     public static let didChangeNotification = Notification.Name.dnsRepositoryDidChange

@@ -90,39 +90,23 @@ extension PacketTunnelProvider {
 
     func updateConfiguration(_ config: [String: Any]) async {
         let boxedConfig = UnsafeSendable(config)
-        await runtimeState.updateProxyConfiguration(boxedConfig)
+        await runtimeState.updateProxyServerConfiguration(boxedConfig)
         await refreshCaptureConfiguration()
     }
 
     func refreshCaptureConfiguration() async {
-        let config = AppGroupStorage.shared.loadConfiguration()
+        let runtimeConfiguration = await loadTunnelProviderConfiguration()
+        let config = runtimeConfiguration.capture
         let previousCaptureMode = currentCaptureMode
-        let trimmedHost = config.fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
-        let socksHostHash = LogRedaction.hash(trimmedHost)
-        let transparentTCPMITMEnabled = effectiveTransparentTCPMITMEnabled(for: config)
         VPNLog.tunnel.info(
-            "event=vpn.capture_config mode=\(config.captureMode.rawValue, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue, privacy: .public) hybrid_tcp_mitm=\(config.fullTunnelHybridTCPMITMEnabled) tcp_transparent_mitm=\(transparentTCPMITMEnabled) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count) dual_mitm_policy=\(config.dualMITMPolicy.rawValue, privacy: .public) tcp_bypass_ttl=\(config.tcpBypassTTLSeconds) quic_fail_open_ttl=\(config.quicHostFailOpenSeconds) dual_mitm_breaker=\(config.dualMITMCircuitBreakerEnabled) quic_no_progress_grace_ms=\(config.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.quicCertMaterialCacheTTLSeconds)"
+            "event=vpn.capture_config \(runtimeConfiguration.captureLogMessage, privacy: .public)"
         )
         await runtimeState.appendEventLog(
             type: "capture_config",
-            msg: "mode=\(config.captureMode.rawValue) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(config.fullTunnelSocks5Port) ipv6=\(config.fullTunnelIPv6Enabled) udp_mode=\(config.fullTunnelUDPForwardingMode.rawValue) hybrid_tcp_mitm=\(config.fullTunnelHybridTCPMITMEnabled) tcp_transparent_mitm=\(transparentTCPMITMEnabled) dns_servers=\(config.fullTunnelDNSServers.count) search_domains=\(config.fullTunnelSearchDomains.count) dual_mitm_policy=\(config.dualMITMPolicy.rawValue) tcp_bypass_ttl=\(config.tcpBypassTTLSeconds) quic_fail_open_ttl=\(config.quicHostFailOpenSeconds) dual_mitm_breaker=\(config.dualMITMCircuitBreakerEnabled) quic_no_progress_grace_ms=\(config.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.quicCertMaterialCacheTTLSeconds)"
+            msg: runtimeConfiguration.captureLogMessage
         )
 
-        let rawCaptureEnabled = await HardeningConfig.shared.enableRawCapture
-        let rawCaptureLimit = await HardeningConfig.shared.maxRawCaptureSize
-        let dualMITMPolicyEngineShadow = await HardeningConfig.shared.dualMITMPolicyEngineShadow
-        let dualMITMPolicyEngineEnforcedTCP = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedTCP
-        let dualMITMPolicyEngineEnforcedProxy = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedProxy
-        let dualMITMPolicyEngineEnforcedQUIC = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedQUIC
-        let dualMITMHttp2MITMEnabled = await HardeningConfig.shared.dualMITMHttp2MITMEnabled
-        let dualMITMStrictEnforcementHardFail = await HardeningConfig.shared.dualMITMStrictEnforcementHardFail
-        let enableProxyPCAP = shouldEnableProxyPCAP(rawCaptureEnabled: rawCaptureEnabled, mode: config.captureMode)
-        let proxyWriter = await createPCAPWriterIfNeeded(enabled: enableProxyPCAP)
-        await runtimeState.configureRawCapture(
-            enabled: enableProxyPCAP,
-            limit: rawCaptureLimit,
-            writer: proxyWriter
-        )
+        await syncCaptureSettings(using: runtimeConfiguration)
         let reconfigEventSink: @Sendable (String, String) -> Void = { [weak self] type, msg in
             guard let self else { return }
             Task {
@@ -147,47 +131,17 @@ extension PacketTunnelProvider {
                     type: "reconfig_step",
                     msg: "id=\(plan.id) step=proxy_ingress_mode"
                 )
-                await self.applyProxyIngressMode(for: config)
+                await self.applyProxyIngressMode(using: runtimeConfiguration)
                 await self.runtimeState.appendEventLog(
                     type: "reconfig_step",
                     msg: "id=\(plan.id) step=packet_flow"
                 )
                 let packetCaptureWriter = self.createPacketCaptureWriterIfNeeded(
-                    enabled: rawCaptureEnabled && config.captureMode.usesPacketTunnelRouting
+                    enabled: runtimeConfiguration.packetCaptureEnabled
                 )
-                let flowConfig = PacketTunnelRuntimeState.PacketFlowConfig(
+                let flowConfig = runtimeConfiguration.makePacketFlowConfig(
                     packetFlow: self.packetFlow,
-                    mode: config.captureMode,
-                    mtu: self.fullTunnelMTU,
-                    captureEnabled: rawCaptureEnabled,
-                    captureLimit: rawCaptureLimit,
-                    writer: packetCaptureWriter,
-                    socks5Host: config.fullTunnelSocks5Host,
-                    socks5Port: config.fullTunnelSocks5Port,
-                    localSocks5Host: self.localSocks5Host,
-                    localSocks5Port: self.localSocks5Port,
-                    udpForwardingMode: config.fullTunnelUDPForwardingMode,
-                    ipv6Enabled: config.fullTunnelIPv6Enabled,
-                    tcpTransparentMITMEnabled: self.effectiveTransparentTCPMITMEnabled(for: config),
-                    tcpTransparentMITMPorts: self.transparentMITMPorts,
-                    mitmProxyHost: self.proxyHost,
-                    mitmProxyPort: self.proxyPort,
-                    dualMITMPolicy: config.dualMITMPolicy,
-                    tcpBypassTTLSeconds: config.tcpBypassTTLSeconds,
-                    quicHostFailOpenSeconds: config.quicHostFailOpenSeconds,
-                    dualMITMCircuitBreakerEnabled: config.dualMITMCircuitBreakerEnabled,
-                    quicNoProgressGraceMs: config.quicNoProgressGraceMs,
-                    quicNoProgressIdleMs: config.quicNoProgressIdleMs,
-                    quicNoProgressAbsoluteMs: config.quicNoProgressAbsoluteMs,
-                    quicNoProgressMinClientDatagrams: config.quicNoProgressMinClientDatagrams,
-                    quicAuthorityRetryAttempts: config.quicAuthorityRetryAttempts,
-                    quicCertMaterialCacheTTLSeconds: config.quicCertMaterialCacheTTLSeconds,
-                    dualMITMPolicyEngineShadowEnabled: dualMITMPolicyEngineShadow,
-                    dualMITMPolicyEngineEnforcedTCP: dualMITMPolicyEngineEnforcedTCP,
-                    dualMITMPolicyEngineEnforcedProxy: dualMITMPolicyEngineEnforcedProxy,
-                    dualMITMPolicyEngineEnforcedQUIC: dualMITMPolicyEngineEnforcedQUIC,
-                    dualMITMHttp2MITMEnabled: dualMITMHttp2MITMEnabled,
-                    dualMITMStrictEnforcementHardFail: dualMITMStrictEnforcementHardFail
+                    packetCaptureWriter: packetCaptureWriter
                 )
                 await self.runtimeState.configurePacketFlow(flowConfig)
             }
@@ -245,17 +199,19 @@ extension PacketTunnelProvider {
         if let enableRawCapture = config["enableRawCapture"] as? Bool {
             await hardeningConfig.setEnableRawCapture(enableRawCapture)
             let limit = await hardeningConfig.maxRawCaptureSize
-            let enableProxyPCAP = shouldEnableProxyPCAP(rawCaptureEnabled: enableRawCapture, mode: currentCaptureMode)
-            let writer = await createPCAPWriterIfNeeded(enabled: enableProxyPCAP)
+            let runtimeConfiguration = await loadTunnelProviderConfiguration()
+            let writer = await createPCAPWriterIfNeeded(enabled: runtimeConfiguration.proxyRawCaptureEnabled)
             await runtimeState.configureRawCapture(
-                enabled: enableProxyPCAP,
+                enabled: runtimeConfiguration.proxyRawCaptureEnabled,
                 limit: limit,
                 writer: writer
             )
             if currentCaptureMode.usesPacketTunnelRouting {
-                let packetWriter = createPacketCaptureWriterIfNeeded(enabled: enableRawCapture)
+                let packetWriter = createPacketCaptureWriterIfNeeded(
+                    enabled: runtimeConfiguration.packetCaptureEnabled
+                )
                 await runtimeState.updatePacketCaptureSettings(
-                    enabled: enableRawCapture,
+                    enabled: runtimeConfiguration.packetCaptureEnabled,
                     limit: limit,
                     writer: packetWriter
                 )
@@ -374,8 +330,8 @@ extension PacketTunnelProvider {
 
         let shouldRunCaptureRefresh = shouldRefreshCaptureFlow && currentCaptureMode.usesPacketTunnelRouting
         if shouldRefreshProxyIngress, !shouldRunCaptureRefresh {
-            let captureConfig = AppGroupStorage.shared.loadConfiguration()
-            await applyProxyIngressMode(for: captureConfig)
+            let runtimeConfiguration = await loadTunnelProviderConfiguration()
+            await applyProxyIngressMode(using: runtimeConfiguration)
         }
         if shouldRunCaptureRefresh {
             await refreshCaptureConfiguration()
@@ -395,49 +351,34 @@ extension PacketTunnelProvider {
         }
     }
 
-    func configureCaptureSettings(for mode: CaptureMode) async {
-        let config = HardeningConfig.shared
-        let rawCaptureEnabled = await config.enableRawCapture
-        let rawCaptureLimit = await config.maxRawCaptureSize
-        let quicHandlingMode = await config.quicHandlingMode
+    func loadTunnelProviderConfiguration(
+        captureConfiguration: CaptureConfiguration? = nil
+    ) async -> TunnelProviderConfiguration {
+        let capture = captureConfiguration ?? AppGroupStorage.shared.loadConfiguration()
+        let hardeningSnapshot = await HardeningConfig.shared.getCurrentConfig()
+        return TunnelProviderConfiguration(
+            capture: capture,
+            hardeningSnapshot: hardeningSnapshot,
+            environment: tunnelProviderEnvironment
+        )
+    }
 
-        let enableProxyPCAP = shouldEnableProxyPCAP(rawCaptureEnabled: rawCaptureEnabled, mode: mode)
-        let writer = await createPCAPWriterIfNeeded(enabled: enableProxyPCAP)
+    func syncCaptureSettings(using runtimeConfiguration: TunnelProviderConfiguration) async {
+        let writer = await createPCAPWriterIfNeeded(enabled: runtimeConfiguration.proxyRawCaptureEnabled)
         await runtimeState.configureRawCapture(
-            enabled: enableProxyPCAP,
-            limit: rawCaptureLimit,
+            enabled: runtimeConfiguration.proxyRawCaptureEnabled,
+            limit: runtimeConfiguration.hardening.maxRawCaptureSize,
             writer: writer
         )
-        await runtimeState.setQUICHandlingMode(quicHandlingMode)
+        await runtimeState.setQUICHandlingMode(runtimeConfiguration.hardening.quicHandlingMode)
     }
 
-    func applyProxyIngressMode(for config: CaptureConfiguration) async {
-        let transparentTLSModeEnabled = effectiveTransparentTCPMITMEnabled(for: config)
-        let enforcedProxy = await HardeningConfig.shared.dualMITMPolicyEngineEnforcedProxy
-        let http2MITMEnabled = await HardeningConfig.shared.dualMITMHttp2MITMEnabled
-        let strictHardFail = await HardeningConfig.shared.dualMITMStrictEnforcementHardFail
-        let payload: UnsafeSendable<[String: Any]> = UnsafeSendable(
-            [
-                "transparentTLSModeEnabled": transparentTLSModeEnabled,
-                "dualMitmPolicyEngineEnforcedProxy": enforcedProxy,
-                "dualMitmHttp2MITMEnabled": http2MITMEnabled,
-                "dualMitmStrictEnforcementHardFail": strictHardFail
-            ]
-        )
-        await runtimeState.updateProxyConfiguration(payload)
+    func applyProxyIngressMode(using runtimeConfiguration: TunnelProviderConfiguration) async {
+        await runtimeState.updateProxyIngressConfiguration(runtimeConfiguration.proxyIngress)
         await runtimeState.appendEventLog(
             type: "proxy_ingress_mode",
-            msg: "mode=\(config.captureMode.rawValue) transparent_tls=\(transparentTLSModeEnabled) hybrid_tcp_mitm=\(config.fullTunnelHybridTCPMITMEnabled) policy_enforced_proxy=\(enforcedProxy) http2_mitm=\(http2MITMEnabled) strict_hard_fail=\(strictHardFail)"
+            msg: "mode=\(runtimeConfiguration.captureMode.rawValue) hybrid_tcp_mitm=\(runtimeConfiguration.capture.fullTunnelHybridTCPMITMEnabled) \(runtimeConfiguration.proxyIngress.eventLogMessage)"
         )
-    }
-
-    func effectiveTransparentTCPMITMEnabled(for config: CaptureConfiguration) -> Bool {
-        config.captureMode.enablesTCPTransparentMITM ||
-            (config.captureMode == .fullTunnel && config.fullTunnelHybridTCPMITMEnabled)
-    }
-
-    func shouldEnableProxyPCAP(rawCaptureEnabled: Bool, mode: CaptureMode) -> Bool {
-        rawCaptureEnabled && mode == .proxyOnly
     }
 
     func createPCAPWriterIfNeeded(enabled: Bool) async -> PCAPWriting? {

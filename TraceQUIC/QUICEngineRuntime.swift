@@ -35,8 +35,16 @@ public struct QUICEngineStatus: Sendable {
 public enum QUICEngineRuntime {
     public static func currentStatus() -> QUICEngineStatus {
         #if canImport(CQuicheFFI)
-        let version = String(cString: cquiche_version_string())
+        let rawVersion = String(cString: cquiche_version_string())
         let availability: QUICEngineAvailability = cquiche_runtime_available() ? .available : .unavailable
+        let version: String
+        if availability == .available {
+            version = rawVersion
+        } else if rawVersion == "quiche-staged-action-api" {
+            version = "quiche-artifacts-missing"
+        } else {
+            version = rawVersion
+        }
         return QUICEngineStatus(
             availability: availability,
             version: version,
