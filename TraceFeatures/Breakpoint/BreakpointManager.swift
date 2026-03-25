@@ -22,6 +22,7 @@ public actor BreakpointManager {
     private var pausedRequests: [String: PausedRequest] = [:]
     private var resumedRequests: [String: PausedRequest] = [:]
     private var continuations: [String: CheckedContinuation<BreakpointAction, Never>] = [:]
+    private var sharedCommandPollingTasks: [String: Task<Void, Never>] = [:]
     private var totalHitCount: Int = 0
     private var storedRequestModifications: PausedRequest?
     private var storedResponseModifications: PausedRequest?
@@ -29,6 +30,7 @@ public actor BreakpointManager {
     private var editOnceApplied: Bool = false
     private nonisolated(unsafe) let storage: AppGroupStorage
     private nonisolated(unsafe) let configFileName = "BreakpointConfiguration.json"
+    private let sharedCommandPollIntervalNs: UInt64 = 100_000_000
 
     private init() {
         self.storage = AppGroupStorage.shared
@@ -185,6 +187,146 @@ public actor BreakpointManager {
         return true
     }
 
+    private func registerPausedRequest(_ pausedRequest: PausedRequest) {
+        pausedRequests[pausedRequest.id] = pausedRequest
+
+        do {
+            try storage.deleteBreakpointResumeCommand(requestId: pausedRequest.id)
+            try storage.savePausedBreakpointRequest(pausedRequest)
+        } catch {
+            FeatureLog.breakpoint.error(
+                "event=breakpoint.shared_state_save outcome=failure request_id=\(pausedRequest.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    private func waitForResumeAction(
+        id: String,
+        userInfo: [AnyHashable: Any]
+    ) async -> BreakpointAction {
+        await withCheckedContinuation { continuation in
+            continuations[id] = continuation
+            startPollingForSharedResumeCommand(id: id)
+
+            // Concurrency: UI notifications are sent on the MainActor.
+            Task { @MainActor in
+                NotificationCenter.default.post(
+                    name: .breakpointTriggered,
+                    object: nil,
+                    userInfo: userInfo
+                )
+            }
+        }
+    }
+
+    private func startPollingForSharedResumeCommand(id: String) {
+        sharedCommandPollingTasks[id]?.cancel()
+        sharedCommandPollingTasks[id] = Task { [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled {
+                do {
+                    if let command = try self.storage.consumeBreakpointResumeCommand(requestId: id) {
+                        let synchronizedRequest = try? self.storage.loadPausedBreakpointRequest(id: id)
+                        await self.completeResume(
+                            id: id,
+                            action: command.action,
+                            synchronizedPausedRequest: synchronizedRequest
+                        )
+                        return
+                    }
+                } catch {
+                    FeatureLog.breakpoint.error(
+                        "event=breakpoint.shared_command_poll outcome=failure request_id=\(id, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                    )
+                }
+
+                try? await Task.sleep(nanoseconds: self.sharedCommandPollIntervalNs)
+            }
+        }
+    }
+
+    private func completeResume(
+        id: String,
+        action: BreakpointAction,
+        synchronizedPausedRequest: PausedRequest? = nil
+    ) {
+        sharedCommandPollingTasks[id]?.cancel()
+        sharedCommandPollingTasks.removeValue(forKey: id)
+
+        if let synchronizedPausedRequest {
+            pausedRequests[id] = synchronizedPausedRequest
+        }
+
+        if var pausedRequest = pausedRequests[id] {
+            pausedRequest.isPaused = false
+            pausedRequest.state = action == .drop ? .dropped : .continuing
+            pausedRequests[id] = pausedRequest
+            if action.appliesModifications, pausedRequest.hasModifications {
+                pausedRequest.state = .modified
+                resumedRequests[id] = pausedRequest
+                if configuration.executionMode == .editOnce || configuration.executionMode == .alwaysApply {
+                    switch pausedRequest.breakpointType {
+                    case .response:
+                        storedResponseModifications = pausedRequest
+                    case .stream:
+                        storedStreamModifications = pausedRequest
+                    case .request, .both:
+                        storedRequestModifications = pausedRequest
+                    }
+                    if configuration.executionMode == .editOnce {
+                        editOnceApplied = true
+                    }
+                }
+            } else {
+                resumedRequests.removeValue(forKey: id)
+            }
+        }
+
+        if let continuation = continuations[id] {
+            continuation.resume(returning: action)
+            continuations.removeValue(forKey: id)
+        }
+
+        do {
+            try storage.deletePausedBreakpointRequest(id: id)
+        } catch {
+            FeatureLog.breakpoint.error(
+                "event=breakpoint.shared_state_delete outcome=failure request_id=\(id, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
+
+        do {
+            try storage.deleteBreakpointResumeCommand(requestId: id)
+        } catch {
+            FeatureLog.breakpoint.error(
+                "event=breakpoint.shared_command_delete outcome=failure request_id=\(id, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
+
+        // Concurrency: UI notifications are sent on the MainActor.
+        Task { @MainActor in
+            NotificationCenter.default.post(
+                name: .breakpointResumed,
+                object: nil,
+                userInfo: [BreakpointNotificationKey.requestId.rawValue: id]
+            )
+        }
+
+        pausedRequests.removeValue(forKey: id)
+    }
+
+    private func loadSharedPausedRequests() -> [PausedRequest] {
+        do {
+            return try storage.loadAllPausedBreakpointRequests()
+        } catch {
+            FeatureLog.breakpoint.error(
+                "event=breakpoint.shared_state_load outcome=failure error=\(error.localizedDescription, privacy: .public)"
+            )
+            return []
+        }
+    }
+
     // MARK: - Request Pausing
 
     /// Pauses a request and waits for user action.
@@ -212,27 +354,17 @@ public actor BreakpointManager {
             breakpointType: .request
         )
 
-        pausedRequests[id] = pausedRequest
+        registerPausedRequest(pausedRequest)
 
-        return await withCheckedContinuation { continuation in
-            continuations[id] = continuation
-
-            // Concurrency: UI notifications are sent on the MainActor.
-            // Important: Do not `await` here; yielding before the continuation is registered can race with `resumeRequest`.
-            let methodRawValue = method.rawValue
-            Task { @MainActor in
-                NotificationCenter.default.post(
-                    name: .breakpointTriggered,
-                    object: nil,
-                    userInfo: [
-                        BreakpointNotificationKey.requestId.rawValue: id,
-                        BreakpointNotificationKey.url.rawValue: url,
-                        BreakpointNotificationKey.method.rawValue: methodRawValue,
-                        BreakpointNotificationKey.breakpointType.rawValue: BreakpointType.request.rawValue
-                    ]
-                )
-            }
-        }
+        return await waitForResumeAction(
+            id: id,
+            userInfo: [
+                BreakpointNotificationKey.requestId.rawValue: id,
+                BreakpointNotificationKey.url.rawValue: url,
+                BreakpointNotificationKey.method.rawValue: method.rawValue,
+                BreakpointNotificationKey.breakpointType.rawValue: BreakpointType.request.rawValue
+            ]
+        )
     }
 
     /// Pauses a response and waits for user action.
@@ -268,27 +400,17 @@ public actor BreakpointManager {
         pausedRequest.statusCode = statusCode
         pausedRequest.statusMessage = statusMessage
 
-        pausedRequests[id] = pausedRequest
+        registerPausedRequest(pausedRequest)
 
-        return await withCheckedContinuation { continuation in
-            continuations[id] = continuation
-
-            // Concurrency: UI notifications are sent on the MainActor.
-            // Important: Do not `await` here; yielding before the continuation is registered can race with `resumeRequest`.
-            let methodRawValue = method.rawValue
-            Task { @MainActor in
-                NotificationCenter.default.post(
-                    name: .breakpointTriggered,
-                    object: nil,
-                    userInfo: [
-                        BreakpointNotificationKey.requestId.rawValue: id,
-                        BreakpointNotificationKey.url.rawValue: url,
-                        BreakpointNotificationKey.method.rawValue: methodRawValue,
-                        BreakpointNotificationKey.breakpointType.rawValue: BreakpointType.response.rawValue
-                    ]
-                )
-            }
-        }
+        return await waitForResumeAction(
+            id: id,
+            userInfo: [
+                BreakpointNotificationKey.requestId.rawValue: id,
+                BreakpointNotificationKey.url.rawValue: url,
+                BreakpointNotificationKey.method.rawValue: method.rawValue,
+                BreakpointNotificationKey.breakpointType.rawValue: BreakpointType.response.rawValue
+            ]
+        )
     }
 
     /// Pauses a stream event and waits for user action.
@@ -312,24 +434,17 @@ public actor BreakpointManager {
             breakpointType: .stream
         )
 
-        pausedRequests[id] = pausedRequest
+        registerPausedRequest(pausedRequest)
 
-        return await withCheckedContinuation { continuation in
-            continuations[id] = continuation
-
-            Task { @MainActor in
-                NotificationCenter.default.post(
-                    name: .breakpointTriggered,
-                    object: nil,
-                    userInfo: [
-                        BreakpointNotificationKey.requestId.rawValue: id,
-                        BreakpointNotificationKey.url.rawValue: url,
-                        BreakpointNotificationKey.method.rawValue: HTTPMethod.get.rawValue,
-                        BreakpointNotificationKey.breakpointType.rawValue: BreakpointType.stream.rawValue
-                    ]
-                )
-            }
-        }
+        return await waitForResumeAction(
+            id: id,
+            userInfo: [
+                BreakpointNotificationKey.requestId.rawValue: id,
+                BreakpointNotificationKey.url.rawValue: url,
+                BreakpointNotificationKey.method.rawValue: HTTPMethod.get.rawValue,
+                BreakpointNotificationKey.breakpointType.rawValue: BreakpointType.stream.rawValue
+            ]
+        )
     }
 
     // MARK: - Request Resuming
@@ -339,52 +454,30 @@ public actor BreakpointManager {
     ///   - id: The request identifier.
     ///   - action: The action selected by the user.
     public func resumeRequest(id: String, action: BreakpointAction) {
-        guard let continuation = continuations[id] else { return }
-
-        if var pausedRequest = pausedRequests[id] {
-            pausedRequest.isPaused = false
-            pausedRequest.state = action == .drop ? .dropped : .continuing
-            pausedRequests[id] = pausedRequest
-            if action.appliesModifications, pausedRequest.hasModifications {
-                pausedRequest.state = .modified
-                resumedRequests[id] = pausedRequest
-                if configuration.executionMode == .editOnce || configuration.executionMode == .alwaysApply {
-                    switch pausedRequest.breakpointType {
-                    case .response:
-                        storedResponseModifications = pausedRequest
-                    case .stream:
-                        storedStreamModifications = pausedRequest
-                    case .request, .both:
-                        storedRequestModifications = pausedRequest
-                    }
-                    if configuration.executionMode == .editOnce {
-                        editOnceApplied = true
-                    }
-                }
-            } else {
-                resumedRequests.removeValue(forKey: id)
-            }
+        if continuations[id] != nil {
+            completeResume(id: id, action: action)
+            return
         }
 
-        continuation.resume(returning: action)
-        continuations.removeValue(forKey: id)
+        let knownLocally = pausedRequests[id] != nil
+        let knownShared = (try? storage.loadPausedBreakpointRequest(id: id)) != nil
+        guard knownLocally || knownShared else { return }
 
-        // Concurrency: UI notifications are sent on the MainActor.
-        Task { @MainActor in
-            NotificationCenter.default.post(
-                name: .breakpointResumed,
-                object: nil,
-                userInfo: [BreakpointNotificationKey.requestId.rawValue: id]
+        do {
+            try storage.saveBreakpointResumeCommand(
+                BreakpointResumeCommand(requestId: id, action: action)
+            )
+        } catch {
+            FeatureLog.breakpoint.error(
+                "event=breakpoint.shared_command_save outcome=failure request_id=\(id, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
             )
         }
-
-        pausedRequests.removeValue(forKey: id)
     }
 
     /// Resumes all paused requests with the given action.
     /// - Parameter action: The action to apply to each paused request.
     public func resumeAllRequests(action: BreakpointAction) {
-        let requestIds = Array(pausedRequests.keys)
+        let requestIds = Set(pausedRequests.keys).union(loadSharedPausedRequests().map(\.id))
         for id in requestIds {
             resumeRequest(id: id, action: action)
         }
@@ -494,7 +587,8 @@ public actor BreakpointManager {
     ///   - id: The request identifier.
     ///   - modifications: The new values to apply.
     public func updatePausedRequest(id: String, modifications: PausedRequestModifications) {
-        guard var pausedRequest = pausedRequests[id] else { return }
+        let hasLocalPauseState = pausedRequests[id] != nil || continuations[id] != nil
+        guard var pausedRequest = pausedRequests[id] ?? (try? storage.loadPausedBreakpointRequest(id: id)) else { return }
 
         pausedRequest.modifiedUrl = modifications.url
         if let methodToken = modifications.resolvedMethodToken {
@@ -510,23 +604,37 @@ public actor BreakpointManager {
         pausedRequest.modifiedStatusMessage = modifications.statusMessage
         pausedRequest.state = .modified
 
-        pausedRequests[id] = pausedRequest
+        if hasLocalPauseState {
+            pausedRequests[id] = pausedRequest
+        }
+
+        do {
+            try storage.savePausedBreakpointRequest(pausedRequest)
+        } catch {
+            FeatureLog.breakpoint.error(
+                "event=breakpoint.shared_state_update outcome=failure request_id=\(id, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     /// Returns a paused request by identifier.
     /// - Parameter id: The request identifier.
     public func getPausedRequest(id: String) -> PausedRequest? {
-        pausedRequests[id]
+        (try? storage.loadPausedBreakpointRequest(id: id)) ?? pausedRequests[id]
     }
 
     /// Returns all paused requests.
     public func getAllPausedRequests() -> [PausedRequest] {
-        Array(pausedRequests.values)
+        var merged = Dictionary(uniqueKeysWithValues: pausedRequests.map { ($0.key, $0.value) })
+        for request in loadSharedPausedRequests() {
+            merged[request.id] = request
+        }
+        return merged.values.sorted { $0.pausedAt > $1.pausedAt }
     }
 
     /// Returns the number of paused requests.
     func pausedRequestsCount() -> Int {
-        pausedRequests.count
+        getAllPausedRequests().count
     }
 
     // MARK: - Persistence

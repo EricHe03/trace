@@ -16,6 +16,8 @@ struct RootTabView: View {
     @ObservedObject var viewModel: CaptureViewModel
     @State private var selectedTab: Tab = .network
     @State private var showingOnboarding = false
+    @State private var showingBreakpointInspector = false
+    @State private var breakpointObserverToken: AppGroupStorageObserverToken?
     @ObservedObject private var vpnManager = VPNManager.shared
 
     enum Tab {
@@ -55,6 +57,8 @@ struct RootTabView: View {
         }
         .onAppear {
             checkOnboarding()
+            startObservingBreakpointChanges()
+            presentBreakpointInspectorIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: .viewRequest)) { notification in
             guard let requestIdString = notification.userInfo?["requestId"] as? String,
@@ -96,6 +100,13 @@ struct RootTabView: View {
             }
             .interactiveDismissDisabled()
         }
+        .sheet(isPresented: $showingBreakpointInspector) {
+            BreakpointConfigView(autoPresentLatestPausedRequest: true)
+        }
+        .onDisappear {
+            breakpointObserverToken?.cancel()
+            breakpointObserverToken = nil
+        }
         .dismissKeyboardOnTapAndScroll()
     }
 
@@ -107,6 +118,26 @@ struct RootTabView: View {
             // Onboarding already complete, initialize VPN
             vpnManager.initializeIfNeeded()
         }
+    }
+
+    private func startObservingBreakpointChanges() {
+        guard breakpointObserverToken == nil else { return }
+        breakpointObserverToken = AppGroupStorage.shared.observeBreakpointChanges {
+            Task { @MainActor in
+                presentBreakpointInspectorIfNeeded()
+            }
+        }
+    }
+
+    @MainActor
+    private func presentBreakpointInspectorIfNeeded() {
+        guard let pausedRequests = try? AppGroupStorage.shared.loadAllPausedBreakpointRequests(),
+              !pausedRequests.isEmpty else {
+            return
+        }
+
+        selectedTab = .tools
+        showingBreakpointInspector = true
     }
 }
 

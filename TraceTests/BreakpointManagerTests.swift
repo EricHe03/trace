@@ -17,6 +17,7 @@ final class BreakpointManagerTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         manager = BreakpointManager.shared
+        try clearSharedBreakpointState()
         await manager.setEnabled(false)
         await manager.resumeAllRequests(action: .continue)
     }
@@ -24,6 +25,7 @@ final class BreakpointManagerTests: XCTestCase {
     override func tearDown() async throws {
         await manager.setEnabled(false)
         await manager.resumeAllRequests(action: .continue)
+        try clearSharedBreakpointState()
         try await super.tearDown()
     }
 
@@ -498,6 +500,65 @@ final class BreakpointManagerTests: XCTestCase {
         XCTAssertEqual(finalCount, 0)
     }
 
+    func testPauseRequest_ConsumesSharedResumeCommand() async throws {
+        let requestId = UUID().uuidString
+
+        let pauseTask = Task {
+            await manager.pauseRequest(
+                id: requestId,
+                url: "https://example.com/original",
+                method: .get,
+                methodToken: "GET",
+                headers: [TraceHTTPHeader(key: "X-Test", value: "1")],
+                body: Data("original".utf8)
+            )
+        }
+
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        await manager.updatePausedRequest(
+            id: requestId,
+            modifications: PausedRequestModifications(
+                url: "https://example.com/updated",
+                methodToken: "PURGE",
+                headers: [TraceHTTPHeader(key: "X-Test", value: "2")],
+                body: Data("patched".utf8)
+            )
+        )
+
+        try AppGroupStorage.shared.saveBreakpointResumeCommand(
+            BreakpointResumeCommand(requestId: requestId, action: .continue)
+        )
+
+        let action = await pauseTask.value
+        XCTAssertEqual(action, .continue)
+
+        let resumedRequest = await manager.consumeResumedRequest(id: requestId)
+        XCTAssertEqual(resumedRequest?.effectiveUrl, "https://example.com/updated")
+        XCTAssertEqual(resumedRequest?.effectiveMethodToken, "PURGE")
+        XCTAssertEqual(resumedRequest?.effectiveHeaders, [TraceHTTPHeader(key: "X-Test", value: "2")])
+        XCTAssertEqual(resumedRequest?.effectiveBody, Data("patched".utf8))
+        XCTAssertThrowsError(try AppGroupStorage.shared.loadPausedBreakpointRequest(id: requestId))
+    }
+
+    func testResumeAllRequests_QueuesSharedCommandsForSharedPausedRequests() async throws {
+        let requestId = UUID().uuidString
+        let pausedRequest = PausedRequest(
+            id: requestId,
+            url: "https://example.com",
+            method: .get,
+            headers: [],
+            breakpointType: .request
+        )
+
+        try AppGroupStorage.shared.savePausedBreakpointRequest(pausedRequest)
+
+        await manager.resumeAllRequests(action: .continue)
+
+        let command = try AppGroupStorage.shared.consumeBreakpointResumeCommand(requestId: requestId)
+        XCTAssertEqual(command?.action, .continue)
+    }
+
     // MARK: - Breakpoint Action Tests
 
     func testDropAction() async {
@@ -570,5 +631,14 @@ final class BreakpointManagerTests: XCTestCase {
         XCTAssertEqual(request.requestMethodRaw, "PURGE")
         XCTAssertEqual(request.requestHeaders, [TraceHTTPHeader(key: "X-Test", value: "2")])
         XCTAssertEqual(request.requestBody.getData(), Data("patched".utf8))
+    }
+
+    private func clearSharedBreakpointState() throws {
+        let storage = AppGroupStorage.shared
+        let pausedRequests = try storage.loadAllPausedBreakpointRequests()
+        for pausedRequest in pausedRequests {
+            try storage.deletePausedBreakpointRequest(id: pausedRequest.id)
+            try storage.deleteBreakpointResumeCommand(requestId: pausedRequest.id)
+        }
     }
 }

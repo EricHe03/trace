@@ -586,6 +586,12 @@ struct BreakpointConfigView: View {
     @State private var selectedRequest: PausedRequest?
     @State private var showingConditionEditor = false
     @State private var pendingSelectionID: String?
+    @State private var breakpointObserverToken: AppGroupStorageObserverToken?
+    @State private var shouldAutoPresentLatestPausedRequest: Bool
+
+    init(autoPresentLatestPausedRequest: Bool = false) {
+        _shouldAutoPresentLatestPausedRequest = State(initialValue: autoPresentLatestPausedRequest)
+    }
 
     var body: some View {
         NavigationStack {
@@ -707,6 +713,7 @@ struct BreakpointConfigView: View {
             .task {
                 await loadConfig()
                 await loadPausedRequests()
+                startObservingBreakpointChanges()
             }
             .onReceive(NotificationCenter.default.publisher(for: .breakpointTriggered)) { notification in
                 pendingSelectionID = notification.userInfo?[BreakpointNotificationKey.requestId.rawValue] as? String
@@ -725,6 +732,10 @@ struct BreakpointConfigView: View {
                         self.selectedRequest = pausedRequests.first
                     }
                 }
+            }
+            .onDisappear {
+                breakpointObserverToken?.cancel()
+                breakpointObserverToken = nil
             }
             .sheet(item: $selectedRequest) { request in
                 BreakpointEditorView(pausedRequest: request) { action, modifications in
@@ -847,6 +858,24 @@ struct BreakpointConfigView: View {
 
     private func loadPausedRequests() async {
         pausedRequests = await breakpointManager.getAllPausedRequests()
+
+        if let pendingSelectionID {
+            selectedRequest = pausedRequests.first(where: { $0.id == pendingSelectionID }) ?? pausedRequests.first
+            self.pendingSelectionID = nil
+            shouldAutoPresentLatestPausedRequest = false
+            return
+        }
+
+        if shouldAutoPresentLatestPausedRequest {
+            selectedRequest = pausedRequests.first
+            shouldAutoPresentLatestPausedRequest = false
+            return
+        }
+
+        if let selectedRequest,
+           let refreshedRequest = pausedRequests.first(where: { $0.id == selectedRequest.id }) {
+            self.selectedRequest = refreshedRequest
+        }
     }
 
     private func resumeAllRequests() {
@@ -886,6 +915,15 @@ struct BreakpointConfigView: View {
             return "Stream Event"
         case .request, .both:
             return request.methodToken
+        }
+    }
+
+    private func startObservingBreakpointChanges() {
+        guard breakpointObserverToken == nil else { return }
+        breakpointObserverToken = AppGroupStorage.shared.observeBreakpointChanges {
+            Task { @MainActor in
+                await loadPausedRequests()
+            }
         }
     }
 }

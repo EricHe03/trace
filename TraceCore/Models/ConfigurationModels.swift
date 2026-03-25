@@ -786,7 +786,7 @@ public enum BreakpointAction: String, Codable, Equatable, Sendable {
     }
 }
 
-public struct PausedRequest: Identifiable, Sendable {
+public struct PausedRequest: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public var url: String
     public var method: HTTPMethod
@@ -832,6 +832,22 @@ public struct PausedRequest: Identifiable, Sendable {
         self.pausedAt = Date()
         self.statusCode = statusCode
         self.statusMessage = statusMessage
+    }
+}
+
+public struct BreakpointResumeCommand: Codable, Equatable, Sendable {
+    public let requestId: String
+    public let action: BreakpointAction
+    public let updatedAt: Date
+
+    public init(
+        requestId: String,
+        action: BreakpointAction,
+        updatedAt: Date = Date()
+    ) {
+        self.requestId = requestId
+        self.action = action
+        self.updatedAt = updatedAt
     }
 }
 

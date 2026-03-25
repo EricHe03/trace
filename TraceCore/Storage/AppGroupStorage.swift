@@ -2540,6 +2540,7 @@ open class AppGroupStorage: @unchecked Sendable {
     private var sseObservers: [UUID: NotificationObserver] = [:]
     private var streamObservers: [UUID: NotificationObserver] = [:]
     private var udpFlowObservers: [UUID: NotificationObserver] = [:]
+    private var breakpointObservers: [UUID: NotificationObserver] = [:]
 
     /// Notifies the main app that a new request was captured
     private func notifyNewRequest() {
@@ -2583,6 +2584,13 @@ open class AppGroupStorage: @unchecked Sendable {
     private func notifyNewUDPFlow() {
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let notificationName = "com.trace.newUDPFlow" as CFString
+
+        CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
+    }
+
+    func notifyBreakpointStateChanged() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let notificationName = "com.trace.breakpointChanged" as CFString
 
         CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
     }
@@ -2746,6 +2754,33 @@ open class AppGroupStorage: @unchecked Sendable {
         notificationObserversLock.lock()
         let observers = Array(udpFlowObservers.values)
         udpFlowObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
+    }
+
+    /// Sets up listener for shared breakpoint state changes.
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeBreakpointChanges(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.breakpointChanged", handler: handler)
+        notificationObserversLock.lock()
+        breakpointObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.breakpointObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingBreakpointChanges() {
+        notificationObserversLock.lock()
+        let observers = Array(breakpointObservers.values)
+        breakpointObservers.removeAll()
         notificationObserversLock.unlock()
         observers.forEach { $0.stop() }
     }
