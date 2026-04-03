@@ -1,4 +1,5 @@
 import NIOHTTP1
+import NIOSSL
 import NIOTransportServices
 import XCTest
 @testable import TraceCore
@@ -94,6 +95,58 @@ final class FullTunnelRegressionTests: XCTestCase {
         )
         XCTAssertEqual(decoded.bypassReason, .internalError)
         XCTAssertEqual(decoded.domain, .quicMITM)
+    }
+
+    func testServerTLSContextCacheEvictsLeastRecentlyUsedEntries() throws {
+        NIOMITMHTTPConnectHandler.clearCachedTLSContexts()
+        defer { NIOMITMHTTPConnectHandler.clearCachedTLSContexts() }
+
+        let baseDate = Date(timeIntervalSince1970: 1_000)
+        for index in 0 ... NIOMITMHTTPConnectHandler.tlsContextCacheMaxEntries {
+            let context = try NIOSSLContext(configuration: .makeClientConfiguration())
+            NIOMITMHTTPConnectHandler.cacheServerTLSContextForTesting(
+                context,
+                host: "host-\(index).example.com",
+                now: baseDate.addingTimeInterval(TimeInterval(index))
+            )
+        }
+
+        XCTAssertEqual(
+            NIOMITMHTTPConnectHandler.cachedTLSContextCountForTesting(),
+            NIOMITMHTTPConnectHandler.tlsContextCacheMaxEntries
+        )
+        XCTAssertNil(
+            NIOMITMHTTPConnectHandler.cachedServerTLSContextForTesting(
+                host: "host-0.example.com",
+                now: baseDate.addingTimeInterval(1_000)
+            )
+        )
+    }
+
+    func testServerTLSContextCacheDropsExpiredEntries() throws {
+        NIOMITMHTTPConnectHandler.clearCachedTLSContexts()
+        defer { NIOMITMHTTPConnectHandler.clearCachedTLSContexts() }
+
+        let baseDate = Date(timeIntervalSince1970: 2_000)
+        let context = try NIOSSLContext(configuration: .makeClientConfiguration())
+        NIOMITMHTTPConnectHandler.cacheServerTLSContextForTesting(
+            context,
+            host: "expired.example.com",
+            now: baseDate
+        )
+
+        XCTAssertNotNil(
+            NIOMITMHTTPConnectHandler.cachedServerTLSContextForTesting(
+                host: "expired.example.com",
+                now: baseDate.addingTimeInterval(1)
+            )
+        )
+        XCTAssertNil(
+            NIOMITMHTTPConnectHandler.cachedServerTLSContextForTesting(
+                host: "expired.example.com",
+                now: baseDate.addingTimeInterval(TLSHandler.certificateLifetime + 1)
+            )
+        )
     }
 
     func testQUICRetryBackoffReusesCachedFailureDecisionWithoutDuplicateEvent() {

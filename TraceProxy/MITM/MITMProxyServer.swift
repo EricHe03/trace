@@ -192,6 +192,7 @@ public class MITMProxyServer: @unchecked Sendable {
 
         mitmEngine?.stop()
         mitmEngine = nil
+        NIOMITMHTTPConnectHandler.clearCachedTLSContexts()
 
         ProxyLog.mitm.info("event=proxy.server_stop outcome=success")
     }

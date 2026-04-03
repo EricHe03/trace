@@ -11,6 +11,8 @@ import NIOSSL
 import TraceCore
 
 extension NIOMITMHTTPConnectHandler {
+    nonisolated(unsafe) static let connectStageLogSampler = LogSampler()
+
     func mitmHost() -> String? {
         if let connectTargetHost, !connectTargetHost.isEmpty {
             return connectTargetHost
@@ -37,11 +39,14 @@ extension NIOMITMHTTPConnectHandler {
         let hostHash = LogRedaction.hash(host)
         let stateLabel = String(describing: state)
         let detailText = detail.flatMap { $0.isEmpty ? nil : $0 }
+        let shouldEmitUnifiedLog = shouldEmitUnifiedLogForConnectStage(stage: stage, outcome: outcome)
 
         if let detailText {
-            ProxyLog.mitm.debug(
-                "event=proxy.nio_connect_stage stage=\(stage, privacy: .public) outcome=\(outcome, privacy: .public) mode=\(self.ingressModeLabel, privacy: .public) id=\(self.connectionID, privacy: .public) host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public) state=\(stateLabel, privacy: .public) detail=\(detailText, privacy: .public)"
-            )
+            if shouldEmitUnifiedLog {
+                ProxyLog.mitm.debug(
+                    "event=proxy.nio_connect_stage stage=\(stage, privacy: .public) outcome=\(outcome, privacy: .public) mode=\(self.ingressModeLabel, privacy: .public) id=\(self.connectionID, privacy: .public) host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public) state=\(stateLabel, privacy: .public) detail=\(detailText, privacy: .public)"
+                )
+            }
             eventLog?.append(
                 type: "proxy_nio_connect_stage",
                 msg: "stage=\(stage) outcome=\(outcome) mode=\(self.ingressModeLabel) id=\(self.connectionID) host_hash=\(hostHash) port=\(port) state=\(stateLabel) detail=\(detailText)"
@@ -49,13 +54,56 @@ extension NIOMITMHTTPConnectHandler {
             return
         }
 
-        ProxyLog.mitm.debug(
-            "event=proxy.nio_connect_stage stage=\(stage, privacy: .public) outcome=\(outcome, privacy: .public) mode=\(self.ingressModeLabel, privacy: .public) id=\(self.connectionID, privacy: .public) host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public) state=\(stateLabel, privacy: .public)"
-        )
+        if shouldEmitUnifiedLog {
+            ProxyLog.mitm.debug(
+                "event=proxy.nio_connect_stage stage=\(stage, privacy: .public) outcome=\(outcome, privacy: .public) mode=\(self.ingressModeLabel, privacy: .public) id=\(self.connectionID, privacy: .public) host=\(host, privacy: .private(mask: .hash)) port=\(port, privacy: .public) state=\(stateLabel, privacy: .public)"
+            )
+        }
         eventLog?.append(
             type: "proxy_nio_connect_stage",
             msg: "stage=\(stage) outcome=\(outcome) mode=\(self.ingressModeLabel) id=\(self.connectionID) host_hash=\(hostHash) port=\(port) state=\(stateLabel)"
         )
+    }
+
+    func shouldEmitUnifiedLogForConnectStage(stage: String, outcome: String) -> Bool {
+        switch outcome {
+        case "failure", "error", "blocked", "unsupported":
+            return true
+        default:
+            break
+        }
+
+        switch stage {
+        case "handler_added",
+             "handler_removed",
+             "handler_tunnel_passthrough",
+             "client_channel_inactive",
+             "client_autoread",
+             "connect_response",
+             "response_pipeline":
+            return Self.connectStageLogSampler.shouldLog(
+                event: "proxy.nio_connect_stage",
+                key: "\(stage)|\(outcome)|\(ingressModeLabel)",
+                first: 2,
+                every: 100
+            )
+        case "http_upstream" where outcome == "start" || outcome == "response":
+            return Self.connectStageLogSampler.shouldLog(
+                event: "proxy.nio_connect_stage",
+                key: "\(stage)|\(outcome)|\(ingressModeLabel)",
+                first: 2,
+                every: 50
+            )
+        case "client_handler_error" where outcome == "ignored":
+            return Self.connectStageLogSampler.shouldLog(
+                event: "proxy.nio_connect_stage",
+                key: "\(stage)|\(outcome)|\(ingressModeLabel)",
+                first: 3,
+                every: 50
+            )
+        default:
+            return true
+        }
     }
 
     func reportMITMFailure(host: String, reason: String) {

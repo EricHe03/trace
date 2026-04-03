@@ -162,10 +162,9 @@ actor PacketTunnelRuntimeState {
         let inboundQUICInterceptor: @Sendable (Data) -> Bool = { packet in
             packetFlowLoopReference.loop?.consumeInboundQUICPacketIfIntercepted(packet) ?? false
         }
-        let eventLogger: @Sendable (String, String) -> Void = { [weak self] type, msg in
-            Task { [weak self] in
-                await self?.appendEventLog(type: type, msg: msg)
-            }
+        let sharedEventLog = eventLog
+        let eventLogger: @Sendable (String, String) -> Void = { [weak sharedEventLog] type, msg in
+            sharedEventLog?.append(type: type, msg: msg)
         }
         let dualMITMBreakerEnabled = config.dualMITM.circuitBreakerEnabled &&
             config.dualMITM.policy == .adaptiveFailOpen
@@ -383,10 +382,9 @@ actor PacketTunnelRuntimeState {
         if let existing = localSocks5Server {
             localServer = existing
         } else {
-            let eventLogger: @Sendable (String, String) -> Void = { [weak self] type, msg in
-                Task { [weak self] in
-                    await self?.appendEventLog(type: type, msg: msg)
-                }
+            let sharedEventLog = eventLog
+            let eventLogger: @Sendable (String, String) -> Void = { [weak sharedEventLog] type, msg in
+                sharedEventLog?.append(type: type, msg: msg)
             }
             let dualMITMPolicy = config.dualMITM.policy
             let policyEngine = dualMITMPolicyEngine

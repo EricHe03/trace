@@ -681,8 +681,107 @@ extension NIOMITMHTTPConnectHandler {
         }
     }
 
+    struct CachedTLSContextEntry {
+        let context: NIOSSLContext
+        let expiresAt: Date
+        var lastAccessAt: Date
+    }
+
     nonisolated(unsafe) static let tlsContextCacheLock = NSLock()
-    nonisolated(unsafe) static var tlsContextCache: [String: NIOSSLContext] = [:]
+    nonisolated(unsafe) static var tlsContextCache: [String: CachedTLSContextEntry] = [:]
+    nonisolated(unsafe) static let tlsContextCacheTTL: TimeInterval = TLSHandler.certificateLifetime
+    nonisolated(unsafe) static let tlsContextCacheMaxEntries = 128
+
+    static func clearCachedTLSContexts() {
+        tlsContextCacheLock.lock()
+        tlsContextCache.removeAll()
+        tlsContextCacheLock.unlock()
+    }
+
+    static func cachedTLSContextCountForTesting() -> Int {
+        tlsContextCacheLock.lock()
+        defer { tlsContextCacheLock.unlock() }
+        return tlsContextCache.count
+    }
+
+    static func cacheServerTLSContextForTesting(
+        _ context: NIOSSLContext,
+        host: String,
+        applicationProtocols: [String]? = nil,
+        now: Date = Date()
+    ) {
+        let key = tlsContextCacheKey(for: host, applicationProtocols: applicationProtocols)
+        cacheServerTLSContext(context, forKey: key, now: now)
+    }
+
+    static func cachedServerTLSContextForTesting(
+        host: String,
+        applicationProtocols: [String]? = nil,
+        now: Date = Date()
+    ) -> NIOSSLContext? {
+        let key = tlsContextCacheKey(for: host, applicationProtocols: applicationProtocols)
+        return cachedServerTLSContext(forKey: key, now: now)
+    }
+
+    private static func tlsContextCacheKey(
+        for host: String,
+        applicationProtocols: [String]? = nil
+    ) -> String {
+        let normalizedHost = host.lowercased()
+        let normalizedProtocols = (applicationProtocols ?? mitmALPNProtocols).map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let protocolCacheComponent = normalizedProtocols.joined(separator: "|")
+        return "\(normalizedHost)|\(protocolCacheComponent)"
+    }
+
+    private static func cachedServerTLSContext(forKey key: String, now: Date) -> NIOSSLContext? {
+        tlsContextCacheLock.lock()
+        defer { tlsContextCacheLock.unlock() }
+
+        pruneExpiredTLSContextsLocked(now: now)
+        guard var entry = tlsContextCache[key] else { return nil }
+        entry.lastAccessAt = now
+        tlsContextCache[key] = entry
+        return entry.context
+    }
+
+    private static func cacheServerTLSContext(
+        _ context: NIOSSLContext,
+        forKey key: String,
+        now: Date
+    ) {
+        tlsContextCacheLock.lock()
+        defer { tlsContextCacheLock.unlock() }
+
+        pruneExpiredTLSContextsLocked(now: now)
+        tlsContextCache[key] = CachedTLSContextEntry(
+            context: context,
+            expiresAt: now.addingTimeInterval(tlsContextCacheTTL),
+            lastAccessAt: now
+        )
+        trimTLSContextCacheIfNeededLocked()
+    }
+
+    private static func pruneExpiredTLSContextsLocked(now: Date) {
+        tlsContextCache = tlsContextCache.filter { _, entry in
+            entry.expiresAt > now
+        }
+    }
+
+    private static func trimTLSContextCacheIfNeededLocked() {
+        guard tlsContextCache.count > tlsContextCacheMaxEntries else { return }
+        let overflow = tlsContextCache.count - tlsContextCacheMaxEntries
+        let keysToRemove = tlsContextCache
+            .sorted { lhs, rhs in
+                lhs.value.lastAccessAt < rhs.value.lastAccessAt
+            }
+            .prefix(overflow)
+            .map(\.key)
+        for key in keysToRemove {
+            tlsContextCache.removeValue(forKey: key)
+        }
+    }
 
     static func makeServerTLSContext(
         for host: String,
@@ -695,15 +794,12 @@ extension NIOMITMHTTPConnectHandler {
         let normalizedProtocols = (applicationProtocols ?? mitmALPNProtocols).map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        let protocolCacheComponent = normalizedProtocols.joined(separator: "|")
-        let key = "\(normalizedHost)|\(protocolCacheComponent)"
+        let key = tlsContextCacheKey(for: normalizedHost, applicationProtocols: normalizedProtocols)
+        let now = Date()
 
-        tlsContextCacheLock.lock()
-        if let cached = tlsContextCache[key] {
-            tlsContextCacheLock.unlock()
+        if let cached = cachedServerTLSContext(forKey: key, now: now) {
             return cached
         }
-        tlsContextCacheLock.unlock()
 
         let (leafCertificate, leafPrivateKey) = try CertificateManager.shared.generateCertificateForDomain(normalizedHost)
         let leafData = SecCertificateCopyData(leafCertificate) as Data
@@ -731,10 +827,7 @@ extension NIOMITMHTTPConnectHandler {
         tlsConfiguration.applicationProtocols = normalizedProtocols
 
         let context = try NIOSSLContext(configuration: tlsConfiguration)
-
-        tlsContextCacheLock.lock()
-        tlsContextCache[key] = context
-        tlsContextCacheLock.unlock()
+        cacheServerTLSContext(context, forKey: key, now: now)
         return context
     }
 
