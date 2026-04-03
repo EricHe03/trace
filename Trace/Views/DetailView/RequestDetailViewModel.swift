@@ -33,6 +33,11 @@ final class RequestDetailViewModel: ObservableObject {
     @Published private(set) var isResponseBodyPreview = false
     @Published private(set) var isLoadingRequestBody = false
     @Published private(set) var isLoadingResponseBody = false
+    @Published private(set) var requestBodyNotice: String?
+    @Published private(set) var responseBodyNotice: String?
+
+    private var requestBodyShareSourceRequest: NetworkRequest?
+    private var responseBodyShareSourceRequest: NetworkRequest?
 
     func availableTabs(for request: NetworkRequest) -> [DetailTab] {
         var tabs: [DetailTab] = [.overview, .requestHeaders, .responseHeaders, .body]
@@ -51,19 +56,25 @@ final class RequestDetailViewModel: ObservableObject {
         guard !request.requestBody.isEmpty else { return }
 
         isLoadingRequestBody = true
+        requestBodyNotice = nil
         let sourceRequest = await sourceRequestForBodyLoading(request, full: full)
-        let limit = full ? nil : BodyStorage.previewSize
         let contentType = requestContentType(from: sourceRequest)?.lowercased()
         let isBinary = RequestDetailBodyAnalyzer.isBinaryContentType(contentType)
+        let loadLimit = min(
+            BodyStorage.previewSize,
+            BodyViewerPolicy.loadLimit(
+                contentType: contentType,
+                requestedFullLoad: full,
+                isBinary: isBinary
+            )
+        )
+        requestBodyShareSourceRequest = sourceRequest
 
         if isBinary {
             let capturedSize = sourceRequest.requestBody.capturedSize
-            let isPreview = !full && capturedSize > BodyStorage.previewSize
+            let isPreview = !full && capturedSize > loadLimit
             requestBodyRawData = await Task.detached(priority: .userInitiated) {
-                if let limit {
-                    return sourceRequest.requestBody.getPreview(maxBytes: limit)
-                }
-                return sourceRequest.requestBody.getData()
+                sourceRequest.requestBody.getPreview(maxBytes: loadLimit)
             }.value
 
             let kind = RequestDetailBodyAnalyzer.detectBinaryKind(
@@ -83,24 +94,25 @@ final class RequestDetailViewModel: ObservableObject {
         } else {
             if contentType?.hasPrefix("image/") == true {
                 requestBodyRawData = await Task.detached(priority: .userInitiated) {
-                    if let limit {
-                        return sourceRequest.requestBody.getPreview(maxBytes: limit)
-                    }
-                    return sourceRequest.requestBody.getData()
+                    sourceRequest.requestBody.getPreview(maxBytes: loadLimit)
                 }.value
             } else {
                 requestBodyRawData = nil
             }
 
             requestBodyText = await Task.detached(priority: .userInitiated) {
-                if let limit {
-                    return sourceRequest.requestBody.getString(maxBytes: limit)
-                }
-                return sourceRequest.requestBody.getString()
+                sourceRequest.requestBody.getString(maxBytes: loadLimit)
             }.value
         }
 
-        isRequestBodyPreview = !full && sourceRequest.requestBody.capturedSize > BodyStorage.previewSize
+        if full, sourceRequest.requestBody.capturedSize > loadLimit {
+            requestBodyNotice = stableLoadingNotice(
+                loadedBytes: loadLimit,
+                totalBytes: sourceRequest.requestBody.capturedSize
+            )
+        }
+
+        isRequestBodyPreview = !full && sourceRequest.requestBody.capturedSize > loadLimit
         isLoadingRequestBody = false
     }
 
@@ -108,22 +120,28 @@ final class RequestDetailViewModel: ObservableObject {
         guard !request.responseBody.isEmpty else { return }
 
         isLoadingResponseBody = true
+        responseBodyNotice = nil
         let sourceRequest = await sourceRequestForBodyLoading(request, full: full)
-        let limit = full ? nil : BodyStorage.previewSize
         let contentType = responseContentType(from: sourceRequest)?.lowercased()
         let contentDisposition = responseContentDisposition(from: sourceRequest)
         let fileName = RequestDetailBodyAnalyzer.attachmentFileName(from: contentDisposition)
         let isAttachment = contentDisposition?.lowercased().contains("attachment") == true
         let isBinary = sourceRequest.isBinary || RequestDetailBodyAnalyzer.isBinaryContentType(contentType) || isAttachment
+        let loadLimit = min(
+            BodyStorage.previewSize,
+            BodyViewerPolicy.loadLimit(
+                contentType: contentType,
+                requestedFullLoad: full,
+                isBinary: isBinary
+            )
+        )
+        responseBodyShareSourceRequest = sourceRequest
 
         if isBinary {
             let capturedSize = sourceRequest.responseBody.capturedSize
-            let isPreview = !full && capturedSize > BodyStorage.previewSize
+            let isPreview = !full && capturedSize > loadLimit
             responseBodyRawData = await Task.detached(priority: .userInitiated) {
-                if let limit {
-                    return sourceRequest.responseBody.getPreview(maxBytes: limit)
-                }
-                return sourceRequest.responseBody.getData()
+                sourceRequest.responseBody.getPreview(maxBytes: loadLimit)
             }.value
 
             let kind = RequestDetailBodyAnalyzer.detectBinaryKind(
@@ -143,24 +161,25 @@ final class RequestDetailViewModel: ObservableObject {
         } else {
             if contentType?.hasPrefix("image/") == true {
                 responseBodyRawData = await Task.detached(priority: .userInitiated) {
-                    if let limit {
-                        return sourceRequest.responseBody.getPreview(maxBytes: limit)
-                    }
-                    return sourceRequest.responseBody.getData()
+                    sourceRequest.responseBody.getPreview(maxBytes: loadLimit)
                 }.value
             } else {
                 responseBodyRawData = nil
             }
 
             responseBodyText = await Task.detached(priority: .userInitiated) {
-                if let limit {
-                    return sourceRequest.responseBody.getString(maxBytes: limit)
-                }
-                return sourceRequest.responseBody.getString()
+                sourceRequest.responseBody.getString(maxBytes: loadLimit)
             }.value
         }
 
-        isResponseBodyPreview = !full && sourceRequest.responseBody.capturedSize > BodyStorage.previewSize
+        if full, sourceRequest.responseBody.capturedSize > loadLimit {
+            responseBodyNotice = stableLoadingNotice(
+                loadedBytes: loadLimit,
+                totalBytes: sourceRequest.responseBody.capturedSize
+            )
+        }
+
+        isResponseBodyPreview = !full && sourceRequest.responseBody.capturedSize > loadLimit
         isLoadingResponseBody = false
     }
 
@@ -228,21 +247,25 @@ final class RequestDetailViewModel: ObservableObject {
     }
 
     func shareRequestBody(for request: NetworkRequest) {
+        let sourceRequest = requestBodyShareSourceRequest ?? request
+        let shouldPreferSourceBody = requestBodyNotice != nil
         shareSheetItem = ShareSheetItem(
             ShareHelper.shareItemsForRequestBody(
-                from: request,
-                bodyText: requestBodyText,
-                bodyData: requestBodyRawData
+                from: sourceRequest,
+                bodyText: shouldPreferSourceBody ? nil : requestBodyText,
+                bodyData: shouldPreferSourceBody ? nil : requestBodyRawData
             )
         )
     }
 
     func shareResponseBody(for request: NetworkRequest) {
+        let sourceRequest = responseBodyShareSourceRequest ?? request
+        let shouldPreferSourceBody = responseBodyNotice != nil
         shareSheetItem = ShareSheetItem(
             ShareHelper.shareItemsForResponseBody(
-                from: request,
-                bodyText: responseBodyText,
-                bodyData: responseBodyRawData
+                from: sourceRequest,
+                bodyText: shouldPreferSourceBody ? nil : responseBodyText,
+                bodyData: shouldPreferSourceBody ? nil : responseBodyRawData
             )
         )
     }
@@ -340,5 +363,9 @@ final class RequestDetailViewModel: ObservableObject {
 
     private func formattedBytes(_ bytes: Int) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+
+    private func stableLoadingNotice(loadedBytes: Int, totalBytes: Int) -> String {
+        "Showing the first \(formattedBytes(loadedBytes)) of \(formattedBytes(totalBytes)) in the viewer for stability. Use Share to export the full captured body."
     }
 }

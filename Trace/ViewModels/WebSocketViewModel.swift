@@ -17,6 +17,8 @@ final class WebSocketViewModel: ObservableObject {
     private let storage = AppGroupStorage.shared
     private var loadTask: Task<Void, Never>?
     private var storageObserverToken: AppGroupStorageObserverToken?
+    private var isSceneActive = true
+    private var hasPendingRefresh = false
 
     @Published var connections: [WebSocketConnection] = [] {
         didSet {
@@ -34,7 +36,7 @@ final class WebSocketViewModel: ObservableObject {
         // Observe new WebSocket connections from Network Extension
         storageObserverToken = storage.observeNewWebSockets { [weak self] in
             Task { @MainActor [weak self] in
-                self?.scheduleLoad()
+                self?.handleObservedConnectionChange()
             }
         }
     }
@@ -50,6 +52,29 @@ final class WebSocketViewModel: ObservableObject {
         loadTask = Task { [weak self] in
             await self?.loadConnections()
         }
+    }
+
+    func setSceneActive(_ isActive: Bool) {
+        guard isSceneActive != isActive else { return }
+        isSceneActive = isActive
+
+        guard isActive else {
+            loadTask?.cancel()
+            return
+        }
+
+        if hasPendingRefresh {
+            hasPendingRefresh = false
+            scheduleLoad()
+        }
+    }
+
+    private func handleObservedConnectionChange() {
+        guard isSceneActive else {
+            hasPendingRefresh = true
+            return
+        }
+        scheduleLoad()
     }
 
     func loadConnections() async {

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ImageIO
 import SwiftUI
 import UIKit
 
@@ -63,6 +64,7 @@ public struct BodyInspectorView: View {
                 metadataRow
                 viewModePicker
                 fileInfoRow
+                viewerNoticeRow
                 contentArea
             }
         }
@@ -163,6 +165,15 @@ public struct BodyInspectorView: View {
     }
 
     @ViewBuilder
+    private var viewerNoticeRow: some View {
+        if let viewerNotice {
+            Label(viewerNotice, systemImage: "info.circle")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
     private var contentArea: some View {
         switch viewMode {
         case .text:
@@ -190,7 +201,7 @@ public struct BodyInspectorView: View {
 
     @ViewBuilder
     private var autoContentView: some View {
-        switch detectedContentType {
+        switch effectiveDetectedContentType {
         case .json:
             JSONViewerView(jsonString: content)
                 .frame(minHeight: 200)
@@ -249,7 +260,7 @@ public struct BodyInspectorView: View {
                 .background(DesignSystem.Colors.surface)
                 .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
         } else if let imageData = imageDataFromContent,
-                  let uiImage = UIImage(data: imageData) {
+                  let uiImage = downsampledImage(from: imageData) {
             Button {
                 previewImageItem = PreviewImageItem(
                     data: imageData,
@@ -311,7 +322,7 @@ public struct BodyInspectorView: View {
     private var fullViewerSheet: some View {
         NavigationStack {
             Group {
-                switch detectedContentType {
+                switch effectiveDetectedContentType {
                 case .json:
                     JSONViewerView(jsonString: content)
                 case .html:
@@ -332,7 +343,7 @@ public struct BodyInspectorView: View {
                     }
                 }
             }
-            .navigationTitle(detectedContentType?.displayName ?? "Body")
+            .navigationTitle(effectiveDetectedContentType?.displayName ?? "Body")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -387,7 +398,7 @@ public struct BodyInspectorView: View {
     }
 
     private var showsFullScreenOption: Bool {
-        guard let type = detectedContentType else { return false }
+        guard let type = effectiveDetectedContentType else { return false }
         switch type {
         case .plainText, .binary:
             return false
@@ -496,6 +507,30 @@ public struct BodyInspectorView: View {
         return nil
     }
 
+    private var effectiveDetectedContentType: DetectedContentType? {
+        guard let detectedContentType else { return nil }
+        if shouldUseLightweightRenderer {
+            return .plainText
+        }
+        return detectedContentType
+    }
+
+    private var viewerNotice: String? {
+        guard shouldUseLightweightRenderer else { return nil }
+        return "Showing a lightweight text view because this body is too large for structured rendering."
+    }
+
+    private var shouldUseLightweightRenderer: Bool {
+        BodyViewerPolicy.shouldPreferLightweightRenderer(
+            contentType: contentType,
+            byteCount: viewerByteCount
+        )
+    }
+
+    private var viewerByteCount: Int {
+        rawData?.count ?? content.utf8.count
+    }
+
     private var hexRepresentation: String {
         let data: Data? = rawData ?? content.data(using: .utf8)
         guard let data else { return "" }
@@ -524,13 +559,13 @@ public struct BodyInspectorView: View {
 
     private var imageFromContent: UIImage? {
         if let rawData {
-            return UIImage(data: rawData)
+            return downsampledImage(from: rawData)
         }
         if let data = Data(base64Encoded: content) {
-            return UIImage(data: data)
+            return downsampledImage(from: data)
         }
         if let data = content.data(using: .utf8) {
-            return UIImage(data: data)
+            return downsampledImage(from: data)
         }
         return nil
     }
@@ -547,6 +582,26 @@ public struct BodyInspectorView: View {
 
     private var svgData: Data? {
         SVGPreviewHelper.svgData(from: content, contentType: contentType)
+    }
+
+    private func downsampledImage(from data: Data) -> UIImage? {
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let imageSource = CGImageSourceCreateWithData(data as CFData, options) else {
+            return UIImage(data: data)
+        }
+
+        let downsampleOptions = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: false,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: BodyViewerPolicy.imageThumbnailMaxPixelSize
+        ] as CFDictionary
+
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, downsampleOptions) else {
+            return UIImage(data: data)
+        }
+
+        return UIImage(cgImage: cgImage)
     }
 
     private struct PreviewImageItem: Identifiable {
