@@ -261,6 +261,7 @@ struct VPNSetupPageView: View {
                 .font(.system(size: DesignSystem.IconSize.hero))
                 .foregroundStyle(vpnStatusColor)
                 .traceBounceSymbolEffectIfAvailable()
+                .animation(DesignSystem.Accessibility.springAnimation, value: vpnStatusIcon)
                 .padding(.bottom, DesignSystem.Spacing.lg)
 
             Text("Enable VPN")
@@ -276,22 +277,24 @@ struct VPNSetupPageView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             // Status indicator
-            if vpnManager.isSimulator {
-                Label("VPN not available in Simulator", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .padding(.top, DesignSystem.Spacing.md)
-            } else if setupComplete || vpnManager.status != .invalid {
-                Label("VPN Configuration Added", systemImage: "checkmark.circle.fill")
-                    .font(.headline)
-                    .foregroundStyle(DesignSystem.Colors.success)
-                    .padding(.top, DesignSystem.Spacing.md)
-            } else if let error = setupError {
-                Label(error, systemImage: "exclamationmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(DesignSystem.Colors.danger)
-                    .padding(.top, DesignSystem.Spacing.md)
+            Group {
+                if vpnManager.isSimulator {
+                    Label("VPN not available in Simulator", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(DesignSystem.Colors.warning)
+                } else if setupComplete || vpnManager.status != .invalid {
+                    Label("VPN Configuration Added", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(DesignSystem.Colors.success)
+                } else if let error = setupError {
+                    Label(error, systemImage: "exclamationmark.circle.fill")
+                        .foregroundStyle(DesignSystem.Colors.danger)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
+            .font(.headline)
+            .padding(.top, DesignSystem.Spacing.md)
+            .padding(.horizontal, DesignSystem.Spacing.xxxl)
+            .transition(DesignSystem.Accessibility.transition(standard: .opacity.combined(with: .scale(scale: 0.95))))
 
             // Enable VPN button
             if !vpnManager.isSimulator && !setupComplete && vpnManager.status == .invalid {
@@ -317,7 +320,9 @@ struct VPNSetupPageView: View {
         }
         .onReceive(vpnManager.$status) { status in
             if status != .invalid {
-                setupComplete = true
+                withAnimation(DesignSystem.Accessibility.springAnimation) {
+                    setupComplete = true
+                }
             }
         }
     }
@@ -348,12 +353,18 @@ struct VPNSetupPageView: View {
                 // This will trigger the system prompt "Would Like to Add VPN Configurations"
                 try await vpnManager.requestVPNPermission()
                 await MainActor.run {
-                    setupComplete = true
-                    setupError = nil
+                    withAnimation(DesignSystem.Accessibility.springAnimation) {
+                        setupComplete = true
+                        setupError = nil
+                    }
+                    DesignSystem.Haptics.success()
                 }
             } catch {
                 await MainActor.run {
-                    setupError = error.localizedDescription
+                    withAnimation(DesignSystem.Accessibility.springAnimation) {
+                        setupError = error.localizedDescription
+                    }
+                    DesignSystem.Haptics.error()
                 }
             }
         }
