@@ -142,6 +142,8 @@ struct SSEDetailView: View {
         }
         .sheet(item: $selectedEvent) { event in
             SSEEventDetailView(event: event)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showingFilters) {
             SSEEventFiltersView(
@@ -150,6 +152,8 @@ struct SSEDetailView: View {
                 hasActiveFilters: hasActiveFilters,
                 onClear: clearFilters
             )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .task(id: connection.id) {
             await loadReplayRecords()

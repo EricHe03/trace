@@ -75,9 +75,13 @@ public struct BodyInspectorView: View {
                 contentType: item.contentType,
                 title: item.title
             )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showingFullViewer) {
             fullViewerSheet
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
     }
 

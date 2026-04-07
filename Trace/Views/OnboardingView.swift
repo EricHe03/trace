@@ -91,6 +91,8 @@ struct OnboardingView: View {
                         }
                     }
             }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .onAppear {
             refreshCertificateTrustStatus()

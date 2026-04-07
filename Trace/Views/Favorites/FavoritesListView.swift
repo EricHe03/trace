@@ -82,6 +82,8 @@ struct FavoritesListView: View {
         }
         .sheet(item: $editingFavorite) { favorite in
             FavoriteEditorView(favorite: favorite)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .toast(message: $toastMessage)
         .alert("Clear All Favorites", isPresented: $showingClearAllAlert) {

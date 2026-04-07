@@ -50,10 +50,9 @@ struct OverviewSection: View {
                     Divider()
                     HStack {
                         VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
-                            Text("STREAM TYPE")
+                            Text("Stream Type")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                                .textCase(.uppercase)
 
                             Text("Server-Sent Events (SSE)")
                                 .font(.body)
@@ -91,10 +90,9 @@ struct OverviewSection: View {
             if !request.redirectChain.isEmpty {
                 SectionCard(title: request.redirectChain.count > 1 ? "Redirects" : "Redirect") {
                     VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
-                        Text("LOCATION")
+                        Text("Location")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .textCase(.uppercase)
 
                         ForEach(request.redirectChain) { redirect in
                             HStack(alignment: .top, spacing: DesignSystem.Spacing.xs) {
@@ -118,10 +116,9 @@ struct OverviewSection: View {
                       let locationURL = request.responseHeaders.first(where: { $0.key.lowercased() == "location" })?.value {
                 SectionCard(title: "Redirect") {
                     VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
-                        Text("LOCATION")
+                        Text("Location")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .textCase(.uppercase)
 
                         Text(locationURL)
                             .font(.body)
@@ -320,10 +317,9 @@ struct OverviewSection: View {
             InfoRow(label: "Authorization", value: maskAuthorizationHeader(authorization))
         case let .queryParameters(queryParams):
             VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
-                Text("QUERY PARAMETERS")
+                Text("Query Parameters")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
 
                 ForEach(queryParams, id: \.name) { param in
                     HStack(alignment: .top) {
@@ -341,10 +337,9 @@ struct OverviewSection: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         case let .requestCookies(cookies):
             VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
-                Text("REQUEST COOKIES")
+                Text("Request Cookies")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
 
                 Text("\(cookies.count) cookie(s)")
                     .font(.body)
@@ -353,10 +348,9 @@ struct OverviewSection: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         case let .responseCookies(cookies):
             VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
-                Text("SET-COOKIE")
+                Text("Set-Cookie")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
 
                 ForEach(cookies) { cookie in
                     VStack(alignment: .leading, spacing: 2) {
@@ -434,10 +428,9 @@ struct StackTraceView: View {
                     .font(.caption)
                     .foregroundStyle(DesignSystem.Colors.accent)
 
-                Text("REQUEST INITIATED BY")
+                Text("Request Initiated By")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
                     .fontWeight(.semibold)
 
                 Spacer()

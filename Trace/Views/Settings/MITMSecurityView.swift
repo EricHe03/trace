@@ -18,6 +18,7 @@ struct MITMSecurityView: View {
 
     @State private var isLoading = true
     @State private var toastMessage: String?
+    @State private var showingResetConfirmation = false
 
     @ObservedObject private var vpnManager = VPNManager.shared
 
@@ -42,7 +43,7 @@ struct MITMSecurityView: View {
             } header: {
                 Text("QUIC Protocol")
             } footer: {
-                Text("`Intercept` attempts QUIC/HTTP3 interception, `Pass Through` keeps connectivity and marks flow state, and `Block` drops QUIC (UDP/443).")
+                Text("\"Intercept\" attempts QUIC/HTTP3 interception, \"Pass Through\" keeps connectivity and marks flow state, and \"Block\" drops QUIC (UDP/443).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -57,7 +58,7 @@ struct MITMSecurityView: View {
 
             Section {
                 Button("Reset to Defaults", role: .destructive) {
-                    resetToDefaults()
+                    showingResetConfirmation = true
                 }
             }
         }
@@ -67,6 +68,18 @@ struct MITMSecurityView: View {
         .onChangeCompat(of: mitmAllowlist) { persistHardeningConfig() }
         .onChangeCompat(of: quicHandlingMode) { persistHardeningConfig() }
         .toast(message: $toastMessage)
+        .confirmationDialog(
+            "Reset to Defaults",
+            isPresented: $showingResetConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Reset", role: .destructive) {
+                resetToDefaults()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("MITM allowlist and QUIC settings will be restored to their default values.")
+        }
     }
 
     private var isAllowlistEffectivelyEmpty: Bool {

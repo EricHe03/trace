@@ -55,17 +55,25 @@ struct NetworkView: View {
         contentStack
             .sheet(isPresented: $showingFilters) {
                 FiltersView(viewModel: viewModel)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingRequestBuilder) {
                 RequestBuilderView()
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingFavorites) {
                 NavigationStack {
                     FavoritesListView()
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingCurlImport) {
                 curlImportView
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .shareSheet(item: $shareSheetItem)
             .modifier(RequestNavigationDestinationModifier(requestToOpen: $requestToOpen))

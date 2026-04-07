@@ -116,6 +116,8 @@ struct BreakpointEditorView: View {
                     headers.append(TraceHTTPHeader(key: key, value: value))
                     syncRawMessageFromDraft()
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .alert("Invalid Breakpoint Edit", isPresented: validationErrorBinding) {
                 Button("OK", role: .cancel) {}
@@ -743,11 +745,15 @@ struct BreakpointConfigView: View {
                         await handleBreakpointAction(requestId: request.id, action: action, modifications: modifications)
                     }
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingConditionEditor) {
                 BreakpointConditionEditorView { condition in
                     updateConfig { $0.conditions.append(condition) }
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
         }
     }

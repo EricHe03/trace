@@ -140,12 +140,16 @@ struct RewriteRulesView: View {
                     rewriteManager.addRule(newRule)
                     showToast(message: "Rule added")
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
             .sheet(item: $editingRule) { rule in
                 RewriteRuleEditorView(rule: rule) { updatedRule in
                     rewriteManager.updateRule(updatedRule)
                     showToast(message: "Rule updated")
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
             .fileImporter(isPresented: $showingImport, allowedContentTypes: [.json]) { result in
                 handleImport(result)

@@ -213,6 +213,8 @@ struct RequestMapEditorView: View {
                 HeaderEditorView { key, value in
                     headers.append(TraceHTTPHeader(key: key, value: value))
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
         }
         .toast(message: $toastMessage)

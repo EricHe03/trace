@@ -91,6 +91,8 @@ struct UDPFlowsView: View {
             NavigationStack {
                 UDPFlowFiltersView(viewModel: viewModel)
             }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .shareSheet(item: $shareSheetItem)
         .confirmationDialog("Export UDP Flows", isPresented: $showingExport, titleVisibility: .visible) {

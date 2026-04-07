@@ -76,6 +76,8 @@ struct WebSocketListView: View {
             }
             .sheet(isPresented: $showingFilters) {
                 WebSocketFiltersView(viewModel: viewModel)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .alert("Clear All WebSocket Connections", isPresented: $showingClearAllAlert) {
                 Button("Cancel", role: .cancel) {}

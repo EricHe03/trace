@@ -100,6 +100,8 @@ struct ConnectionDetailView: View {
                     }
                 }
             }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .overlay {
             if viewModel.isLoading {

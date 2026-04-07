@@ -164,9 +164,13 @@ struct HostsListView: View {
             .searchable(text: $searchText, prompt: "Search hosts")
             .sheet(isPresented: $showingAddEntry) {
                 HostEditorView(entry: nil)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(item: $editingEntry) { entry in
                 HostEditorView(entry: entry)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
             .fileImporter(
                 isPresented: $showingImport,

@@ -144,18 +144,24 @@ struct ScriptListView: View {
                     scriptManager.addScript(newScript)
                     showToast(message: "Script added")
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
             .sheet(item: $editingScript) { script in
                 ScriptEditorView(script: script) { updatedScript in
                     scriptManager.updateScript(updatedScript)
                     showToast(message: "Script updated")
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingTemplates) {
                 ScriptTemplatesView { template in
                     scriptManager.loadTemplate(template)
                     showToast(message: "Template loaded")
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .fileImporter(isPresented: $showingImport, allowedContentTypes: [.json]) { result in
                 handleImport(result)

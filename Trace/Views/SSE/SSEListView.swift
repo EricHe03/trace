@@ -76,6 +76,8 @@ struct SSEListView: View {
             }
             .sheet(isPresented: $showingFilters) {
                 SSEFiltersView(viewModel: viewModel)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .alert("Clear All SSE Connections", isPresented: $showingClearAllAlert) {
                 Button("Cancel", role: .cancel) {}

@@ -14,6 +14,7 @@ struct AdvancedSettingsView: View {
     @State private var samplingConfig: SamplingConfig = .default
     @State private var toastMessage: String?
     @State private var isLoading = true
+    @State private var showingResetConfirmation = false
 
     var body: some View {
         Form {
@@ -78,7 +79,7 @@ struct AdvancedSettingsView: View {
 
             Section {
                 Button("Reset to Defaults", role: .destructive) {
-                    resetToDefaults()
+                    showingResetConfirmation = true
                 }
             }
         }
@@ -90,6 +91,18 @@ struct AdvancedSettingsView: View {
         .onChangeCompat(of: bodyStorageConfig) { persistBodyStorageConfig() }
         .onChangeCompat(of: samplingConfig) { persistSamplingConfig() }
         .toast(message: $toastMessage)
+        .confirmationDialog(
+            "Reset to Defaults",
+            isPresented: $showingResetConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Reset", role: .destructive) {
+                resetToDefaults()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("All advanced settings will be restored to their default values.")
+        }
     }
 
     private func loadSettings() async {

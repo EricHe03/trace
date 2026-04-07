@@ -146,6 +146,8 @@ struct WebSocketDetailView: View {
         }
         .sheet(item: $selectedMessage) { message in
             WebSocketMessageDetailView(message: message)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showingFilters) {
             WebSocketMessageFiltersView(
@@ -154,6 +156,8 @@ struct WebSocketDetailView: View {
                 hasActiveFilters: hasActiveFilters,
                 onClear: clearFilters
             )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .task(id: connection.id) {
             await loadReplayRecords()

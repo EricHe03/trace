@@ -59,9 +59,13 @@ struct DNSListView: View {
             .searchable(text: $viewModel.searchText, prompt: "Search domains, IPs...")
             .sheet(isPresented: $showingFilters) {
                 DNSFilterView(viewModel: viewModel)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingExport) {
                 DNSExportView(viewModel: viewModel)
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
             }
             .alert("Clear All DNS Queries", isPresented: $showingClearAllAlert) {
                 Button("Cancel", role: .cancel) {}

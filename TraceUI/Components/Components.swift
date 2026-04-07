@@ -89,7 +89,6 @@ public struct InfoRow: View {
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .textCase(.uppercase)
 
             Text(value)
                 .font(.body)
@@ -103,7 +102,7 @@ public struct InfoRow: View {
 
 // MARK: - Section Header
 
-/// Represents an uppercased, lightweight header for grouping related fields.
+/// Represents a lightweight header for grouping related fields.
 public struct SectionHeader: View {
     public let title: String
 
@@ -112,7 +111,6 @@ public struct SectionHeader: View {
             .font(.caption)
             .fontWeight(.semibold)
             .foregroundStyle(.secondary)
-            .textCase(.uppercase)
             .accessibilityAddTraits(.isHeader)
     }
 }

@@ -152,12 +152,16 @@ struct RequestMapView: View {
                     mapManager.addMap(newMap)
                     showToast(message: "Map added")
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
             .sheet(item: $editingMap) { map in
                 RequestMapEditorView(map: map) { updatedMap in
                     mapManager.updateMap(updatedMap)
                     showToast(message: "Map updated")
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
             .fileImporter(isPresented: $showingImport, allowedContentTypes: [.json]) { result in
                 handleImport(result)

@@ -55,6 +55,7 @@ struct RootTabView: View {
                 .accessibilityLabel("Settings tab")
                 .accessibilityHint("Configure app settings and preferences")
         }
+        .modifier(SidebarAdaptableModifier())
         .onAppear {
             checkOnboarding()
             startObservingBreakpointChanges()
@@ -102,6 +103,8 @@ struct RootTabView: View {
         }
         .sheet(isPresented: $showingBreakpointInspector) {
             BreakpointConfigView(autoPresentLatestPausedRequest: true)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
         .onDisappear {
             breakpointObserverToken?.cancel()
@@ -488,6 +491,18 @@ struct SettingsTabView: View {
                     }
                 }
             }
+        }
+    }
+}
+
+// MARK: - SidebarAdaptableModifier
+
+private struct SidebarAdaptableModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.tabViewStyle(.sidebarAdaptable)
+        } else {
+            content
         }
     }
 }

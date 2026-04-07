@@ -60,7 +60,7 @@ struct DNSExportView: View {
             .padding(40)
             .navigationTitle("Export DNS Data")
         }
-        .frame(maxWidth: 400, maxHeight: 300)
+        .frame(maxWidth: 520)
         .fileExporter(
             isPresented: $showingExporter,
             document: ExportDocument(data: exportData ?? Data(), format: exportFormat),

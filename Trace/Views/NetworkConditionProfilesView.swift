@@ -208,6 +208,8 @@ struct NetworkConditionProfilesView: View {
                     )
                     showingCustomThrottling = false
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
         }
     }
