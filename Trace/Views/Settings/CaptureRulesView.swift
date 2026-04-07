@@ -81,6 +81,7 @@ struct CaptureRulesView: View {
         .onChangeCompat(of: config.filterMode) { scheduleSave() }
         .onChangeCompat(of: config.domainFilters) { scheduleSave() }
         .toast(message: $toastMessage)
+        .dismissKeyboardOnTapAndScroll()
         .confirmationDialog(
             "Reset to Defaults",
             isPresented: $showingResetConfirmation,

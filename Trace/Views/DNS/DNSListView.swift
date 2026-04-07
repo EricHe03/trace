@@ -32,6 +32,13 @@ struct DNSListView: View {
                     ForEach(viewModel.messages, id: \.id) { message in
                         DNSMessageRow(message: message)
                             .tag(message.id)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    viewModel.deleteMessage(message)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                             .contextMenu {
                                 messageContextMenu(for: message)
                             }
@@ -46,13 +53,14 @@ struct DNSListView: View {
                     if viewModel.messages.isEmpty {
                         TraceContentUnavailableView(
                             viewModel.searchText.isEmpty ? "No DNS Queries" : "No Results",
-                            systemImage: viewModel.searchText.isEmpty ? "network" : "magnifyingglass",
+                            systemImage: viewModel.searchText.isEmpty ? "network.slash" : "magnifyingglass",
                             description: Text(viewModel.searchText.isEmpty ? "DNS queries will appear here as they're captured" : "Try adjusting your search or filters")
                         )
                     }
                 }
             }
             .navigationTitle("DNS Queries")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 toolbarContent
             }
@@ -136,28 +144,37 @@ struct DNSListView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup {
+        ToolbarItem(placement: .topBarLeading) {
             Button {
                 showingFilters.toggle()
             } label: {
                 Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
             }
-            .help("Filter DNS messages")
+            .accessibilityLabel("Filters")
+            .accessibilityHint("Double tap to filter DNS messages")
+        }
 
-            Button {
-                showingExport.toggle()
-            } label: {
-                Label("Export", systemImage: "square.and.arrow.up")
-            }
-            .help("Export DNS data")
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu {
+                Button {
+                    showingExport.toggle()
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
 
-            Button(role: .destructive) {
-                showingClearAllAlert = true
+                Divider()
+
+                Button(role: .destructive) {
+                    showingClearAllAlert = true
+                } label: {
+                    Label("Clear All", systemImage: "trash")
+                }
+                .disabled(viewModel.messages.isEmpty)
             } label: {
-                Label("Clear All", systemImage: "trash")
+                Label("More", systemImage: "ellipsis.circle")
             }
-            .disabled(viewModel.messages.isEmpty)
-            .help("Clear all DNS messages")
+            .accessibilityLabel("More options")
+            .accessibilityHint("Double tap to export or clear DNS messages")
         }
     }
 

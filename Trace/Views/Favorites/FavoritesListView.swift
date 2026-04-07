@@ -74,7 +74,7 @@ struct FavoritesListView: View {
                     }
                     .disabled(favoritesManager.favorites.isEmpty)
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Label("More", systemImage: "ellipsis.circle")
                 }
                 .accessibilityLabel("More options")
                 .accessibilityHint("Double tap to clear all favorites")

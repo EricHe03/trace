@@ -95,7 +95,7 @@ struct HostsListView: View {
                                     } label: {
                                         Label(
                                             entry.enabled ? "Disable" : "Enable",
-                                            systemImage: entry.enabled ? "pause.circle" : "play.circle"
+                                            systemImage: entry.enabled ? "circle.slash" : "checkmark.circle"
                                         )
                                         .foregroundStyle(.white)
                                     }
@@ -111,6 +111,7 @@ struct HostsListView: View {
             }
             .listStyle(.plain)
             .navigationTitle("Hosts")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {

@@ -61,30 +61,38 @@ struct UDPFlowsView: View {
         .navigationTitle("UDP Flows")
         .searchable(text: $viewModel.searchText, prompt: "Search IP, port, protocol")
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItem(placement: .topBarLeading) {
                 Button {
                     showingFilters = true
                 } label: {
                     Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
                 }
+                .accessibilityLabel("Filters")
+                .accessibilityHint("Double tap to configure UDP flow filters")
             }
 
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showingExport = true
-                } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                }
-                .disabled(viewModel.filteredFlows.isEmpty)
-            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        showingExport = true
+                    } label: {
+                        Label("Export", systemImage: "square.and.arrow.up")
+                    }
+                    .disabled(viewModel.filteredFlows.isEmpty)
 
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(role: .destructive) {
-                    showingClearAllAlert = true
+                    Divider()
+
+                    Button(role: .destructive) {
+                        showingClearAllAlert = true
+                    } label: {
+                        Label("Clear All", systemImage: "trash")
+                    }
+                    .disabled(viewModel.flows.isEmpty)
                 } label: {
-                    Label("Clear", systemImage: "trash")
+                    Label("More", systemImage: "ellipsis.circle")
                 }
-                .disabled(viewModel.flows.isEmpty)
+                .accessibilityLabel("More options")
+                .accessibilityHint("Double tap to export or clear UDP flows")
             }
         }
         .sheet(isPresented: $showingFilters) {

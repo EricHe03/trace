@@ -182,6 +182,7 @@ struct NetworkView: View {
             Color.clear.frame(height: 100)
         }
         .navigationTitle("Network")
+        .navigationBarTitleDisplayMode(.large)
         .searchable(
             text: $viewModel.searchText,
             prompt: "Search URL, headers, or body"

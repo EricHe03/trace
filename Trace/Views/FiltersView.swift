@@ -389,6 +389,7 @@ struct FiltersView: View {
                     }
                 }
                 .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
             }
         }
     }

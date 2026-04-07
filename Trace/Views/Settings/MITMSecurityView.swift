@@ -68,6 +68,7 @@ struct MITMSecurityView: View {
         .onChangeCompat(of: mitmAllowlist) { persistHardeningConfig() }
         .onChangeCompat(of: quicHandlingMode) { persistHardeningConfig() }
         .toast(message: $toastMessage)
+        .dismissKeyboardOnTapAndScroll()
         .confirmationDialog(
             "Reset to Defaults",
             isPresented: $showingResetConfirmation,

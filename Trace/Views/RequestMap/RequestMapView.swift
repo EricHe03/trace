@@ -102,7 +102,7 @@ struct RequestMapView: View {
                                     } label: {
                                         Label(
                                             map.enabled ? "Disable" : "Enable",
-                                            systemImage: map.enabled ? "pause.circle" : "play.circle"
+                                            systemImage: map.enabled ? "circle.slash" : "checkmark.circle"
                                         )
                                         .foregroundStyle(.white)
                                     }
@@ -118,6 +118,7 @@ struct RequestMapView: View {
             }
             .listStyle(.plain)
             .navigationTitle("Request Mapping")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {

@@ -83,7 +83,7 @@ struct ScriptListView: View {
                                     } label: {
                                         Label(
                                             script.enabled ? "Disable" : "Enable",
-                                            systemImage: script.enabled ? "pause.circle" : "play.circle"
+                                            systemImage: script.enabled ? "circle.slash" : "checkmark.circle"
                                         )
                                         .foregroundStyle(.white)
                                     }
@@ -102,6 +102,7 @@ struct ScriptListView: View {
             }
             .listStyle(.plain)
             .navigationTitle("Scripts")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {

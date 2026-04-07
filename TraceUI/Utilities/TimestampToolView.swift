@@ -125,7 +125,7 @@ public struct TimestampToolView: View {
                     }
 
                     TextEditor(text: $isoDateTime)
-                        .frame(minHeight: 88)
+                        .frame(minHeight: DesignSystem.Form.textEditorMinHeight)
                         .font(DesignSystem.Typography.monospacedFont)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()

@@ -29,10 +29,18 @@ struct WebSocketListView: View {
                             Label("Delete", systemImage: "trash")
                         }
                     }
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            viewModel.deleteConnection(connection)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
                 }
             }
             .listStyle(.insetGrouped)
             .navigationTitle("WebSocket Connections")
+            .navigationBarTitleDisplayMode(.large)
             .searchable(
                 text: $viewModel.searchText,
                 prompt: "Search connections"
@@ -51,18 +59,14 @@ struct WebSocketListView: View {
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button(role: .destructive) {
-                            showingClearAllAlert = true
-                        } label: {
-                            Label("Clear All", systemImage: "trash")
-                        }
-                        .disabled(viewModel.connections.isEmpty)
+                    Button(role: .destructive) {
+                        showingClearAllAlert = true
                     } label: {
-                        Label("More", systemImage: "ellipsis.circle")
+                        Label("Clear All", systemImage: "trash")
                     }
-                    .accessibilityLabel("More options")
-                    .accessibilityHint("Double tap to clear all WebSocket connections")
+                    .disabled(viewModel.connections.isEmpty)
+                    .accessibilityLabel("Clear all WebSocket connections")
+                    .accessibilityHint("Double tap to clear all captured WebSocket connections")
                 }
             }
             .overlay {

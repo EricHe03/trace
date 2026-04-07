@@ -30,10 +30,10 @@ struct NetworkConditionProfilesView: View {
                     if viewModel.throttlingEnabled {
                         HStack {
                             Image(systemName: "info.circle")
-                                .foregroundColor(DesignSystem.Colors.accent)
+                                .foregroundStyle(DesignSystem.Colors.accent)
                             Text("Simulates network conditions for testing")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 } header: {
@@ -64,31 +64,31 @@ struct NetworkConditionProfilesView: View {
                                 HStack(spacing: DesignSystem.Spacing.md) {
                                     Image(systemName: condition.icon)
                                         .font(.title3)
-                                        .foregroundColor(DesignSystem.Colors.accent)
+                                        .foregroundStyle(DesignSystem.Colors.accent)
                                         .frame(width: 30)
 
                                     VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
                                         Text(condition.displayName)
                                             .font(.headline)
-                                            .foregroundColor(.primary)
+                                            .foregroundStyle(.primary)
 
                                         HStack(spacing: DesignSystem.Spacing.sm) {
                                             Label("\(condition.downloadSpeed) KB/s", systemImage: "arrow.down.circle.fill")
                                                 .font(.caption)
-                                                .foregroundColor(DesignSystem.Colors.success)
+                                                .foregroundStyle(DesignSystem.Colors.success)
 
                                             Label("\(condition.uploadSpeed) KB/s", systemImage: "arrow.up.circle.fill")
                                                 .font(.caption)
-                                                .foregroundColor(DesignSystem.Colors.warning)
+                                                .foregroundStyle(DesignSystem.Colors.warning)
 
                                             Label("\(condition.latency)ms", systemImage: "clock.fill")
                                                 .font(.caption)
-                                                .foregroundColor(DesignSystem.Colors.accentAlt)
+                                                .foregroundStyle(DesignSystem.Colors.accentAlt)
 
                                             if condition.packetLoss > 0 {
                                                 Label(String(format: "%.1f%%", condition.packetLoss * 100), systemImage: "exclamationmark.triangle.fill")
                                                     .font(.caption)
-                                                    .foregroundColor(DesignSystem.Colors.danger)
+                                                    .foregroundStyle(DesignSystem.Colors.danger)
                                             }
                                         }
                                     }
@@ -97,13 +97,15 @@ struct NetworkConditionProfilesView: View {
 
                                     if viewModel.selectedNetworkCondition == condition {
                                         Image(systemName: "checkmark.circle.fill")
-                                            .foregroundColor(DesignSystem.Colors.accent)
+                                            .foregroundStyle(DesignSystem.Colors.accent)
                                             .font(.title3)
                                     }
                                 }
                                 .padding(.vertical, DesignSystem.Spacing.md)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("\(condition.displayName) network condition. Download \(condition.downloadSpeed) KB/s, Upload \(condition.uploadSpeed) KB/s, Latency \(condition.latency)ms\(condition.packetLoss > 0 ? ", Packet loss \(String(format: "%.1f%%", condition.packetLoss * 100))" : "")")
+                            .accessibilityAddTraits(viewModel.selectedNetworkCondition == condition ? [.isSelected] : [])
                         }
 
                         // Custom Throttling
@@ -113,38 +115,38 @@ struct NetworkConditionProfilesView: View {
                             HStack(spacing: DesignSystem.Spacing.md) {
                                 Image(systemName: "slider.horizontal.3")
                                     .font(.title3)
-                                    .foregroundColor(DesignSystem.Colors.accent)
+                                    .foregroundStyle(DesignSystem.Colors.accent)
                                     .frame(width: 30)
 
                                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
                                     Text("Custom")
                                         .font(.headline)
-                                        .foregroundColor(.primary)
+                                        .foregroundStyle(.primary)
 
                                     if case let .custom(down, up, lat, loss) = viewModel.selectedNetworkCondition {
                                         HStack(spacing: DesignSystem.Spacing.sm) {
                                             Label("\(down) KB/s", systemImage: "arrow.down.circle.fill")
                                                 .font(.caption)
-                                                .foregroundColor(DesignSystem.Colors.success)
+                                                .foregroundStyle(DesignSystem.Colors.success)
 
                                             Label("\(up) KB/s", systemImage: "arrow.up.circle.fill")
                                                 .font(.caption)
-                                                .foregroundColor(DesignSystem.Colors.warning)
+                                                .foregroundStyle(DesignSystem.Colors.warning)
 
                                             Label("\(lat)ms", systemImage: "clock.fill")
                                                 .font(.caption)
-                                                .foregroundColor(DesignSystem.Colors.accentAlt)
+                                                .foregroundStyle(DesignSystem.Colors.accentAlt)
 
                                             if loss > 0 {
                                                 Label(String(format: "%.1f%%", loss * 100), systemImage: "exclamationmark.triangle.fill")
                                                     .font(.caption)
-                                                    .foregroundColor(DesignSystem.Colors.danger)
+                                                    .foregroundStyle(DesignSystem.Colors.danger)
                                             }
                                         }
                                     } else {
                                         Text("Configure custom network settings")
                                             .font(.caption)
-                                            .foregroundColor(.secondary)
+                                            .foregroundStyle(.secondary)
                                     }
                                 }
 
@@ -152,13 +154,14 @@ struct NetworkConditionProfilesView: View {
 
                                 if case .custom = viewModel.selectedNetworkCondition {
                                     Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(DesignSystem.Colors.accent)
+                                        .foregroundStyle(DesignSystem.Colors.accent)
                                         .font(.title3)
                                 }
                             }
                             .padding(.vertical, DesignSystem.Spacing.md)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Custom network condition. Configure custom network settings.")
                     } header: {
                         Text("Network Conditions")
                     } footer: {
@@ -305,7 +308,7 @@ struct CustomThrottlingSheet: View {
                         Image(systemName: "info.circle")
                         Text(profileDescription)
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                     }
                 } header: {
                     Text("Profile Simulation")

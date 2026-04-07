@@ -83,7 +83,7 @@ struct RewriteRulesView: View {
                                     } label: {
                                         Label(
                                             rule.enabled ? "Disable" : "Enable",
-                                            systemImage: rule.enabled ? "pause.circle" : "play.circle"
+                                            systemImage: rule.enabled ? "circle.slash" : "checkmark.circle"
                                         )
                                         .foregroundStyle(.white)
                                     }
@@ -105,6 +105,7 @@ struct RewriteRulesView: View {
             }
             .listStyle(.plain)
             .navigationTitle("Rewrite Rules")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {

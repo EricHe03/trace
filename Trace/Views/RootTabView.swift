@@ -100,6 +100,8 @@ struct RootTabView: View {
                 vpnManager.initializeIfNeeded()
             }
             .interactiveDismissDisabled()
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showingBreakpointInspector) {
             BreakpointConfigView(autoPresentLatestPausedRequest: true)
