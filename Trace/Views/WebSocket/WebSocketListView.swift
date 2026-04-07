@@ -123,7 +123,7 @@ struct WebSocketConnectionRow: View {
                 .lineLimit(2)
 
             HStack {
-                Text(connection.startTime, style: .relative)
+                Text(connection.startTime, style: .time)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
 

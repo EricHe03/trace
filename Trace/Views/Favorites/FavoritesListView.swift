@@ -140,7 +140,7 @@ struct FavoriteRowView: View {
 
                 Spacer()
 
-                Text(favorite.createdAt, style: .relative)
+                Text(favorite.createdAt, style: .time)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

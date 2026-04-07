@@ -252,7 +252,7 @@ struct HostsListView: View {
                 TraceContentUnavailableView(
                     "No Results",
                     systemImage: "magnifyingglass",
-                    description: Text("Try a different search term")
+                    description: Text("Try adjusting your search or filters")
                 )
             }
         }

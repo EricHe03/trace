@@ -282,7 +282,7 @@ struct DNSMessageRow: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text(message.timestamp, style: .relative)
+                Text(message.timestamp, style: .time)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

@@ -372,14 +372,13 @@ private struct UDPFlowFiltersView: View {
             }
 
             Section {
-                Button("Reset Filters") {
+                Button("Reset Filters", role: .destructive) {
                     viewModel.searchText = ""
                     viewModel.activeOnly = false
                     viewModel.selectedProtocol = nil
                     viewModel.portFilter = ""
                     viewModel.sortOrder = .startTimeDescending
                 }
-                .foregroundStyle(.red)
             }
         }
         .navigationTitle("Filters")
