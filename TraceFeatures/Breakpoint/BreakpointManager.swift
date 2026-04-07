@@ -202,7 +202,7 @@ public actor BreakpointManager {
 
     private func waitForResumeAction(
         id: String,
-        userInfo: [AnyHashable: Any]
+        userInfo: [String: String]
     ) async -> BreakpointAction {
         await withCheckedContinuation { continuation in
             continuations[id] = continuation

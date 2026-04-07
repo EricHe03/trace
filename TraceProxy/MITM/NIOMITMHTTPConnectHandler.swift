@@ -94,6 +94,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
     var pendingRequestHead: HTTPRequestHead?
     var pendingRequestBody = ByteBuffer()
     var activeCapturedRequest: NetworkRequest?
+    var queuedTerminalCapturedRequest: NetworkRequest?
     var connectTargetHost: String?
     var connectTargetPort: Int?
     var connectRequestStartTime: Date?
@@ -131,9 +132,15 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
         self.ingressMode = ingressMode
         self.upstreamHint = upstreamHint
         self.usesHTTP2StreamSemantics = usesHTTP2StreamSemantics
-        if case let .tunneledHTTPS(host, port) = ingressMode {
+        switch ingressMode {
+        case let .tunneledHTTPS(host, port):
             connectTargetHost = host
             connectTargetPort = Int(port)
+        case .proxy:
+            if let upstreamHint {
+                connectTargetHost = upstreamHint.host
+                connectTargetPort = Int(upstreamHint.port)
+            }
         }
     }
 

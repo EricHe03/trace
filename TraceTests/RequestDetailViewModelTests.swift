@@ -8,6 +8,7 @@
 import XCTest
 @testable import Trace
 @testable import TraceCore
+@testable import TraceUI
 
 @MainActor
 final class RequestDetailViewModelTests: XCTestCase {
@@ -68,6 +69,29 @@ final class RequestDetailViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.responseBodyText?.count, fullText.count)
         XCTAssertEqual(viewModel.responseBodyText?.prefix(32), fullText.prefix(32))
+        XCTAssertFalse(viewModel.isResponseBodyPreview)
+    }
+
+    func testLoadResponseBodyFullCapsViewerLoadForLargeBodies() async throws {
+        let requestID = UUID()
+        let fullText = String(repeating: "c", count: 800_000)
+        let fullData = Data(fullText.utf8)
+
+        let storedRequest = makeRequest(
+            id: requestID,
+            requestBody: .empty,
+            responseBody: .inline(fullData, charset: "utf-8")
+        )
+        try storage.saveRequest(storedRequest)
+
+        var listRequest = storedRequest
+        listRequest.responseBody = .truncated(Data(fullData.prefix(256)), totalSize: fullData.count, charset: "utf-8")
+
+        let viewModel = RequestDetailViewModel()
+        await viewModel.loadResponseBody(for: listRequest, full: true)
+
+        XCTAssertNotNil(viewModel.responseBodyNotice)
+        XCTAssertEqual(viewModel.responseBodyText?.count, BodyViewerPolicy.expandedPlainTextLoadBytes)
         XCTAssertFalse(viewModel.isResponseBodyPreview)
     }
 

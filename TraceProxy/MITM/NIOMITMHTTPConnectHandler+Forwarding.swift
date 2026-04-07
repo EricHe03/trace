@@ -1123,6 +1123,7 @@ extension NIOMITMHTTPConnectHandler {
         )
         let responseBodyBuffer = byteBuffer(from: responseBodyData, allocator: context.channel.allocator)
 
+        queueTerminalCapturedRequest(request)
         throttle(direction: .download, bytes: responseBodyData.count, context: context) { [weak self] in
             guard let self else { return }
             self.sendHTTPResponse(
@@ -1133,7 +1134,7 @@ extension NIOMITMHTTPConnectHandler {
                 context: context
             ) { [weak self] in
                 guard let self else { return }
-                self.publishCapturedRequest(request)
+                self.publishQueuedTerminalCapturedRequest()
                 if metricsAsParsedResponse {
                     Task {
                         await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
@@ -1162,6 +1163,7 @@ extension NIOMITMHTTPConnectHandler {
         )
         let responseBodyBuffer = byteBuffer(from: bodyData, allocator: context.channel.allocator)
 
+        queueTerminalCapturedRequest(capturedRequest)
         throttle(direction: .download, bytes: bodyData.count, context: context) { [weak self] in
             guard let self else { return }
             self.sendHTTPResponse(
@@ -1172,7 +1174,7 @@ extension NIOMITMHTTPConnectHandler {
                 context: context
             ) { [weak self] in
                 guard let self else { return }
-                self.publishCapturedRequest(capturedRequest)
+                self.publishQueuedTerminalCapturedRequest()
                 if metricsAsParsedResponse {
                     Task {
                         await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
@@ -1362,9 +1364,9 @@ extension NIOMITMHTTPConnectHandler {
                         captureConfig: captureConfig,
                         onRequestCaptured: self.onRequestCaptured
                     )
+                    self.clearActiveCapturedRequest()
                     let endPromise = context.eventLoop.makePromise(of: Void.self)
                     endPromise.futureResult.whenComplete { _ in
-                        self.clearActiveCapturedRequest()
                         if metricsAsParsedResponse {
                             Task {
                                 await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
@@ -1422,10 +1424,11 @@ extension NIOMITMHTTPConnectHandler {
                     storageContentEncoding: responseContentEncoding
                 )
                 NetworkThrottlingController.shared.applyMetadata(to: &capturedRequest)
+                self.queueTerminalCapturedRequest(capturedRequest)
 
                 let endPromise = context.eventLoop.makePromise(of: Void.self)
                 endPromise.futureResult.whenComplete { _ in
-                    self.publishCapturedRequest(capturedRequest)
+                    self.publishQueuedTerminalCapturedRequest()
                     if metricsAsParsedResponse {
                         Task {
                             await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
@@ -1446,11 +1449,34 @@ extension NIOMITMHTTPConnectHandler {
                 terminalStateReached = true
 
                 if let sseCapture {
+                    self.logUpstreamHTTPFailure(
+                        error: error,
+                        methodToken: outboundContext.methodToken,
+                        targetHost: targetHost
+                    )
                     sseCapture.finish(
-                        succeeded: responseHeadSent,
+                        succeeded: false,
                         captureConfig: captureConfig,
                         onRequestCaptured: self.onRequestCaptured
                     )
+                    self.clearActiveCapturedRequest()
+                    if responseHeadSent {
+                        self.state = .closed
+                        context.close(promise: nil)
+                    } else {
+                        self.finalizeActiveRequestAsHTTPFailure(
+                            status: .badGateway,
+                            reason: self.classifyMITMFailure(error)
+                        )
+                        self.sendResponse(
+                            status: .badGateway,
+                            body: "Upstream HTTP request failed",
+                            closeAfterSend: true,
+                            context: context
+                        )
+                        self.state = .closed
+                    }
+                    return
                 }
 
                 self.logUpstreamHTTPFailure(

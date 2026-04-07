@@ -15,6 +15,7 @@ import UniformTypeIdentifiers
 
 struct NetworkView: View {
     @ObservedObject var viewModel: CaptureViewModel
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var webSocketViewModel = WebSocketViewModel()
     @StateObject private var sseViewModel = SSEViewModel()
 
@@ -76,6 +77,12 @@ struct NetworkView: View {
             ))
             .task {
                 await performInitialLoad()
+            }
+            .onAppear {
+                syncRefreshLifecycle(for: scenePhase)
+            }
+            .onChangeCompat(of: scenePhase) { newPhase in
+                syncRefreshLifecycle(for: newPhase)
             }
             .modifier(EventRebuildModifier(
                 viewModel: viewModel,
@@ -268,6 +275,12 @@ struct NetworkView: View {
         FeatureLog.capture.info("event=network_view.load_all_data outcome=complete")
     }
 
+    private func syncRefreshLifecycle(for phase: ScenePhase) {
+        let isActive = phase == .active
+        webSocketViewModel.setSceneActive(isActive)
+        sseViewModel.setSceneActive(isActive)
+    }
+
     // MARK: - Computed Properties
 
     private var filteredEvents: [NetworkEvent] {
@@ -399,8 +412,9 @@ struct NetworkView: View {
 
     @MainActor
     private func rebuildEventCaches() async {
+        let requestFilterSnapshot = viewModel.makeRequestFilterSnapshot()
         let input = EventBuildInput(
-            httpRequests: viewModel.filteredRequests,
+            requestFilterSnapshot: requestFilterSnapshot,
             transportRequests: viewModel.transportRequests,
             webSockets: webSocketViewModel.connections,
             sseConnections: sseViewModel.connections,
@@ -417,7 +431,7 @@ struct NetworkView: View {
     }
 
     private struct EventBuildInput: Sendable {
-        let httpRequests: [NetworkRequest]
+        let requestFilterSnapshot: CaptureViewModel.RequestFilterSnapshot
         let transportRequests: [TransportRequest]
         let webSockets: [WebSocketConnection]
         let sseConnections: [SSEConnection]
@@ -430,7 +444,8 @@ struct NetworkView: View {
         var eventArrays: [[NetworkEvent]] = []
 
         if input.enabledTypes.contains(.http) {
-            eventArrays.append(input.httpRequests.map { .httpRequest($0) })
+            let filteredRequests = CaptureViewModel.filterRequests(using: input.requestFilterSnapshot)
+            eventArrays.append(filteredRequests.map { .httpRequest($0) })
         }
 
         if input.enabledTypes.contains(.webSocket) {

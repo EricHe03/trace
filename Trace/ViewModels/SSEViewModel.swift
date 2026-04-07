@@ -17,6 +17,8 @@ final class SSEViewModel: ObservableObject {
     private let storage = AppGroupStorage.shared
     private var loadTask: Task<Void, Never>?
     private var storageObserverToken: AppGroupStorageObserverToken?
+    private var isSceneActive = true
+    private var hasPendingRefresh = false
 
     @Published var connections: [SSEConnection] = [] {
         didSet {
@@ -35,7 +37,7 @@ final class SSEViewModel: ObservableObject {
         // Observe new SSE connections from Network Extension
         storageObserverToken = storage.observeNewSSE { [weak self] in
             Task { @MainActor [weak self] in
-                self?.scheduleLoad()
+                self?.handleObservedConnectionChange()
             }
         }
     }
@@ -51,6 +53,29 @@ final class SSEViewModel: ObservableObject {
         loadTask = Task { [weak self] in
             await self?.loadConnections()
         }
+    }
+
+    func setSceneActive(_ isActive: Bool) {
+        guard isSceneActive != isActive else { return }
+        isSceneActive = isActive
+
+        guard isActive else {
+            loadTask?.cancel()
+            return
+        }
+
+        if hasPendingRefresh {
+            hasPendingRefresh = false
+            scheduleLoad()
+        }
+    }
+
+    private func handleObservedConnectionChange() {
+        guard isSceneActive else {
+            hasPendingRefresh = true
+            return
+        }
+        scheduleLoad()
     }
 
     func loadConnections() async {

@@ -46,6 +46,7 @@ struct TraceApp: App {
                 }
         }
         .onChangeCompat(of: scenePhase) { newPhase in
+            viewModel.setSceneActive(newPhase == .active)
             if newPhase == .active {
                 // Rule: Avoid VPN setup before onboarding completion.
                 if OnboardingState.hasCompleted {
@@ -57,7 +58,7 @@ struct TraceApp: App {
                 handlePendingWidgetActionIfNeeded()
             }
         }
-        .handlesExternalEvents(matching: Set(arrayLiteral: "*"))
+        .handlesExternalEvents(matching: ["*"])
     }
 
     private func setupAppearance() {

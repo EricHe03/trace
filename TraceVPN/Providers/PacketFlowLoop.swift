@@ -200,12 +200,6 @@ final class PacketCapturePipeline: @unchecked Sendable {
         let outputs = reassembler.process(ipPacket: ipPacket, tcpPacket: tcpPacket)
         for output in outputs {
             flowRecorder.processReassembled(flow: output.flow, data: output.data, isFinal: output.isFinal)
-            if !output.data.isEmpty,
-               logSampler.shouldLog(event: "vpn.stream_reassembly", key: output.flow.description, first: 3, every: 200) {
-                VPNLog.tunnel.debug(
-                    "event=vpn.stream_reassembly outcome=success flow=\(output.flow.description, privacy: .private(mask: .hash)) bytes=\(output.data.count) final=\(output.isFinal)"
-                )
-            }
         }
     }
 
