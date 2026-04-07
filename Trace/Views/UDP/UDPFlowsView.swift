@@ -121,7 +121,7 @@ struct UDPFlowsView: View {
                 TraceContentUnavailableView(
                     "No Results",
                     systemImage: "magnifyingglass",
-                    description: Text("Try adjusting your filters")
+                    description: Text("Try adjusting your search or filters")
                 )
             }
         }

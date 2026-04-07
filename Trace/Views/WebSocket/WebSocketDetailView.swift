@@ -459,7 +459,7 @@ struct WebSocketMessageDetailView: View {
             .navigationTitle("Message Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
@@ -503,17 +503,23 @@ struct WebSocketMessageFiltersView: View {
             .navigationTitle("Filters")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Clear") {
-                        onClear()
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
                     }
-                    .disabled(!hasActiveFilters)
                 }
 
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
+                }
+
+                ToolbarItem(placement: .bottomBar) {
+                    Button("Clear All", role: .destructive) {
+                        onClear()
+                    }
+                    .disabled(!hasActiveFilters)
                 }
             }
         }

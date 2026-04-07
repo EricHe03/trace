@@ -157,11 +157,13 @@ final class CaptureViewModel: ObservableObject {
     }
 
     var minResponseSize: Int? {
-        get { filterMinSize } set { filterMinSize = newValue }
+        get { filterMinSize.map { $0 / 1024 } }
+        set { filterMinSize = newValue.map { $0 * 1024 } }
     }
 
     var maxResponseSize: Int? {
-        get { filterMaxSize } set { filterMaxSize = newValue }
+        get { filterMaxSize.map { $0 / 1024 } }
+        set { filterMaxSize = newValue.map { $0 * 1024 } }
     }
 
     var minDuration: TimeInterval? {

@@ -49,22 +49,9 @@ struct MITMSecurityView: View {
 
             if isAllowlistEffectivelyEmpty {
                 Section {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(DesignSystem.Colors.warning)
-                        Text("Allowlist is empty. HTTPS interception will be disabled.")
-                            .font(.subheadline)
-                    }
-                }
-            }
-            if mitmAllowlist.count == 1, mitmAllowlist.first == "*" {
-                Section {
-                    HStack(spacing: DesignSystem.Spacing.md) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(DesignSystem.Colors.warning)
-                        Text("Allowlist is set to *. HTTPS interception will apply to all domains.")
-                            .font(.subheadline)
-                    }
+                    Label("Allowlist is empty. HTTPS interception will be disabled.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(DesignSystem.Colors.warning)
+                        .font(.subheadline)
                 }
             }
 

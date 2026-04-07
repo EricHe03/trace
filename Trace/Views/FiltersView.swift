@@ -127,42 +127,50 @@ struct FiltersView: View {
                         Divider()
 
                         Group {
-                            Text("2xx - Success").tag(nil as Int?)
-                                .font(.headline)
-                            Text("200 - OK").tag(200 as Int?)
-                            Text("201 - Created").tag(201 as Int?)
-                            Text("204 - No Content").tag(204 as Int?)
+                            Text("2xx – Success")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .disabled(true)
+                            Text("200 – OK").tag(200 as Int?)
+                            Text("201 – Created").tag(201 as Int?)
+                            Text("204 – No Content").tag(204 as Int?)
                         }
 
                         Divider()
 
                         Group {
-                            Text("3xx - Redirection").tag(nil as Int?)
-                                .font(.headline)
-                            Text("301 - Moved Permanently").tag(301 as Int?)
-                            Text("302 - Found").tag(302 as Int?)
-                            Text("304 - Not Modified").tag(304 as Int?)
+                            Text("3xx – Redirection")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .disabled(true)
+                            Text("301 – Moved Permanently").tag(301 as Int?)
+                            Text("302 – Found").tag(302 as Int?)
+                            Text("304 – Not Modified").tag(304 as Int?)
                         }
 
                         Divider()
 
                         Group {
-                            Text("4xx - Client Error").tag(nil as Int?)
-                                .font(.headline)
-                            Text("400 - Bad Request").tag(400 as Int?)
-                            Text("401 - Unauthorized").tag(401 as Int?)
-                            Text("403 - Forbidden").tag(403 as Int?)
-                            Text("404 - Not Found").tag(404 as Int?)
+                            Text("4xx – Client Error")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .disabled(true)
+                            Text("400 – Bad Request").tag(400 as Int?)
+                            Text("401 – Unauthorized").tag(401 as Int?)
+                            Text("403 – Forbidden").tag(403 as Int?)
+                            Text("404 – Not Found").tag(404 as Int?)
                         }
 
                         Divider()
 
                         Group {
-                            Text("5xx - Server Error").tag(nil as Int?)
-                                .font(.headline)
-                            Text("500 - Internal Server Error").tag(500 as Int?)
-                            Text("502 - Bad Gateway").tag(502 as Int?)
-                            Text("503 - Service Unavailable").tag(503 as Int?)
+                            Text("5xx – Server Error")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .disabled(true)
+                            Text("500 – Internal Server Error").tag(500 as Int?)
+                            Text("502 – Bad Gateway").tag(502 as Int?)
+                            Text("503 – Service Unavailable").tag(503 as Int?)
                         }
                     }
                     .accessibilityLabel("Status Code filter")
@@ -215,31 +223,6 @@ struct FiltersView: View {
                     Text("Network Event Type")
                 } footer: {
                     Text("Filter by network event type. TCP, UDP, DNS, and QUIC are hidden by default to keep Requests focused; enable them for packet-level debugging.")
-                }
-
-                // Response Time Filter
-                Section {
-                    HStack {
-                        Text("Min (ms)")
-                        Spacer()
-                        TextField("0", value: $viewModel.minResponseTime, format: .number)
-                            .multilineTextAlignment(.trailing)
-                            .keyboardType(.numberPad)
-                            .frame(width: 100)
-                    }
-
-                    HStack {
-                        Text("Max (ms)")
-                        Spacer()
-                        TextField("∞", value: $viewModel.maxResponseTime, format: .number)
-                            .multilineTextAlignment(.trailing)
-                            .keyboardType(.numberPad)
-                            .frame(width: 100)
-                    }
-                } header: {
-                    Text("Response Time")
-                } footer: {
-                    Text("Filter by response time in milliseconds")
                 }
 
                 // Response Size Filter
@@ -354,18 +337,17 @@ struct FiltersView: View {
             .navigationTitle("Filters")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
                 }
 
                 if viewModel.hasActiveFilters {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Clear All") {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Clear All", role: .destructive) {
                             viewModel.clearFilters()
                         }
-                        .foregroundStyle(DesignSystem.Colors.danger)
                     }
                 }
             }

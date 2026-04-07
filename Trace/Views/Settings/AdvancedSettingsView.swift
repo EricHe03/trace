@@ -48,24 +48,21 @@ struct AdvancedSettingsView: View {
                 Toggle("Enable Sampling", isOn: $samplingConfig.enabled)
 
                 if samplingConfig.enabled {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Sample Rate")
-                                .font(.subheadline)
-                            Spacer()
-                            Text("\(Int(samplingConfig.sampleRate * 100))%")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        Slider(
-                            value: $samplingConfig.sampleRate,
-                            in: 0.05 ... 1.0,
-                            step: 0.05
-                        )
-                        .accessibilityLabel("Sample rate")
-                        .accessibilityValue("\(Int(samplingConfig.sampleRate * 100)) percent")
+                    HStack {
+                        Text("Sample Rate")
+                        Spacer()
+                        Text("\(Int(samplingConfig.sampleRate * 100))%")
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(.vertical, 4)
+
+                    Slider(
+                        value: $samplingConfig.sampleRate,
+                        in: 0.05 ... 1.0,
+                        step: 0.05
+                    )
+                    .accessibilityLabel("Sample rate")
+                    .accessibilityValue("\(Int(samplingConfig.sampleRate * 100)) percent")
+                    .listRowSeparator(.hidden)
 
                     Picker("Strategy", selection: $samplingConfig.strategy) {
                         Text("Random").tag(SamplingStrategy.random)

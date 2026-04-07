@@ -170,6 +170,9 @@ struct NetworkView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .safeAreaInset(edge: .bottom) {
+            Color.clear.frame(height: 100)
+        }
         .navigationTitle("Network")
         .searchable(
             text: $viewModel.searchText,
@@ -305,14 +308,16 @@ struct NetworkView: View {
             TraceContentUnavailableView(
                 "No Results",
                 systemImage: "magnifyingglass",
-                description: Text("Try adjusting your search or filters")
+                description: Text("Try adjusting your search or filters"),
+                actionTitle: "Clear Filters",
+                action: { viewModel.clearFilters() }
             )
         } else if !vpnManager.isConnected {
-            // Capture is not active
+            // Capture is not active — BottomActionBar is always visible, no duplicate button needed
             TraceContentUnavailableView(
                 "No Requests Yet",
                 systemImage: "network.slash",
-                description: Text("Start capture to see network traffic here")
+                description: Text("Tap the button below to start capturing network traffic")
             )
         } else {
             // Capture is active but no requests yet

@@ -110,6 +110,7 @@ struct CaptureSettingsView: View {
             }
         }
         .navigationTitle("Capture Mode")
+        .navigationBarTitleDisplayMode(.inline)
         .dismissKeyboardOnTapAndScroll()
         .onAppear {
             loadConfiguration()

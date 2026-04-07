@@ -47,7 +47,7 @@ struct DNSListView: View {
                         TraceContentUnavailableView(
                             viewModel.searchText.isEmpty ? "No DNS Queries" : "No Results",
                             systemImage: viewModel.searchText.isEmpty ? "network" : "magnifyingglass",
-                            description: Text(viewModel.searchText.isEmpty ? "DNS queries will appear here as they're captured" : "Try a different search term or filter")
+                            description: Text(viewModel.searchText.isEmpty ? "DNS queries will appear here as they're captured" : "Try adjusting your search or filters")
                         )
                     }
                 }

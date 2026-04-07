@@ -70,7 +70,7 @@ struct SSEListView: View {
                     TraceContentUnavailableView(
                         viewModel.searchText.isEmpty ? "No Connections" : "No Results",
                         systemImage: viewModel.searchText.isEmpty ? "antenna.radiowaves.left.and.right.slash" : "magnifyingglass",
-                        description: Text(viewModel.searchText.isEmpty ? "SSE connections will appear here" : "Try a different search term")
+                        description: Text(viewModel.searchText.isEmpty ? "SSE connections will appear here when capture is active" : "Try adjusting your search term")
                     )
                 }
             }

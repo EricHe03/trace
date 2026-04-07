@@ -81,7 +81,7 @@ struct DomainGroupLabel: View {
             Spacer()
             Text("\(group.requestCount)")
                 .font(.caption)
-                .foregroundStyle(.primary)
+                .foregroundStyle(.white)
                 .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
                 .padding(.vertical, DesignSystem.Badge.verticalPadding)
                 .background(Capsule().fill(DesignSystem.Colors.accent))

@@ -183,25 +183,25 @@ struct ToolsTabView: View {
                     NavigationLink {
                         Base64ToolView()
                     } label: {
-                        Label("Base64 Encoder/Decoder", systemImage: "arrow.left.arrow.right.circle")
+                        Label("Base64", systemImage: "arrow.left.arrow.right.circle")
                     }
 
                     NavigationLink {
                         TimestampToolView()
                     } label: {
-                        Label("Timestamp Converter", systemImage: "clock")
+                        Label("Timestamp", systemImage: "clock")
                     }
 
                     NavigationLink {
                         HashToolView()
                     } label: {
-                        Label("Hash Generator", systemImage: "number")
+                        Label("Hash", systemImage: "number")
                     }
 
                     NavigationLink {
                         URLEncoderView()
                     } label: {
-                        Label("URL Encoder/Decoder", systemImage: "link")
+                        Label("URL Encoder", systemImage: "link")
                     }
 
                     NavigationLink {
@@ -269,7 +269,6 @@ struct SettingsTabView: View {
                     }
                 } header: {
                     Text("Capture Configuration")
-                        .font(.headline)
                 }
 
                 Section {
@@ -292,7 +291,6 @@ struct SettingsTabView: View {
                     }
                 } header: {
                     Text("Security & Certificates")
-                        .font(.headline)
                 }
 
                 Section {
@@ -333,33 +331,18 @@ struct SettingsTabView: View {
                         Text("\(viewModel.requests.count)")
                             .foregroundStyle(.secondary)
                     }
+                } header: {
+                    Text("Data Management")
+                }
 
-                    if viewModel.requests.isEmpty {
-                        HStack {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(DesignSystem.Colors.success)
-                                .font(.title3)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("All Clear")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                Text("No requests to delete")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                        }
-                        .padding(.vertical, 8)
-                    } else {
+                if !viewModel.requests.isEmpty {
+                    Section {
                         Button(role: .destructive) {
                             showingClearAlert = true
                         } label: {
                             Label("Clear All Requests", systemImage: "trash")
                         }
                     }
-                } header: {
-                    Text("Data Management")
-                        .font(.headline)
                 }
 
                 Section {
@@ -370,7 +353,6 @@ struct SettingsTabView: View {
                     }
                 } header: {
                     Text("General")
-                        .font(.headline)
                 }
 
                 Section {
@@ -407,7 +389,6 @@ struct SettingsTabView: View {
                     }
                 } header: {
                     Text("About")
-                        .font(.headline)
                 }
             }
             .navigationTitle("Settings")

@@ -549,10 +549,38 @@ public struct StorageSettingsView: View {
             Section {
                 Toggle("Enable Auto Cleanup", isOn: $config.enabled)
 
-                Stepper("Keep Requests: \(config.requestRetentionDays) days", value: $config.requestRetentionDays, in: 1 ... 30)
-                Stepper("Keep Body Files: \(config.bodyFileRetentionDays) days", value: $config.bodyFileRetentionDays, in: 1 ... 30)
-                Stepper("Keep Logs: \(config.logRetentionDays) days", value: $config.logRetentionDays, in: 1 ... 30)
-                Stepper("Max Storage: \(config.maxStorageMB) MB", value: $config.maxStorageMB, in: 100 ... 2000, step: 100)
+                Stepper(value: $config.requestRetentionDays, in: 1 ... 30) {
+                    HStack {
+                        Text("Keep Requests")
+                        Spacer()
+                        Text("\(config.requestRetentionDays) days")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Stepper(value: $config.bodyFileRetentionDays, in: 1 ... 30) {
+                    HStack {
+                        Text("Keep Body Files")
+                        Spacer()
+                        Text("\(config.bodyFileRetentionDays) days")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Stepper(value: $config.logRetentionDays, in: 1 ... 30) {
+                    HStack {
+                        Text("Keep Logs")
+                        Spacer()
+                        Text("\(config.logRetentionDays) days")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Stepper(value: $config.maxStorageMB, in: 100 ... 2000, step: 100) {
+                    HStack {
+                        Text("Max Storage")
+                        Spacer()
+                        Text("\(config.maxStorageMB) MB")
+                            .foregroundStyle(.secondary)
+                    }
+                }
             } header: {
                 Text("Automatic Cleanup")
             }
