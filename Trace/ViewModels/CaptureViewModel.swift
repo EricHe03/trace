@@ -1134,11 +1134,16 @@ final class CaptureViewModel: ObservableObject {
             return snapshot.requests
         }
 
-        let regex: NSRegularExpression? = if let pattern = snapshot.filterRegexPattern?.trimmingCharacters(in: .whitespacesAndNewlines),
-                                             !pattern.isEmpty {
-            try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        let regex: NSRegularExpression?
+        if let pattern = snapshot.filterRegexPattern?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !pattern.isEmpty {
+            do {
+                regex = try NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+            } catch {
+                return []
+            }
         } else {
-            nil
+            regex = nil
         }
 
         var results: [NetworkRequest] = []

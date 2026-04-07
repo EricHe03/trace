@@ -38,6 +38,8 @@ public class CertificateManager {
     public static let rootCAMismatchNotification = Notification.Name("TraceRootCAMismatchNotification")
     private static let keychainAccessGroupLogLock = NSLock()
     private nonisolated(unsafe) static var didLogKeychainAccessGroup = false
+    private static let runtimeCacheInvalidatorLock = NSLock()
+    private nonisolated(unsafe) static var runtimeCacheInvalidators: [@Sendable () -> Void] = []
 
     // MARK: - Keychain identifiers (per-domain leafs)
 
@@ -201,6 +203,26 @@ public class CertificateManager {
         rootCACacheLock.lock()
         cachedRootCA = nil
         rootCACacheLock.unlock()
+    }
+
+    public static func registerRuntimeCacheInvalidator(_ invalidator: @escaping @Sendable () -> Void) {
+        runtimeCacheInvalidatorLock.lock()
+        runtimeCacheInvalidators.append(invalidator)
+        runtimeCacheInvalidatorLock.unlock()
+    }
+
+    func clearRuntimeCaches() {
+        SecurityLog.certificate.debug("event=ca.runtime_cache_clear outcome=pending")
+        clearCachedRootCA()
+        TLSHandler.clearCertificateCache()
+
+        Self.runtimeCacheInvalidatorLock.lock()
+        let invalidators = Self.runtimeCacheInvalidators
+        Self.runtimeCacheInvalidatorLock.unlock()
+
+        for invalidator in invalidators {
+            invalidator()
+        }
     }
 
     // MARK: - Root CA Management
@@ -999,8 +1021,7 @@ public class CertificateManager {
         SecurityLog.certificate.info("event=ca.reset outcome=pending")
 
         SecurityLog.certificate.debug("event=ca.reset_cache outcome=pending")
-        clearCachedRootCA()
-        TLSHandler.clearCertificateCache()
+        clearRuntimeCaches()
 
         SecurityLog.certificate.debug("event=ca.reset_domain_certs outcome=pending")
         let accessGroup = try requireKeychainAccessGroup()

@@ -261,6 +261,17 @@ final class CaptureViewModelTests: XCTestCase {
         XCTAssertTrue(filtered.first?.url.contains("users") ?? false)
     }
 
+    func testInvalidRegexFilterMatchesNothing() {
+        let request1 = createMockRequest(url: "https://api.example.com/users")
+        let request2 = createMockRequest(url: "https://example.com/posts")
+
+        viewModel.requests = [request1, request2]
+        viewModel.filterRegexPattern = "["
+
+        XCTAssertTrue(viewModel.filteredRequests.isEmpty)
+        XCTAssertNotNil(viewModel.regexFilterError)
+    }
+
     func testFilteredRequestsSortedByTimestamp() {
         let oldRequest = createMockRequest(
             url: "https://example.com/old",

@@ -691,14 +691,25 @@ extension NIOMITMHTTPConnectHandler {
     nonisolated(unsafe) static var tlsContextCache: [String: CachedTLSContextEntry] = [:]
     nonisolated(unsafe) static let tlsContextCacheTTL: TimeInterval = TLSHandler.certificateLifetime
     nonisolated(unsafe) static let tlsContextCacheMaxEntries = 128
+    nonisolated(unsafe) static let runtimeCacheInvalidatorRegistration: Void = {
+        CertificateManager.registerRuntimeCacheInvalidator {
+            NIOMITMHTTPConnectHandler.clearCachedTLSContexts()
+        }
+    }()
+
+    private static func ensureRuntimeCacheInvalidatorRegistration() {
+        _ = runtimeCacheInvalidatorRegistration
+    }
 
     static func clearCachedTLSContexts() {
+        ensureRuntimeCacheInvalidatorRegistration()
         tlsContextCacheLock.lock()
         tlsContextCache.removeAll()
         tlsContextCacheLock.unlock()
     }
 
     static func cachedTLSContextCountForTesting() -> Int {
+        ensureRuntimeCacheInvalidatorRegistration()
         tlsContextCacheLock.lock()
         defer { tlsContextCacheLock.unlock() }
         return tlsContextCache.count
@@ -710,6 +721,7 @@ extension NIOMITMHTTPConnectHandler {
         applicationProtocols: [String]? = nil,
         now: Date = Date()
     ) {
+        ensureRuntimeCacheInvalidatorRegistration()
         let key = tlsContextCacheKey(for: host, applicationProtocols: applicationProtocols)
         cacheServerTLSContext(context, forKey: key, now: now)
     }
@@ -719,6 +731,7 @@ extension NIOMITMHTTPConnectHandler {
         applicationProtocols: [String]? = nil,
         now: Date = Date()
     ) -> NIOSSLContext? {
+        ensureRuntimeCacheInvalidatorRegistration()
         let key = tlsContextCacheKey(for: host, applicationProtocols: applicationProtocols)
         return cachedServerTLSContext(forKey: key, now: now)
     }
@@ -787,6 +800,7 @@ extension NIOMITMHTTPConnectHandler {
         for host: String,
         applicationProtocols: [String]? = nil
     ) throws -> NIOSSLContext {
+        ensureRuntimeCacheInvalidatorRegistration()
         let normalizedHost = host.lowercased()
         guard !normalizedHost.isEmpty else {
             throw TLSContextError.unsupportedHost

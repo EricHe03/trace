@@ -1,3 +1,4 @@
+import NIOCore
 import NIOHTTP1
 import NIOSSL
 import NIOTransportServices
@@ -6,6 +7,7 @@ import XCTest
 @testable import TracePacket
 @testable import TraceProxy
 @testable import TraceQUIC
+@testable import TraceSecurity
 @testable import TraceVPNKit
 
 final class FullTunnelRegressionTests: XCTestCase {
@@ -147,6 +149,52 @@ final class FullTunnelRegressionTests: XCTestCase {
                 now: baseDate.addingTimeInterval(TLSHandler.certificateLifetime + 1)
             )
         )
+    }
+
+    func testCertificateRuntimeCacheClearAlsoClearsServerTLSContexts() throws {
+        NIOMITMHTTPConnectHandler.clearCachedTLSContexts()
+        defer { NIOMITMHTTPConnectHandler.clearCachedTLSContexts() }
+
+        let context = try NIOSSLContext(configuration: .makeClientConfiguration())
+        NIOMITMHTTPConnectHandler.cacheServerTLSContextForTesting(
+            context,
+            host: "cached.example.com"
+        )
+
+        XCTAssertEqual(NIOMITMHTTPConnectHandler.cachedTLSContextCountForTesting(), 1)
+
+        CertificateManager.shared.clearRuntimeCaches()
+
+        XCTAssertEqual(NIOMITMHTTPConnectHandler.cachedTLSContextCountForTesting(), 0)
+    }
+
+    func testPlaintextProbeTreatsWebDAVMethodAsHTTP() {
+        let group = NIOTSEventLoopGroup()
+        defer { try? group.syncShutdownGracefully() }
+
+        let handler = NIOMITMInitialIngressHandler(
+            group: group,
+            eventLog: nil,
+            throttler: nil,
+            interceptor: nil,
+            captureConfigProvider: { .default },
+            onRequestCaptured: nil,
+            shouldMitmConnect: { _, _ in true },
+            shouldEnableTransparentTLS: { true },
+            http2MITMEnabledProvider: { true },
+            shouldFailOpenAfterMITMFailure: { _, _, _, _ in true },
+            onMITMFailure: nil
+        )
+
+        var buffer = ByteBufferAllocator().buffer(capacity: 64)
+        buffer.writeString("PROPFIND /remote.php/dav HTTP/1.1\r\n")
+
+        switch handler.plaintextProbeState(for: buffer) {
+        case .httpLike:
+            return
+        case .needMore, .opaque:
+            XCTFail("Expected PROPFIND to be treated as HTTP-like")
+        }
     }
 
     func testQUICRetryBackoffReusesCachedFailureDecisionWithoutDuplicateEvent() {

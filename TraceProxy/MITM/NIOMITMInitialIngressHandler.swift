@@ -132,6 +132,8 @@ final class NIOMITMInitialIngressHandler: ChannelInboundHandler, RemovableChanne
 }
 
 extension NIOMITMInitialIngressHandler {
+    private static let maxPlaintextHTTPMethodProbeBytes = 32
+
     func evaluateRouting(context: ChannelHandlerContext) {
         guard state == .probing else { return }
 
@@ -884,7 +886,7 @@ extension NIOMITMInitialIngressHandler {
     }
 
     func plaintextProbeState(for buffer: ByteBuffer) -> PlaintextProbeState {
-        let bytes = Array(buffer.readableBytesView.prefix(16))
+        let bytes = Array(buffer.readableBytesView.prefix(Self.maxPlaintextHTTPMethodProbeBytes))
         guard !bytes.isEmpty else {
             return .needMore
         }
@@ -919,7 +921,38 @@ extension NIOMITMInitialIngressHandler {
             return uppercaseBytes.count >= prefix.count ? .httpLike : .needMore
         }
 
+        if let separatorIndex = uppercaseBytes.firstIndex(of: 0x20) {
+            let methodBytes = uppercaseBytes[..<separatorIndex]
+            if !methodBytes.isEmpty, methodBytes.allSatisfy(Self.isHTTPMethodTokenByte) {
+                return .httpLike
+            }
+        } else if uppercaseBytes.count < Self.maxPlaintextHTTPMethodProbeBytes,
+                  uppercaseBytes.allSatisfy(Self.isHTTPMethodTokenByte) {
+            return .needMore
+        }
+
         return uppercaseBytes.count < 4 ? .needMore : .opaque
+    }
+
+    private static func isHTTPMethodTokenByte(_ byte: UInt8) -> Bool {
+        switch byte {
+        case 0x21, // !
+             0x23 ... 0x27, // # $ % & '
+             0x2A, // *
+             0x2B, // +
+             0x2D, // -
+             0x2E, // .
+             0x30 ... 0x39, // 0-9
+             0x41 ... 0x5A, // A-Z
+             0x5E, // ^
+             0x5F, // _
+             0x60, // `
+             0x7C, // |
+             0x7E: // ~
+            true
+        default:
+            false
+        }
     }
 
     private func transparentMITMFailureDetail(_ error: Error) -> String {
