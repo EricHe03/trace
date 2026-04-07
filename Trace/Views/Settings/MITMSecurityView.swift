@@ -62,7 +62,7 @@ struct MITMSecurityView: View {
                 }
             }
         }
-        .navigationTitle("MITM & Security")
+        .navigationTitle("Interception Rules")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadSettings() }
         .onChangeCompat(of: mitmAllowlist) { persistHardeningConfig() }

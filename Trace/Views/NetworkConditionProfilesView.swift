@@ -185,7 +185,13 @@ struct NetworkConditionProfilesView: View {
             }
             .navigationTitle("Network Throttling")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {}
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
             .alert("Enable Network Throttling?", isPresented: $showingEnableConfirmation) {
                 Button("Cancel", role: .cancel) {
                     viewModel.throttlingEnabled = false

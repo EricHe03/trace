@@ -109,7 +109,7 @@ struct CaptureSettingsView: View {
                 }
             }
         }
-        .navigationTitle("Capture Mode")
+        .navigationTitle("VPN & Proxy Mode")
         .navigationBarTitleDisplayMode(.inline)
         .dismissKeyboardOnTapAndScroll()
         .onAppear {
