@@ -15,18 +15,45 @@ extension NIOMITMHTTPConnectHandler {
         activeCapturedRequest = nil
     }
 
-    func publishCapturedRequest(_ request: NetworkRequest) {
+    func clearQueuedTerminalCapturedRequest() {
+        queuedTerminalCapturedRequest = nil
+    }
+
+    func prepareCapturedRequestForPublication(_ request: NetworkRequest) -> NetworkRequest {
         var finalized = request
         annotateCaptureMetadata(&finalized)
         finalizeCapturedDuration(for: &finalized)
+        return finalized
+    }
+
+    func publishCapturedRequest(_ request: NetworkRequest) {
+        let finalized = prepareCapturedRequestForPublication(request)
+        clearQueuedTerminalCapturedRequest()
         onRequestCaptured?(finalized)
         clearActiveCapturedRequest()
+    }
+
+    func queueTerminalCapturedRequest(_ request: NetworkRequest) {
+        queuedTerminalCapturedRequest = prepareCapturedRequestForPublication(request)
+        clearActiveCapturedRequest()
+    }
+
+    @discardableResult
+    func publishQueuedTerminalCapturedRequest() -> Bool {
+        guard let queuedTerminalCapturedRequest else { return false }
+        clearQueuedTerminalCapturedRequest()
+        onRequestCaptured?(queuedTerminalCapturedRequest)
+        clearActiveCapturedRequest()
+        return true
     }
 
     func finalizeActiveRequestAsHTTPFailure(
         status: HTTPResponseStatus,
         reason: String
     ) {
+        if publishQueuedTerminalCapturedRequest() {
+            return
+        }
         guard var request = activeCapturedRequest else { return }
         request.statusCode = Int(status.code)
         request.statusMessage = status.reasonPhrase
@@ -35,12 +62,18 @@ extension NIOMITMHTTPConnectHandler {
     }
 
     func finalizeActiveRequestAsFailure(reason: String) {
+        if publishQueuedTerminalCapturedRequest() {
+            return
+        }
         guard var request = activeCapturedRequest else { return }
         request.executionErrors.append(ExecutionError(message: reason))
         publishCapturedRequest(request)
     }
 
     func finalizeActiveRequestAsCancellation(reason: String) {
+        if publishQueuedTerminalCapturedRequest() {
+            return
+        }
         guard var request = activeCapturedRequest else { return }
         request.wasCancelled = true
         request.executionErrors.append(ExecutionError(message: reason))

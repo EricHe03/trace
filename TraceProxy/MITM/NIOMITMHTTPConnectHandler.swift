@@ -94,6 +94,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
     var pendingRequestHead: HTTPRequestHead?
     var pendingRequestBody = ByteBuffer()
     var activeCapturedRequest: NetworkRequest?
+    var queuedTerminalCapturedRequest: NetworkRequest?
     var connectTargetHost: String?
     var connectTargetPort: Int?
     var connectRequestStartTime: Date?
