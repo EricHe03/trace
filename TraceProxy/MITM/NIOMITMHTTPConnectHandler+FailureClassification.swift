@@ -19,7 +19,12 @@ extension NIOMITMHTTPConnectHandler {
         }
         switch ingressMode {
         case .proxy:
-            return nil
+            guard let hintedHost = upstreamHint?.host.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !hintedHost.isEmpty
+            else {
+                return nil
+            }
+            return hintedHost
         case let .tunneledHTTPS(host, _):
             return host
         }

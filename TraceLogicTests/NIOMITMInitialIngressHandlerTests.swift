@@ -55,6 +55,28 @@ final class NIOMITMInitialIngressHandlerTests: XCTestCase {
         )
     }
 
+    func testPlaintextProbeStateRecognizesHTTPRequestPrefix() {
+        let group = NIOTSEventLoopGroup(loopCount: 1)
+        defer { XCTAssertNoThrow(try group.syncShutdownGracefully()) }
+
+        let handler = makeHandler(group: group)
+        var buffer = ByteBufferAllocator().buffer(capacity: 32)
+        buffer.writeString("POST /cgi-bin/micromsg-bin HTTP/1.1\r\n")
+
+        XCTAssertEqual(handler.plaintextProbeState(for: buffer), .httpLike)
+    }
+
+    func testPlaintextProbeStateRecognizesOpaqueBinaryTraffic() {
+        let group = NIOTSEventLoopGroup(loopCount: 1)
+        defer { XCTAssertNoThrow(try group.syncShutdownGracefully()) }
+
+        let handler = makeHandler(group: group)
+        var buffer = ByteBufferAllocator().buffer(capacity: 8)
+        buffer.writeBytes([0x16, 0xF1, 0x03, 0x7F, 0x88, 0x00])
+
+        XCTAssertEqual(handler.plaintextProbeState(for: buffer), .opaque)
+    }
+
     private func makeHandler(group: NIOTSEventLoopGroup) -> NIOMITMInitialIngressHandler {
         NIOMITMInitialIngressHandler(
             group: group,
