@@ -143,7 +143,7 @@ struct HostsListView: View {
                                 showToast(message: "All entries disabled")
                             }
                         } label: {
-                            Label("Disable All", systemImage: "pause.circle")
+                            Label("Disable All", systemImage: "minus.circle")
                         }
 
                         Divider()

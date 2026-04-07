@@ -254,7 +254,7 @@ struct PCAPExportView: View {
                                 Text("Exporting…")
                             }
                         } else {
-                            Label("Export All Files", systemImage: "square.and.arrow.up.fill")
+                            Label("Export All Files", systemImage: "square.and.arrow.up")
                         }
                     }
                     .disabled(isExportingAll)
@@ -263,7 +263,7 @@ struct PCAPExportView: View {
                         showingDeleteAlert = true
                         fileToDelete = nil
                     } label: {
-                        Label("Delete All Captures", systemImage: "trash.fill")
+                        Label("Delete All Captures", systemImage: "trash")
                     }
                 }
             }

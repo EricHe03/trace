@@ -284,7 +284,7 @@ struct RuleRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
             HStack {
-                Image(systemName: rule.enabled ? "checkmark.circle.fill" : "slash.circle.fill")
+                Image(systemName: rule.enabled ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(rule.enabled ? DesignSystem.Colors.success : DesignSystem.Colors.muted)
                     .accessibilityHidden(true)
 

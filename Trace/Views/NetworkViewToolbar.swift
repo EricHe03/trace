@@ -69,7 +69,7 @@ struct NetworkViewToolbar: ToolbarContent {
                 Button {
                     onShowFavorites()
                 } label: {
-                    Label("Favorites", systemImage: "star.fill")
+                    Label("Favorites", systemImage: "star")
                 }
 
                 Button {

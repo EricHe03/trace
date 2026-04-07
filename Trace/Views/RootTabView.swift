@@ -151,13 +151,13 @@ struct ToolsTabView: View {
                     NavigationLink {
                         RewriteRulesView()
                     } label: {
-                        Label("Rewrite Rules", systemImage: "doc.text.fill")
+                        Label("Rewrite Rules", systemImage: "doc.text")
                     }
 
                     NavigationLink {
                         RequestMapView()
                     } label: {
-                        Label("Request Maps", systemImage: "map.fill")
+                        Label("Request Maps", systemImage: "map")
                     }
 
                     NavigationLink {
@@ -175,7 +175,7 @@ struct ToolsTabView: View {
                     NavigationLink {
                         BreakpointConfigView()
                     } label: {
-                        Label("Breakpoints", systemImage: "pause.circle.fill")
+                        Label("Breakpoints", systemImage: "pause.circle")
                     }
                 }
 
@@ -365,13 +365,7 @@ struct SettingsTabView: View {
 
                     if let githubURL = URL(string: "https://github.com/Trace-iOS/Trace") {
                         Link(destination: githubURL) {
-                            HStack {
-                                Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
-                                Spacer()
-                                Image(systemName: "arrow.up.forward.square.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Label("GitHub", systemImage: "arrow.up.right.square")
                         }
                     }
 
