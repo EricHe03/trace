@@ -319,12 +319,6 @@ struct SettingsTabView: View {
                     }
 
                     NavigationLink {
-                        FullTunnelSelfCheckView()
-                    } label: {
-                        Label("Full Tunnel Self-Check", systemImage: "checklist")
-                    }
-
-                    NavigationLink {
                         StorageSettingsView()
                     } label: {
                         Label("Storage & Cleanup", systemImage: "externaldrive")

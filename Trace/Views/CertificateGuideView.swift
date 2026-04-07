@@ -268,9 +268,6 @@ struct CertificateGuideView: View {
                     }
                 }
 
-                // Warning Banner
-                warningBanner
-
                 // Progress Indicator
                 progressIndicator
 
@@ -290,24 +287,6 @@ struct CertificateGuideView: View {
     }
 
     // MARK: - UI Components
-
-    private var warningBanner: some View {
-        VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-            HStack {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(DesignSystem.Colors.warning)
-                Text("Security Notice")
-                    .font(.headline)
-            }
-
-            Text("Installing this certificate allows Trace to decrypt HTTPS traffic. Only install if you trust this app. The certificate and all captured data stay on your device.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding()
-        .background(DesignSystem.Colors.warning.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
-    }
 
     private var progressIndicator: some View {
         HStack(spacing: DesignSystem.Spacing.sm) {
@@ -371,7 +350,7 @@ struct CertificateGuideView: View {
                 Button(role: .destructive) {
                     regenerateRootCA()
                 } label: {
-                    Label("Regenerate Root CA (if HTTPS keeps failing)", systemImage: "arrow.clockwise.circle")
+                    Label("Regenerate Root CA", systemImage: "arrow.clockwise.circle")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
