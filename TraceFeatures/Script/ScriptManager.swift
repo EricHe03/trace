@@ -495,15 +495,12 @@ private extension ScriptManager {
     func withExecutionLockSync<T>(_ operation: @escaping () throws -> T) -> T? {
         // Optimistic fast path: try to acquire without blocking.
         // This avoids creating a Task + semaphore when the lock is not contended.
-        var acquired = false
-        let semaphore = DispatchSemaphore(value: 0)
-        Task { [executionMutex] in
+        let semaphore = ScriptManagerUncheckedSendableBox(value: DispatchSemaphore(value: 0))
+        Task { [executionMutex, semaphore] in
             await executionMutex.lock()
-            acquired = true
-            semaphore.signal()
+            semaphore.value.signal()
         }
-        semaphore.wait()
-        assert(acquired)
+        semaphore.value.wait()
 
         defer {
             Task { [executionMutex] in
@@ -517,6 +514,10 @@ private extension ScriptManager {
             return nil
         }
     }
+}
+
+private struct ScriptManagerUncheckedSendableBox<Value>: @unchecked Sendable {
+    let value: Value
 }
 
 private actor ScriptExecutionMutex {

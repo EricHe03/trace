@@ -245,7 +245,7 @@ public actor BreakpointManager {
     private func autoResumeIfStillPaused(id: String) {
         guard continuations[id] != nil else { return }
         FeatureLog.breakpoint.warning(
-            "event=breakpoint.auto_resume outcome=timeout request_id=\(id, privacy: .public) timeout_seconds=\(continuationTimeoutSeconds)"
+            "event=breakpoint.auto_resume outcome=timeout request_id=\(id, privacy: .public) timeout_seconds=\(self.continuationTimeoutSeconds)"
         )
         completeResume(id: id, action: .continue)
     }

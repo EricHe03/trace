@@ -375,18 +375,22 @@ extension NIOMITMHTTPConnectHandler {
 
         // Apply host override before connecting: use the overridden IP while keeping
         // targetHost for TLS SNI and the HTTP Host header.
-        Task { [weak self] in
+        let capturedURL = outboundContext.url
+        let capturedHost = targetHost
+        let capturedPort = targetPort
+        Task { [weak self, capturedURL, capturedHost, capturedPort, sendableContext, sseCapture, streamingRequestHead, requestHead] in
             guard let self else { return }
-            let override = await RequestInterceptor.shared.hostOverride(for: outboundContext.url)
-            let connectHost = override?.ip ?? targetHost
-            let connectPort = override?.port ?? targetPort
+            let override = await RequestInterceptor.shared.hostOverride(for: capturedURL)
+            let connectHost = override?.ip ?? capturedHost
+            let connectPort = override?.port ?? capturedPort
             if let override {
                 ProxyLog.mitm.info(
-                    "event=proxy.sse_host_override outcome=applied original_host=\(targetHost, privacy: .private(mask: .hash)) override_ip=\(override.ip, privacy: .private(mask: .hash)) url=\(outboundContext.url, privacy: .private(mask: .hash))"
+                    "event=proxy.sse_host_override outcome=applied original_host=\(capturedHost, privacy: .private(mask: .hash)) override_ip=\(override.ip, privacy: .private(mask: .hash)) url=\(capturedURL, privacy: .private(mask: .hash))"
                 )
             }
             let bootstrap = NIOTSConnectionBootstrap(group: self.group)
             bootstrap.connect(host: connectHost, port: connectPort).whenComplete { [weak self] result in
+                let context = sendableContext.value
                 context.eventLoop.execute {
                     guard let self, self.state == .forwardingHTTPRequest else {
                         if case let .success(upstream) = result {
@@ -700,17 +704,34 @@ extension NIOMITMHTTPConnectHandler {
             sessionID: streamRuntime?.snapshot().id
         )
         let sendableContext = NIOMITMUncheckedSendableBox(value: context)
+        let taskState = NIOMITMUncheckedSendableBox(
+            value: (
+                outboundURL: outboundContext.url,
+                requestSnapshot: outboundContext.requestSnapshot,
+                requestBody: outboundContext.body,
+                requestHead: requestHead,
+                targetURL: targetURL,
+                targetHost: targetHost,
+                targetPort: targetPort,
+                normalizedURL: normalizedURL,
+                streamingRequestHead: streamingRequestHead,
+                streamRuntime: streamRuntime,
+                wsCapture: wsCapture
+            )
+        )
 
         // Apply host override before connecting: use the overridden IP while keeping
         // targetHost for TLS SNI and the HTTP Host header.
-        Task { [weak self] in
+        Task { [weak self, sendableContext, taskState] in
             guard let self else { return }
-            let override = await RequestInterceptor.shared.hostOverride(for: outboundContext.url)
-            let connectHost = override?.ip ?? targetHost
-            let connectPort = override?.port ?? targetPort
+            let state = taskState.value
+            let context = sendableContext.value
+            let override = await RequestInterceptor.shared.hostOverride(for: state.outboundURL)
+            let connectHost = override?.ip ?? state.targetHost
+            let connectPort = override?.port ?? state.targetPort
             if let override {
                 ProxyLog.mitm.info(
-                    "event=proxy.ws_host_override outcome=applied original_host=\(targetHost, privacy: .private(mask: .hash)) override_ip=\(override.ip, privacy: .private(mask: .hash)) url=\(outboundContext.url, privacy: .private(mask: .hash))"
+                    "event=proxy.ws_host_override outcome=applied original_host=\(state.targetHost, privacy: .private(mask: .hash)) override_ip=\(override.ip, privacy: .private(mask: .hash)) url=\(state.outboundURL, privacy: .private(mask: .hash))"
                 )
             }
             let bootstrap = NIOTSConnectionBootstrap(group: self.group)
@@ -739,10 +760,10 @@ extension NIOMITMHTTPConnectHandler {
                             case let .head(head):
                                 responseHead = head
                                 closeAfterSend = self.shouldCloseConnection(
-                                    requestHead: requestHead,
+                                    requestHead: state.requestHead,
                                     responseHeaders: head.headers
                                 )
-                                if let streamRuntime {
+                                if let streamRuntime = state.streamRuntime {
                                     streamRuntime.updateResponseHeaders(
                                         self.captureConfigProvider().captureHeaders
                                             ? self.traceHeaders(from: head.headers)
@@ -778,18 +799,18 @@ extension NIOMITMHTTPConnectHandler {
                                 if isUpgrade {
                                     let perMessageDeflateEnabled = self.webSocketPerMessageDeflateEnabled(headers: head.headers)
                                     ProxyLog.mitm.info(
-                                        "event=proxy.nio_ws_upgrade outcome=accepted ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) permessage_deflate=\(perMessageDeflateEnabled, privacy: .public)"
+                                        "event=proxy.nio_ws_upgrade outcome=accepted ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) permessage_deflate=\(perMessageDeflateEnabled, privacy: .public)"
                                     )
                                     self.eventLog?.append(
                                         type: "proxy_nio_ws_upgrade",
-                                        msg: "outcome=accepted mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(normalizedURL)) permessage_deflate=\(perMessageDeflateEnabled)"
+                                        msg: "outcome=accepted mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(state.normalizedURL)) permessage_deflate=\(perMessageDeflateEnabled)"
                                     )
                                     wsCapture.markOpen(
                                         responseHeaders: self.captureConfigProvider().captureHeaders
                                             ? self.traceHeaders(from: head.headers)
                                             : []
                                     )
-                                    if let streamRuntime {
+                                    if let streamRuntime = state.streamRuntime {
                                         streamRuntime.setStatus(.open)
                                         self.persistStreamRuntimeSnapshot(streamRuntime)
                                     }
@@ -800,7 +821,7 @@ extension NIOMITMHTTPConnectHandler {
                                             clientContext: context,
                                             upstream: upstream,
                                             captureState: wsCapture,
-                                            streamRuntime: streamRuntime,
+                                            streamRuntime: state.streamRuntime,
                                             perMessageDeflateEnabled: perMessageDeflateEnabled
                                         )
                                     }
@@ -809,23 +830,23 @@ extension NIOMITMHTTPConnectHandler {
                                 }
 
                                 ProxyLog.mitm.info(
-                                    "event=proxy.nio_ws_upgrade outcome=rejected ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) status=\(Int(head.status.code), privacy: .public)"
+                                    "event=proxy.nio_ws_upgrade outcome=rejected ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) status=\(Int(head.status.code), privacy: .public)"
                                 )
                                 self.eventLog?.append(
                                     type: "proxy_nio_ws_upgrade",
-                                    msg: "outcome=rejected mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(normalizedURL)) status=\(head.status.code)"
+                                    msg: "outcome=rejected mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(state.normalizedURL)) status=\(head.status.code)"
                                 )
                                 let responseBodyData = self.byteBufferToData(responseBody)
                                 let captureConfig = self.captureConfigProvider()
                                 let responseHeadersTrace = self.traceHeaders(from: head.headers)
                                 let declaredContentLength = self.contentLength(from: head.headers)
                                 self.completeStreamRuntime(
-                                    streamRuntime,
+                                    state.streamRuntime,
                                     status: .failed,
                                     reason: "websocket_upgrade_rejected",
                                     eventLoop: context.eventLoop
                                 )
-                                var captured = outboundContext.requestSnapshot
+                                var captured = state.requestSnapshot
                                 captured.protocolVersion = self.mergedCapturedProtocolVersion(
                                     current: captured.protocolVersion,
                                     fallback: head.version
@@ -890,11 +911,11 @@ extension NIOMITMHTTPConnectHandler {
                             )
                             self.reportMITMFailure(reason: failureReason)
                             ProxyLog.mitm.warning(
-                                "event=proxy.nio_ws_upstream_error outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                                "event=proxy.nio_ws_upstream_error outcome=failure host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                             )
                             wsCapture.markFailed()
                             self.completeStreamRuntime(
-                                streamRuntime,
+                                state.streamRuntime,
                                 status: .failed,
                                 reason: error.localizedDescription,
                                 eventLoop: context.eventLoop
@@ -916,7 +937,7 @@ extension NIOMITMHTTPConnectHandler {
                             guard let self, self.state == .forwardingHTTPRequest else { return }
                             wsCapture.markClosed(code: nil, reason: nil)
                             self.completeStreamRuntime(
-                                streamRuntime,
+                                state.streamRuntime,
                                 status: .closed,
                                 reason: nil,
                                 eventLoop: context.eventLoop
@@ -935,14 +956,14 @@ extension NIOMITMHTTPConnectHandler {
                     .flatMap {
                         self.installStreamingUpstreamTLSIfNeeded(
                             on: upstream,
-                            url: targetURL,
-                            serverHostname: targetHost
+                            url: state.targetURL,
+                            serverHostname: state.targetHost
                         )
                     }
                     .flatMap {
                         self.writeAndFlushStreamingUpstreamRequest(
-                            head: streamingRequestHead,
-                            body: outboundContext.body,
+                            head: state.streamingRequestHead,
+                            body: state.requestBody,
                             to: upstream
                         )
                     }
@@ -956,11 +977,11 @@ extension NIOMITMHTTPConnectHandler {
                             )
                             self.reportMITMFailure(reason: failureReason)
                             ProxyLog.mitm.warning(
-                                "event=proxy.nio_ws_setup outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                                "event=proxy.nio_ws_setup outcome=failure host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                             )
                             wsCapture.markFailed()
                             self.completeStreamRuntime(
-                                streamRuntime,
+                                state.streamRuntime,
                                 status: .failed,
                                 reason: error.localizedDescription,
                                 eventLoop: context.eventLoop
@@ -984,10 +1005,10 @@ extension NIOMITMHTTPConnectHandler {
                     )
                     self.reportMITMFailure(reason: failureReason)
                     ProxyLog.mitm.warning(
-                        "event=proxy.nio_ws_connect outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                        "event=proxy.nio_ws_connect outcome=failure host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                     )
                     self.completeStreamRuntime(
-                        streamRuntime,
+                        state.streamRuntime,
                         status: .failed,
                         reason: error.localizedDescription,
                         eventLoop: context.eventLoop

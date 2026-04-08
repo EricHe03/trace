@@ -220,11 +220,6 @@ struct OverviewSection: View {
                     .padding(.horizontal)
             }
 
-            // Timeline View
-            if request.timingPhases != nil {
-                RequestTimelineView(request: request)
-                    .padding(.horizontal)
-            }
         }
         .padding()
     }
