@@ -130,3 +130,13 @@ struct SSEEventDetailView: View {
         eventData.map { String(format: "%02x", $0) }.joined(separator: " ")
     }
 }
+
+#Preview {
+    SSEEventDetailView(event: ServerSentEvent(
+        eventId: "42",
+        eventType: "message",
+        data: "{\"user\": \"alice\", \"message\": \"Hello from SSE!\", \"timestamp\": 1712345678}",
+        retry: 3000,
+        timestamp: Date()
+    ))
+}

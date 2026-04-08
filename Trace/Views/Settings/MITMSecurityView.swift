@@ -153,3 +153,9 @@ struct MITMSecurityView: View {
         Validation.isValidDomainPattern(value) ? nil : "Invalid domain pattern"
     }
 }
+
+#Preview {
+    NavigationStack {
+        MITMSecurityView()
+    }
+}

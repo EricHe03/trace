@@ -163,3 +163,21 @@ public struct RequestListRow: View {
         return description
     }
 }
+
+#Preview {
+    let request = NetworkRequest(
+        url: "https://api.example.com/users/123",
+        method: .get,
+        statusCode: 200,
+        timestamp: Date(),
+        duration: 0.234,
+        requestHeaders: [],
+        responseHeaders: [],
+        requestBody: .empty,
+        responseBody: .empty
+    )
+    List {
+        RequestListRow(request: request, isFavorited: false)
+        RequestListRow(request: request, isFavorited: true)
+    }
+}

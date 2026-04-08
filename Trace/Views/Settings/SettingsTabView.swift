@@ -249,3 +249,8 @@ struct SettingsTabView: View {
         }
     }
 }
+
+#Preview {
+    @Previewable @State var showingOnboarding = false
+    SettingsTabView(viewModel: CaptureViewModel(), showingOnboarding: $showingOnboarding)
+}

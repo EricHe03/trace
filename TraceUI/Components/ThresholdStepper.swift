@@ -34,3 +34,15 @@ public struct ThresholdStepper: View {
         .accessibilityHint("Swipe up or down to adjust")
     }
 }
+
+#Preview {
+    @Previewable @State var value = 5 * 1024 * 1024
+    Form {
+        ThresholdStepper(
+            title: "Inline Threshold",
+            value: $value,
+            range: 1 * 1024 * 1024 ... 50 * 1024 * 1024,
+            step: 1 * 1024 * 1024
+        )
+    }
+}

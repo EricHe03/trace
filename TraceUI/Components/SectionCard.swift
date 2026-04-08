@@ -54,3 +54,16 @@ public struct SectionCard<Content: View>: View {
         }
     }
 }
+
+#Preview {
+    ScrollView {
+        SectionCard(title: "General", systemImage: "info.circle") {
+            Text("Row 1")
+            Divider()
+            Text("Row 2")
+            Divider()
+            Text("Row 3")
+        }
+        .padding()
+    }
+}

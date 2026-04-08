@@ -257,3 +257,28 @@ struct TransportDetailView: View {
         }
     }
 }
+
+#Preview {
+    let request = TransportRequest(
+        sourceIP: "192.168.1.1",
+        destinationIP: "8.8.8.8",
+        sourcePort: 54321,
+        destinationPort: 53,
+        transport: .udp,
+        applicationProtocol: .dns,
+        parserOutcome: .parsed,
+        payload: .inline(Data("example.com".utf8)),
+        payloadBytes: 11,
+        ipVersion: 4,
+        protocolNumber: 17,
+        hopLimit: 64,
+        ipHeaderLength: 20,
+        totalLength: 51,
+        fragmentOffset: 0,
+        moreFragments: false,
+        flowKey: "192.168.1.1:54321-8.8.8.8:53"
+    )
+    NavigationStack {
+        TransportDetailView(request: request)
+    }
+}

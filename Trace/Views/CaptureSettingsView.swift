@@ -216,3 +216,9 @@ struct CaptureSettingsView: View {
         return "Enter a valid IPv4 or IPv6 address"
     }
 }
+
+#Preview {
+    NavigationStack {
+        CaptureSettingsView(vpnManager: VPNManager.shared)
+    }
+}

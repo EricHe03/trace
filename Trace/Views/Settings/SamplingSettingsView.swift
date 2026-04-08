@@ -97,3 +97,9 @@ struct SamplingSettingsView: View {
         persistConfig()
     }
 }
+
+#Preview {
+    NavigationStack {
+        SamplingSettingsView()
+    }
+}

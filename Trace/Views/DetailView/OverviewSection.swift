@@ -739,3 +739,25 @@ struct StackFrameView: View {
         .textSelection(.enabled)
     }
 }
+
+#Preview("OverviewSection") {
+    let request = NetworkRequest(
+        url: "https://api.example.com/users/123",
+        method: .get,
+        statusCode: 200,
+        timestamp: Date(),
+        duration: 0.234,
+        requestHeaders: [TraceHTTPHeader(key: "Content-Type", value: "application/json")],
+        responseHeaders: [TraceHTTPHeader(key: "Content-Type", value: "application/json")],
+        requestBody: .empty,
+        responseBody: .empty
+    )
+    ScrollView {
+        OverviewSection(request: request)
+    }
+}
+
+#Preview("StackTraceView") {
+    StackTraceView(stackTrace: "1. 0x103c4a6d4 Trace.RequestManager.fetch(_:) + 456 at /path/RequestManager.swift:42\n2. 0x103c5b7e8 Trace.NetworkClient.send(_:) + 128 at /path/NetworkClient.swift:87")
+        .padding()
+}

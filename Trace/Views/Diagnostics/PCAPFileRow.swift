@@ -36,3 +36,17 @@ struct PCAPFileRow: View {
         .accessibilityHint("Swipe to share or delete")
     }
 }
+
+// MARK: - Previews
+
+#Preview {
+    let file = PCAPExportView.PCAPFileInfo(
+        url: URL(fileURLWithPath: "/tmp/capture_2026-04-08.pcap"),
+        name: "capture_2026-04-08.pcap",
+        size: 1_048_576,
+        modificationDate: Date()
+    )
+    List {
+        PCAPFileRow(file: file)
+    }
+}

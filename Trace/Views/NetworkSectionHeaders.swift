@@ -90,3 +90,48 @@ struct DomainGroupLabel: View {
         .accessibilityLabel("\(group.domain), \(group.requestCount) requests")
     }
 }
+
+// MARK: - Previews
+
+#Preview("SessionSectionHeader") {
+    let session = CaptureSession(name: "Session 1", startTime: Date().addingTimeInterval(-120))
+    let request = NetworkRequest(
+        url: "https://api.example.com/users",
+        method: .get,
+        statusCode: 200,
+        timestamp: Date(),
+        duration: 0.15
+    )
+    let group = SessionGroup(session: session, requests: [request], domainGroups: [])
+    List {
+        SessionSectionHeader(group: group)
+    }
+}
+
+#Preview("DomainSectionHeader") {
+    let request = NetworkRequest(
+        url: "https://api.example.com/users",
+        method: .get,
+        statusCode: 200,
+        timestamp: Date(),
+        duration: 0.15
+    )
+    let group = DomainGroup(domain: "api.example.com", requests: [request])
+    List {
+        DomainSectionHeader(group: group)
+    }
+}
+
+#Preview("DomainGroupLabel") {
+    let request = NetworkRequest(
+        url: "https://api.example.com/users",
+        method: .get,
+        statusCode: 200,
+        timestamp: Date(),
+        duration: 0.15
+    )
+    let group = DomainGroup(domain: "api.example.com", requests: [request])
+    List {
+        DomainGroupLabel(group: group)
+    }
+}

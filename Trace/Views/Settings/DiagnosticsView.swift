@@ -172,3 +172,9 @@ struct DiagnosticsView: View {
         }
     }
 }
+
+#Preview {
+    NavigationStack {
+        DiagnosticsView()
+    }
+}
