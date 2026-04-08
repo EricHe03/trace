@@ -336,13 +336,13 @@ public extension AppGroupStorage {
         return .disabled
     }
 
-    func savePausedBreakpointRequest(_ request: PausedRequest) throws {
+    public func savePausedBreakpointRequest(_ request: PausedRequest) throws {
         let data = try makeEncoder().encode(request)
         try saveData(data, to: breakpointPausedRequestBlobName(for: request.id))
         notifyBreakpointStateChanged()
     }
 
-    func loadPausedBreakpointRequest(id: String) throws -> PausedRequest {
+    public func loadPausedBreakpointRequest(id: String) throws -> PausedRequest {
         let data = try loadData(from: breakpointPausedRequestBlobName(for: id))
         do {
             return try makeDecoder().decode(PausedRequest.self, from: data)
@@ -351,7 +351,7 @@ public extension AppGroupStorage {
         }
     }
 
-    func loadAllPausedBreakpointRequests() throws -> [PausedRequest] {
+    public func loadAllPausedBreakpointRequests() throws -> [PausedRequest] {
         do {
             let rows: [Data] = try withDatabase { pool in
                 try pool.read { db in
@@ -383,17 +383,17 @@ public extension AppGroupStorage {
         }
     }
 
-    func deletePausedBreakpointRequest(id: String) throws {
+    public func deletePausedBreakpointRequest(id: String) throws {
         try deleteConfigBlob(named: breakpointPausedRequestBlobName(for: id))
         notifyBreakpointStateChanged()
     }
 
-    func saveBreakpointResumeCommand(_ command: BreakpointResumeCommand) throws {
+    public func saveBreakpointResumeCommand(_ command: BreakpointResumeCommand) throws {
         let data = try makeEncoder().encode(command)
         try saveData(data, to: breakpointResumeCommandBlobName(for: command.requestId))
     }
 
-    func loadBreakpointResumeCommand(requestId: String) throws -> BreakpointResumeCommand? {
+    public func loadBreakpointResumeCommand(requestId: String) throws -> BreakpointResumeCommand? {
         do {
             let data = try loadData(from: breakpointResumeCommandBlobName(for: requestId))
             return try makeDecoder().decode(BreakpointResumeCommand.self, from: data)
@@ -406,14 +406,14 @@ public extension AppGroupStorage {
         }
     }
 
-    func consumeBreakpointResumeCommand(requestId: String) throws -> BreakpointResumeCommand? {
+    public func consumeBreakpointResumeCommand(requestId: String) throws -> BreakpointResumeCommand? {
         let command = try loadBreakpointResumeCommand(requestId: requestId)
         guard command != nil else { return nil }
         try deleteBreakpointResumeCommand(requestId: requestId)
         return command
     }
 
-    func deleteBreakpointResumeCommand(requestId: String) throws {
+    public func deleteBreakpointResumeCommand(requestId: String) throws {
         try deleteConfigBlob(named: breakpointResumeCommandBlobName(for: requestId))
     }
 }

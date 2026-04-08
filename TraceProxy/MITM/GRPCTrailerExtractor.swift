@@ -16,9 +16,9 @@ import TraceCore
 enum GRPCTrailerExtractor {
     /// Extract gRPC metadata from the given HTTPHeaders.
     /// Returns nil if no grpc-status header is present (i.e., not a gRPC response).
-    static func extract(from headers: HTTPHeaders) -> NetworkRequest.GRPCMetadata? {
+    static func extract(from headers: HTTPHeaders) -> GRPCMetadata? {
         guard headers["grpc-status"].first != nil else { return nil }
-        var meta = NetworkRequest.GRPCMetadata()
+        var meta = GRPCMetadata()
         meta.statusCode = headers["grpc-status"].first.flatMap { Int($0) }
         // grpc-message is percent-encoded per the gRPC spec (§2.4).
         meta.statusMessage = headers["grpc-message"].first.map {

@@ -414,6 +414,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
 
         didEmitForwardingErrorResponse = false
         shouldCloseAfterForwardingResponse = false
+        resetProxyPathTimingState()
         state = .forwardingHTTPRequest
         requestInterceptionFuture(
             RequestInterceptionContext(

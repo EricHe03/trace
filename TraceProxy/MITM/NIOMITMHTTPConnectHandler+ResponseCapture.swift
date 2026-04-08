@@ -11,6 +11,11 @@ import NIOHTTP1
 import TraceCore
 
 extension NIOMITMHTTPConnectHandler {
+    func resetProxyPathTimingState() {
+        requestSentAt = nil
+        responseHeadAt = nil
+    }
+
     func clearActiveCapturedRequest() {
         activeCapturedRequest = nil
     }
@@ -350,6 +355,7 @@ extension NIOMITMHTTPConnectHandler {
             )
         }
         shouldCloseAfterForwardingResponse = false
+        resetProxyPathTimingState()
         if shouldEmitPipeliningBadRequest {
             state = .closed
             sendResponse(
