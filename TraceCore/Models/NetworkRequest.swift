@@ -79,10 +79,13 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public var timingPhases: NetworkTimingPhases?
     public var tlsInfo: TLSConnectionInfo?
 
+    /// gRPC Metadata
+    public var grpcMetadata: GRPCMetadata?
+
     // Initiator Tracking
-    public var initiatorStackTrace: String?        // Call stack at request creation
-    public var initiatorBundleId: String?          // App bundle ID if identifiable
-    public var initiatorDisplayName: String?       // User-friendly app name
+    public var initiatorStackTrace: String? // Call stack at request creation
+    public var initiatorBundleId: String? // App bundle ID if identifiable
+    public var initiatorDisplayName: String? // User-friendly app name
 
     // Network Throttling
     public var wasThrottled: Bool = false
@@ -593,6 +596,57 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         }
 
         return nil
+    }
+}
+
+// MARK: - gRPC Metadata
+
+/// gRPC-specific metadata extracted from HTTP/2 trailing HEADERS frames (END_STREAM).
+/// Only populated for requests where Content-Type starts with "application/grpc".
+public struct GRPCMetadata: Codable, Equatable, Sendable {
+    /// The grpc-status code. 0 = OK. See https://grpc.github.io/grpc/core/md_doc_statuscodes.html
+    public var statusCode: Int?
+    /// The grpc-message value, percent-decoded.
+    public var statusMessage: String?
+    /// The grpc-encoding value (e.g. "gzip", "deflate", "identity").
+    public var encoding: String?
+    /// Number of gRPC length-prefixed messages in the response body.
+    public var responseMessageCount: Int?
+
+    /// Human-readable name for the status code.
+    public var statusName: String? {
+        GRPCMetadata.name(for: statusCode)
+    }
+
+    /// True when grpc-status is 0 (OK).
+    public var isSuccess: Bool {
+        statusCode == 0
+    }
+
+    public init() {}
+
+    // swiftlint:disable:next cyclomatic_complexity
+    public static func name(for code: Int?) -> String? {
+        switch code {
+        case 0: "OK"
+        case 1: "CANCELLED"
+        case 2: "UNKNOWN"
+        case 3: "INVALID_ARGUMENT"
+        case 4: "DEADLINE_EXCEEDED"
+        case 5: "NOT_FOUND"
+        case 6: "ALREADY_EXISTS"
+        case 7: "PERMISSION_DENIED"
+        case 8: "RESOURCE_EXHAUSTED"
+        case 9: "FAILED_PRECONDITION"
+        case 10: "ABORTED"
+        case 11: "OUT_OF_RANGE"
+        case 12: "UNIMPLEMENTED"
+        case 13: "INTERNAL"
+        case 14: "UNAVAILABLE"
+        case 15: "DATA_LOSS"
+        case 16: "UNAUTHENTICATED"
+        default: nil
+        }
     }
 }
 

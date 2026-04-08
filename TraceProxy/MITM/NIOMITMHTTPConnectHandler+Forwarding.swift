@@ -159,8 +159,10 @@ extension NIOMITMHTTPConnectHandler {
                                     captured.statusCode = Int(response.status.code)
                                     captured.statusMessage = response.status.reasonPhrase
                                     captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
-                                    let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
-                                    let responseContentType = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-type" })?.value
+                                    if captured.isGRPC {
+                                        captured.grpcMetadata = GRPCTrailerExtractor.extract(from: forwardedHeaders)
+                                    }
+                                    let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace) let responseContentType = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-type" })?.value
                                     let responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
                                     let effectiveCaptureBodyLimit = self.effectiveBodyCaptureLimit(
                                         captureConfig: captureConfig,
@@ -177,6 +179,9 @@ extension NIOMITMHTTPConnectHandler {
                                         captureConfig: captureConfig
                                     )
                                     let responseBodyData = self.byteBufferToData(responseBodyBuffer)
+                                    if captured.isGRPC {
+                                        captured.grpcMetadata?.responseMessageCount = GRPCTrailerExtractor.countMessages(in: responseBodyData)
+                                    }
                                     self.logResponseCaptureDecision(
                                         pipeline: "buffer_and_intercept",
                                         requestID: captured.id,
@@ -1383,6 +1388,10 @@ extension NIOMITMHTTPConnectHandler {
                 capturedRequest.statusCode = Int(finalStatus.code)
                 capturedRequest.statusMessage = finalStatus.reasonPhrase
                 capturedRequest.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
+                if capturedRequest.isGRPC, let responseHead {
+                    capturedRequest.grpcMetadata = GRPCTrailerExtractor.extract(from: responseHead.headers)
+                    capturedRequest.grpcMetadata?.responseMessageCount = GRPCTrailerExtractor.countMessages(in: capturedBodyData)
+                }
                 let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
                 let observedResponseBodyBytes = max(receivedBodyBytes, capturedBodyData.count)
                 let resolvedResponseBodyBytes = self.resolvedResponseBodyBytes(

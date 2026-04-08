@@ -24,6 +24,7 @@ extension NetworkRequest: Codable {
         case http2Streams, http2ConnectionInfo
         case redirectChain
         case curlExecutionMetadata
+        case grpcMetadata
     }
 
     private enum LegacyCodingKeys: String, CodingKey {
@@ -114,6 +115,7 @@ extension NetworkRequest: Codable {
         self.http2ConnectionInfo = try container.decodeIfPresent(HTTP2ConnectionInfo.self, forKey: .http2ConnectionInfo)
         self.redirectChain = try container.decodeIfPresent([RedirectInfo].self, forKey: .redirectChain) ?? []
         self.curlExecutionMetadata = try container.decodeIfPresent(CurlExecutionMetadata.self, forKey: .curlExecutionMetadata)
+        self.grpcMetadata = try container.decodeIfPresent(GRPCMetadata.self, forKey: .grpcMetadata)
 
         let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
         if self.requestMethodRaw == nil {
@@ -214,6 +216,7 @@ extension NetworkRequest: Codable {
         try container.encodeIfPresent(http2ConnectionInfo, forKey: .http2ConnectionInfo)
         try container.encode(redirectChain, forKey: .redirectChain)
         try container.encodeIfPresent(curlExecutionMetadata, forKey: .curlExecutionMetadata)
+        try container.encodeIfPresent(grpcMetadata, forKey: .grpcMetadata)
     }
 }
 

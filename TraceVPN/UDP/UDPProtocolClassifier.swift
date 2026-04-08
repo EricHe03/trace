@@ -135,6 +135,16 @@ enum UDPProtocolClassifier {
             }
         }
 
+        // QUIC on non-standard ports: require the stricter long-header + known version check
+        // to avoid false positives that the loose bit-only check would produce on arbitrary ports.
+        if looksLikeQUICStrict(payload) {
+            return Classification(
+                applicationProtocol: .quic,
+                parserOutcome: .parsed,
+                summary: "QUIC (non-443)"
+            )
+        }
+
         return Classification(
             applicationProtocol: .unknown,
             parserOutcome: .fallbackUnknown,
@@ -169,6 +179,24 @@ enum UDPProtocolClassifier {
         guard let first = payload.first else { return false }
         // Long header sets bit 0x80; short header keeps fixed bit 0x40 set.
         return (first & 0x80) == 0x80 || (first & 0x40) == 0x40
+    }
+
+    /// Strict QUIC detection: requires both the long-header fixed bits (0xC0) AND a known QUIC
+    /// version number in bytes 1–4. Safe to apply on any port without false positives from
+    /// the looser bit-only check used on port 443.
+    ///
+    /// Recognised versions (RFC 9000 §15):
+    ///   - 0x00000001  QUIC v1
+    ///   - 0x6b3343cf  QUIC v2 (RFC 9369)
+    ///   - 0x00000000  Version Negotiation
+    private static func looksLikeQUICStrict(_ payload: Data) -> Bool {
+        guard payload.count >= 5, let first = payload.first else { return false }
+        guard (first & 0xC0) == 0xC0 else { return false }
+        let version = UInt32(payload[1]) << 24
+            | UInt32(payload[2]) << 16
+            | UInt32(payload[3]) << 8
+            | UInt32(payload[4])
+        return version == 0x0000_0001 || version == 0x6B33_43CF || version == 0x0000_0000
     }
 
     private static func ntpVersion(_ payload: Data) -> UInt8 {

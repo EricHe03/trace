@@ -787,9 +787,15 @@ extension NIOMITMInitialIngressHandler {
         let relayProtocols = http2MITMEnabledProvider()
             ? Self.transparentRelayALPNProtocols
             : ["http/1.1"]
-        return relayProtocols.filter { candidate in
+        let candidates = relayProtocols.filter { candidate in
             normalizedOffer.contains(candidate.lowercased())
         }
+        if normalizedOffer.contains("h3"), !candidates.contains("h3") {
+            ProxyLog.mitm.info(
+                "event=transparent_alpn_downgrade client_offered_h3=true selected=\(candidates.joined(separator: ","), privacy: .public) note=quic_requires_full_tunnel"
+            )
+        }
+        return candidates
     }
 
     func mirroredClientALPNList(from negotiatedUpstreamALPN: String?, clientOfferedALPN: [String]) -> [String] {
