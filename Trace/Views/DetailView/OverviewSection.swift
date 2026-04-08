@@ -67,6 +67,9 @@ struct OverviewSection: View {
                 }
             }
 
+            // Connection Information
+            connectionSection
+
             // Initiator Information
             if request.initiatorDisplayName != nil || request.initiatorStackTrace != nil {
                 SectionCard(title: "Initiator") {
@@ -208,6 +211,9 @@ struct OverviewSection: View {
                 }
             }
 
+            // Transfer Sizes
+            transferSection
+
             // TLS/Certificate Information with ALPN
             if let tlsInfo = request.tlsInfo {
                 TLSDetailSection(tlsInfo: tlsInfo)
@@ -221,6 +227,164 @@ struct OverviewSection: View {
             }
         }
         .padding()
+    }
+
+    // MARK: - Connection Section
+
+    @ViewBuilder
+    private var connectionSection: some View {
+        let hasRemote = request.remoteAddress != nil
+        let hasLocal = request.localAddress != nil
+        let hasFlags = request.isCellular || request.isExpensive || request.isConstrained
+        let hasProxy = request.isProxyConnection
+
+        if hasRemote || hasLocal || hasFlags || hasProxy {
+            SectionCard(title: "Connection", systemImage: "network") {
+                // Remote address + port
+                if let remote = request.remoteAddress {
+                    VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
+                        Text("Remote")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(alignment: .center, spacing: DesignSystem.Spacing.sm) {
+                            Text(request.remotePort.map { "\(remote) : \($0)" } ?? remote)
+                                .font(.body.monospaced())
+                                .foregroundStyle(.primary)
+                                .textSelection(.enabled)
+
+                            if request.isConnectionReused {
+                                connectionBadge("Reused", color: DesignSystem.Colors.success)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if hasLocal || hasFlags || hasProxy {
+                        Divider()
+                    }
+                }
+
+                // Local address + port
+                if let local = request.localAddress {
+                    VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
+                        Text("Local")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text(request.localPort.map { "\(local) : \($0)" } ?? local)
+                            .font(.body.monospaced())
+                            .foregroundStyle(.primary)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if hasFlags || hasProxy {
+                        Divider()
+                    }
+                }
+
+                // Network path flags (cellular / expensive / constrained)
+                if hasFlags {
+                    HStack(spacing: DesignSystem.Spacing.sm) {
+                        if request.isCellular {
+                            connectionBadge("Cellular", color: DesignSystem.Colors.warning)
+                        }
+                        if request.isExpensive {
+                            connectionBadge("Expensive", color: DesignSystem.Colors.warning)
+                        }
+                        if request.isConstrained {
+                            connectionBadge("Low Data Mode", color: DesignSystem.Colors.warning)
+                        }
+                        Spacer()
+                    }
+
+                    if hasProxy {
+                        Divider()
+                    }
+                }
+
+                // Proxy
+                if hasProxy {
+                    HStack(spacing: DesignSystem.Spacing.sm) {
+                        Image(systemName: "network.badge.shield.half.filled")
+                            .font(.caption)
+                            .foregroundStyle(DesignSystem.Colors.accent)
+                            .accessibilityHidden(true)
+
+                        VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
+                            Text("Via Proxy")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("Request routed through a proxy")
+                                .font(.body)
+                                .foregroundStyle(.primary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+    }
+
+    private func connectionBadge(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(DesignSystem.Badge.font)
+            .fontWeight(DesignSystem.Badge.fontWeight)
+            .foregroundStyle(.white)
+            .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
+            .padding(.vertical, DesignSystem.Badge.verticalPadding)
+            .background(color)
+            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius, style: .continuous))
+    }
+
+    // MARK: - Transfer Section
+
+    @ViewBuilder
+    private var transferSection: some View {
+        let reqH = request.requestHeadersSize
+        let resH = request.responseHeadersSize
+        let reqB = request.requestBodyTransferSize
+        let resDecoded = request.responseBodyDecodedSize
+        let resWire = request.responseBodyTransferSize
+
+        if reqH != nil || resH != nil || reqB != nil || resDecoded != nil || resWire != nil {
+            SectionCard(title: "Transfer", systemImage: "arrow.up.arrow.down") {
+                let rows: [(String, String?, Color)] = [
+                    ("Request Headers", reqH.map { DesignSystem.formattedBytes($0) }, .primary),
+                    ("Response Headers", resH.map { DesignSystem.formattedBytes($0) }, .primary),
+                    ("Request Body", reqB.map { DesignSystem.formattedBytes($0) }, .primary),
+                    ("Response Body", resDecoded.map { DesignSystem.formattedBytes($0) }, .primary),
+                ].filter { $0.1 != nil }
+
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                    if index > 0 { Divider() }
+                    transferRow(label: row.0, value: row.1 ?? "", color: row.2)
+                }
+
+                // On Wire + Savings (only when wire size differs from decoded)
+                if let wire = resWire, let decoded = resDecoded, wire < decoded {
+                    Divider()
+                    transferRow(label: "On Wire", value: DesignSystem.formattedBytes(wire), color: .secondary)
+
+                    let savings = Int((1.0 - Double(wire) / Double(decoded)) * 100)
+                    Divider()
+                    transferRow(label: "Compression Savings", value: "\(savings)%", color: DesignSystem.Colors.success)
+                }
+            }
+        }
+    }
+
+    private func transferRow(label: String, value: String, color: Color) -> some View {
+        HStack {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(color)
+        }
     }
 
     private func formattedDuration(_ duration: TimeInterval) -> String {

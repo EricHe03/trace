@@ -194,7 +194,7 @@ class NetworkInterceptor: URLProtocol {
             contentDownload: contentDownload,
             redirectTime: redirectTime
         )
-        return phases.hasAnyData ? phases : nil
+        return phases.hasData ? phases : nil
     }
 
     private func captureRequest(response: URLResponse?, error: Error?, metrics: URLSessionTaskMetrics?) {

@@ -599,7 +599,7 @@ extension NIOMITMHTTPConnectHandler {
             ttfb: ttfb.flatMap { $0 > 0.0001 ? $0 : nil },
             contentDownload: contentDownload.flatMap { $0 > 0.0001 ? $0 : nil }
         )
-        return phases.hasAnyData ? phases : nil
+        return phases.hasData ? phases : nil
     }
 
     func throttle(
