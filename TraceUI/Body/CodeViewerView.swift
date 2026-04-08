@@ -72,7 +72,7 @@ public struct CodeViewerView: View {
                     .padding(.top, DesignSystem.Spacing.xs)
             }
 
-            ScrollView([.horizontal, .vertical]) {
+            DirectionalScrollView([.horizontal, .vertical]) {
                 Group {
                     switch viewMode {
                     case .formatted:

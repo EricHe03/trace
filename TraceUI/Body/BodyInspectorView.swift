@@ -181,7 +181,7 @@ public struct BodyInspectorView: View {
     private var contentArea: some View {
         switch viewMode {
         case .text:
-            ScrollView([.horizontal, .vertical]) {
+            DirectionalScrollView([.horizontal, .vertical]) {
                 textView
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, DesignSystem.Spacing.xs)
@@ -189,7 +189,7 @@ public struct BodyInspectorView: View {
             .frame(maxHeight: 420)
 
         case .hex:
-            ScrollView([.horizontal, .vertical]) {
+            DirectionalScrollView([.horizontal, .vertical]) {
                 hexView
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, DesignSystem.Spacing.xs)
@@ -239,7 +239,7 @@ public struct BodyInspectorView: View {
             }
 
         case .plainText, .none:
-            ScrollView([.horizontal, .vertical]) {
+            DirectionalScrollView([.horizontal, .vertical]) {
                 textView
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, DesignSystem.Spacing.xs)
@@ -247,7 +247,7 @@ public struct BodyInspectorView: View {
             .frame(maxHeight: 420)
 
         case .binary:
-            ScrollView([.horizontal, .vertical]) {
+            DirectionalScrollView([.horizontal, .vertical]) {
                 hexView
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, DesignSystem.Spacing.xs)
@@ -340,7 +340,7 @@ public struct BodyInspectorView: View {
                 case .image:
                     imageFullScreenView
                 default:
-                    ScrollView([.horizontal, .vertical]) {
+                    DirectionalScrollView([.horizontal, .vertical]) {
                         textView
                             .padding()
                             .frame(maxWidth: .infinity, alignment: .leading)

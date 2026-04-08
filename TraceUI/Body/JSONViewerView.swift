@@ -78,12 +78,12 @@ public struct JSONViewerView: View {
 
             switch viewMode {
             case .formatted:
-                ScrollView([.horizontal, .vertical]) {
+                DirectionalScrollView([.horizontal, .vertical]) {
                     formattedView
                         .padding()
                 }
             case .tree:
-                ScrollView([.horizontal, .vertical]) {
+                DirectionalScrollView([.horizontal, .vertical]) {
                     treeView
                         .padding()
                 }
