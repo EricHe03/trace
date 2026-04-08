@@ -21,9 +21,11 @@ final class RequestInterceptorTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         sut = await RequestInterceptor.shared
+        await resetBreakpointTestState()
     }
 
     override func tearDown() async throws {
+        await resetBreakpointTestState()
         sut = nil
         try await super.tearDown()
     }
@@ -306,6 +308,113 @@ final class RequestInterceptorTests: XCTestCase {
             // Then
             XCTAssertNotNil(result, "Failed for method \(method)")
         }
+    }
+
+    func testInterceptRequestContinueAndDisablePreservesBreakpointEdits() async {
+        var config = BreakpointConfiguration(
+            enabled: true,
+            breakpointType: .request,
+            matchType: .exact,
+            matchPattern: "https://api.example.com/test"
+        )
+        config.executionMode = .pause
+        await BreakpointManager.shared.updateConfiguration(config)
+
+        let flowId = UUID()
+        let resultTask = Task {
+            await self.sut.interceptRequest(
+                flowId: flowId,
+                url: "https://api.example.com/test",
+                method: "POST",
+                headers: ["Content-Type": "text/plain"],
+                body: Data("original".utf8)
+            )
+        }
+
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        await BreakpointManager.shared.updatePausedRequest(
+            id: flowId.uuidString,
+            modifications: PausedRequestModifications(
+                url: "https://api.example.com/patched",
+                headers: [TraceHTTPHeader(key: "X-Breakpoint", value: "applied")],
+                body: Data("patched".utf8)
+            )
+        )
+        await BreakpointManager.shared.resumeRequest(id: flowId.uuidString, action: .continueAndDisable)
+
+        let result = await resultTask.value
+        switch result {
+        case let .modified(request):
+            XCTAssertEqual(request.url, "https://api.example.com/patched")
+            XCTAssertEqual(request.requestHeaders, [TraceHTTPHeader(key: "X-Breakpoint", value: "applied")])
+            XCTAssertEqual(request.requestBody.getData(), Data("patched".utf8))
+        default:
+            XCTFail("Expected modified request after continue-and-disable breakpoint")
+        }
+
+        let isEnabled = await BreakpointManager.shared.isEnabled()
+        XCTAssertFalse(isEnabled)
+    }
+
+    func testInterceptResponseBreakpointUsesMutatedResponseState() async {
+        let url = "https://api.example.com/response"
+        let rule = makeRewriteRule(
+            name: "Prepare Response For Breakpoint",
+            ruleType: .modifyResponse,
+            matchType: .exact,
+            matchPattern: url,
+            actions: [
+                .setStatusCode(204),
+                .setHeader(key: "X-Rewritten", value: "true"),
+                .setBody(content: "rewritten-body")
+            ]
+        )
+        RewriteManager.shared.addRule(rule)
+        await sut.forceConfigRefresh()
+
+        let config = BreakpointConfiguration(
+            enabled: true,
+            breakpointType: .response,
+            matchType: .exact,
+            matchPattern: url,
+            statusCodes: [204]
+        )
+        await BreakpointManager.shared.updateConfiguration(config)
+
+        let request = NetworkRequest(
+            id: UUID(),
+            url: url,
+            method: .get,
+            duration: 0
+        )
+        let resultTask = Task {
+            await self.sut.interceptResponse(
+                request: request,
+                statusCode: 200,
+                statusMessage: "OK",
+                headers: [TraceHTTPHeader(key: "Content-Type", value: "text/plain")],
+                body: Data("original".utf8)
+            )
+        }
+
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        let pausedRequest = await BreakpointManager.shared.getPausedRequest(id: request.id.uuidString)
+        XCTAssertEqual(pausedRequest?.statusCode, 204)
+        XCTAssertTrue(pausedRequest?.headers.contains(TraceHTTPHeader(key: "X-Rewritten", value: "true")) == true)
+        XCTAssertEqual(pausedRequest?.body, Data("rewritten-body".utf8))
+
+        await BreakpointManager.shared.updatePausedRequest(
+            id: request.id.uuidString,
+            modifications: PausedRequestModifications(statusCode: 205)
+        )
+        await BreakpointManager.shared.resumeRequest(id: request.id.uuidString, action: .continue)
+
+        let response = await resultTask.value
+        XCTAssertEqual(response.statusCode, 205)
+        XCTAssertTrue(response.responseHeaders.contains(TraceHTTPHeader(key: "X-Rewritten", value: "true")))
+        XCTAssertEqual(response.responseBody.getData(), Data("rewritten-body".utf8))
     }
 
     // MARK: - Edge Cases
@@ -714,4 +823,22 @@ private func makeProfile(
         ruleGroups: [],
         isActive: true
     )
+}
+
+@MainActor
+private func resetBreakpointTestState() async {
+    ScriptManager.shared.clearAllScripts()
+    RewriteManager.shared.clearAllRules()
+    await BreakpointManager.shared.setEnabled(false)
+    await BreakpointManager.shared.resumeAllRequests(action: .continue)
+
+    let storage = AppGroupStorage.shared
+    if let pausedRequests = try? storage.loadAllPausedBreakpointRequests() {
+        for pausedRequest in pausedRequests {
+            try? storage.deletePausedBreakpointRequest(id: pausedRequest.id)
+            try? storage.deleteBreakpointResumeCommand(requestId: pausedRequest.id)
+        }
+    }
+
+    await RequestInterceptor.shared.forceConfigRefresh()
 }

@@ -491,6 +491,13 @@ public actor BreakpointManager {
 
     public func applyStoredRequestModifications(to request: inout NetworkRequest) -> Bool {
         guard let stored = storedRequestModifications else { return false }
+        guard configuration.shouldBreakOnRequest(url: request.url, method: request.method) else { return false }
+        guard conditionsPass(
+            url: request.url,
+            headers: request.requestHeaders,
+            body: request.requestBody.getData()
+        ) else { return false }
+
         var didApply = false
         if request.url != stored.effectiveUrl {
             request.url = stored.effectiveUrl
@@ -511,11 +518,27 @@ public actor BreakpointManager {
             request.requestBody = BodyStorage.from(data: modifiedBody)
             didApply = true
         }
+
+        if configuration.executionMode == .editOnce {
+            storedRequestModifications = nil
+            editOnceApplied = false
+        }
+
         return didApply
     }
 
     public func applyStoredResponseModifications(to request: inout NetworkRequest) -> Bool {
         guard let stored = storedResponseModifications else { return false }
+        guard configuration.shouldBreakOnResponse(
+            url: request.url,
+            statusCode: request.statusCode ?? stored.statusCode ?? 200
+        ) else { return false }
+        guard conditionsPass(
+            url: request.url,
+            headers: request.responseHeaders,
+            body: request.responseBody.getData()
+        ) else { return false }
+
         var didApply = false
         if request.responseHeaders != stored.effectiveHeaders {
             request.responseHeaders = stored.effectiveHeaders
@@ -533,12 +556,31 @@ public actor BreakpointManager {
             request.statusMessage = message
             didApply = true
         }
+
+        if configuration.executionMode == .editOnce {
+            storedResponseModifications = nil
+            editOnceApplied = false
+        }
+
         return didApply
     }
 
-    public func applyStoredStreamModifications(to body: inout Data?) -> Bool {
+    public func applyStoredStreamModifications(
+        url: String,
+        headers: [TraceHTTPHeader],
+        to body: inout Data?
+    ) -> Bool {
         guard let stored = storedStreamModifications else { return false }
+        guard configuration.shouldBreakOnStream(url: url) else { return false }
+        guard conditionsPass(url: url, headers: headers, body: body) else { return false }
+
         body = stored.effectiveBody
+
+        if configuration.executionMode == .editOnce {
+            storedStreamModifications = nil
+            editOnceApplied = false
+        }
+
         return stored.effectiveBody != nil
     }
 

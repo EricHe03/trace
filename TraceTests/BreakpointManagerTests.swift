@@ -633,6 +633,102 @@ final class BreakpointManagerTests: XCTestCase {
         XCTAssertEqual(request.requestBody.getData(), Data("patched".utf8))
     }
 
+    func testApplyStoredRequestModifications_DoesNotApplyToNonMatchingTraffic() async {
+        var config = BreakpointConfiguration()
+        config.enabled = true
+        config.breakpointType = .request
+        config.matchType = .exact
+        config.matchPattern = "https://example.com/target"
+        config.executionMode = .alwaysApply
+        await manager.updateConfiguration(config)
+
+        let requestId = UUID().uuidString
+        let pauseTask = Task {
+            await manager.pauseRequest(
+                id: requestId,
+                url: "https://example.com/target",
+                method: .get,
+                headers: [],
+                body: nil
+            )
+        }
+
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        await manager.updatePausedRequest(
+            id: requestId,
+            modifications: PausedRequestModifications(url: "https://example.com/patched")
+        )
+        await manager.resumeRequest(id: requestId, action: .continue)
+        _ = await pauseTask.value
+
+        var otherRequest = NetworkRequest(
+            url: "https://example.com/other",
+            method: .get,
+            duration: 0
+        )
+
+        let applied = await manager.applyStoredRequestModifications(to: &otherRequest)
+        XCTAssertFalse(applied)
+        XCTAssertEqual(otherRequest.url, "https://example.com/other")
+    }
+
+    func testApplyStoredRequestModifications_EditOnceClearsAfterSingleReplay() async {
+        var config = BreakpointConfiguration()
+        config.enabled = true
+        config.breakpointType = .request
+        config.matchType = .exact
+        config.matchPattern = "https://example.com/original"
+        config.executionMode = .editOnce
+        await manager.updateConfiguration(config)
+
+        let requestId = UUID().uuidString
+        let pauseTask = Task {
+            await manager.pauseRequest(
+                id: requestId,
+                url: "https://example.com/original",
+                method: .get,
+                headers: [],
+                body: nil
+            )
+        }
+
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        await manager.updatePausedRequest(
+            id: requestId,
+            modifications: PausedRequestModifications(url: "https://example.com/patched")
+        )
+        await manager.resumeRequest(id: requestId, action: .continue)
+        _ = await pauseTask.value
+
+        var firstReplay = NetworkRequest(
+            url: "https://example.com/original",
+            method: .get,
+            duration: 0
+        )
+        let firstApplied = await manager.applyStoredRequestModifications(to: &firstReplay)
+        XCTAssertTrue(firstApplied)
+        XCTAssertEqual(firstReplay.url, "https://example.com/patched")
+
+        var secondReplay = NetworkRequest(
+            url: "https://example.com/original",
+            method: .get,
+            duration: 0
+        )
+        let secondApplied = await manager.applyStoredRequestModifications(to: &secondReplay)
+        XCTAssertFalse(secondApplied)
+        XCTAssertEqual(secondReplay.url, "https://example.com/original")
+
+        let shouldBreakAgain = await manager.shouldBreakOnRequest(
+            url: "https://example.com/original",
+            method: .get,
+            headers: [],
+            body: nil
+        )
+        XCTAssertTrue(shouldBreakAgain)
+    }
+
     private func clearSharedBreakpointState() throws {
         let storage = AppGroupStorage.shared
         let pausedRequests = try storage.loadAllPausedBreakpointRequests()
