@@ -136,10 +136,70 @@ extension NIOMITMHTTPConnectHandler {
             responseHeaders: [],
             requestBody: requestBody,
             responseBody: .empty,
-            protocolVersion: usesHTTP2StreamSemantics ? .http2 : httpProtocolVersion(from: requestVersion)
+            protocolVersion: usesHTTP2StreamSemantics ? .http2 : httpProtocolVersion(from: requestVersion),
+            initiatorDisplayName: initiatorDisplayName(from: requestHeaders)
         )
         annotateCaptureMetadata(&request)
         return request
+    }
+
+    /// Derive a human-readable framework/client name from the User-Agent header.
+    /// This is the only reliable initiator signal available in the MITM proxy path.
+    private func initiatorDisplayName(from headers: [String: String]) -> String? {
+        guard let ua = headers.first(where: { $0.key.lowercased() == "user-agent" })?.value,
+              !ua.isEmpty else { return nil }
+
+        let lower = ua.lowercased()
+
+        // Match ordered from most specific to most generic.
+        let patterns: [(String, String)] = [
+            ("okhttp/", "OkHttp (Android)"),
+            ("retrofit/", "Retrofit (Android)"),
+            ("volley/", "Volley (Android)"),
+            ("cronet/", "Cronet"),
+            ("grpc-java/", "gRPC-Java"),
+            ("grpc-swift/", "gRPC-Swift"),
+            ("grpc-go/", "gRPC-Go"),
+            ("grpc-python/", "gRPC-Python"),
+            ("grpc-", "gRPC"),
+            ("alamofire/", "Alamofire"),
+            ("afnetworking/", "AFNetworking"),
+            ("python-httpx/", "HTTPX (Python)"),
+            ("python-requests/", "Requests (Python)"),
+            ("aiohttp/", "aiohttp (Python)"),
+            ("axios/", "Axios"),
+            ("got/", "Got (Node.js)"),
+            ("node-fetch/", "node-fetch"),
+            ("undici/", "Undici (Node.js)"),
+            ("go-http-client/", "Go net/http"),
+            ("curl/", "curl"),
+            ("wget/", "wget"),
+            ("httpie/", "HTTPie"),
+            ("insomnia/", "Insomnia"),
+            ("postmanruntime/", "Postman"),
+            ("dart:io", "Dart (Flutter)"),
+            ("dio/", "Dio (Flutter)"),
+            ("flutter", "Flutter"),
+            ("java/", "Java HttpClient"),
+            ("apache-httpclient/", "Apache HttpClient"),
+            ("reactor-netty/", "Reactor Netty"),
+            ("ruby", "Ruby"),
+            ("php/", "PHP"),
+        ]
+
+        for (pattern, name) in patterns {
+            if lower.contains(pattern) { return name }
+        }
+
+        // CFNetwork covers native Apple URLSession / WKWebView / SwiftUI async
+        if lower.contains("cfnetwork") {
+            if lower.contains("webkit") || lower.contains("mobile/") {
+                return "WKWebView"
+            }
+            return "Apple URLSession"
+        }
+
+        return nil
     }
 
     func bodyStorage(
@@ -498,34 +558,42 @@ extension NIOMITMHTTPConnectHandler {
     }
 
     func finalizeCapturedDuration(for request: inout NetworkRequest) {
-        let elapsed = Date().timeIntervalSince(request.timestamp)
+        let now = Date()
+        let elapsed = now.timeIntervalSince(request.timestamp)
         guard elapsed.isFinite else { return }
         request.duration = max(request.duration, max(0, elapsed))
-
-        // Compute timing phases for proxy path (heuristic estimates without precise timestamps)
-        // Proxy path doesn't have granular DNS/TCP/TLS timing, so we estimate based on response size
-        request.timingPhases = computeProxyPathTimingPhases(duration: request.duration, responseSize: request.responseBody.totalSize)
+        request.timingPhases = computeProxyPathTimingPhases(requestStart: request.timestamp, now: now)
     }
 
-    /// Compute heuristic timing phases for proxy path
-    /// Since we don't have precise TTFB/content-download boundaries, we estimate based on response size
-    private func computeProxyPathTimingPhases(duration: TimeInterval, responseSize: Int) -> NetworkTimingPhases? {
-        guard duration > 0.001 else { return nil }
+    /// Compute real timing phases for the proxy path using timestamps recorded during the NIO pipeline.
+    /// requestSentAt and responseHeadAt are set at precise moments in the forwarding handlers;
+    /// only phases that are actually observed are populated.
+    private func computeProxyPathTimingPhases(requestStart: Date, now: Date) -> NetworkTimingPhases? {
+        guard let sentAt = requestSentAt else { return nil }
 
-        // Conservative estimate: assume smaller responses are faster
-        // Larger responses spend more time in content-download
-        let responseSizeMB = Double(responseSize) / (1024 * 1024)
-        let contentDownloadRatio = min(0.8, max(0.3, responseSizeMB * 0.5))
+        let requestSent = sentAt.timeIntervalSince(requestStart)
+        guard requestSent >= 0 else { return nil }
 
-        let requestSent = duration * 0.1 // ~10% for request transmission
-        let ttfb = duration * (0.4 - contentDownloadRatio * 0.2) // 20-40% waiting
-        let contentDownload = duration - requestSent - ttfb
+        let ttfb: TimeInterval?
+        if let headAt = responseHeadAt, headAt >= sentAt {
+            ttfb = headAt.timeIntervalSince(sentAt)
+        } else {
+            ttfb = nil
+        }
 
-        return NetworkTimingPhases(
-            requestSent: requestSent > 0.001 ? requestSent : nil,
-            ttfb: ttfb > 0.001 ? ttfb : nil,
-            contentDownload: contentDownload > 0.001 ? contentDownload : nil
+        let contentDownload: TimeInterval?
+        if let headAt = responseHeadAt, now >= headAt {
+            contentDownload = now.timeIntervalSince(headAt)
+        } else {
+            contentDownload = nil
+        }
+
+        let phases = NetworkTimingPhases(
+            requestSent: requestSent > 0.0001 ? requestSent : nil,
+            ttfb: ttfb.flatMap { $0 > 0.0001 ? $0 : nil },
+            contentDownload: contentDownload.flatMap { $0 > 0.0001 ? $0 : nil }
         )
+        return phases.hasAnyData ? phases : nil
     }
 
     func throttle(

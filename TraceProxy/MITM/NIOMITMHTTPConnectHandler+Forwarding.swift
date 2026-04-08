@@ -119,6 +119,7 @@ extension NIOMITMHTTPConnectHandler {
                             outcome: "start",
                             detail: "deadline_seconds=\(Self.upstreamHTTPResponseDeadlineSeconds)"
                         )
+                        self.requestSentAt = Date()
                         if responsePipeline == .streamAndCapture {
                             self.forwardStreamingUpstreamResponse(
                                 httpClient: httpClient,
@@ -137,6 +138,7 @@ extension NIOMITMHTTPConnectHandler {
                                 guard let self, self.state == .forwardingHTTPRequest else { return }
                                 switch result {
                                 case let .success(response):
+                                    self.responseHeadAt = Date()
                                     var forwardedHeaders = response.headers
                                     if blockQUIC, outboundContext.url.lowercased().hasPrefix("https://") {
                                         forwardedHeaders.remove(name: "Alt-Svc")
@@ -1236,6 +1238,7 @@ extension NIOMITMHTTPConnectHandler {
 
                 responseHead = head
                 responseHeadSent = true
+                if self.responseHeadAt == nil { self.responseHeadAt = Date() }
                 declaredResponseBodyBytes = self.contentLength(from: head.headers)
                 capturedRequest.protocolVersion = self.mergedCapturedProtocolVersion(
                     current: capturedRequest.protocolVersion,

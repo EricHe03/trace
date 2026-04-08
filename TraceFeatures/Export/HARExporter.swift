@@ -205,15 +205,16 @@ public class HARExporter {
             comment: nil
         )
 
-        // Build timings (simplified)
+        // Build timings from real NetworkTimingPhases when available; fall back to total duration in wait.
+        let phases = request.timingPhases
         let timings = HARTimings(
-            send: 0,
-            wait: time,
-            receive: 0,
+            send: (phases?.requestSent.map { $0 * 1000 }) ?? 0,
+            wait: (phases?.ttfb.map { $0 * 1000 }) ?? time,
+            receive: (phases?.contentDownload.map { $0 * 1000 }) ?? 0,
             blocked: nil,
-            dns: nil,
-            connect: nil,
-            ssl: nil,
+            dns: phases?.dnsLookup.map { $0 * 1000 },
+            connect: phases?.tcpConnection.map { $0 * 1000 },
+            ssl: phases?.tlsHandshake.map { $0 * 1000 },
             comment: nil
         )
 

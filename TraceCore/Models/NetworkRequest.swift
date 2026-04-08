@@ -83,9 +83,8 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public var grpcMetadata: GRPCMetadata?
 
     // Initiator Tracking
-    public var initiatorStackTrace: String? // Call stack at request creation
-    public var initiatorBundleId: String? // App bundle ID if identifiable
-    public var initiatorDisplayName: String? // User-friendly app name
+    public var initiatorStackTrace: String? // Call stack at request creation (URLProtocol path only)
+    public var initiatorDisplayName: String? // Framework/client identified from User-Agent (MITM path)
 
     // Network Throttling
     public var wasThrottled: Bool = false
@@ -238,7 +237,6 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         timingPhases: NetworkTimingPhases? = nil,
         tlsInfo: TLSConnectionInfo? = nil,
         initiatorStackTrace: String? = nil,
-        initiatorBundleId: String? = nil,
         initiatorDisplayName: String? = nil,
         wasThrottled: Bool = false,
         throttlingProfile: String? = nil,
@@ -268,7 +266,6 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         self.timingPhases = timingPhases
         self.tlsInfo = tlsInfo
         self.initiatorStackTrace = initiatorStackTrace
-        self.initiatorBundleId = initiatorBundleId
         self.initiatorDisplayName = initiatorDisplayName
         self.wasThrottled = wasThrottled
         self.throttlingProfile = throttlingProfile

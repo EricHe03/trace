@@ -68,15 +68,10 @@ struct OverviewSection: View {
             }
 
             // Initiator Information
-            if request.initiatorBundleId != nil || request.initiatorDisplayName != nil || request.initiatorStackTrace != nil {
+            if request.initiatorDisplayName != nil || request.initiatorStackTrace != nil {
                 SectionCard(title: "Initiator") {
-                    if let bundleId = request.initiatorBundleId {
-                        InfoRow(label: "Bundle ID", value: bundleId)
-                        Divider()
-                    }
-
                     if let displayName = request.initiatorDisplayName {
-                        InfoRow(label: "App Name", value: displayName)
+                        InfoRow(label: "Framework", value: displayName)
                         Divider()
                     }
 
