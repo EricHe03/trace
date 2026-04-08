@@ -63,6 +63,7 @@ Go to **Settings → Capture Mode** and tap the desired mode. Switching modes wh
 | HTTPS decryption | Yes | Yes (hybrid MITM) | Yes |
 | WebSocket | Yes | Yes (via MITM) | Yes |
 | SSE | Yes | Yes (via MITM) | Yes |
+| gRPC metadata | Yes | Yes (hybrid MITM) | Yes |
 | QUIC/HTTP3 | Partial (fallback) | With QUIC MITM | With QUIC MITM |
 | Raw TCP flows | No | Yes | Yes |
 | UDP flows | No | Yes | Yes |

@@ -71,6 +71,23 @@ Traffic that Trace generates itself (request replay, the request builder, diagno
 
 This is intentionally separate from the NIO path because `URLProtocol` is the only Apple-sanctioned mechanism for intercepting traffic within an app's own process. The NIO MITM proxy handles external clients; URLProtocol handles Trace's internal client.
 
+## gRPC metadata capture
+
+When Trace intercepts HTTP/2 traffic, it automatically detects gRPC responses and extracts structured metadata from the HTTP/2 trailing HEADERS frame. Per the gRPC-over-HTTP/2 spec, the server sends a trailing HEADERS frame with `END_STREAM` set containing the status fields. AsyncHTTPClient merges these trailing headers into the final response headers, so the same extraction path handles both buffered and streaming captures.
+
+Extracted fields stored in `NetworkRequest.GRPCMetadata`:
+
+| Field | gRPC header | Notes |
+|---|---|---|
+| Status code | `grpc-status` | Integer; 0 = OK. See [gRPC status codes](https://grpc.github.io/grpc/core/md_doc_statuscodes.html) |
+| Status message | `grpc-message` | Percent-decoded per gRPC spec §2.4 |
+| Encoding | `grpc-encoding` | E.g. `identity`, `gzip` |
+| Message count | _(computed)_ | Number of length-prefixed gRPC frames in the body buffer |
+
+If no `grpc-status` header is present the response is treated as plain HTTP/2 and no gRPC metadata is stored.
+
+**Implementation:** `TraceProxy/MITM/GRPCTrailerExtractor.swift` — `extract(from:)` and `countMessages(in:)`.
+
 ## Shared NIO runtime
 
 All three targets that do networking share a single event loop group and AsyncHTTPClient instance, managed by `TraceCore/Networking/NIORuntime.swift`. This avoids redundant thread pools and ensures orderly teardown.
