@@ -128,7 +128,7 @@ public final class RequestMapManager: ObservableObject {
     // Use composition with the base manager
     private let baseManager: PersistentCollectionManager<RequestMap>
     private var cancellables: Set<AnyCancellable> = []
-    // Reuse a single MockScriptEngine across calls — JSContext init is expensive (~5–15 ms).
+    /// Reuse a single MockScriptEngine across calls — JSContext init is expensive (~5–15 ms).
     private lazy var scriptEngine: MockScriptEngine? = MockScriptEngine()
 
     public nonisolated(unsafe) let objectWillChange = ObservableObjectPublisher()

@@ -189,7 +189,7 @@ extension NIOMITMHTTPConnectHandler {
             ("apache-httpclient/", "Apache HttpClient"),
             ("reactor-netty/", "Reactor Netty"),
             ("ruby", "Ruby"),
-            ("php/", "PHP"),
+            ("php/", "PHP")
         ]
 
         for (pattern, name) in patterns {
@@ -580,18 +580,16 @@ extension NIOMITMHTTPConnectHandler {
         let requestSent = sentAt.timeIntervalSince(requestStart)
         guard requestSent >= 0 else { return nil }
 
-        let ttfb: TimeInterval?
-        if let headAt = responseHeadAt, headAt >= sentAt {
-            ttfb = headAt.timeIntervalSince(sentAt)
+        let ttfb: TimeInterval? = if let headAt = responseHeadAt, headAt >= sentAt {
+            headAt.timeIntervalSince(sentAt)
         } else {
-            ttfb = nil
+            nil
         }
 
-        let contentDownload: TimeInterval?
-        if let headAt = responseHeadAt, now >= headAt {
-            contentDownload = now.timeIntervalSince(headAt)
+        let contentDownload: TimeInterval? = if let headAt = responseHeadAt, now >= headAt {
+            now.timeIntervalSince(headAt)
         } else {
-            contentDownload = nil
+            nil
         }
 
         let phases = NetworkTimingPhases(

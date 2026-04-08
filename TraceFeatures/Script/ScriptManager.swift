@@ -488,10 +488,10 @@ private extension ScriptManager {
         }
     }
 
-    // Synchronous callers (e.g. unit tests) acquire the mutex via a Task and wait on a
-    // DispatchSemaphore. This is intentionally restricted to non-NIO contexts — never call
-    // from a NIO event loop thread or any actor that must not block.
-    // Production code paths use withExecutionLock (async) instead.
+    /// Synchronous callers (e.g. unit tests) acquire the mutex via a Task and wait on a
+    /// DispatchSemaphore. This is intentionally restricted to non-NIO contexts — never call
+    /// from a NIO event loop thread or any actor that must not block.
+    /// Production code paths use withExecutionLock (async) instead.
     func withExecutionLockSync<T>(_ operation: @escaping () throws -> T) -> T? {
         // Optimistic fast path: try to acquire without blocking.
         // This avoids creating a Task + semaphore when the lock is not contended.

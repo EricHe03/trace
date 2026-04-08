@@ -219,7 +219,6 @@ struct OverviewSection: View {
                 TLSDetailSection(tlsInfo: tlsInfo)
                     .padding(.horizontal)
             }
-
         }
         .padding()
     }
@@ -349,7 +348,7 @@ struct OverviewSection: View {
                     ("Request Headers", reqH.map { DesignSystem.formattedBytes($0) }, .primary),
                     ("Response Headers", resH.map { DesignSystem.formattedBytes($0) }, .primary),
                     ("Request Body", reqB.map { DesignSystem.formattedBytes($0) }, .primary),
-                    ("Response Body", resDecoded.map { DesignSystem.formattedBytes($0) }, .primary),
+                    ("Response Body", resDecoded.map { DesignSystem.formattedBytes($0) }, .primary)
                 ].filter { $0.1 != nil }
 
                 ForEach(Array(rows.enumerated()), id: \.offset) { index, row in

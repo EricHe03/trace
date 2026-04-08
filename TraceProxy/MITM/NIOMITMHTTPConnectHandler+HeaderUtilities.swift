@@ -96,8 +96,7 @@ extension NIOMITMHTTPConnectHandler {
     func webSocketDeflateParameters(from headers: HTTPHeaders) -> WebSocketDeflateParameters? {
         for value in headers[canonicalForm: "Sec-WebSocket-Extensions"] {
             for token in value.split(separator: ",")
-                .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
-            {
+                .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }) {
                 if token.lowercased().contains("permessage-deflate") {
                     return WebSocketDeflateParameters.parse(from: token)
                 }

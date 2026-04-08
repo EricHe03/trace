@@ -31,8 +31,8 @@ public actor BreakpointManager {
     private nonisolated(unsafe) let storage: AppGroupStorage
     private nonisolated(unsafe) let configFileName = "BreakpointConfiguration.json"
     private let sharedCommandPollIntervalNs: UInt64 = 100_000_000
-    // Maximum time to wait for user action before auto-resuming. Prevents NIO channels from
-    // hanging forever if the app is force-quit or crashes while a request is paused.
+    /// Maximum time to wait for user action before auto-resuming. Prevents NIO channels from
+    /// hanging forever if the app is force-quit or crashes while a request is paused.
     private let continuationTimeoutSeconds: TimeInterval = 300 // 5 minutes
 
     private init() {

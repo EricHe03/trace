@@ -110,8 +110,8 @@ extension NIOMITMInitialIngressHandler {
                     // RFC 7301: protocol names are opaque octets. No whitespace-trimming or
                     // case-folding is permitted; names must be forwarded as-is.
                     if let proto = String(data: protoData, encoding: .utf8),
-                        !proto.isEmpty,
-                        !seen.contains(proto) {
+                       !proto.isEmpty,
+                       !seen.contains(proto) {
                         protocols.append(proto)
                         seen.insert(proto)
                     }
