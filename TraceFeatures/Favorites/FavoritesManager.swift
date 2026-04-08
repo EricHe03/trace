@@ -128,7 +128,6 @@ public final class FavoritesManager: ObservableObject {
     public var totalCount: Int {
         baseManager.totalCount
     }
-
 }
 
 // MARK: - Convenience Methods

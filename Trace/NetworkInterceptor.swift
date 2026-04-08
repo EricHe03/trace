@@ -107,11 +107,11 @@ class NetworkInterceptor: URLProtocol {
         let appFrames = symbols.dropFirst(2).prefix(10).filter { symbol in
             // Keep frames from the app/Trace targets, filter out Foundation/NIO
             !symbol.contains("Foundation") &&
-            !symbol.contains("Darwin") &&
-            !symbol.contains("SwiftUI") &&
-            !symbol.contains("NIOCore") &&
-            !symbol.contains("AsyncHTTPClient") &&
-            !symbol.contains("CoreFoundation")
+                !symbol.contains("Darwin") &&
+                !symbol.contains("SwiftUI") &&
+                !symbol.contains("NIOCore") &&
+                !symbol.contains("AsyncHTTPClient") &&
+                !symbol.contains("CoreFoundation")
         }
 
         let filtered = Array(appFrames)
@@ -133,8 +133,8 @@ class NetworkInterceptor: URLProtocol {
         guard duration > 0 else { return nil }
 
         // Conservative estimates for timing breakdown
-        let requestSent = duration * 0.08  // ~8% for sending request
-        let ttfb = duration * 0.35         // ~35% waiting for first byte
+        let requestSent = duration * 0.08 // ~8% for sending request
+        let ttfb = duration * 0.35 // ~35% waiting for first byte
         let contentDownload = duration - requestSent - ttfb
 
         return NetworkTimingPhases(

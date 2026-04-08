@@ -148,7 +148,7 @@ if quicheRequiresArtifactsForBuild && !quicheArtifactsAvailable {
         quicheDeviceLibraryPath,
         quicheSimulatorLibraryPath
     ]
-        .filter { FileManager.default.fileExists(atPath: $0) }
+    .filter { FileManager.default.fileExists(atPath: $0) }
 
     let availableArtifactsDescription = if availablePaths.isEmpty {
         "none"

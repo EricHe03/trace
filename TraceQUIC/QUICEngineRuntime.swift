@@ -37,13 +37,12 @@ public enum QUICEngineRuntime {
         #if canImport(CQuicheFFI)
         let rawVersion = String(cString: cquiche_version_string())
         let availability: QUICEngineAvailability = cquiche_runtime_available() ? .available : .unavailable
-        let version: String
-        if availability == .available {
-            version = rawVersion
+        let version: String = if availability == .available {
+            rawVersion
         } else if rawVersion == "quiche-staged-action-api" {
-            version = "quiche-artifacts-missing"
+            "quiche-artifacts-missing"
         } else {
-            version = rawVersion
+            rawVersion
         }
         return QUICEngineStatus(
             availability: availability,

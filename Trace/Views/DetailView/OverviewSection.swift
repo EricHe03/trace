@@ -522,7 +522,10 @@ struct StackFrameView: View {
     let index: Int
     let totalFrames: Int
 
-    private var isFirstFrame: Bool { index == 0 }
+    private var isFirstFrame: Bool {
+        index == 0
+    }
+
     private var fileName: String {
         let components = frame.file.split(separator: "/")
         return components.last.map(String.init) ?? frame.file

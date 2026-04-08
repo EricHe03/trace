@@ -299,12 +299,12 @@ struct BreakpointEditorView: View {
                 ForEach(headers.indices, id: \.self) { index in
                     VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
                         TextField("Header Name", text: headerKeyBinding(for: index))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
 
                         TextField("Header Value", text: headerValueBinding(for: index))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
                     }
                 }
                 .onDelete { indices in
@@ -458,14 +458,14 @@ struct BreakpointEditorView: View {
         }
 
         if action.appliesModifications,
-           (pausedRequest.breakpointType == .request || pausedRequest.breakpointType == .both),
+           pausedRequest.breakpointType == .request || pausedRequest.breakpointType == .both,
            normalizedMethodToken.isEmpty {
             validationError = "The edited HTTP method is empty."
             return
         }
 
         if action.appliesModifications,
-           (pausedRequest.breakpointType == .request || pausedRequest.breakpointType == .both),
+           pausedRequest.breakpointType == .request || pausedRequest.breakpointType == .both,
            URL(string: url) == nil {
             validationError = "The edited URL is not valid."
             return
@@ -758,7 +758,6 @@ struct BreakpointConfigView: View {
         }
     }
 
-    @ViewBuilder
     private var pausedRequestsSection: some View {
         Section("Paused Traffic") {
             if pausedRequests.isEmpty {

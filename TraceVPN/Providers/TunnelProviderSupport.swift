@@ -5,8 +5,8 @@
 //  Created by Codex on 2026/03/17.
 //
 
-import os
 import Foundation
+import os
 
 final class CompletionHandlerBox<T>: @unchecked Sendable {
     private let handler: (T) -> Void

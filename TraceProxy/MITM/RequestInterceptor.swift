@@ -806,7 +806,7 @@ public actor RequestInterceptor {
                 headers: session.requestHeaders,
                 to: &storedPayload
             ),
-               let storedPayload {
+                let storedPayload {
                 payloadData = storedPayload
                 metadata["breakpoint"] = "stored_modifications_applied"
                 didModify = true

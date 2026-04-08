@@ -160,7 +160,6 @@ public final class HostsManager: ObservableObject {
     public var disabledCount: Int {
         baseManager.disabledCount
     }
-
 }
 
 // MARK: - Convenience Methods
