@@ -47,6 +47,7 @@ public actor RequestInterceptor {
     private var lastScriptsFileDate: Date?
     private var lastGroupsFileDate: Date?
     private var lastProfilesFileDate: Date?
+    private var lastHostsFileDate: Date?
 
     // MARK: - Metrics
 
@@ -97,7 +98,8 @@ public actor RequestInterceptor {
             (.requestMapsUpdated, "maps"),
             (.scriptsUpdated, "scripts"),
             (.ruleGroupsUpdated, "rule_groups"),
-            (.profilesUpdated, "profiles")
+            (.profilesUpdated, "profiles"),
+            (.hostsUpdated, "hosts")
         ]
 
         notificationObservers = observedCollections.map { notificationName, label in
@@ -158,12 +160,18 @@ public actor RequestInterceptor {
         // Concurrency: ScriptManager is Sendable.
         let scripts = scriptManager.scripts
 
+        let hostEntries = await MainActor.run {
+            HostsManager.shared.reloadEntries()
+            return HostsManager.shared.entries
+        }
+
         configSnapshot = ConfigSnapshot(
             rewriteRules: rules,
             requestMaps: maps,
             scripts: scripts,
             ruleGroups: groups,
-            activeProfile: activeProfile
+            activeProfile: activeProfile,
+            hostEntries: hostEntries
         )
 
         lastRulesFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.rewriteRules.fileName)
@@ -171,6 +179,7 @@ public actor RequestInterceptor {
         lastScriptsFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.scripts.fileName)
         lastGroupsFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.ruleGroups.fileName)
         lastProfilesFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.profiles.fileName)
+        lastHostsFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.hostEntries.fileName)
 
         lastConfigRefresh = now
         metrics.configReloadCount += 1
@@ -649,14 +658,16 @@ public actor RequestInterceptor {
         let scriptsDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.scripts.fileName)
         let groupsDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.ruleGroups.fileName)
         let profilesDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.profiles.fileName)
+        let hostsDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.hostEntries.fileName)
 
         let rulesChanged = (rulesDate ?? .distantPast) > (lastRulesFileDate ?? .distantPast)
         let mapsChanged = (mapsDate ?? .distantPast) > (lastMapsFileDate ?? .distantPast)
         let scriptsChanged = (scriptsDate ?? .distantPast) > (lastScriptsFileDate ?? .distantPast)
         let groupsChanged = (groupsDate ?? .distantPast) > (lastGroupsFileDate ?? .distantPast)
         let profilesChanged = (profilesDate ?? .distantPast) > (lastProfilesFileDate ?? .distantPast)
+        let hostsChanged = (hostsDate ?? .distantPast) > (lastHostsFileDate ?? .distantPast)
 
-        return rulesChanged || mapsChanged || scriptsChanged || groupsChanged || profilesChanged
+        return rulesChanged || mapsChanged || scriptsChanged || groupsChanged || profilesChanged || hostsChanged
     }
 
     // MARK: - Public Utilities
@@ -694,6 +705,16 @@ public actor RequestInterceptor {
         let activeProfileEnabled = configSnapshot.activeProfile != nil
 
         return hasEnabledRewriteRules || hasEnabledRequestMaps || hasEnabledScripts || breakpointsEnabled || activeProfileEnabled
+    }
+
+    /// Returns the connect-time host override (IP + optional port) from enabled host entries.
+    ///
+    /// Call this **before** `NIOTSConnectionBootstrap.connect(host:port:)` to redirect the TCP
+    /// connection to the overridden IP while keeping the original hostname for TLS SNI and
+    /// the HTTP `Host` header.
+    public func hostOverride(for url: String) async -> (ip: String, port: Int?)? {
+        await refreshConfigSnapshotIfNeeded()
+        return configSnapshot.hostOverride(for: url)
     }
 
     // MARK: - Response Pipeline Decision

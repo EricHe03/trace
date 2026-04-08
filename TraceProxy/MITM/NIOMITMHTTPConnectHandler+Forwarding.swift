@@ -373,15 +373,27 @@ extension NIOMITMHTTPConnectHandler {
         )
         let sendableContext = NIOMITMUncheckedSendableBox(value: context)
 
-        let bootstrap = NIOTSConnectionBootstrap(group: group)
-        bootstrap.connect(host: targetHost, port: targetPort).whenComplete { [weak self] result in
-            context.eventLoop.execute {
-                guard let self, self.state == .forwardingHTTPRequest else {
-                    if case let .success(upstream) = result {
-                        upstream.close(promise: nil)
+        // Apply host override before connecting: use the overridden IP while keeping
+        // targetHost for TLS SNI and the HTTP Host header.
+        Task { [weak self] in
+            guard let self else { return }
+            let override = await RequestInterceptor.shared.hostOverride(for: outboundContext.url)
+            let connectHost = override?.ip ?? targetHost
+            let connectPort = override?.port ?? targetPort
+            if let override {
+                ProxyLog.mitm.info(
+                    "event=proxy.sse_host_override outcome=applied original_host=\(targetHost, privacy: .private(mask: .hash)) override_ip=\(override.ip, privacy: .private(mask: .hash)) url=\(outboundContext.url, privacy: .private(mask: .hash))"
+                )
+            }
+            let bootstrap = NIOTSConnectionBootstrap(group: self.group)
+            bootstrap.connect(host: connectHost, port: connectPort).whenComplete { [weak self] result in
+                context.eventLoop.execute {
+                    guard let self, self.state == .forwardingHTTPRequest else {
+                        if case let .success(upstream) = result {
+                            upstream.close(promise: nil)
+                        }
+                        return
                     }
-                    return
-                }
 
                 switch result {
                 case let .success(upstream):
@@ -645,6 +657,7 @@ extension NIOMITMHTTPConnectHandler {
                 }
             }
         }
+        } // end Task (host override + connect)
     }
 
     func forwardWebSocketStreamLegacy(
@@ -688,12 +701,24 @@ extension NIOMITMHTTPConnectHandler {
         )
         let sendableContext = NIOMITMUncheckedSendableBox(value: context)
 
-        let bootstrap = NIOTSConnectionBootstrap(group: group)
-        bootstrap.connect(host: targetHost, port: targetPort).whenComplete { [weak self] result in
-            context.eventLoop.execute {
-                guard let self, self.state == .forwardingHTTPRequest else {
-                    if case let .success(upstream) = result {
-                        upstream.close(promise: nil)
+        // Apply host override before connecting: use the overridden IP while keeping
+        // targetHost for TLS SNI and the HTTP Host header.
+        Task { [weak self] in
+            guard let self else { return }
+            let override = await RequestInterceptor.shared.hostOverride(for: outboundContext.url)
+            let connectHost = override?.ip ?? targetHost
+            let connectPort = override?.port ?? targetPort
+            if let override {
+                ProxyLog.mitm.info(
+                    "event=proxy.ws_host_override outcome=applied original_host=\(targetHost, privacy: .private(mask: .hash)) override_ip=\(override.ip, privacy: .private(mask: .hash)) url=\(outboundContext.url, privacy: .private(mask: .hash))"
+                )
+            }
+            let bootstrap = NIOTSConnectionBootstrap(group: self.group)
+            bootstrap.connect(host: connectHost, port: connectPort).whenComplete { [weak self] result in
+                context.eventLoop.execute {
+                    guard let self, self.state == .forwardingHTTPRequest else {
+                        if case let .success(upstream) = result {
+                            upstream.close(promise: nil)
                     }
                     return
                 }
@@ -976,6 +1001,7 @@ extension NIOMITMHTTPConnectHandler {
                 }
             }
         }
+        } // end Task (host override + connect)
     }
 
     func makeRawStreamingRequestBuffer(

@@ -8,6 +8,7 @@ import Foundation
 import NIOCore
 import NIOTransportServices
 import TraceCore
+import TraceFeatures
 
 final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
@@ -246,6 +247,10 @@ final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Sendable {
         let destinationHost = request.address.host
         let destinationPort = request.port
         let destinationHash = LogRedaction.hash(destinationHost)
+
+        // Apply host override for direct (non-MITM) connections.
+        // On the MITM route the proxy itself handles the upstream, so no override needed there.
+        let hostOverride = HostsManager.shared.matchingEntry(for: destinationHost)
         let routeEvaluation = tcpConnectRoutingPolicy.evaluateRouteDecision(
             destinationHost: destinationHost,
             destinationPort: destinationPort
@@ -299,9 +304,14 @@ final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Sendable {
                 "local_socks5_connect_route",
                 "session=\(sessionID) destination_hash=\(destinationHash) sni_hash=\(destinationHash) upstream_hash=\(destinationHash) destination_port=\(destinationPort) route=direct route_decision=direct fallback_applied=false bypass_reason=\(reason) policy=\(tcpConnectRoutingPolicy.dualMITMPolicy.rawValue)"
             )
+            // Apply host entry override for direct connections (e.g. redirect api.example.com → 192.168.1.100).
+            // The original hostname is preserved for the SOCKS5 address field; only the TCP connect
+            // target is overridden so TLS SNI and Host headers remain correct.
+            let effectiveHost = hostOverride?.targetIP ?? destinationHost
+            let effectivePort = hostOverride.flatMap { $0.targetPort.map { UInt16($0) } } ?? destinationPort
             attemptDirectConnect(
-                host: destinationHost,
-                port: destinationPort,
+                host: effectiveHost,
+                port: effectivePort,
                 destinationHash: destinationHash,
                 fallbackApplied: false,
                 bypassReason: reason,

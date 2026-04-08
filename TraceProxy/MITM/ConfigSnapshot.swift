@@ -14,6 +14,7 @@ public struct ConfigSnapshot: Sendable {
     public let scripts: [Script]
     public let ruleGroups: [RuleGroup]
     public let activeProfile: Profile?
+    public let hostEntries: [HostEntry]
     public let timestamp: Date
 
     public init(
@@ -21,13 +22,15 @@ public struct ConfigSnapshot: Sendable {
         requestMaps: [RequestMap],
         scripts: [Script],
         ruleGroups: [RuleGroup],
-        activeProfile: Profile?
+        activeProfile: Profile?,
+        hostEntries: [HostEntry] = []
     ) {
         self.rewriteRules = rewriteRules
         self.requestMaps = requestMaps
         self.scripts = scripts
         self.ruleGroups = ruleGroups
         self.activeProfile = activeProfile
+        self.hostEntries = hostEntries
         self.timestamp = Date()
     }
 
@@ -36,6 +39,15 @@ public struct ConfigSnapshot: Sendable {
         requestMaps: [],
         scripts: [],
         ruleGroups: [],
-        activeProfile: nil
+        activeProfile: nil,
+        hostEntries: []
     )
+
+    /// Returns the host override (IP + optional port) for a given URL, or nil if none matches.
+    public func hostOverride(for url: String) -> (ip: String, port: Int?)? {
+        guard let entry = hostEntries.first(where: { $0.matches(url) }) else {
+            return nil
+        }
+        return (ip: entry.targetIP, port: entry.targetPort)
+    }
 }

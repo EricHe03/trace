@@ -252,6 +252,7 @@ let traceFeaturesDependencies: [Target.Dependency] = [
 
 let traceVPNDependencies: [Target.Dependency] = [
     "TraceCore",
+    "TraceFeatures",
     "TraceSecurity",
     "TraceNetworking",
     "TraceProxy",
