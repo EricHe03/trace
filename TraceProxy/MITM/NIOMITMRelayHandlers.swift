@@ -745,7 +745,7 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         // fragment of a compressed message and MUST be 0 on all continuation frames.
         frames.enumerated().reduce(context.eventLoop.makeSucceededVoidFuture()) { partial, pair in
             let (index, frame) = pair
-            partial.flatMap {
+            return partial.flatMap {
                 var prepared = self.prepareInboundFrameForForwarding(frame)
                 if index > 0 {
                     prepared.rsv1 = false

@@ -60,13 +60,20 @@ struct SSEEventsFilterBar: View {
     }
 }
 
+private struct SSEEventsFilterBarPreview: View {
+    @State private var searchText = ""
+    @State private var filterType: String?
+
+    var body: some View {
+        SSEEventsFilterBar(
+            searchText: $searchText,
+            filterEventType: $filterType,
+            uniqueEventTypes: ["message", "update", "ping"]
+        )
+        .padding()
+    }
+}
+
 #Preview {
-    @Previewable @State var searchText = ""
-    @Previewable @State var filterType: String? = nil
-    SSEEventsFilterBar(
-        searchText: $searchText,
-        filterEventType: $filterType,
-        uniqueEventTypes: ["message", "update", "ping"]
-    )
-    .padding()
+    SSEEventsFilterBarPreview()
 }

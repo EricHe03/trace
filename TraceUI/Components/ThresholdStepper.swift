@@ -35,14 +35,21 @@ public struct ThresholdStepper: View {
     }
 }
 
-#Preview {
-    @Previewable @State var value = 5 * 1024 * 1024
-    Form {
-        ThresholdStepper(
-            title: "Inline Threshold",
-            value: $value,
-            range: 1 * 1024 * 1024 ... 50 * 1024 * 1024,
-            step: 1 * 1024 * 1024
-        )
+private struct ThresholdStepperPreview: View {
+    @State private var value = 5 * 1024 * 1024
+
+    var body: some View {
+        Form {
+            ThresholdStepper(
+                title: "Inline Threshold",
+                value: $value,
+                range: 1 * 1024 * 1024 ... 50 * 1024 * 1024,
+                step: 1 * 1024 * 1024
+            )
+        }
     }
+}
+
+#Preview {
+    ThresholdStepperPreview()
 }

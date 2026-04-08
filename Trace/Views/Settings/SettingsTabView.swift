@@ -250,7 +250,14 @@ struct SettingsTabView: View {
     }
 }
 
+private struct SettingsTabViewPreview: View {
+    @State private var showingOnboarding = false
+
+    var body: some View {
+        SettingsTabView(viewModel: CaptureViewModel(), showingOnboarding: $showingOnboarding)
+    }
+}
+
 #Preview {
-    @Previewable @State var showingOnboarding = false
-    SettingsTabView(viewModel: CaptureViewModel(), showingOnboarding: $showingOnboarding)
+    SettingsTabViewPreview()
 }
