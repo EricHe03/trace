@@ -12,8 +12,8 @@ import TraceCore
 #endif
 
 /// Manages automatic cleanup of stored capture data.
-actor DataCleanupManager {
-    static let shared = DataCleanupManager()
+public actor DataCleanupManager {
+    public static let shared = DataCleanupManager()
 
     private var cleanupTask: Task<Void, Never>?
     private static var isRunningUnitTests: Bool {
@@ -40,21 +40,25 @@ actor DataCleanupManager {
 
     private var config = CleanupConfiguration()
 
-    struct CleanupConfiguration: Codable, Equatable {
-        var enabled: Bool = true
-        var requestRetentionDays: Int = 7
-        var bodyFileRetentionDays: Int = 7
-        var logRetentionDays: Int = 7
-        var maxStorageMB: Int = 500
-        var cleanupInterval: TimeInterval = 3600
+    public struct CleanupConfiguration: Codable, Equatable {
+        public var enabled: Bool = true
+        public var requestRetentionDays: Int = 7
+        public var bodyFileRetentionDays: Int = 7
+        public var logRetentionDays: Int = 7
+        public var maxStorageMB: Int = 500
+        public var cleanupInterval: TimeInterval = 3600
+
+        public init() {}
     }
 
-    struct CleanupStats: Codable {
-        var lastCleanup: Date?
-        var requestsDeleted: Int = 0
-        var bodyFilesDeleted: Int = 0
-        var logsDeleted: Int = 0
-        var bytesFreed: Int64 = 0
+    public struct CleanupStats: Codable {
+        public var lastCleanup: Date?
+        public var requestsDeleted: Int = 0
+        public var bodyFilesDeleted: Int = 0
+        public var logsDeleted: Int = 0
+        public var bytesFreed: Int64 = 0
+
+        public init() {}
     }
 
     private var stats = CleanupStats()
@@ -80,7 +84,7 @@ actor DataCleanupManager {
 
     // MARK: - Configuration
 
-    func updateConfiguration(_ newConfig: CleanupConfiguration) async {
+    public func updateConfiguration(_ newConfig: CleanupConfiguration) async {
         config = newConfig
 
         cleanupTask?.cancel()
@@ -92,11 +96,11 @@ actor DataCleanupManager {
         FeatureLog.storage.info("event=storage.config_update outcome=success")
     }
 
-    func getConfiguration() -> CleanupConfiguration {
+    public func getConfiguration() -> CleanupConfiguration {
         config
     }
 
-    func getStats() -> CleanupStats {
+    public func getStats() -> CleanupStats {
         stats
     }
 
@@ -114,7 +118,7 @@ actor DataCleanupManager {
         }
     }
 
-    func performManualCleanup() async {
+    public func performManualCleanup() async {
         await performCleanup()
     }
 
@@ -394,7 +398,7 @@ actor DataCleanupManager {
 
     // MARK: - Manual Operations
 
-    func deleteAllRequests() async -> Int {
+    public func deleteAllRequests() async -> Int {
         do {
             let deletedCount = try AppGroupStorage.shared.loadAllRequests().count
             try AppGroupStorage.shared.clearAllRequests()
@@ -406,7 +410,7 @@ actor DataCleanupManager {
         }
     }
 
-    func getStorageUsage() async -> (total: Int64, requests: Int64, bodies: Int64, logs: Int64) {
+    public func getStorageUsage() async -> (total: Int64, requests: Int64, bodies: Int64, logs: Int64) {
         guard let containerURL = storageContainerURL() else {
             return (0, 0, 0, 0)
         }
@@ -519,122 +523,6 @@ actor DataCleanupManager {
         }
 
         return freedBytes
-    }
-}
-
-// MARK: - Storage Settings View
-
-/// Displays storage usage and cleanup controls.
-public struct StorageSettingsView: View {
-    @State private var config = DataCleanupManager.CleanupConfiguration()
-    @State private var stats = DataCleanupManager.CleanupStats()
-    @State private var storageUsage: (total: Int64, requests: Int64, bodies: Int64, logs: Int64) = (0, 0, 0, 0)
-    @State private var isCleaningUp = false
-
-    public init() {}
-
-    public var body: some View {
-        Form {
-            Section {
-                storageUsageRow(label: "Total", bytes: storageUsage.total)
-                storageUsageRow(label: "Requests", bytes: storageUsage.requests)
-                storageUsageRow(label: "Body Files", bytes: storageUsage.bodies)
-                storageUsageRow(label: "Logs", bytes: storageUsage.logs)
-            } header: {
-                Text("Storage Usage")
-            } footer: {
-                Text("Storage usage reflects data kept in the app’s shared container. You can export logs and packet captures before cleaning up.")
-            }
-
-            Section {
-                Toggle("Enable Auto Cleanup", isOn: $config.enabled)
-
-                Stepper("Keep Requests: \(config.requestRetentionDays) days", value: $config.requestRetentionDays, in: 1 ... 30)
-                Stepper("Keep Body Files: \(config.bodyFileRetentionDays) days", value: $config.bodyFileRetentionDays, in: 1 ... 30)
-                Stepper("Keep Logs: \(config.logRetentionDays) days", value: $config.logRetentionDays, in: 1 ... 30)
-                Stepper("Max Storage: \(config.maxStorageMB) MB", value: $config.maxStorageMB, in: 100 ... 2000, step: 100)
-            } header: {
-                Text("Automatic Cleanup")
-            }
-
-            Section {
-                if let lastCleanup = stats.lastCleanup {
-                    HStack {
-                        Text("Last Cleanup")
-                        Spacer()
-                        Text(lastCleanup, style: .relative)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                HStack {
-                    Text("Requests Deleted")
-                    Spacer()
-                    Text("\(stats.requestsDeleted)")
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Text("Space Freed")
-                    Spacer()
-                    Text(ByteCountFormatter.string(fromByteCount: stats.bytesFreed, countStyle: .file))
-                        .foregroundStyle(.secondary)
-                }
-            } header: {
-                Text("Statistics")
-            }
-
-            Section {
-                Button {
-                    Task {
-                        isCleaningUp = true
-                        await DataCleanupManager.shared.performManualCleanup()
-                        await loadData()
-                        isCleaningUp = false
-                    }
-                } label: {
-                    if isCleaningUp {
-                        HStack {
-                            ProgressView()
-                            Text("Cleaning Up...")
-                        }
-                    } else {
-                        Label("Clean Up Now", systemImage: "trash")
-                    }
-                }
-                .disabled(isCleaningUp)
-            }
-        }
-        .navigationTitle("Storage")
-        .task {
-            await loadData()
-        }
-        .onChangeCompat(of: config) { newConfig in
-            Task {
-                await DataCleanupManager.shared.updateConfiguration(newConfig)
-            }
-        }
-    }
-
-    private func storageUsageRow(label: String, bytes: Int64) -> some View {
-        HStack {
-            Text(label)
-            Spacer()
-            Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func loadData() async {
-        config = await DataCleanupManager.shared.getConfiguration()
-        stats = await DataCleanupManager.shared.getStats()
-        storageUsage = await DataCleanupManager.shared.getStorageUsage()
-    }
-}
-
-#Preview {
-    NavigationStack {
-        StorageSettingsView()
     }
 }
 

@@ -150,8 +150,6 @@ struct TransportEventRow: View {
     }
 
     private func formattedByteCount(_ bytes: Int) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: Int64(bytes))
+        DesignSystem.formattedBytes(bytes)
     }
 }

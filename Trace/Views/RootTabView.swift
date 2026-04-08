@@ -10,7 +10,6 @@ import SwiftUI
 import TraceCore
 import TraceFeatures
 import TraceUI
-import UniformTypeIdentifiers
 
 struct RootTabView: View {
     @ObservedObject var viewModel: CaptureViewModel
@@ -55,6 +54,7 @@ struct RootTabView: View {
                 .accessibilityLabel("Settings tab")
                 .accessibilityHint("Configure app settings and preferences")
         }
+        .modifier(SidebarAdaptableModifier())
         .onAppear {
             checkOnboarding()
             startObservingBreakpointChanges()
@@ -99,9 +99,13 @@ struct RootTabView: View {
                 vpnManager.initializeIfNeeded()
             }
             .interactiveDismissDisabled()
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showingBreakpointInspector) {
             BreakpointConfigView(autoPresentLatestPausedRequest: true)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
         .onDisappear {
             breakpointObserverToken?.cancel()
@@ -151,13 +155,13 @@ struct ToolsTabView: View {
                     NavigationLink {
                         RewriteRulesView()
                     } label: {
-                        Label("Rewrite Rules", systemImage: "doc.text.fill")
+                        Label("Rewrite Rules", systemImage: "doc.text")
                     }
 
                     NavigationLink {
                         RequestMapView()
                     } label: {
-                        Label("Request Maps", systemImage: "map.fill")
+                        Label("Request Maps", systemImage: "map")
                     }
 
                     NavigationLink {
@@ -175,7 +179,7 @@ struct ToolsTabView: View {
                     NavigationLink {
                         BreakpointConfigView()
                     } label: {
-                        Label("Breakpoints", systemImage: "pause.circle.fill")
+                        Label("Breakpoints", systemImage: "pause.circle")
                     }
                 }
 
@@ -183,25 +187,25 @@ struct ToolsTabView: View {
                     NavigationLink {
                         Base64ToolView()
                     } label: {
-                        Label("Base64 Encoder/Decoder", systemImage: "arrow.left.arrow.right.circle")
+                        Label("Base64", systemImage: "arrow.left.arrow.right.circle")
                     }
 
                     NavigationLink {
                         TimestampToolView()
                     } label: {
-                        Label("Timestamp Converter", systemImage: "clock")
+                        Label("Timestamp", systemImage: "clock")
                     }
 
                     NavigationLink {
                         HashToolView()
                     } label: {
-                        Label("Hash Generator", systemImage: "number")
+                        Label("Hash", systemImage: "number")
                     }
 
                     NavigationLink {
                         URLEncoderView()
                     } label: {
-                        Label("URL Encoder/Decoder", systemImage: "link")
+                        Label("URL Encoder", systemImage: "link")
                     }
 
                     NavigationLink {
@@ -217,302 +221,14 @@ struct ToolsTabView: View {
     }
 }
 
-// MARK: - Settings Tab View
+// MARK: - SidebarAdaptableModifier
 
-struct SettingsTabView: View {
-    @ObservedObject var viewModel: CaptureViewModel
-    @Binding var showingOnboarding: Bool
-    @State private var showingClearAlert = false
-    @State private var showingHARImport = false
-    @State private var shareSheetItem: ShareSheetItem?
-    @State private var toastMessage: String?
-    @ObservedObject private var vpnManager = VPNManager.shared
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    NavigationLink {
-                        CaptureRulesView()
-                    } label: {
-                        Label("Capture Rules", systemImage: "line.3.horizontal.decrease.circle")
-                    }
-
-                    NavigationLink {
-                        CaptureSettingsView(vpnManager: vpnManager)
-                    } label: {
-                        Label("Capture Mode", systemImage: "record.circle")
-                    }
-
-                    NavigationLink {
-                        NetworkConditionProfilesView(viewModel: viewModel)
-                    } label: {
-                        HStack {
-                            Label("Network Conditions", systemImage: "speedometer")
-                            Spacer()
-                            if viewModel.throttlingEnabled, let condition = viewModel.selectedNetworkCondition {
-                                Text(condition.displayName)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Text("Off")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-
-                    NavigationLink {
-                        ConnectionSettingsView()
-                    } label: {
-                        Label("Connections", systemImage: "network")
-                    }
-                } header: {
-                    Text("Capture Configuration")
-                        .font(.headline)
-                }
-
-                Section {
-                    NavigationLink {
-                        CertificateGuideView()
-                    } label: {
-                        Label("HTTPS Certificate", systemImage: "checkmark.seal")
-                    }
-
-                    NavigationLink {
-                        MITMSecurityView()
-                    } label: {
-                        Label("MITM & Security", systemImage: "shield")
-                    }
-
-                    NavigationLink {
-                        NotificationSettingsView()
-                    } label: {
-                        Label("Notifications", systemImage: "bell")
-                    }
-                } header: {
-                    Text("Security & Certificates")
-                        .font(.headline)
-                }
-
-                Section {
-                    Button {
-                        exportToHAR()
-                    } label: {
-                        Label("Export HAR", systemImage: "square.and.arrow.up")
-                    }
-                    .disabled(viewModel.requests.isEmpty)
-
-                    Button {
-                        showingHARImport = true
-                    } label: {
-                        Label("Import HAR", systemImage: "square.and.arrow.down")
-                    }
-
-                    NavigationLink {
-                        PCAPExportView()
-                    } label: {
-                        Label("Packet Captures", systemImage: "doc")
-                    }
-
-                    NavigationLink {
-                        FullTunnelSelfCheckView()
-                    } label: {
-                        Label("Full Tunnel Self-Check", systemImage: "checklist")
-                    }
-
-                    NavigationLink {
-                        StorageSettingsView()
-                    } label: {
-                        Label("Storage & Cleanup", systemImage: "externaldrive")
-                    }
-
-                    HStack {
-                        Label("Total Requests", systemImage: "chart.bar")
-                        Spacer()
-                        Text("\(viewModel.requests.count)")
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if viewModel.requests.isEmpty {
-                        HStack {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(DesignSystem.Colors.success)
-                                .font(.title3)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("All Clear")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                Text("No requests to delete")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                        }
-                        .padding(.vertical, 8)
-                    } else {
-                        Button(role: .destructive) {
-                            showingClearAlert = true
-                        } label: {
-                            Label("Clear All Requests", systemImage: "trash")
-                        }
-                    }
-                } header: {
-                    Text("Data Management")
-                        .font(.headline)
-                }
-
-                Section {
-                    NavigationLink {
-                        AdvancedSettingsView()
-                    } label: {
-                        Label("Advanced", systemImage: "wrench.and.screwdriver")
-                    }
-                } header: {
-                    Text("General")
-                        .font(.headline)
-                }
-
-                Section {
-                    HStack {
-                        Label("Version", systemImage: "tag")
-                        Spacer()
-                        Text(AppVersion.fullVersion)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if let githubURL = URL(string: "https://github.com/Trace-iOS/Trace") {
-                        Link(destination: githubURL) {
-                            HStack {
-                                Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
-                                Spacer()
-                                Image(systemName: "arrow.up.forward.square.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-
-                    NavigationLink {
-                        PrivacyPolicyView()
-                    } label: {
-                        Label("Privacy Policy", systemImage: "hand.raised.circle")
-                    }
-
-                    Button {
-                        UserDefaults.standard.set(false, forKey: TraceUserDefaultsKey.hasCompletedOnboarding)
-                        showingOnboarding = true
-                    } label: {
-                        Label("Show Onboarding", systemImage: "arrow.counterclockwise")
-                    }
-                } header: {
-                    Text("About")
-                        .font(.headline)
-                }
-            }
-            .navigationTitle("Settings")
-            .alert("Clear All Requests", isPresented: $showingClearAlert) {
-                Button("Cancel", role: .cancel) {}
-                Button("Clear", role: .destructive) {
-                    viewModel.clearRequests()
-                }
-            } message: {
-                Text("Are you sure you want to clear all captured requests? This action cannot be undone.")
-            }
-            .shareSheet(item: $shareSheetItem)
-            .fileImporter(
-                isPresented: $showingHARImport,
-                allowedContentTypes: {
-                    // Accept both .json and .har extensions so HAR files show up in the picker.
-                    if let harType = UTType(filenameExtension: "har") {
-                        return [.json, harType]
-                    }
-                    return [.json]
-                }(),
-                allowsMultipleSelection: false
-            ) { result in
-                handleHARImport(result)
-            }
-            .toast(message: $toastMessage)
-        }
-    }
-
-    // MARK: - HAR Export/Import
-
-    private func exportToHAR() {
-        do {
-            let url = try HARExporter.exportToFile(requests: viewModel.requests)
-            shareSheetItem = ShareSheetItem([url])
-        } catch {
-            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                toastMessage = "Export failed: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    private func handleHARImport(_ result: Result<[URL], Error>) {
-        Task {
-            do {
-                let urls = try result.get()
-                guard let url = urls.first else { return }
-
-                // Check if file exists before attempting to access
-                guard FileManager.default.fileExists(atPath: url.path) else {
-                    CoreLog.storage.warning("event=storage.har_import outcome=failure reason=file_not_found")
-                    await MainActor.run {
-                        withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                            toastMessage = "File not found"
-                        }
-                    }
-                    return
-                }
-
-                // Access security-scoped resource from Files picker
-                let canAccess = url.startAccessingSecurityScopedResource()
-                defer {
-                    if canAccess { url.stopAccessingSecurityScopedResource() }
-                }
-
-                let requests = try HARExporter.importFromFile(url)
-                CoreLog.storage.info("event=storage.har_import outcome=success count=\(requests.count)")
-
-                // Save imported requests to storage
-                var savedCount = 0
-                for request in requests {
-                    do {
-                        try AppGroupStorage.shared.saveRequest(request)
-                        savedCount += 1
-                        CoreLog.storage.debug(
-                            "event=storage.request_save outcome=success request_id=\(request.id.uuidString, privacy: .public) method=\(request.method.rawValue, privacy: .public) url=\(request.url, privacy: .private(mask: .hash))"
-                        )
-                    } catch {
-                        CoreLog.storage.error(
-                            "event=storage.request_save outcome=failure request_id=\(request.id.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
-                        )
-                    }
-                }
-                CoreLog.storage.info(
-                    "event=storage.har_import_save outcome=success saved=\(savedCount) total=\(requests.count)"
-                )
-
-                // Reload all requests from storage to ensure consistency
-                await viewModel.reloadRequests()
-                CoreLog.storage.info(
-                    "event=storage.requests_reload outcome=success count=\(viewModel.requests.count)"
-                )
-
-                await MainActor.run {
-                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                        toastMessage = "Imported \(requests.count) requests"
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                        toastMessage = "Import failed: \(error.localizedDescription)"
-                    }
-                }
-            }
+private struct SidebarAdaptableModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.tabViewStyle(.sidebarAdaptable)
+        } else {
+            content
         }
     }
 }

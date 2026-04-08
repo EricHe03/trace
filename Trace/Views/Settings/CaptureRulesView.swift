@@ -18,6 +18,7 @@ struct CaptureRulesView: View {
     @State private var isLoading = true
     @State private var toastMessage: String?
     @State private var saveTask: Task<Void, Never>?
+    @State private var showingResetConfirmation = false
 
     @ObservedObject private var vpnManager = VPNManager.shared
 
@@ -69,7 +70,7 @@ struct CaptureRulesView: View {
 
             Section {
                 Button("Reset to Defaults", role: .destructive) {
-                    resetToDefaults()
+                    showingResetConfirmation = true
                 }
             }
         }
@@ -80,6 +81,19 @@ struct CaptureRulesView: View {
         .onChangeCompat(of: config.filterMode) { scheduleSave() }
         .onChangeCompat(of: config.domainFilters) { scheduleSave() }
         .toast(message: $toastMessage)
+        .dismissKeyboardOnTapAndScroll()
+        .confirmationDialog(
+            "Reset to Defaults",
+            isPresented: $showingResetConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Reset", role: .destructive) {
+                resetToDefaults()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Capture rules will be restored to their default values.")
+        }
     }
 
     private func loadSettings() async {

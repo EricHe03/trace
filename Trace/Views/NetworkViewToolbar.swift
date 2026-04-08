@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import TraceCore
 import TraceUI
 
 struct NetworkViewToolbar: ToolbarContent {
@@ -14,6 +15,7 @@ struct NetworkViewToolbar: ToolbarContent {
     let onToggleFilters: () -> Void
     let onShowFavorites: () -> Void
     let onShowCurlImport: () -> Void
+    let onShowThrottling: () -> Void
     let onClearAll: () -> Void
 
     var body: some ToolbarContent {
@@ -69,13 +71,24 @@ struct NetworkViewToolbar: ToolbarContent {
                 Button {
                     onShowFavorites()
                 } label: {
-                    Label("Favorites", systemImage: "star.fill")
+                    Label("Favorites", systemImage: "star")
                 }
 
                 Button {
                     onShowCurlImport()
                 } label: {
                     Label("Import cURL", systemImage: "square.and.arrow.down")
+                }
+
+                Button {
+                    onShowThrottling()
+                } label: {
+                    if viewModel.throttlingEnabled, let condition = viewModel.selectedNetworkCondition {
+                        Label("Throttle: \(condition.displayName)", systemImage: "speedometer.medium")
+                            .foregroundStyle(DesignSystem.Colors.accent)
+                    } else {
+                        Label("Throttle", systemImage: "speedometer")
+                    }
                 }
 
                 Divider()

@@ -27,13 +27,13 @@ struct SessionSectionHeader: View {
     private func headerContent(durationText: String) -> some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
             HStack {
-                Image(systemName: group.session.isActive ? "record.circle" : "checkmark.circle")
+                Image(systemName: group.session.isActive ? "record.circle.fill" : "checkmark.circle")
                     .foregroundStyle(group.session.isActive ? DesignSystem.Colors.danger : DesignSystem.Colors.success)
                 Text(group.session.displayName)
                     .font(.headline)
             }
             HStack(spacing: 12) {
-                Label("\(group.requestCount) requests", systemImage: "number")
+                Label("\(group.requestCount) requests", systemImage: "list.number")
                 Label(durationText, systemImage: "clock")
                 Label(group.totalSizeString, systemImage: "arrow.down.circle")
             }
@@ -81,7 +81,7 @@ struct DomainGroupLabel: View {
             Spacer()
             Text("\(group.requestCount)")
                 .font(.caption)
-                .foregroundStyle(.primary)
+                .foregroundStyle(.white)
                 .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
                 .padding(.vertical, DesignSystem.Badge.verticalPadding)
                 .background(Capsule().fill(DesignSystem.Colors.accent))

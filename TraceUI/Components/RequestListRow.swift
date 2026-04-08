@@ -96,7 +96,7 @@ public struct RequestListRow: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("URL: \(request.host)\(request.path)")
 
-            Text(request.timestamp, style: .relative)
+            Text(request.timestamp, style: .time)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

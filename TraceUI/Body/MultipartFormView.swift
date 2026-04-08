@@ -46,6 +46,8 @@ public struct MultipartFormView: View {
         .sheet(item: $selectedImagePart) { part in
             if let data = part.data as Data? {
                 ImagePreviewSheet(imageData: data, filename: part.filename ?? "Image", contentType: part.contentType)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
         }
     }

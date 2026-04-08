@@ -18,6 +18,7 @@ struct MITMSecurityView: View {
 
     @State private var isLoading = true
     @State private var toastMessage: String?
+    @State private var showingResetConfirmation = false
 
     @ObservedObject private var vpnManager = VPNManager.shared
 
@@ -42,44 +43,44 @@ struct MITMSecurityView: View {
             } header: {
                 Text("QUIC Protocol")
             } footer: {
-                Text("`Intercept` attempts QUIC/HTTP3 interception, `Pass Through` keeps connectivity and marks flow state, and `Block` drops QUIC (UDP/443).")
+                Text("\"Intercept\" attempts QUIC/HTTP3 interception, \"Pass Through\" keeps connectivity and marks flow state, and \"Block\" drops QUIC (UDP/443).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             if isAllowlistEffectivelyEmpty {
                 Section {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(DesignSystem.Colors.warning)
-                        Text("Allowlist is empty. HTTPS interception will be disabled.")
-                            .font(.subheadline)
-                    }
-                }
-            }
-            if mitmAllowlist.count == 1, mitmAllowlist.first == "*" {
-                Section {
-                    HStack(spacing: DesignSystem.Spacing.md) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(DesignSystem.Colors.warning)
-                        Text("Allowlist is set to *. HTTPS interception will apply to all domains.")
-                            .font(.subheadline)
-                    }
+                    Label("Allowlist is empty. HTTPS interception will be disabled.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(DesignSystem.Colors.warning)
+                        .font(.subheadline)
                 }
             }
 
             Section {
                 Button("Reset to Defaults", role: .destructive) {
-                    resetToDefaults()
+                    showingResetConfirmation = true
                 }
             }
         }
-        .navigationTitle("MITM & Security")
+        .navigationTitle("Interception Rules")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadSettings() }
         .onChangeCompat(of: mitmAllowlist) { persistHardeningConfig() }
         .onChangeCompat(of: quicHandlingMode) { persistHardeningConfig() }
         .toast(message: $toastMessage)
+        .dismissKeyboardOnTapAndScroll()
+        .confirmationDialog(
+            "Reset to Defaults",
+            isPresented: $showingResetConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Reset", role: .destructive) {
+                resetToDefaults()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("MITM allowlist and QUIC settings will be restored to their default values.")
+        }
     }
 
     private var isAllowlistEffectivelyEmpty: Bool {

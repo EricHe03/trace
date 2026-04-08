@@ -9,7 +9,6 @@ import SwiftUI
 import TraceCore
 import TraceFeatures
 import TraceProxy
-import TraceQUIC
 import TraceUI
 
 struct PCAPExportView: View {
@@ -23,10 +22,6 @@ struct PCAPExportView: View {
     @State private var rawCaptureEnabled = false
     @State private var captureLimitBytes = 10_485_760
     @State private var captureSaveTask: Task<Void, Never>?
-    @State private var quicHandlingMode: QUICHandlingMode = .intercept
-    @State private var quicEngineStatus: QUICEngineStatus = QUICEngineRuntime.currentStatus()
-    @State private var quicDiagnosticsSummary = QUICDiagnosticsSummary()
-    @State private var recentQUICFallbackReasons: [String] = []
     @ObservedObject private var vpnManager = VPNManager.shared
 
     private let vpnLogFileName = "vpn_events.ndjson"
@@ -50,14 +45,6 @@ struct PCAPExportView: View {
         }
     }
 
-    private struct QUICDiagnosticsSummary {
-        var flowsSeen = 0
-        var flowsIntercepted = 0
-        var flowsPassThrough = 0
-        var flowsBlocked = 0
-        var flowsTunnelForwarded = 0
-    }
-
     var body: some View {
         Form {
             Section("Packet Capture") {
@@ -76,90 +63,6 @@ struct PCAPExportView: View {
                 Text("Captures raw IP packets in PCAP format. Files can be analyzed with Wireshark. Capture stops when limit is reached.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-
-            Section("Network Hardening") {
-                Picker("QUIC / HTTP3", selection: quicHandlingModeBinding) {
-                    ForEach(QUICHandlingMode.allCases, id: \.self) { mode in
-                        Text(mode.displayName).tag(mode)
-                    }
-                }
-                .accessibilityHint("Choose intercept, pass-through, or block behavior for QUIC/HTTP3")
-
-                Text("`Intercept` attempts HTTP/3 visibility, `Pass Through` preserves connectivity, and `Block` forces non-QUIC behavior.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("QUIC Diagnostics") {
-                HStack {
-                    Text("Engine")
-                    Spacer()
-                    Text(quicEngineStatus.availability == .available ? "Available" : "Unavailable")
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Text("Engine Version")
-                    Spacer()
-                    Text(quicEngineStatus.version)
-                        .foregroundStyle(.secondary)
-                        .font(.system(.body, design: .monospaced))
-                }
-
-                HStack {
-                    Text("FFI Linked")
-                    Spacer()
-                    Text(quicEngineStatus.usingQuicheFFI ? "Yes" : "No")
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Text("QUIC Flows Seen")
-                    Spacer()
-                    Text("\(quicDiagnosticsSummary.flowsSeen)")
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Text("Intercepted")
-                    Spacer()
-                    Text("\(quicDiagnosticsSummary.flowsIntercepted)")
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Text("Pass Through")
-                    Spacer()
-                    Text("\(quicDiagnosticsSummary.flowsPassThrough)")
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Text("Blocked")
-                    Spacer()
-                    Text("\(quicDiagnosticsSummary.flowsBlocked)")
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Text("Tunnel Forwarded")
-                    Spacer()
-                    Text("\(quicDiagnosticsSummary.flowsTunnelForwarded)")
-                        .foregroundStyle(.secondary)
-                }
-
-                if !recentQUICFallbackReasons.isEmpty {
-                    Text("Recent fallback reasons")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    ForEach(Array(recentQUICFallbackReasons.enumerated()), id: \.offset) { _, reason in
-                        Text(reason)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                    }
-                }
             }
 
             Section("VPN Logs") {
@@ -254,7 +157,7 @@ struct PCAPExportView: View {
                                 Text("Exporting…")
                             }
                         } else {
-                            Label("Export All Files", systemImage: "square.and.arrow.up.fill")
+                            Label("Export All Files", systemImage: "square.and.arrow.up")
                         }
                     }
                     .disabled(isExportingAll)
@@ -263,7 +166,7 @@ struct PCAPExportView: View {
                         showingDeleteAlert = true
                         fileToDelete = nil
                     } label: {
-                        Label("Delete All Captures", systemImage: "trash.fill")
+                        Label("Delete All Captures", systemImage: "trash")
                     }
                 }
             }
@@ -273,11 +176,9 @@ struct PCAPExportView: View {
         .onAppear {
             loadSettings()
             loadFiles()
-            loadQUICDiagnostics()
         }
         .refreshable {
             loadFiles()
-            loadQUICDiagnostics()
         }
         .shareSheet(item: $shareSheetItem)
         .alert("Delete Packet Capture", isPresented: $showingDeleteAlert) {
@@ -322,16 +223,6 @@ struct PCAPExportView: View {
         )
     }
 
-    private var quicHandlingModeBinding: Binding<QUICHandlingMode> {
-        Binding(
-            get: { quicHandlingMode },
-            set: { mode in
-                quicHandlingMode = mode
-                updateQUICHandlingSettings()
-            }
-        )
-    }
-
     private var totalSizeFormatted: String {
         let total = pcapFiles.reduce(0) { $0 + $1.size }
         return ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
@@ -342,11 +233,9 @@ struct PCAPExportView: View {
             let hardening = HardeningConfig.shared
             let limitBytes = await hardening.maxRawCaptureSize
             let rawCapture = await hardening.enableRawCapture
-            let mode = await hardening.quicHandlingMode
             await MainActor.run {
                 rawCaptureEnabled = rawCapture
                 captureLimitBytes = max(minRawCaptureSize, min(Int(limitBytes), maxRawCaptureSize))
-                quicHandlingMode = mode
             }
         }
     }
@@ -373,46 +262,6 @@ struct PCAPExportView: View {
             await MainActor.run {
                 pcapFiles = fileInfos.sorted { $0.modificationDate > $1.modificationDate }
                 isLoading = false
-            }
-            loadQUICDiagnostics()
-        }
-    }
-
-    private func loadQUICDiagnostics() {
-        Task {
-            let engineStatus = QUICEngineRuntime.currentStatus()
-            let flows = (try? AppGroupStorage.shared.loadAllUDPFlowMetadata()) ?? []
-            let quicFlows = flows
-                .filter { $0.detectedProtocol == .quic || $0.hasQUICDiagnostics }
-                .sorted { $0.lastActivity > $1.lastActivity }
-
-            var summary = QUICDiagnosticsSummary()
-            summary.flowsSeen = quicFlows.count
-            for flow in quicFlows {
-                switch flow.quicInspectionOutcome {
-                case .intercepted:
-                    summary.flowsIntercepted += 1
-                case .passThroughMarked:
-                    summary.flowsPassThrough += 1
-                case .blocked:
-                    summary.flowsBlocked += 1
-                case .tunnelForwarded:
-                    summary.flowsTunnelForwarded += 1
-                case nil:
-                    break
-                }
-            }
-
-            let recentReasons = Array(
-                quicFlows
-                    .compactMap { $0.quicFlowMetadata?.failureReason }
-                    .prefix(5)
-            )
-
-            await MainActor.run {
-                quicEngineStatus = engineStatus
-                quicDiagnosticsSummary = summary
-                recentQUICFallbackReasons = recentReasons
             }
         }
     }
@@ -457,30 +306,6 @@ struct PCAPExportView: View {
 
             await MainActor.run {
                 captureLimitBytes = Int(clampedBytes)
-            }
-        }
-    }
-
-    private func updateQUICHandlingSettings() {
-        Task {
-            let hardening = HardeningConfig.shared
-            await hardening.setQUICHandlingMode(quicHandlingMode)
-
-            if vpnManager.isConnected {
-                do {
-                    try await vpnManager.sendMessage([
-                        "command": "updateHardeningConfig",
-                        "hardeningConfig": [
-                            "quicHandlingMode": quicHandlingMode.rawValue,
-                            // Legacy key for old extension payloads.
-                            "blockQUIC": quicHandlingMode.blocksQUIC
-                        ]
-                    ])
-                } catch {
-                    await MainActor.run {
-                        toastMessage = "Saved locally, but failed to notify VPN: \(error.localizedDescription)"
-                    }
-                }
             }
         }
     }

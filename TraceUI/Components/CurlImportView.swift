@@ -46,8 +46,8 @@ public struct CurlImportView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding()
-                .background(Color(.systemGray6))
-                .cornerRadius(12)
+                .background(DesignSystem.Colors.surfaceMuted)
+                .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.lg))
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("cURL Command")
@@ -60,13 +60,14 @@ public struct CurlImportView: View {
                         .autocorrectionDisabled()
                         .keyboardType(.asciiCapable)
                         .frame(minHeight: 200)
-                        .padding(8)
-                        .background(Color(.systemGray6))
-                        .cornerRadius(8)
+                        .padding(DesignSystem.Form.textEditorPadding)
+                        .background(DesignSystem.Colors.surfaceMuted)
+                        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color(.separator), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .stroke(DesignSystem.Colors.muted.opacity(0.3), lineWidth: 1)
                         )
+                        .accessibilityLabel("cURL command input")
                 }
 
                 analysisStatusView
@@ -171,9 +172,9 @@ public struct CurlImportView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(Color(.systemGray6))
-        .cornerRadius(10)
+        .padding(DesignSystem.Spacing.md)
+        .background(DesignSystem.Colors.surfaceMuted)
+        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
     }
 
     @ViewBuilder
@@ -199,23 +200,23 @@ public struct CurlImportView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
+        .padding(DesignSystem.Spacing.md)
         .background(style.color.opacity(0.12))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
                 .stroke(style.color.opacity(0.25), lineWidth: 1)
         )
-        .cornerRadius(10)
+        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
     }
 
     private func color(for severity: CurlDiagnosticSeverity) -> Color {
         switch severity {
         case .info:
-            .blue
+            DesignSystem.Colors.info
         case .warning:
-            .orange
+            DesignSystem.Colors.warning
         case .error:
-            .red
+            DesignSystem.Colors.danger
         }
     }
 

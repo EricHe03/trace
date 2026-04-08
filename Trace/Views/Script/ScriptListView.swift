@@ -83,7 +83,7 @@ struct ScriptListView: View {
                                     } label: {
                                         Label(
                                             script.enabled ? "Disable" : "Enable",
-                                            systemImage: script.enabled ? "pause.circle" : "play.circle"
+                                            systemImage: script.enabled ? "circle.slash" : "checkmark.circle"
                                         )
                                         .foregroundStyle(.white)
                                     }
@@ -102,6 +102,7 @@ struct ScriptListView: View {
             }
             .listStyle(.plain)
             .navigationTitle("Scripts")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
@@ -144,18 +145,24 @@ struct ScriptListView: View {
                     scriptManager.addScript(newScript)
                     showToast(message: "Script added")
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
             .sheet(item: $editingScript) { script in
                 ScriptEditorView(script: script) { updatedScript in
                     scriptManager.updateScript(updatedScript)
                     showToast(message: "Script updated")
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingTemplates) {
                 ScriptTemplatesView { template in
                     scriptManager.loadTemplate(template)
                     showToast(message: "Template loaded")
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .fileImporter(isPresented: $showingImport, allowedContentTypes: [.json]) { result in
                 handleImport(result)

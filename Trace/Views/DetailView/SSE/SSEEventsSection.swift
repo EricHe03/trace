@@ -46,10 +46,9 @@ struct SSEEventsSection: View {
                 SectionCard(title: "SSE Statistics", systemImage: "chart.bar") {
                     HStack {
                         VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
-                            Text("TOTAL EVENTS")
+                            Text("Total Events")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                                .textCase(.uppercase)
 
                             Text("\(displayedEvents.count)")
                                 .font(.title2)
@@ -60,10 +59,9 @@ struct SSEEventsSection: View {
 
                         if !uniqueEventTypes.isEmpty {
                             VStack(alignment: .trailing, spacing: DesignSystem.Spacing.xs) {
-                                Text("EVENT TYPES")
+                                Text("Event Types")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                    .textCase(.uppercase)
 
                                 Text("\(uniqueEventTypes.count)")
                                     .font(.title2)

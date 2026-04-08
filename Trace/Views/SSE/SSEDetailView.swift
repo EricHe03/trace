@@ -142,6 +142,8 @@ struct SSEDetailView: View {
         }
         .sheet(item: $selectedEvent) { event in
             SSEEventDetailView(event: event)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showingFilters) {
             SSEEventFiltersView(
@@ -150,6 +152,8 @@ struct SSEDetailView: View {
                 hasActiveFilters: hasActiveFilters,
                 onClear: clearFilters
             )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .task(id: connection.id) {
             await loadReplayRecords()
@@ -343,17 +347,23 @@ struct SSEEventFiltersView: View {
             .navigationTitle("Filters")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Clear") {
-                        onClear()
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
                     }
-                    .disabled(!hasActiveFilters)
                 }
 
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
+                }
+
+                ToolbarItem(placement: .bottomBar) {
+                    Button("Clear All", role: .destructive) {
+                        onClear()
+                    }
+                    .disabled(!hasActiveFilters)
                 }
             }
         }

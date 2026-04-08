@@ -35,7 +35,7 @@ public struct SectionCard<Content: View>: View {
 
                 Text(title)
                     .font(.headline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary)
             }
 
             VStack(spacing: DesignSystem.Spacing.sm) {

@@ -102,7 +102,7 @@ struct RequestMapView: View {
                                     } label: {
                                         Label(
                                             map.enabled ? "Disable" : "Enable",
-                                            systemImage: map.enabled ? "pause.circle" : "play.circle"
+                                            systemImage: map.enabled ? "circle.slash" : "checkmark.circle"
                                         )
                                         .foregroundStyle(.white)
                                     }
@@ -118,6 +118,7 @@ struct RequestMapView: View {
             }
             .listStyle(.plain)
             .navigationTitle("Request Mapping")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
@@ -152,12 +153,16 @@ struct RequestMapView: View {
                     mapManager.addMap(newMap)
                     showToast(message: "Map added")
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
             .sheet(item: $editingMap) { map in
                 RequestMapEditorView(map: map) { updatedMap in
                     mapManager.updateMap(updatedMap)
                     showToast(message: "Map updated")
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
             .fileImporter(isPresented: $showingImport, allowedContentTypes: [.json]) { result in
                 handleImport(result)

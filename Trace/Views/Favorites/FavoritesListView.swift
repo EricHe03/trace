@@ -74,7 +74,7 @@ struct FavoritesListView: View {
                     }
                     .disabled(favoritesManager.favorites.isEmpty)
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Label("More", systemImage: "ellipsis.circle")
                 }
                 .accessibilityLabel("More options")
                 .accessibilityHint("Double tap to clear all favorites")
@@ -82,6 +82,8 @@ struct FavoritesListView: View {
         }
         .sheet(item: $editingFavorite) { favorite in
             FavoriteEditorView(favorite: favorite)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .toast(message: $toastMessage)
         .alert("Clear All Favorites", isPresented: $showingClearAllAlert) {
@@ -109,7 +111,7 @@ struct FavoritesListView: View {
                 TraceContentUnavailableView(
                     "No Results",
                     systemImage: "magnifyingglass",
-                    description: Text("Try a different search term")
+                    description: Text("Try adjusting your search or filters")
                 )
             }
         }
@@ -140,7 +142,7 @@ struct FavoriteRowView: View {
 
                 Spacer()
 
-                Text(favorite.createdAt, style: .relative)
+                Text(favorite.createdAt, style: .time)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

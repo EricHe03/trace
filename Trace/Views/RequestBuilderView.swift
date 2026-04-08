@@ -196,6 +196,8 @@ struct RequestBuilderView: View {
                                 }
                             }
                     }
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
                 }
             }
             .toast(message: $toastMessage)

@@ -23,6 +23,7 @@ struct NetworkView: View {
     @State private var showingRequestBuilder = false
     @State private var showingFavorites = false
     @State private var showingCurlImport = false
+    @State private var showingThrottling = false
     @State private var showingClearAllAlert = false
     @State private var showingVPNSetupAlert = false
     @State private var toastMessage: String?
@@ -55,17 +56,30 @@ struct NetworkView: View {
         contentStack
             .sheet(isPresented: $showingFilters) {
                 FiltersView(viewModel: viewModel)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingRequestBuilder) {
                 RequestBuilderView()
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingFavorites) {
                 NavigationStack {
                     FavoritesListView()
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingCurlImport) {
                 curlImportView
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $showingThrottling) {
+                NetworkConditionProfilesView(viewModel: viewModel)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .shareSheet(item: $shareSheetItem)
             .modifier(RequestNavigationDestinationModifier(requestToOpen: $requestToOpen))
@@ -170,7 +184,11 @@ struct NetworkView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .safeAreaInset(edge: .bottom) {
+            Color.clear.frame(height: 100)
+        }
         .navigationTitle("Network")
+        .navigationBarTitleDisplayMode(.large)
         .searchable(
             text: $viewModel.searchText,
             prompt: "Search URL, headers, or body"
@@ -191,6 +209,7 @@ struct NetworkView: View {
                 onToggleFilters: { showingFilters = true },
                 onShowFavorites: { showingFavorites = true },
                 onShowCurlImport: { showingCurlImport = true },
+                onShowThrottling: { showingThrottling = true },
                 onClearAll: { showingClearAllAlert = true }
             )
         }
@@ -305,14 +324,16 @@ struct NetworkView: View {
             TraceContentUnavailableView(
                 "No Results",
                 systemImage: "magnifyingglass",
-                description: Text("Try adjusting your search or filters")
+                description: Text("Try adjusting your search or filters"),
+                actionTitle: "Clear Filters",
+                action: { viewModel.clearFilters() }
             )
         } else if !vpnManager.isConnected {
-            // Capture is not active
+            // Capture is not active — BottomActionBar is always visible, no duplicate button needed
             TraceContentUnavailableView(
                 "No Requests Yet",
                 systemImage: "network.slash",
-                description: Text("Start capture to see network traffic here")
+                description: Text("Tap the button below to start capturing network traffic")
             )
         } else {
             // Capture is active but no requests yet
