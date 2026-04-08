@@ -164,7 +164,8 @@ extension NIOMITMHTTPConnectHandler {
                                     if captured.isGRPC {
                                         captured.grpcMetadata = GRPCTrailerExtractor.extract(from: forwardedHeaders)
                                     }
-                                    let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace) let responseContentType = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-type" })?.value
+                                    let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
+                                    let responseContentType = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-type" })?.value
                                     let responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
                                     let effectiveCaptureBodyLimit = self.effectiveBodyCaptureLimit(
                                         captureConfig: captureConfig,

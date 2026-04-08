@@ -784,6 +784,7 @@ public actor RequestInterceptor {
             case .drop:
                 return .drop
             case .continueAndDisable:
+                fallthrough
             case .continue:
                 if let pausedEvent = await breakpointManager.consumeResumedRequest(id: event.id.uuidString),
                    let modifiedBody = pausedEvent.effectiveBody {
