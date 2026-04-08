@@ -107,9 +107,9 @@ extension NIOMITMInitialIngressHandler {
                     let protoLen = Int(data[j]); j += 1
                     guard j + protoLen <= listEnd else { return protocols }
                     let protoData = data.subdata(in: j ..< (j + protoLen))
-                    if let proto = String(data: protoData, encoding: .utf8)?
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                        .lowercased(),
+                    // RFC 7301: protocol names are opaque octets. No whitespace-trimming or
+                    // case-folding is permitted; names must be forwarded as-is.
+                    if let proto = String(data: protoData, encoding: .utf8),
                         !proto.isEmpty,
                         !seen.contains(proto) {
                         protocols.append(proto)
@@ -191,7 +191,12 @@ extension NIOMITMInitialIngressHandler {
                     guard j + nameLen <= listEnd else { return nil }
                     if nameType == 0x00 {
                         let nameData = data.subdata(in: j ..< (j + nameLen))
-                        return String(data: nameData, encoding: .utf8)
+                        guard let hostname = String(data: nameData, encoding: .utf8) else { return nil }
+                        // RFC 6066 §3: IP address literals are not permitted in SNI.
+                        guard !isIPLiteral(hostname) else { return nil }
+                        // RFC 6066 §3: hostname must be an FQDN without a trailing dot.
+                        guard !hostname.hasSuffix(".") else { return nil }
+                        return hostname
                     }
                     j += nameLen
                 }
@@ -201,5 +206,18 @@ extension NIOMITMInitialIngressHandler {
         }
 
         return nil
+    }
+
+    /// Returns true if the string looks like an IPv4 or IPv6 address literal.
+    ///
+    /// RFC 6066 §3: "Literal IPv4 and IPv6 addresses are not permitted in 'HostName'."
+    private func isIPLiteral(_ hostname: String) -> Bool {
+        // IPv6 address literal: enclosed in brackets (e.g. "[::1]") or contains a colon.
+        if hostname.hasPrefix("["), hostname.hasSuffix("]") { return true }
+        if hostname.contains(":") { return true }
+        // IPv4 address literal: four decimal octets separated by dots.
+        let parts = hostname.split(separator: ".", omittingEmptySubsequences: false)
+        if parts.count == 4, parts.allSatisfy({ UInt8($0) != nil }) { return true }
+        return false
     }
 }

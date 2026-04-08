@@ -44,20 +44,31 @@ extension NIOMITMHTTPConnectHandler {
 
     func sanitizedRequestHeaders(from headers: HTTPHeaders) -> HTTPHeaders {
         var sanitized = headers
+        // Strip headers named in the Connection token list first (RFC 9110 §7.6.1).
+        stripConnectionTokenHeaders(from: &sanitized)
+        // Strip all known hop-by-hop headers (RFC 9110 §7.6.1, RFC 7230 §6.1).
         sanitized.remove(name: "Proxy-Connection")
         sanitized.remove(name: "Connection")
         sanitized.remove(name: "Keep-Alive")
         sanitized.remove(name: "TE")
         sanitized.remove(name: "Trailer")
         sanitized.remove(name: "Transfer-Encoding")
+        sanitized.remove(name: "Upgrade")
+        sanitized.remove(name: "Proxy-Authorization")
+        sanitized.remove(name: "Proxy-Authenticate")
         sanitized.remove(name: "Content-Length")
         return sanitized
     }
 
     func sanitizedStreamingRequestHeaders(from headers: HTTPHeaders) -> HTTPHeaders {
         var sanitized = headers
+        // Strip headers named in the Connection token list first (RFC 9110 §7.6.1).
+        stripConnectionTokenHeaders(from: &sanitized)
+        // Strip all known hop-by-hop headers (RFC 9110 §7.6.1).
         sanitized.remove(name: "Proxy-Connection")
         sanitized.remove(name: "Proxy-Authorization")
+        sanitized.remove(name: "Proxy-Authenticate")
+        sanitized.remove(name: "Upgrade")
         sanitized.remove(name: "Host")
         sanitized.remove(name: "Content-Length")
         sanitized.remove(name: "Transfer-Encoding")
@@ -76,6 +87,23 @@ extension NIOMITMHTTPConnectHandler {
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
                 .contains { $0.contains("permessage-deflate") }
         }
+    }
+
+    /// Parse permessage-deflate parameters from the negotiated Sec-WebSocket-Extensions header.
+    ///
+    /// Returns `nil` if permessage-deflate is not negotiated.
+    /// RFC 7692 §7.1 — parameters control per-direction context-takeover and window bits.
+    func webSocketDeflateParameters(from headers: HTTPHeaders) -> WebSocketDeflateParameters? {
+        for value in headers[canonicalForm: "Sec-WebSocket-Extensions"] {
+            for token in value.split(separator: ",")
+                .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+            {
+                if token.lowercased().contains("permessage-deflate") {
+                    return WebSocketDeflateParameters.parse(from: token)
+                }
+            }
+        }
+        return nil
     }
 
     func isSSERequest(headers: HTTPHeaders) -> Bool {
@@ -201,16 +229,35 @@ extension NIOMITMHTTPConnectHandler {
         closeAfterSend: Bool
     ) -> HTTPHeaders {
         var sanitized = headers
+        // Strip headers named in the Connection token list first (RFC 9110 §7.6.1).
+        stripConnectionTokenHeaders(from: &sanitized)
+        // Strip all known hop-by-hop headers (RFC 9110 §7.6.1).
         sanitized.remove(name: "Proxy-Connection")
         sanitized.remove(name: "Connection")
         sanitized.remove(name: "Keep-Alive")
         sanitized.remove(name: "Trailer")
         sanitized.remove(name: "Transfer-Encoding")
+        sanitized.remove(name: "Upgrade")
+        sanitized.remove(name: "Proxy-Authenticate")
         sanitized.replaceOrAdd(name: "Content-Length", value: "\(bodyBytes)")
         if !usesHTTP2StreamSemantics {
             sanitized.replaceOrAdd(name: "Connection", value: closeAfterSend ? "close" : "keep-alive")
         }
         return sanitized
+    }
+
+    /// Strip any header names listed as tokens in the `Connection` header (RFC 9110 §7.6.1).
+    ///
+    /// Per RFC: "A proxy or gateway MUST remove or replace any header field that
+    /// is listed in the Connection field before forwarding the message."
+    private func stripConnectionTokenHeaders(from headers: inout HTTPHeaders) {
+        let tokens = headers[canonicalForm: "Connection"]
+            .flatMap { $0.split(separator: ",") }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty && $0 != "close" && $0 != "keep-alive" }
+        for token in tokens {
+            headers.remove(name: token)
+        }
     }
 
     func shouldCloseConnection(requestHead: HTTPRequestHead, responseHeaders: HTTPHeaders) -> Bool {
@@ -280,9 +327,16 @@ extension NIOMITMHTTPConnectHandler {
     }
 
     func dictionary(from headers: HTTPHeaders) -> [String: String] {
+        // Combine multiple values for the same field name with ", " per RFC 9110 §5.3.
+        // Keys are lowercased for case-insensitive lookup.
         var result: [String: String] = [:]
         for header in headers {
-            result[header.name] = header.value
+            let key = header.name.lowercased()
+            if let existing = result[key] {
+                result[key] = existing + ", " + header.value
+            } else {
+                result[key] = header.value
+            }
         }
         return result
     }

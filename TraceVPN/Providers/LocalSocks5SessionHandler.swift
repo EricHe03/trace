@@ -205,7 +205,15 @@ final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Sendable {
                 switch parseRequest() {
                 case .needMoreData:
                     return
-                case .invalid:
+                case .commandNotSupported:
+                    sendReply(.commandNotSupported, context: context)
+                    closeConnection(context: context)
+                    return
+                case .addressTypeNotSupported:
+                    sendReply(.addressTypeNotSupported, context: context)
+                    closeConnection(context: context)
+                    return
+                case .generalFailure:
                     sendReply(.generalFailure, context: context)
                     closeConnection(context: context)
                     return
@@ -877,7 +885,7 @@ final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Sendable {
         return .value(methods.contains(0x00))
     }
 
-    private func parseRequest() -> ParseResult<Socks5Request> {
+    private func parseRequest() -> Socks5RequestParseResult {
         guard buffer.readableBytes >= 4 else {
             return .needMoreData
         }
@@ -886,20 +894,26 @@ final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Sendable {
               let commandRaw = buffer.getInteger(at: buffer.readerIndex + 1, as: UInt8.self),
               let atypRaw = buffer.getInteger(at: buffer.readerIndex + 3, as: UInt8.self)
         else {
-            return .invalid
+            return .generalFailure
         }
 
         guard version == 0x05 else {
-            return .invalid
+            return .generalFailure
         }
 
-        guard let command = Socks5Command(rawValue: commandRaw) else {
-            return .invalid
+        guard Socks5Command(rawValue: commandRaw) != nil else {
+            // RFC 1928 §6 REP 0x07: Command not supported.
+            _ = buffer.readSlice(length: buffer.readableBytes)
+            return .commandNotSupported
         }
 
         guard let atyp = Socks5AddressType(rawValue: atypRaw) else {
-            return .invalid
+            // RFC 1928 §6 REP 0x08: Address type not supported.
+            _ = buffer.readSlice(length: buffer.readableBytes)
+            return .addressTypeNotSupported
         }
+
+        let command = Socks5Command(rawValue: commandRaw)!
 
         let checkpoint = buffer
 

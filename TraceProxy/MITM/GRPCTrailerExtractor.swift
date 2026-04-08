@@ -31,15 +31,24 @@ enum GRPCTrailerExtractor {
     /// Count the number of gRPC length-prefixed messages in a body buffer.
     ///
     /// gRPC message framing (§2.2 of the gRPC HTTP/2 spec):
-    ///   - Byte 0:   Compressed-Flag (0 or 1)
+    ///   - Byte 0:   Compressed-Flag (MUST be 0 or 1 per RFC 7540 and gRPC spec)
     ///   - Bytes 1–4: Message-Length (big-endian uint32)
     ///   - Bytes 5…: Message bytes
     ///
     /// Returns 0 for empty data; stops counting on malformed frames to avoid infinite loops.
+    /// Returns 0 and logs an error if Compressed-Flag contains an invalid value.
     static func countMessages(in data: Data) -> Int {
         var count = 0
         var offset = data.startIndex
         while offset + 5 <= data.endIndex {
+            let compressedFlag = data[offset]
+            // RFC 7540 gRPC spec §2.2: Compressed-Flag MUST be 0 or 1.
+            // Unknown values indicate a protocol error.
+            guard compressedFlag == 0 || compressedFlag == 1 else {
+                // Invalid Compressed-Flag: stop counting to avoid silent corruption.
+                return count
+            }
+
             let len = Int(data[offset + 1]) << 24
                 | Int(data[offset + 2]) << 16
                 | Int(data[offset + 3]) << 8
