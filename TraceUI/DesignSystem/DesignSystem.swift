@@ -26,10 +26,10 @@ public enum DesignSystem {
         public static let xxxl: CGFloat = 40
 
         /// Defines vertical spacing for list rows.
-        public static let rowVertical: CGFloat = 4
+        public static let rowVertical: CGFloat = 8
 
-        /// Defines horizontal padding for sections.
-        public static let sectionHorizontal: CGFloat = 16
+        /// Defines horizontal padding for sections — matches system `.insetGrouped` insets.
+        public static let sectionHorizontal: CGFloat = 20
 
         /// Defines indentation for tree-like layouts.
         public static let indent: CGFloat = lgPlus
@@ -38,6 +38,8 @@ public enum DesignSystem {
     // MARK: - Corner Radius
 
     /// Defines standard corner radius values.
+    /// Always pair with `RoundedRectangle(cornerRadius:, style: .continuous)` for Apple's
+    /// superellipse (squircle) appearance used by native iOS components.
     public enum CornerRadius {
         public static let sm: CGFloat = 4
         public static let md: CGFloat = 8
@@ -50,59 +52,66 @@ public enum DesignSystem {
 
     /// Defines standard font configurations.
     public enum Typography {
+        // Monospaced variants — use `.monospacedDigit()` for numeric-only content
         public static let monospacedFont: Font = .system(.body, design: .monospaced)
         public static let monospacedCaptionFont: Font = .system(.caption, design: .monospaced)
         public static let monospacedCaption2Font: Font = .system(.caption2, design: .monospaced)
+
+        // Dynamic Type text styles
+        public static let largeTitle: Font = .largeTitle
+        public static let title: Font = .title
+        public static let title2: Font = .title2
+        public static let title3: Font = .title3
+        public static let headline: Font = .headline
+        public static let subheadline: Font = .subheadline
+        public static let body: Font = .body
+        public static let callout: Font = .callout
+        public static let footnote: Font = .footnote
+        public static let caption: Font = .caption
+        public static let caption2: Font = .caption2
     }
 
     // MARK: - Colors
 
     /// Defines semantic color mappings.
+    /// All colors use `Color(UIColor)` system variants for automatic light/dark,
+    /// Increased Contrast, and accessibility adaptation — no manual fallbacks needed.
     public enum Colors {
-        private static var isHighContrast: Bool {
-            UIAccessibility.isDarkerSystemColorsEnabled ||
-                UIAccessibility.isInvertColorsEnabled
-        }
+        // Semantic tints
+        public static let accent: Color = Color(.systemBlue)
+        public static let accentAlt: Color = Color(.systemPurple)
+        public static let success: Color = Color(.systemGreen)
+        public static let warning: Color = Color(.systemOrange)
+        public static let danger: Color = Color(.systemRed)
+        public static let info: Color = Color(.systemCyan)
+        public static let favorite: Color = Color(.systemYellow)
+        public static let muted: Color = Color(.systemGray)
 
-        public static var accent: Color {
-            isHighContrast ? Color(red: 0.0, green: 0.45, blue: 1.0) : .blue
-        }
+        // Surface hierarchy
+        public static let surface: Color = Color(.systemBackground)
+        public static let surfaceSubtle: Color = Color(.systemGray5)
+        public static let surfaceMuted: Color = Color(.systemGray6)
+        public static let groupedBackground: Color = Color(.systemGroupedBackground)
+        public static let secondaryGroupedBackground: Color = Color(.secondarySystemGroupedBackground)
+        public static let tertiaryGroupedBackground: Color = Color(.tertiarySystemGroupedBackground)
 
-        public static var accentAlt: Color {
-            isHighContrast ? Color(red: 0.6, green: 0.0, blue: 0.8) : .purple
-        }
+        // Label hierarchy
+        public static let label: Color = Color(.label)
+        public static let secondaryLabel: Color = Color(.secondaryLabel)
+        public static let tertiaryLabel: Color = Color(.tertiaryLabel)
+        public static let quaternaryLabel: Color = Color(.quaternaryLabel)
+        public static let placeholderText: Color = Color(.placeholderText)
 
-        public static var success: Color {
-            isHighContrast ? Color(red: 0.0, green: 0.7, blue: 0.0) : .green
-        }
-
-        public static var warning: Color {
-            isHighContrast ? Color(red: 1.0, green: 0.6, blue: 0.0) : .orange
-        }
-
-        public static var danger: Color {
-            isHighContrast ? Color(red: 0.9, green: 0.0, blue: 0.0) : .red
-        }
-
-        public static var info: Color {
-            isHighContrast ? Color(red: 0.0, green: 0.7, blue: 0.8) : .cyan
-        }
-
-        public static var favorite: Color {
-            isHighContrast ? Color(red: 1.0, green: 0.8, blue: 0.0) : .yellow
-        }
-
-        public static let muted: Color = .gray
-
-        public static let surface: Color = .init(.systemBackground)
-        public static let surfaceSubtle: Color = .init(.systemGray5)
-        public static let surfaceMuted: Color = .init(.systemGray6)
-        public static let groupedBackground: Color = .init(.systemGroupedBackground)
+        // Separators
+        public static let separator: Color = Color(.separator)
+        public static let opaqueSeparator: Color = Color(.opaqueSeparator)
     }
 
     // MARK: - Effects
 
     /// Defines standard shadow configurations.
+    /// Prefer `Material` backgrounds (`.ultraThinMaterial`, `.regularMaterial`, etc.) over
+    /// custom shadows in Liquid Glass / layered surface contexts.
     public enum Shadow {
         public static let sm = (color: Color.black.opacity(0.05), radius: CGFloat(2), x: CGFloat(0), y: CGFloat(1))
         public static let md = (color: Color.black.opacity(0.1), radius: CGFloat(4), x: CGFloat(0), y: CGFloat(2))
@@ -113,12 +122,8 @@ public enum DesignSystem {
 
     /// Defines standard toast configuration.
     public enum Toast {
-        static let backgroundColor: Color = .black
-        static let backgroundOpacity: Double = 0.8
-        static let foregroundColor: Color = .white
         static let horizontalPadding: CGFloat = Spacing.lg
         static let verticalPadding: CGFloat = 10
-        static let cornerRadius: CGFloat = CornerRadius.md
         public static let bottomPadding: CGFloat = 20
         static let displayDuration: TimeInterval = 2.0
         static let maxWidthPercentage: CGFloat = 0.8
@@ -131,7 +136,8 @@ public enum DesignSystem {
     public enum Badge {
         public static let horizontalPadding: CGFloat = 8
         public static let verticalPadding: CGFloat = 4
-        public static let cornerRadius: CGFloat = CornerRadius.sm
+        /// Badges use pill shape to match Apple's native badge appearance.
+        public static let cornerRadius: CGFloat = CornerRadius.pill
         public static let font: Font = .caption
         public static let fontWeight: Font.Weight = .semibold
     }
@@ -139,13 +145,15 @@ public enum DesignSystem {
     // MARK: - Empty States
 
     /// Defines standard empty state configuration.
-    enum EmptyState {
-        static let iconSize: CGFloat = 60
-        static let spacing: CGFloat = Spacing.lg
-        static let titleFont: Font = .title2
-        static let titleWeight: Font.Weight = .semibold
-        static let descriptionFont: Font = .subheadline
-        static let verticalPadding: CGFloat = 40
+    /// On iOS 17+ targets, prefer the native `ContentUnavailableView` — its typography
+    /// and layout match these tokens exactly and it is automatically localized/accessible.
+    public enum EmptyState {
+        public static let iconSize: CGFloat = 60
+        public static let spacing: CGFloat = Spacing.lg
+        public static let titleFont: Font = .title2
+        public static let titleWeight: Font.Weight = .semibold
+        public static let descriptionFont: Font = .subheadline
+        public static let verticalPadding: CGFloat = 40
     }
 
     // MARK: - Icon Sizes
@@ -166,13 +174,14 @@ public enum DesignSystem {
     /// Defines accessibility-aware animations and transitions.
     public enum Accessibility {
         /// Returns an animation that respects the Reduce Motion setting.
+        /// Uses a short cross-fade instead of instant snap, per HIG guidance.
         public static var preferredAnimation: SwiftUI.Animation {
-            UIAccessibility.isReduceMotionEnabled ? .linear(duration: 0) : .easeInOut
+            UIAccessibility.isReduceMotionEnabled ? .linear(duration: 0.15) : .easeInOut
         }
 
         /// Returns a spring animation that respects the Reduce Motion setting.
         public static var springAnimation: SwiftUI.Animation {
-            UIAccessibility.isReduceMotionEnabled ? .linear(duration: 0) : .spring(response: 0.3, dampingFraction: 0.95)
+            UIAccessibility.isReduceMotionEnabled ? .linear(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.95)
         }
 
         /// Returns a transition that respects the Reduce Motion setting.
@@ -191,10 +200,10 @@ public enum DesignSystem {
                 UIAccessibility.isInvertColorsEnabled
         }
 
-        /// Defines the minimum tappable size for iOS (44x44 pt).
+        /// Defines the minimum tappable size for iOS (44×44 pt).
         public static let minimumTapTarget: CGFloat = 44
 
-        /// Defines the absolute minimum tappable size (28x28 pt).
+        /// Defines the absolute minimum tappable size for non-primary interactive elements (28×28 pt).
         public static let absoluteMinimumTapTarget: CGFloat = 28
     }
 
@@ -202,24 +211,38 @@ public enum DesignSystem {
 
     /// Defines standard haptic feedback patterns.
     public enum Haptics {
-        /// Plays light impact feedback.
+        /// Plays light impact feedback — subtle, for minor UI interactions.
         public static func light() {
             guard !UIAccessibility.isReduceMotionEnabled else { return }
             let generator = UIImpactFeedbackGenerator(style: .light)
             generator.impactOccurred()
         }
 
-        /// Plays medium impact feedback.
+        /// Plays medium impact feedback — standard, for most interactions.
         public static func medium() {
             guard !UIAccessibility.isReduceMotionEnabled else { return }
             let generator = UIImpactFeedbackGenerator(style: .medium)
             generator.impactOccurred()
         }
 
-        /// Plays heavy impact feedback.
+        /// Plays heavy impact feedback — pronounced, for significant actions.
         public static func heavy() {
             guard !UIAccessibility.isReduceMotionEnabled else { return }
             let generator = UIImpactFeedbackGenerator(style: .heavy)
+            generator.impactOccurred()
+        }
+
+        /// Plays rigid impact feedback — sharp, precise, for snapping/locking interactions.
+        public static func rigid() {
+            guard !UIAccessibility.isReduceMotionEnabled else { return }
+            let generator = UIImpactFeedbackGenerator(style: .rigid)
+            generator.impactOccurred()
+        }
+
+        /// Plays soft impact feedback — gentle, for floating or elastic interactions.
+        public static func soft() {
+            guard !UIAccessibility.isReduceMotionEnabled else { return }
+            let generator = UIImpactFeedbackGenerator(style: .soft)
             generator.impactOccurred()
         }
 
@@ -262,7 +285,8 @@ public enum DesignSystem {
         public static let textEditorMinHeightLarge: CGFloat = 150
         public static let outputMaxHeight: CGFloat = 200
         public static let outputMaxHeightLarge: CGFloat = 300
-        public static let textEditorBackground: Color = .init(.systemGray6)
+        /// Uses `secondarySystemGroupedBackground` for correct vibrancy inside grouped forms.
+        public static let textEditorBackground: Color = Color(.secondarySystemGroupedBackground)
         public static let textEditorPadding: CGFloat = Spacing.sm
         public static let textEditorCornerRadius: CGFloat = CornerRadius.md
     }
@@ -270,22 +294,21 @@ public enum DesignSystem {
     // MARK: - Lists
 
     /// Defines list style guidelines for common screens.
-    /// - .insetGrouped: Primary data lists (Requests, WebSockets, Favorites, Tests)
-    /// - .plain: Management/configuration screens with custom styling (Rules, Scripts, Maps, Hosts)
-    /// - Form (auto .insetGrouped): Settings and configuration forms
-    ///
-    /// Defines standard list configuration.
+    /// - `.insetGrouped`: Primary data lists (Requests, WebSockets, Favorites, Tests)
+    /// - `.plain`: Management/configuration screens with custom styling (Rules, Scripts, Maps, Hosts)
+    /// - `Form` (auto `.insetGrouped`): Settings and configuration forms
     public enum List {
         public static var preferredStyle: some ListStyle {
             .insetGrouped
         }
 
         public static let rowVerticalPadding: CGFloat = Spacing.rowVertical
+        /// Leading/trailing 20 pt matches the system `.insetGrouped` list insets.
         public static let rowInsets = EdgeInsets(
             top: Spacing.sm,
-            leading: Spacing.lg,
+            leading: Spacing.lgPlus,
             bottom: Spacing.sm,
-            trailing: Spacing.lg
+            trailing: Spacing.lgPlus
         )
     }
 }
@@ -419,7 +442,7 @@ public extension View {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
-    /// Applies standard badge styling.
+    /// Applies standard badge styling with pill shape matching native iOS badges.
     func badgeStyle(backgroundColor: Color, foregroundColor: Color = .white) -> some View {
         self
             .font(DesignSystem.Badge.font)
@@ -432,15 +455,15 @@ public extension View {
                 minHeight: DesignSystem.Accessibility.absoluteMinimumTapTarget
             )
             .background(backgroundColor)
-            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Badge.cornerRadius))
+            .clipShape(Capsule())
     }
 
-    /// Applies standard card styling.
+    /// Applies standard card styling with continuous corner radius.
     func cardStyle() -> some View {
         self
             .padding()
             .background(Color(.systemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
+            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md, style: .continuous))
             .shadow(
                 color: DesignSystem.Shadow.sm.color,
                 radius: DesignSystem.Shadow.sm.radius,
@@ -449,12 +472,12 @@ public extension View {
             )
     }
 
-    /// Applies standard form text editor styling.
+    /// Applies standard form text editor styling with continuous corner radius.
     func formTextEditorStyle() -> some View {
         self
             .padding(DesignSystem.Form.textEditorPadding)
             .background(DesignSystem.Form.textEditorBackground)
-            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Form.textEditorCornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Form.textEditorCornerRadius, style: .continuous))
     }
 
     /// Applies the standard toast notification overlay.
@@ -476,7 +499,8 @@ public extension View {
 
 // MARK: - Toast View
 
-/// Presents a standard toast notification view.
+/// Presents a standard toast notification view using a system material background
+/// for automatic light/dark mode and vibrancy adaptation.
 struct ToastView: View {
     let message: String
     let onDismiss: () -> Void
@@ -485,14 +509,15 @@ struct ToastView: View {
         Button(action: onDismiss) {
             Text(message)
                 .font(.subheadline)
-                .foregroundStyle(DesignSystem.Toast.foregroundColor)
+                .foregroundStyle(.primary)
                 .multilineTextAlignment(.center)
                 .lineLimit(DesignSystem.Toast.lineLimit)
                 .frame(width: textWidth, alignment: .center)
                 .padding(.horizontal, DesignSystem.Toast.horizontalPadding)
                 .padding(.vertical, DesignSystem.Toast.verticalPadding)
-                .background(DesignSystem.Toast.backgroundColor.opacity(DesignSystem.Toast.backgroundOpacity))
-                .clipShape(RoundedRectangle(cornerRadius: DesignSystem.Toast.cornerRadius))
+                .background(.regularMaterial)
+                .clipShape(Capsule())
+                .overlay(Capsule().strokeBorder(DesignSystem.Colors.separator, lineWidth: 0.5))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(message)
@@ -533,7 +558,7 @@ private struct ToastModifier: ViewModifier {
                         )
                     )
                     .padding(.horizontal, DesignSystem.Spacing.lg)
-                    .padding(.bottom, bottomPadding)
+                    .padding(.bottom, effectiveBottomPadding)
                     .animation(DesignSystem.Accessibility.springAnimation, value: message)
                     .onAppear {
                         scheduleAutoDismiss()
@@ -547,6 +572,18 @@ private struct ToastModifier: ViewModifier {
             }
         }
         .animation(DesignSystem.Accessibility.springAnimation, value: message)
+    }
+
+    /// Computes bottom padding that clears the home indicator safe area.
+    private var effectiveBottomPadding: CGFloat {
+        let safeAreaBottom = UIApplication.shared
+            .connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?
+            .windows
+            .first { $0.isKeyWindow }?
+            .safeAreaInsets.bottom ?? 0
+        return max(bottomPadding, safeAreaBottom + 8)
     }
 
     private func dismiss() {

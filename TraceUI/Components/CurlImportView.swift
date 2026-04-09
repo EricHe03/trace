@@ -24,7 +24,7 @@ public struct CurlImportView: View {
     @State private var analyzedPlan: CurlCommandPlan?
     @State private var isAnalyzing = false
     @State private var isImporting = false
-    @State private var importOutcome: ImportOutcome?
+    @State private var toastMessage: String?
     @State private var analysisTask: Task<Void, Never>?
 
     public var onImport: ((String) async -> ImportOutcome)?
@@ -35,68 +35,43 @@ public struct CurlImportView: View {
 
     public var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Import cURL Command", systemImage: "square.and.arrow.down")
-                        .font(.headline)
-
-                    Text("Paste a cURL command. Analysis runs automatically with inline diagnostics.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-                .background(DesignSystem.Colors.surfaceMuted)
-                .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.lg))
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("cURL Command")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-
+            Form {
+                // MARK: Command Input
+                Section {
                     TextEditor(text: $curlCommand)
                         .font(.system(.body, design: .monospaced))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.asciiCapable)
-                        .frame(minHeight: 200)
-                        .padding(DesignSystem.Form.textEditorPadding)
-                        .background(DesignSystem.Colors.surfaceMuted)
-                        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
-                                .stroke(DesignSystem.Colors.muted.opacity(0.3), lineWidth: 1)
-                        )
-                        .accessibilityLabel("cURL command input")
+                        .frame(minHeight: DesignSystem.Form.textEditorMinHeightLarge)
+                        .accessibilityLabel("cURL command")
+                } header: {
+                    Text("Command")
+                } footer: {
+                    analysisStatusFooter
                 }
 
-                analysisStatusView
-
-                if let plan = analyzedPlan {
-                    analysisSummary(plan: plan)
-                }
-
-                if let importOutcome {
-                    importOutcomeView(importOutcome)
-                }
-
-                Spacer()
             }
-            .padding()
             .navigationTitle("Import cURL")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button("Cancel", role: .cancel) {
                         dismiss()
                     }
                 }
 
                 ToolbarItem(placement: .primaryAction) {
-                    Button(isImporting ? "Importing..." : "Import") {
-                        startImport()
+                    if isImporting {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Button("Import") {
+                            startImport()
+                        }
+                        .bold()
+                        .disabled(importDisabled)
                     }
-                    .disabled(importDisabled || isImporting)
                 }
             }
             .dismissKeyboardOnTapAndScroll()
@@ -106,8 +81,13 @@ public struct CurlImportView: View {
             .onDisappear {
                 analysisTask?.cancel()
             }
+            .toast(message: $toastMessage)
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
+
+    // MARK: - Private
 
     private var importDisabled: Bool {
         guard let plan = analyzedPlan else { return true }
@@ -115,108 +95,24 @@ public struct CurlImportView: View {
     }
 
     @ViewBuilder
-    private var analysisStatusView: some View {
+    private var analysisStatusFooter: some View {
         if !curlCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            HStack(spacing: 8) {
-                if isAnalyzing {
+            if isAnalyzing {
+                HStack(spacing: 6) {
                     ProgressView()
-                        .controlSize(.small)
-                    Text("Analyzing command…")
-                        .foregroundStyle(.secondary)
-                } else if let plan = analyzedPlan {
-                    Image(systemName: plan.hasBlockingDiagnostics ? "xmark.octagon.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(plan.hasBlockingDiagnostics ? DesignSystem.Colors.danger : DesignSystem.Colors.success)
-                    Text(plan.hasBlockingDiagnostics ? "Fix blocking diagnostics before importing" : "Ready to import")
-                        .foregroundStyle(plan.hasBlockingDiagnostics ? DesignSystem.Colors.danger : DesignSystem.Colors.success)
+                        .controlSize(.mini)
+                    Text("Analyzing…")
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .font(.caption)
-        }
-    }
-
-    private func analysisSummary(plan: CurlCommandPlan) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Analysis")
-                .font(.subheadline)
-                .fontWeight(.semibold)
-
-            Text("Transfers: \(plan.transfers.count)")
-                .font(.caption)
                 .foregroundStyle(.secondary)
-
-            if plan.diagnostics.isEmpty {
-                Text("No diagnostics")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(plan.diagnostics) { diagnostic in
-                            HStack(alignment: .top, spacing: 8) {
-                                Text(diagnostic.severity.rawValue.uppercased())
-                                    .font(.caption2)
-                                    .fontWeight(.bold)
-                                    .foregroundStyle(color(for: diagnostic.severity))
-                                    .frame(width: 56, alignment: .leading)
-
-                                Text(diagnostic.message)
-                                    .font(.caption)
-                                    .foregroundStyle(.primary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                    }
+            } else if let plan = analyzedPlan {
+                if plan.hasBlockingDiagnostics {
+                    Label("Fix blocking issues before importing.", systemImage: "xmark.octagon.fill")
+                        .foregroundStyle(DesignSystem.Colors.danger)
+                } else {
+                    Label("Ready to import.", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(DesignSystem.Colors.success)
                 }
-                .frame(maxHeight: 140)
             }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(DesignSystem.Spacing.md)
-        .background(DesignSystem.Colors.surfaceMuted)
-        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
-    }
-
-    @ViewBuilder
-    private func importOutcomeView(_ outcome: ImportOutcome) -> some View {
-        let style = style(for: outcome)
-
-        VStack(alignment: .leading, spacing: 8) {
-            Label(style.title, systemImage: style.icon)
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundStyle(style.color)
-
-            Text(style.message)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if case .permissionRequired = outcome {
-                Button("Open Settings") {
-                    openAppSettings()
-                }
-                .font(.caption)
-                .buttonStyle(.bordered)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(DesignSystem.Spacing.md)
-        .background(style.color.opacity(0.12))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
-                .stroke(style.color.opacity(0.25), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md))
-    }
-
-    private func color(for severity: CurlDiagnosticSeverity) -> Color {
-        switch severity {
-        case .info:
-            DesignSystem.Colors.info
-        case .warning:
-            DesignSystem.Colors.warning
-        case .error:
-            DesignSystem.Colors.danger
         }
     }
 
@@ -225,19 +121,24 @@ public struct CurlImportView: View {
         guard let onImport else { return }
 
         isImporting = true
-        importOutcome = nil
         let commandToImport = curlCommand
 
         Task {
             let outcome = await onImport(commandToImport)
             await MainActor.run {
                 isImporting = false
-                withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                    importOutcome = outcome
-                }
 
-                if case .success = outcome {
+                switch outcome {
+                case .success:
                     dismiss()
+                case let .failure(message):
+                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+                        toastMessage = message
+                    }
+                case let .permissionRequired(message):
+                    withAnimation(DesignSystem.Accessibility.preferredAnimation) {
+                        toastMessage = message
+                    }
                 }
             }
         }
@@ -245,7 +146,6 @@ public struct CurlImportView: View {
 
     private func scheduleAnalysis() {
         analysisTask?.cancel()
-        importOutcome = nil
 
         let trimmed = curlCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -272,24 +172,6 @@ public struct CurlImportView: View {
                 isAnalyzing = false
             }
         }
-    }
-
-    private func style(for outcome: ImportOutcome) -> (title: String, message: String, icon: String, color: Color) {
-        switch outcome {
-        case let .success(message):
-            ("Import complete", message, "checkmark.circle.fill", DesignSystem.Colors.success)
-        case let .permissionRequired(message):
-            ("Network access required", message, "exclamationmark.triangle.fill", DesignSystem.Colors.warning)
-        case let .failure(message):
-            ("Import couldn't finish", message, "xmark.circle.fill", DesignSystem.Colors.danger)
-        }
-    }
-
-    private func openAppSettings() {
-        #if canImport(UIKit)
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
-        #endif
     }
 }
 
