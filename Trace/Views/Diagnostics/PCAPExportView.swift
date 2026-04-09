@@ -119,6 +119,7 @@ struct PCAPExportView: View {
                                 } label: {
                                     Label("Share", systemImage: "square.and.arrow.up")
                                 }
+                                .tint(DesignSystem.Colors.accent)
                             }
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button(role: .destructive) {

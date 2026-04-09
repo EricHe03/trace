@@ -294,7 +294,7 @@ public struct QuickActionsBar: View {
             QuickActionButton(
                 icon: "square.and.arrow.up",
                 title: "Share",
-                color: DesignSystem.Colors.accentAlt,
+                color: DesignSystem.Colors.accent,
                 action: onShare
             )
         }
