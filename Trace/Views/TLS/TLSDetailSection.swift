@@ -207,3 +207,18 @@ private struct LabelValueRow: View {
         }
     }
 }
+
+#Preview("With ALPN") {
+    ScrollView {
+        TLSDetailSection(tlsInfo: TLSConnectionInfo(
+            protocolVersion: "TLSv1.3",
+            cipherSuite: "TLS_AES_128_GCM_SHA256",
+            certificatePinningEnabled: false,
+            certificateTrusted: true,
+            alpnProtocol: "h2",
+            alpnOffered: ["h2", "http/1.1"],
+            alpnAvailable: ["h2", "http/1.1"]
+        ))
+        .padding()
+    }
+}

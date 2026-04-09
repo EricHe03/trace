@@ -105,10 +105,13 @@ public class SSEParser {
                 return
             }
 
+            let joinedData = currentDataLines.joined(separator: "\n")
+            // HTML Living Standard §9.2.6: if the data buffer ends with U+000A LF, remove it.
+            let trimmedData = joinedData.hasSuffix("\n") ? String(joinedData.dropLast()) : joinedData
             let event = ServerSentEvent(
                 eventId: lastEventID.isEmpty ? nil : lastEventID,
                 eventType: currentEventType?.isEmpty == true ? nil : currentEventType,
-                data: currentDataLines.joined(separator: "\n"),
+                data: trimmedData,
                 retry: currentRetry
             )
             events.append(event)

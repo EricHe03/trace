@@ -35,7 +35,7 @@ public struct SectionCard<Content: View>: View {
 
                 Text(title)
                     .font(.headline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary)
             }
 
             VStack(spacing: DesignSystem.Spacing.sm) {
@@ -52,5 +52,18 @@ public struct SectionCard<Content: View>: View {
                 y: DesignSystem.Shadow.sm.y
             )
         }
+    }
+}
+
+#Preview {
+    ScrollView {
+        SectionCard(title: "General", systemImage: "info.circle") {
+            Text("Row 1")
+            Divider()
+            Text("Row 2")
+            Divider()
+            Text("Row 3")
+        }
+        .padding()
     }
 }

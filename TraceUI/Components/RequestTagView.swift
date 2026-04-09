@@ -96,3 +96,16 @@ public struct AllTagsPopover: View {
         .frame(maxWidth: 300)
     }
 }
+
+#Preview("RequestTagView") {
+    HStack {
+        RequestTagView(tag: .h2)
+        RequestTagView(tag: .failed)
+    }
+    .padding()
+}
+
+#Preview("DuplicateCounterView") {
+    DuplicateCounterView(count: 5)
+        .padding()
+}

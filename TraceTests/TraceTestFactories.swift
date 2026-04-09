@@ -10,7 +10,7 @@ import Foundation
 @testable import TraceCore
 @testable import TraceNetworking
 @testable import TraceProxy
-@testable import TraceVPN
+@testable import TraceVPNKit
 
 // MARK: - Network Request Factories
 

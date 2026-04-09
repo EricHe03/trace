@@ -89,7 +89,6 @@ public struct InfoRow: View {
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .textCase(.uppercase)
 
             Text(value)
                 .font(.body)
@@ -103,7 +102,7 @@ public struct InfoRow: View {
 
 // MARK: - Section Header
 
-/// Represents an uppercased, lightweight header for grouping related fields.
+/// Represents a lightweight header for grouping related fields.
 public struct SectionHeader: View {
     public let title: String
 
@@ -112,7 +111,6 @@ public struct SectionHeader: View {
             .font(.caption)
             .fontWeight(.semibold)
             .foregroundStyle(.secondary)
-            .textCase(.uppercase)
             .accessibilityAddTraits(.isHeader)
     }
 }
@@ -296,7 +294,7 @@ public struct QuickActionsBar: View {
             QuickActionButton(
                 icon: "square.and.arrow.up",
                 title: "Share",
-                color: DesignSystem.Colors.accentAlt,
+                color: DesignSystem.Colors.accent,
                 action: onShare
             )
         }
@@ -316,7 +314,7 @@ private struct QuickActionButton: View {
                 Image(systemName: icon)
                     .font(.system(size: 20))
                     .foregroundStyle(color)
-                    .frame(height: 20)
+                    .frame(height: 24)
 
                 Text(title)
                     .font(.caption)
@@ -357,7 +355,8 @@ public struct BottomActionBar: View {
                 HStack(spacing: DesignSystem.Spacing.sm) {
                     Circle()
                         .fill(isCapturing ? DesignSystem.Colors.success : DesignSystem.Colors.danger)
-                        .frame(width: 8, height: 8)
+                        .frame(width: 12, height: 12)
+                        .accessibilityHidden(true)
 
                     Text(isCapturing ? "Capturing" : "Stopped")
                         .font(.subheadline)

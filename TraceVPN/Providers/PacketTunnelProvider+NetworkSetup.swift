@@ -315,11 +315,11 @@ extension PacketTunnelProvider {
         }
     }
 
-    func startProxyServer() async throws {
+    func startProxyServer(using runtimeConfiguration: TunnelProviderConfiguration) async throws {
         VPNLog.proxy.info("event=vpn.proxy_server_init_begin")
 
-        let allowlist = await HardeningConfig.shared.mitmAllowlist
-        let requestedMitmEnabled = await HardeningConfig.shared.enableNIOMITM
+        let allowlist = runtimeConfiguration.hardening.mitmAllowlist
+        let requestedMitmEnabled = runtimeConfiguration.hardening.enableNIOMITM
         let caTrusted = CertificateManager.shared.isRootCATrusted()
 
         VPNLog.proxy.info("event=vpn.proxy_server_config allowlist_count=\(allowlist.count) mitm_requested=\(requestedMitmEnabled) ca_trusted=\(caTrusted)")

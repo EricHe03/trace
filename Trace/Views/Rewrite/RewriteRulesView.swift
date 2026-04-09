@@ -83,7 +83,7 @@ struct RewriteRulesView: View {
                                     } label: {
                                         Label(
                                             rule.enabled ? "Disable" : "Enable",
-                                            systemImage: rule.enabled ? "pause.circle" : "play.circle"
+                                            systemImage: rule.enabled ? "circle.slash" : "checkmark.circle"
                                         )
                                         .foregroundStyle(.white)
                                     }
@@ -105,6 +105,7 @@ struct RewriteRulesView: View {
             }
             .listStyle(.plain)
             .navigationTitle("Rewrite Rules")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
@@ -140,12 +141,16 @@ struct RewriteRulesView: View {
                     rewriteManager.addRule(newRule)
                     showToast(message: "Rule added")
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
             .sheet(item: $editingRule) { rule in
                 RewriteRuleEditorView(rule: rule) { updatedRule in
                     rewriteManager.updateRule(updatedRule)
                     showToast(message: "Rule updated")
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
             .fileImporter(isPresented: $showingImport, allowedContentTypes: [.json]) { result in
                 handleImport(result)
@@ -284,7 +289,7 @@ struct RuleRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
             HStack {
-                Image(systemName: rule.enabled ? "checkmark.circle.fill" : "slash.circle.fill")
+                Image(systemName: rule.enabled ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(rule.enabled ? DesignSystem.Colors.success : DesignSystem.Colors.muted)
                     .accessibilityHidden(true)
 

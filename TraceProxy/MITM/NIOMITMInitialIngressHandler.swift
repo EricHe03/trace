@@ -32,6 +32,12 @@ final class NIOMITMInitialIngressHandler: ChannelInboundHandler, RemovableChanne
         case notTLS
     }
 
+    enum PlaintextProbeState {
+        case needMore
+        case httpLike
+        case opaque
+    }
+
     let group: NIOTSEventLoopGroup
     weak var eventLog: NDJSONLogWriter?
     let throttler: PacketThrottler?
@@ -126,6 +132,8 @@ final class NIOMITMInitialIngressHandler: ChannelInboundHandler, RemovableChanne
 }
 
 extension NIOMITMInitialIngressHandler {
+    private static let maxPlaintextHTTPMethodProbeBytes = 32
+
     func evaluateRouting(context: ChannelHandlerContext) {
         guard state == .probing else { return }
 
@@ -154,6 +162,9 @@ extension NIOMITMInitialIngressHandler {
         case .needMore:
             return
         case .notTLS:
+            if routeHintedOpaqueTrafficDirect(context: context) {
+                return
+            }
             installHTTPProxyPipeline(context: context)
         case .tlsClientHello:
             routeTransparentTLS(context: context)
@@ -205,6 +216,54 @@ extension NIOMITMInitialIngressHandler {
                     context.close(promise: nil)
                 }
             }
+    }
+
+    func routeHintedOpaqueTrafficDirect(context: ChannelHandlerContext) -> Bool {
+        guard let upstreamHint else { return false }
+
+        switch plaintextProbeState(for: probeBuffer) {
+        case .needMore, .httpLike:
+            return false
+        case .opaque:
+            break
+        }
+
+        let host = upstreamHint.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else { return false }
+
+        let port = Int(upstreamHint.port)
+        let hostHash = LogRedaction.hash(host)
+        let failureReason = "mitm_non_http_protocol"
+        onMITMFailure?(host, failureReason)
+
+        let shouldFailOpen = shouldFailOpenAfterMITMFailure(
+            host,
+            upstreamHint.port,
+            failureReason,
+            .httpConnect
+        )
+
+        routeDecision = shouldFailOpen ? "passthrough" : "block"
+        fallbackApplied = shouldFailOpen
+        bypassReason = shouldFailOpen ? failureReason : "strict_fail_closed"
+        sniHash = hostHash
+        upstreamHash = hostHash
+
+        if shouldFailOpen {
+            appendTransparentTLSEvent(
+                "stage=plaintext_prefilter outcome=passthrough host_hash=\(hostHash) port=\(port) reason=\(failureReason)"
+            )
+            Task { await ProxyNetworkMetrics.shared.recordMITMBypassed() }
+            installTransparentPassthrough(host: host, port: port, context: context)
+        } else {
+            appendTransparentTLSEvent(
+                "stage=plaintext_prefilter outcome=blocked host_hash=\(hostHash) port=\(port) reason=\(failureReason)"
+            )
+            state = .closed
+            context.close(promise: nil)
+        }
+
+        return true
     }
 
     func routeTransparentTLS(context: ChannelHandlerContext) {
@@ -728,9 +787,15 @@ extension NIOMITMInitialIngressHandler {
         let relayProtocols = http2MITMEnabledProvider()
             ? Self.transparentRelayALPNProtocols
             : ["http/1.1"]
-        return relayProtocols.filter { candidate in
+        let candidates = relayProtocols.filter { candidate in
             normalizedOffer.contains(candidate.lowercased())
         }
+        if normalizedOffer.contains("h3"), !candidates.contains("h3") {
+            ProxyLog.mitm.info(
+                "event=transparent_alpn_downgrade client_offered_h3=true selected=\(candidates.joined(separator: ","), privacy: .public) note=quic_requires_full_tunnel"
+            )
+        }
+        return candidates
     }
 
     func mirroredClientALPNList(from negotiatedUpstreamALPN: String?, clientOfferedALPN: [String]) -> [String] {
@@ -824,6 +889,76 @@ extension NIOMITMInitialIngressHandler {
             return .upstreamTimeout(detail: nil)
         }
         return .mitmSetupFailed(detail: detail)
+    }
+
+    func plaintextProbeState(for buffer: ByteBuffer) -> PlaintextProbeState {
+        let bytes = Array(buffer.readableBytesView.prefix(Self.maxPlaintextHTTPMethodProbeBytes))
+        guard !bytes.isEmpty else {
+            return .needMore
+        }
+
+        let uppercaseBytes = bytes.map { byte -> UInt8 in
+            switch byte {
+            case 0x61 ... 0x7A:
+                return byte - 0x20
+            default:
+                return byte
+            }
+        }
+
+        let httpPrefixes: [[UInt8]] = [
+            Array("GET ".utf8),
+            Array("POST ".utf8),
+            Array("PUT ".utf8),
+            Array("HEAD ".utf8),
+            Array("PATCH ".utf8),
+            Array("DELETE ".utf8),
+            Array("OPTIONS ".utf8),
+            Array("CONNECT ".utf8),
+            Array("TRACE ".utf8),
+            Array("PRI ".utf8)
+        ]
+
+        for prefix in httpPrefixes {
+            let commonCount = min(prefix.count, uppercaseBytes.count)
+            guard uppercaseBytes.prefix(commonCount).elementsEqual(prefix.prefix(commonCount)) else {
+                continue
+            }
+            return uppercaseBytes.count >= prefix.count ? .httpLike : .needMore
+        }
+
+        if let separatorIndex = uppercaseBytes.firstIndex(of: 0x20) {
+            let methodBytes = uppercaseBytes[..<separatorIndex]
+            if !methodBytes.isEmpty, methodBytes.allSatisfy(Self.isHTTPMethodTokenByte) {
+                return .httpLike
+            }
+        } else if uppercaseBytes.count < Self.maxPlaintextHTTPMethodProbeBytes,
+                  uppercaseBytes.allSatisfy(Self.isHTTPMethodTokenByte) {
+            return .needMore
+        }
+
+        return uppercaseBytes.count < 4 ? .needMore : .opaque
+    }
+
+    private static func isHTTPMethodTokenByte(_ byte: UInt8) -> Bool {
+        switch byte {
+        case 0x21, // !
+             0x23 ... 0x27, // # $ % & '
+             0x2A, // *
+             0x2B, // +
+             0x2D, // -
+             0x2E, // .
+             0x30 ... 0x39, // 0-9
+             0x41 ... 0x5A, // A-Z
+             0x5E, // ^
+             0x5F, // _
+             0x60, // `
+             0x7C, // |
+             0x7E: // ~
+            true
+        default:
+            false
+        }
     }
 
     private func transparentMITMFailureDetail(_ error: Error) -> String {

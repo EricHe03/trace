@@ -88,3 +88,11 @@ struct NetworkListContent<ContextMenu: View>: View {
         )
     }
 }
+
+// MARK: - Previews
+
+#Preview {
+    Text("NetworkListContent renders inside a List managed by NetworkView.")
+        .foregroundStyle(.secondary)
+        .padding()
+}

@@ -110,7 +110,6 @@ struct DetailView: View {
                 VStack(spacing: DesignSystem.Spacing.lg) {
                     HeadersSection(headers: request.responseHeaders)
                     responseBodySection
-                    compressionInfoSection
                 }
                 .padding()
             }
@@ -130,7 +129,6 @@ struct DetailView: View {
             VStack(spacing: DesignSystem.Spacing.lg) {
                 requestBodySection
                 responseBodySection
-                compressionInfoSection
                 emptyBodyMessage
             }
             .padding()
@@ -149,6 +147,10 @@ struct DetailView: View {
                     )
                 } else {
                     let contentType = viewModel.requestContentType(from: request)
+                    let shareRequestBody = { viewModel.shareRequestBody(for: request) }
+                    if let requestBodyNotice = viewModel.requestBodyNotice {
+                        bodyNotice(requestBodyNotice)
+                    }
                     BodyInspectorView(
                         title: "Request Body",
                         headerSystemImage: nil,
@@ -160,9 +162,7 @@ struct DetailView: View {
                         onCopy: viewModel.requestBodyText.map { text in
                             { viewModel.copyToClipboard(text) }
                         },
-                        onShare: {
-                            viewModel.shareRequestBody(for: request)
-                        }
+                        onShare: shareRequestBody
                     )
                 }
 
@@ -191,6 +191,10 @@ struct DetailView: View {
                 } else {
                     let contentType = viewModel.responseContentType(from: request)
                     let fileName = viewModel.responseAttachmentFilename(from: request)
+                    let shareResponseBody = { viewModel.shareResponseBody(for: request) }
+                    if let responseBodyNotice = viewModel.responseBodyNotice {
+                        bodyNotice(responseBodyNotice)
+                    }
                     BodyInspectorView(
                         title: "Response Body",
                         headerSystemImage: nil,
@@ -202,9 +206,7 @@ struct DetailView: View {
                         onCopy: viewModel.responseBodyText.map { text in
                             { viewModel.copyToClipboard(text) }
                         },
-                        onShare: {
-                            viewModel.shareResponseBody(for: request)
-                        }
+                        onShare: shareResponseBody
                     )
                 }
 
@@ -221,13 +223,6 @@ struct DetailView: View {
     }
 
     @ViewBuilder
-    private var compressionInfoSection: some View {
-        if let compressionInfo = request.responseBody.getCompressionInfo() {
-            CompressionInfoView(compressionInfo: compressionInfo)
-        }
-    }
-
-    @ViewBuilder
     private var emptyBodyMessage: some View {
         if request.requestBody.isEmpty && request.responseBody.isEmpty {
             TraceContentUnavailableView(
@@ -237,6 +232,16 @@ struct DetailView: View {
             )
             .padding()
         }
+    }
+
+    private func bodyNotice(_ text: String) -> some View {
+        Label(text, systemImage: "info.circle")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, DesignSystem.Spacing.sm)
+            .padding(.vertical, DesignSystem.Spacing.xs)
+            .background(DesignSystem.Colors.surfaceMuted)
+            .clipShape(RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.sm))
     }
 
     private var favoriteButton: some View {

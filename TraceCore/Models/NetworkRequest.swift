@@ -58,7 +58,7 @@ public enum NetworkCapturePath: String, Codable, Sendable, CaseIterable {
 public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public let id: UUID
     public var url: String
-    public let method: HTTPMethod
+    public var method: HTTPMethod
     /// Original method token when it cannot be represented by `HTTPMethod`.
     public var requestMethodRaw: String?
     public var statusCode: Int?
@@ -78,6 +78,62 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     // Advanced Performance Metrics
     public var timingPhases: NetworkTimingPhases?
     public var tlsInfo: TLSConnectionInfo?
+
+    /// gRPC Metadata
+    public var grpcMetadata: GRPCMetadata?
+
+    // Initiator Tracking
+    public var initiatorStackTrace: String? // Call stack at request creation (URLProtocol path only)
+    public var initiatorDisplayName: String? // Framework/client identified from User-Agent (MITM path)
+
+    // MARK: - Connection / Network-Path (HAR serverIPAddress + connection, URLSessionTaskTransactionMetrics, NIO Channel)
+
+    /// Resolved server IP address (HAR: serverIPAddress, CDP: Response.remoteIPAddress)
+    public var remoteAddress: String?
+
+    /// Server port (CDP: Response.remotePort, URLSessionTaskTransactionMetrics.remotePort)
+    public var remotePort: Int?
+
+    /// Local interface IP address (URLSessionTaskTransactionMetrics.localAddress, NIO Channel.localAddress)
+    public var localAddress: String?
+
+    /// Local port (URLSessionTaskTransactionMetrics.localPort, NIO Channel.localAddress)
+    public var localPort: Int?
+
+    /// Whether the underlying TCP connection was reused (HAR: connection, URLSessionTaskTransactionMetrics.isReusedConnection)
+    public var isConnectionReused: Bool = false
+
+    /// Whether the request was sent via a proxy (URLSessionTaskTransactionMetrics.isProxyConnection)
+    public var isProxyConnection: Bool = false
+
+    /// Whether the network interface is cellular (URLSessionTaskTransactionMetrics.isCellular)
+    public var isCellular: Bool = false
+
+    /// Whether the network path is considered expensive, e.g. personal hotspot (URLSessionTaskTransactionMetrics.isExpensive)
+    public var isExpensive: Bool = false
+
+    /// Whether the network path is constrained by Low Data Mode (URLSessionTaskTransactionMetrics.isConstrained)
+    public var isConstrained: Bool = false
+
+    /// Whether the request was satisfied from cache (URLSessionTaskTransactionMetrics.resourceFetchType)
+    public var resourceFetchType: ResourceFetchType = .networkLoad
+
+    // MARK: - Wire-level Size (HAR headersSize/bodySize, Resource Timing transferSize/encodedBodySize/decodedBodySize)
+
+    /// Byte size of the serialised request headers on the wire (HAR: request.headersSize)
+    public var requestHeadersSize: Int?
+
+    /// Byte size of the serialised response headers on the wire (HAR: response.headersSize)
+    public var responseHeadersSize: Int?
+
+    /// Compressed (encoded) bytes received for the response body (Resource Timing: encodedBodySize, URLSessionTaskTransactionMetrics.countOfResponseBodyBytesReceived)
+    public var responseBodyTransferSize: Int?
+
+    /// Decompressed bytes of the response body (Resource Timing: decodedBodySize, URLSessionTaskTransactionMetrics.countOfResponseBodyBytesAfterDecoding)
+    public var responseBodyDecodedSize: Int?
+
+    /// Bytes sent for the request body (URLSessionTaskTransactionMetrics.countOfRequestBodyBytesSent)
+    public var requestBodyTransferSize: Int?
 
     // Network Throttling
     public var wasThrottled: Bool = false
@@ -134,6 +190,11 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     public var retryCount: Int {
         get { retryAttempts }
         set { retryAttempts = newValue }
+    }
+
+    /// The effective HTTP method token that should be placed on the wire.
+    public var methodToken: String {
+        requestMethodRaw ?? method.rawValue
     }
 
     /// Backward-compatible alias for `requestMethodRaw`.
@@ -224,6 +285,8 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         captureMetadataVersion: UInt8? = nil,
         timingPhases: NetworkTimingPhases? = nil,
         tlsInfo: TLSConnectionInfo? = nil,
+        initiatorStackTrace: String? = nil,
+        initiatorDisplayName: String? = nil,
         wasThrottled: Bool = false,
         throttlingProfile: String? = nil,
         executionLog: [ExecutionLogEntry] = [],
@@ -251,6 +314,8 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         self.captureMetadataVersion = captureMetadataVersion
         self.timingPhases = timingPhases
         self.tlsInfo = tlsInfo
+        self.initiatorStackTrace = initiatorStackTrace
+        self.initiatorDisplayName = initiatorDisplayName
         self.wasThrottled = wasThrottled
         self.throttlingProfile = throttlingProfile
         self.executionLog = executionLog
@@ -577,6 +642,88 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         }
 
         return nil
+    }
+}
+
+// MARK: - Resource Fetch Type
+
+/// How the response was fetched — mirrors URLSessionTaskMetrics.ResourceFetchType and HAR cache semantics.
+public enum ResourceFetchType: String, Codable, Sendable {
+    /// Loaded from the network (default).
+    case networkLoad
+    /// Served from a local cache without revalidation.
+    case localCache
+    /// Revalidated against the server (conditional GET returned 304).
+    case serverPush
+    /// Pushed by the server (HTTP/2 PUSH_PROMISE).
+    case unknown
+
+    public var displayName: String {
+        switch self {
+        case .networkLoad: "Network"
+        case .localCache: "Cache"
+        case .serverPush: "Server Push"
+        case .unknown: "Unknown"
+        }
+    }
+}
+
+// MARK: - gRPC Metadata
+
+/// gRPC-specific metadata extracted from HTTP/2 trailing HEADERS frames (END_STREAM).
+/// Only populated for requests where Content-Type starts with "application/grpc".
+public struct GRPCMetadata: Codable, Equatable, Sendable {
+    /// The grpc-status code. 0 = OK. See https://grpc.github.io/grpc/core/md_doc_statuscodes.html
+    public var statusCode: Int?
+    /// The grpc-message value, percent-decoded.
+    public var statusMessage: String?
+    /// The grpc-encoding used for request compression (e.g. "gzip", "deflate", "identity").
+    public var encoding: String?
+    /// The grpc-accept-encoding values the server advertises it supports.
+    public var acceptEncoding: String?
+    /// The grpc-timeout value as sent on the wire (e.g. "5S", "100m").
+    public var timeout: String?
+    /// Base64-encoded grpc-status-details-bin trailer (google.rpc.Status proto).
+    public var statusDetailsBin: String?
+    /// Number of gRPC length-prefixed messages in the request body.
+    public var requestMessageCount: Int?
+    /// Number of gRPC length-prefixed messages in the response body.
+    public var responseMessageCount: Int?
+
+    /// Human-readable name for the status code.
+    public var statusName: String? {
+        GRPCMetadata.name(for: statusCode)
+    }
+
+    /// True when grpc-status is 0 (OK).
+    public var isSuccess: Bool {
+        statusCode == 0
+    }
+
+    public init() {}
+
+    // swiftlint:disable:next cyclomatic_complexity
+    public static func name(for code: Int?) -> String? {
+        switch code {
+        case 0: "OK"
+        case 1: "CANCELLED"
+        case 2: "UNKNOWN"
+        case 3: "INVALID_ARGUMENT"
+        case 4: "DEADLINE_EXCEEDED"
+        case 5: "NOT_FOUND"
+        case 6: "ALREADY_EXISTS"
+        case 7: "PERMISSION_DENIED"
+        case 8: "RESOURCE_EXHAUSTED"
+        case 9: "FAILED_PRECONDITION"
+        case 10: "ABORTED"
+        case 11: "OUT_OF_RANGE"
+        case 12: "UNIMPLEMENTED"
+        case 13: "INTERNAL"
+        case 14: "UNAVAILABLE"
+        case 15: "DATA_LOSS"
+        case 16: "UNAUTHENTICATED"
+        default: nil
+        }
     }
 }
 

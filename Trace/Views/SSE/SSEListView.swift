@@ -29,10 +29,18 @@ struct SSEListView: View {
                             Label("Delete", systemImage: "trash")
                         }
                     }
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            viewModel.deleteConnection(connection)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
                 }
             }
             .listStyle(.insetGrouped)
             .navigationTitle("SSE Connections")
+            .navigationBarTitleDisplayMode(.large)
             .searchable(
                 text: $viewModel.searchText,
                 prompt: "Search connections"
@@ -51,31 +59,29 @@ struct SSEListView: View {
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button(role: .destructive) {
-                            showingClearAllAlert = true
-                        } label: {
-                            Label("Clear All", systemImage: "trash")
-                        }
-                        .disabled(viewModel.connections.isEmpty)
+                    Button(role: .destructive) {
+                        showingClearAllAlert = true
                     } label: {
-                        Label("More", systemImage: "ellipsis.circle")
+                        Label("Clear All", systemImage: "trash")
                     }
-                    .accessibilityLabel("More options")
-                    .accessibilityHint("Double tap to clear all SSE connections")
+                    .disabled(viewModel.connections.isEmpty)
+                    .accessibilityLabel("Clear all SSE connections")
+                    .accessibilityHint("Double tap to clear all captured SSE connections")
                 }
             }
             .overlay {
                 if viewModel.filteredConnections.isEmpty {
                     TraceContentUnavailableView(
                         viewModel.searchText.isEmpty ? "No Connections" : "No Results",
-                        systemImage: viewModel.searchText.isEmpty ? "antenna.radiowaves.left.and.right.slash" : "magnifyingglass",
-                        description: Text(viewModel.searchText.isEmpty ? "SSE connections will appear here" : "Try a different search term")
+                        systemImage: viewModel.searchText.isEmpty ? "network.slash" : "magnifyingglass",
+                        description: Text(viewModel.searchText.isEmpty ? "SSE connections will appear here when capture is active" : "Try adjusting your search term")
                     )
                 }
             }
             .sheet(isPresented: $showingFilters) {
                 SSEFiltersView(viewModel: viewModel)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .alert("Clear All SSE Connections", isPresented: $showingClearAllAlert) {
                 Button("Cancel", role: .cancel) {}
@@ -131,7 +137,7 @@ struct SSEConnectionRow: View {
                 .lineLimit(2)
 
             HStack {
-                Text(connection.startTime, style: .relative)
+                Text(connection.startTime, style: .time)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
 

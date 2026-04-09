@@ -128,6 +128,8 @@ public final class RequestMapManager: ObservableObject {
     // Use composition with the base manager
     private let baseManager: PersistentCollectionManager<RequestMap>
     private var cancellables: Set<AnyCancellable> = []
+    /// Reuse a single MockScriptEngine across calls — JSContext init is expensive (~5–15 ms).
+    private lazy var scriptEngine: MockScriptEngine? = MockScriptEngine()
 
     public nonisolated(unsafe) let objectWillChange = ObservableObjectPublisher()
 
@@ -138,10 +140,8 @@ public final class RequestMapManager: ObservableObject {
 
     private init() {
         self.baseManager = PersistentCollectionManager(
-            fileName: "RequestMaps.json",
-            notificationName: "RequestMapsChanged",
-            logger: FeatureLog.requestMap,
-            itemName: "map"
+            descriptor: .requestMaps,
+            logger: FeatureLog.requestMap
         )
 
         // Forward changes from the underlying store for SwiftUI observation.
@@ -209,9 +209,6 @@ public final class RequestMapManager: ObservableObject {
             return nil
         }
 
-        // Increment hit count
-        incrementHitCount(for: map.id)
-
         let mockResponse = map.mockResponse
 
         // Add delay if specified
@@ -220,7 +217,9 @@ public final class RequestMapManager: ObservableObject {
             try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
         }
 
-        // Get the response body based on body source
+        // Get the response body based on body source.
+        // Increment hitCount only after successful body generation so that failures
+        // (e.g. bad script, missing file) are not counted as hits.
         let body: Data
         switch mockResponse.bodySource {
         case .inline:
@@ -261,6 +260,9 @@ public final class RequestMapManager: ObservableObject {
             }
         }
 
+        // Body generation succeeded — now count the hit.
+        incrementHitCount(for: map.id)
+
         // Create BodyStorage from the body data
         let responseBodyStorage = BodyStorage.from(data: body)
 
@@ -290,8 +292,11 @@ public final class RequestMapManager: ObservableObject {
             throw RequestMapError.scriptExecutionNotSupported
         }
 
-        // Create a script engine for execution
-        guard let engine = MockScriptEngine() else {
+        // Use the cached engine. Recreate it if it was never initialised or failed to init.
+        if scriptEngine == nil {
+            scriptEngine = MockScriptEngine()
+        }
+        guard let engine = scriptEngine else {
             throw RequestMapError.scriptExecutionNotSupported
         }
 

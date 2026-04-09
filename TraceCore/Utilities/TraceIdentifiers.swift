@@ -44,6 +44,24 @@ public extension Notification.Name {
     /// Posted when hosts entries are updated cross-process.
     static let hostsUpdated = Notification.Name("com.trace.hostsUpdated")
 
+    /// Posted when rewrite rules change within the current process.
+    static let rewriteRulesUpdated = Notification.Name("com.trace.rewriteRulesUpdated")
+
+    /// Posted when request maps change within the current process.
+    static let requestMapsUpdated = Notification.Name("com.trace.requestMapsUpdated")
+
+    /// Posted when scripts change within the current process.
+    static let scriptsUpdated = Notification.Name("com.trace.scriptsUpdated")
+
+    /// Posted when rule groups change within the current process.
+    static let ruleGroupsUpdated = Notification.Name("com.trace.ruleGroupsUpdated")
+
+    /// Posted when profiles change within the current process.
+    static let profilesUpdated = Notification.Name("com.trace.profilesUpdated")
+
+    /// Posted when breakpoint presets change within the current process.
+    static let breakpointPresetsUpdated = Notification.Name("com.trace.breakpointPresetsUpdated")
+
     /// Posted when DNS repository content changes.
     static let dnsRepositoryDidChange = Notification.Name("com.trace.dnsRepositoryDidChange")
 }

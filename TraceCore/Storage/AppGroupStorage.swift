@@ -10,7 +10,7 @@ import GRDB
 
 /// Manages storage in the shared App Group container
 /// This allows the main app and Network Extension to share captured request data
-public class AppGroupStorage: @unchecked Sendable {
+open class AppGroupStorage: @unchecked Sendable {
     public static let shared = AppGroupStorage()
 
     /// Shared App Group identifier (must match entitlements for app + extension).
@@ -134,6 +134,62 @@ public class AppGroupStorage: @unchecked Sendable {
 
     func makeDecoder() -> JSONDecoder {
         JSONCoding.makeDecoder()
+    }
+
+    open func saveSessions(_ sessions: [CaptureSession]) async throws {
+        try await saveSessionsImpl(sessions)
+    }
+
+    open func loadSessions() async throws -> [CaptureSession] {
+        try await loadSessionsImpl()
+    }
+
+    open func saveRewriteRules(_ rules: [RewriteRule]) async throws {
+        try await saveRewriteRulesImpl(rules)
+    }
+
+    open func loadRewriteRules() async throws -> [RewriteRule] {
+        try await loadRewriteRulesImpl()
+    }
+
+    open func saveRequestMaps(_ maps: [RequestMap]) async throws {
+        try await saveRequestMapsImpl(maps)
+    }
+
+    open func loadRequestMaps() async throws -> [RequestMap] {
+        try await loadRequestMapsImpl()
+    }
+
+    open func saveHostEntries(_ entries: [HostEntry]) async throws {
+        try await saveHostEntriesImpl(entries)
+    }
+
+    open func loadHostEntries() async throws -> [HostEntry] {
+        try await loadHostEntriesImpl()
+    }
+
+    open func saveScripts(_ scripts: [Script]) async throws {
+        try await saveScriptsImpl(scripts)
+    }
+
+    open func loadScripts() async throws -> [Script] {
+        try await loadScriptsImpl()
+    }
+
+    open func saveBreakpoints(_ breakpoints: [Breakpoint]) async throws {
+        try await saveBreakpointsImpl(breakpoints)
+    }
+
+    open func loadBreakpoints() async throws -> [Breakpoint] {
+        try await loadBreakpointsImpl()
+    }
+
+    open func saveFavorites(_ favorites: [Favorite]) async throws {
+        try await saveFavoritesImpl(favorites)
+    }
+
+    open func loadFavorites() async throws -> [Favorite] {
+        try await loadFavoritesImpl()
     }
 
     /// Clears DB-backed settings (does not delete captured requests).
@@ -410,7 +466,7 @@ public class AppGroupStorage: @unchecked Sendable {
         }
 
         if let configURL = configFileURL(for: "")?.deletingLastPathComponent() {
-            let knownLegacyFiles = [
+            let knownLegacyFiles: [String] = [
                 configurationFileName,
                 captureOptionsFileName,
                 bodyStorageConfigFileName,
@@ -424,17 +480,9 @@ public class AppGroupStorage: @unchecked Sendable {
                 "host_entries.json",
                 "scripts.json",
                 "breakpoints.json",
-                "favorites.json",
-                "RewriteRules.json",
-                "RequestMaps.json",
-                "HostEntries.json",
-                "Scripts.json",
-                "RuleGroups.json",
-                "Profiles.json",
-                "BreakpointPresets.json",
-                "Favorites.json"
+                "favorites.json"
             ]
-            for fileName in knownLegacyFiles {
+            for fileName in knownLegacyFiles + PersistentCollectionDescriptor.all.map(\.fileName) {
                 try? FileManager.default.removeItem(at: configURL.appendingPathComponent(fileName))
             }
         }
@@ -2492,6 +2540,7 @@ public class AppGroupStorage: @unchecked Sendable {
     private var sseObservers: [UUID: NotificationObserver] = [:]
     private var streamObservers: [UUID: NotificationObserver] = [:]
     private var udpFlowObservers: [UUID: NotificationObserver] = [:]
+    private var breakpointObservers: [UUID: NotificationObserver] = [:]
 
     /// Notifies the main app that a new request was captured
     private func notifyNewRequest() {
@@ -2535,6 +2584,13 @@ public class AppGroupStorage: @unchecked Sendable {
     private func notifyNewUDPFlow() {
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let notificationName = "com.trace.newUDPFlow" as CFString
+
+        CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
+    }
+
+    func notifyBreakpointStateChanged() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let notificationName = "com.trace.breakpointChanged" as CFString
 
         CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
     }
@@ -2698,6 +2754,33 @@ public class AppGroupStorage: @unchecked Sendable {
         notificationObserversLock.lock()
         let observers = Array(udpFlowObservers.values)
         udpFlowObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
+    }
+
+    /// Sets up listener for shared breakpoint state changes.
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeBreakpointChanges(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.breakpointChanged", handler: handler)
+        notificationObserversLock.lock()
+        breakpointObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.breakpointObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingBreakpointChanges() {
+        notificationObserversLock.lock()
+        let observers = Array(breakpointObservers.values)
+        breakpointObservers.removeAll()
         notificationObserversLock.unlock()
         observers.forEach { $0.stop() }
     }

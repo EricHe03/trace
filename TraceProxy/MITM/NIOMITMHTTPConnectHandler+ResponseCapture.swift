@@ -11,22 +11,54 @@ import NIOHTTP1
 import TraceCore
 
 extension NIOMITMHTTPConnectHandler {
+    func resetProxyPathTimingState() {
+        requestSentAt = nil
+        responseHeadAt = nil
+    }
+
     func clearActiveCapturedRequest() {
         activeCapturedRequest = nil
     }
 
-    func publishCapturedRequest(_ request: NetworkRequest) {
+    func clearQueuedTerminalCapturedRequest() {
+        queuedTerminalCapturedRequest = nil
+    }
+
+    func prepareCapturedRequestForPublication(_ request: NetworkRequest) -> NetworkRequest {
         var finalized = request
         annotateCaptureMetadata(&finalized)
         finalizeCapturedDuration(for: &finalized)
+        return finalized
+    }
+
+    func publishCapturedRequest(_ request: NetworkRequest) {
+        let finalized = prepareCapturedRequestForPublication(request)
+        clearQueuedTerminalCapturedRequest()
         onRequestCaptured?(finalized)
         clearActiveCapturedRequest()
+    }
+
+    func queueTerminalCapturedRequest(_ request: NetworkRequest) {
+        queuedTerminalCapturedRequest = prepareCapturedRequestForPublication(request)
+        clearActiveCapturedRequest()
+    }
+
+    @discardableResult
+    func publishQueuedTerminalCapturedRequest() -> Bool {
+        guard let queuedTerminalCapturedRequest else { return false }
+        clearQueuedTerminalCapturedRequest()
+        onRequestCaptured?(queuedTerminalCapturedRequest)
+        clearActiveCapturedRequest()
+        return true
     }
 
     func finalizeActiveRequestAsHTTPFailure(
         status: HTTPResponseStatus,
         reason: String
     ) {
+        if publishQueuedTerminalCapturedRequest() {
+            return
+        }
         guard var request = activeCapturedRequest else { return }
         request.statusCode = Int(status.code)
         request.statusMessage = status.reasonPhrase
@@ -35,12 +67,18 @@ extension NIOMITMHTTPConnectHandler {
     }
 
     func finalizeActiveRequestAsFailure(reason: String) {
+        if publishQueuedTerminalCapturedRequest() {
+            return
+        }
         guard var request = activeCapturedRequest else { return }
         request.executionErrors.append(ExecutionError(message: reason))
         publishCapturedRequest(request)
     }
 
     func finalizeActiveRequestAsCancellation(reason: String) {
+        if publishQueuedTerminalCapturedRequest() {
+            return
+        }
         guard var request = activeCapturedRequest else { return }
         request.wasCancelled = true
         request.executionErrors.append(ExecutionError(message: reason))
@@ -81,10 +119,12 @@ extension NIOMITMHTTPConnectHandler {
         let methodRaw = HTTPMethod(rawValue: uppercasedMethod) == nil ? methodToken : nil
         let traceHeaders = captureConfig.captureHeaders ? traceHeaders(from: requestHeaders) : []
         let requestCharset = BodyStorage.extractCharset(from: requestHeaders)
+        let requestContentType = requestHeaders.first(where: { $0.key.lowercased() == "content-type" })?.value
         let requestContentEncoding = requestHeaders.first(where: { $0.key.lowercased() == "content-encoding" })?.value
         let requestBody = bodyStorage(
             from: requestBodyData,
             charset: requestCharset,
+            contentType: requestContentType,
             contentEncoding: requestContentEncoding,
             captureConfig: captureConfig
         )
@@ -101,26 +141,132 @@ extension NIOMITMHTTPConnectHandler {
             responseHeaders: [],
             requestBody: requestBody,
             responseBody: .empty,
-            protocolVersion: usesHTTP2StreamSemantics ? .http2 : httpProtocolVersion(from: requestVersion)
+            protocolVersion: usesHTTP2StreamSemantics ? .http2 : httpProtocolVersion(from: requestVersion),
+            initiatorDisplayName: initiatorDisplayName(from: requestHeaders)
         )
         annotateCaptureMetadata(&request)
         return request
     }
 
+    /// Derive a human-readable framework/client name from the User-Agent header.
+    /// This is the only reliable initiator signal available in the MITM proxy path.
+    private func initiatorDisplayName(from headers: [String: String]) -> String? {
+        guard let ua = headers.first(where: { $0.key.lowercased() == "user-agent" })?.value,
+              !ua.isEmpty else { return nil }
+
+        let lower = ua.lowercased()
+
+        // Match ordered from most specific to most generic.
+        let patterns: [(String, String)] = [
+            ("okhttp/", "OkHttp (Android)"),
+            ("retrofit/", "Retrofit (Android)"),
+            ("volley/", "Volley (Android)"),
+            ("cronet/", "Cronet"),
+            ("grpc-java/", "gRPC-Java"),
+            ("grpc-swift/", "gRPC-Swift"),
+            ("grpc-go/", "gRPC-Go"),
+            ("grpc-python/", "gRPC-Python"),
+            ("grpc-", "gRPC"),
+            ("alamofire/", "Alamofire"),
+            ("afnetworking/", "AFNetworking"),
+            ("python-httpx/", "HTTPX (Python)"),
+            ("python-requests/", "Requests (Python)"),
+            ("aiohttp/", "aiohttp (Python)"),
+            ("axios/", "Axios"),
+            ("got/", "Got (Node.js)"),
+            ("node-fetch/", "node-fetch"),
+            ("undici/", "Undici (Node.js)"),
+            ("go-http-client/", "Go net/http"),
+            ("curl/", "curl"),
+            ("wget/", "wget"),
+            ("httpie/", "HTTPie"),
+            ("insomnia/", "Insomnia"),
+            ("postmanruntime/", "Postman"),
+            ("dart:io", "Dart (Flutter)"),
+            ("dio/", "Dio (Flutter)"),
+            ("flutter", "Flutter"),
+            ("java/", "Java HttpClient"),
+            ("apache-httpclient/", "Apache HttpClient"),
+            ("reactor-netty/", "Reactor Netty"),
+            ("ruby", "Ruby"),
+            ("php/", "PHP")
+        ]
+
+        for (pattern, name) in patterns {
+            if lower.contains(pattern) { return name }
+        }
+
+        // CFNetwork covers native Apple URLSession / WKWebView / SwiftUI async
+        if lower.contains("cfnetwork") {
+            if lower.contains("webkit") || lower.contains("mobile/") {
+                return "WKWebView"
+            }
+            return "Apple URLSession"
+        }
+
+        return nil
+    }
+
     func bodyStorage(
         from data: Data,
         charset: String?,
+        contentType: String? = nil,
         contentEncoding: String?,
         captureConfig: CaptureConfiguration,
         decodeCompressedContent: Bool = true
     ) -> BodyStorage {
-        guard captureConfig.captureBody, captureConfig.maxBodySize > 0, !data.isEmpty else { return .empty }
+        let effectiveMaxBodySize = effectiveBodyCaptureLimit(
+            captureConfig: captureConfig,
+            contentType: contentType,
+            contentEncoding: contentEncoding
+        )
+        guard captureConfig.captureBody, effectiveMaxBodySize > 0, !data.isEmpty else { return .empty }
         return BodyStorage.from(
             data: data,
             charset: charset,
-            maxSize: max(0, captureConfig.maxBodySize),
+            maxSize: effectiveMaxBodySize,
             contentEncoding: contentEncoding,
             decodeCompressedContent: decodeCompressedContent
+        )
+    }
+
+    /// Optimized overload that accepts ByteBuffer directly, avoiding an intermediate Data conversion.
+    /// Preferred for hot paths (HTTP/1.1 full responses, streaming chunks).
+    func bodyStorage(
+        from buffer: ByteBuffer,
+        charset: String?,
+        contentType: String? = nil,
+        contentEncoding: String?,
+        captureConfig: CaptureConfiguration,
+        decodeCompressedContent: Bool = true
+    ) -> BodyStorage {
+        let effectiveMaxBodySize = effectiveBodyCaptureLimit(
+            captureConfig: captureConfig,
+            contentType: contentType,
+            contentEncoding: contentEncoding
+        )
+        guard captureConfig.captureBody, effectiveMaxBodySize > 0, buffer.readableBytes > 0 else { return .empty }
+        // Convert once here, avoiding separate byteBufferToData call upstream
+        var mutableBuffer = buffer
+        let data = mutableBuffer.readData(length: mutableBuffer.readableBytes) ?? Data()
+        return BodyStorage.from(
+            data: data,
+            charset: charset,
+            maxSize: effectiveMaxBodySize,
+            contentEncoding: contentEncoding,
+            decodeCompressedContent: decodeCompressedContent
+        )
+    }
+
+    func effectiveBodyCaptureLimit(
+        captureConfig: CaptureConfiguration,
+        contentType: String?,
+        contentEncoding: String?
+    ) -> Int {
+        CaptureBodyPolicy.effectiveCaptureLimit(
+            configuredLimit: captureConfig.maxBodySize,
+            contentType: contentType,
+            contentEncoding: contentEncoding
         )
     }
 
@@ -209,6 +355,7 @@ extension NIOMITMHTTPConnectHandler {
             )
         }
         shouldCloseAfterForwardingResponse = false
+        resetProxyPathTimingState()
         if shouldEmitPipeliningBadRequest {
             state = .closed
             sendResponse(
@@ -417,9 +564,40 @@ extension NIOMITMHTTPConnectHandler {
     }
 
     func finalizeCapturedDuration(for request: inout NetworkRequest) {
-        let elapsed = Date().timeIntervalSince(request.timestamp)
+        let now = Date()
+        let elapsed = now.timeIntervalSince(request.timestamp)
         guard elapsed.isFinite else { return }
         request.duration = max(request.duration, max(0, elapsed))
+        request.timingPhases = computeProxyPathTimingPhases(requestStart: request.timestamp, now: now)
+    }
+
+    /// Compute real timing phases for the proxy path using timestamps recorded during the NIO pipeline.
+    /// requestSentAt and responseHeadAt are set at precise moments in the forwarding handlers;
+    /// only phases that are actually observed are populated.
+    private func computeProxyPathTimingPhases(requestStart: Date, now: Date) -> NetworkTimingPhases? {
+        guard let sentAt = requestSentAt else { return nil }
+
+        let requestSent = sentAt.timeIntervalSince(requestStart)
+        guard requestSent >= 0 else { return nil }
+
+        let ttfb: TimeInterval? = if let headAt = responseHeadAt, headAt >= sentAt {
+            headAt.timeIntervalSince(sentAt)
+        } else {
+            nil
+        }
+
+        let contentDownload: TimeInterval? = if let headAt = responseHeadAt, now >= headAt {
+            now.timeIntervalSince(headAt)
+        } else {
+            nil
+        }
+
+        let phases = NetworkTimingPhases(
+            requestSent: requestSent > 0.0001 ? requestSent : nil,
+            ttfb: ttfb.flatMap { $0 > 0.0001 ? $0 : nil },
+            contentDownload: contentDownload.flatMap { $0 > 0.0001 ? $0 : nil }
+        )
+        return phases.hasData ? phases : nil
     }
 
     func throttle(

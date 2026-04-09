@@ -24,6 +24,24 @@ final class LocalSocks5Server: @unchecked Sendable {
             case direct(reason: String)
         }
 
+        private final class DecisionCache: @unchecked Sendable {
+            private let lock = NSLock()
+            private var values: [String: RouteDecisionEvaluation] = [:]
+
+            func value(for key: String) -> RouteDecisionEvaluation? {
+                lock.withLock { values[key] }
+            }
+
+            func store(_ evaluation: RouteDecisionEvaluation, for key: String) {
+                lock.withLock {
+                    if values.count >= 1000 {
+                        values.removeAll(keepingCapacity: true)
+                    }
+                    values[key] = evaluation
+                }
+            }
+        }
+
         struct RouteDecisionEvaluation: Sendable, Equatable {
             let effectiveDecision: RouteDecision
             let legacyDecision: RouteDecision
@@ -46,6 +64,7 @@ final class LocalSocks5Server: @unchecked Sendable {
         let policyEngine: DualMITMPolicyEngine?
         let shouldBypassHost: @Sendable (String) -> Bool
         let bypassReasonForHost: @Sendable (String) -> String?
+        private let decisionCache = DecisionCache()
 
         init(
             enabled: Bool,
@@ -89,19 +108,28 @@ final class LocalSocks5Server: @unchecked Sendable {
         }
 
         func evaluateRouteDecision(destinationHost: String, destinationPort: UInt16) -> RouteDecisionEvaluation {
+            let cacheKey = "\(destinationHost):\(destinationPort)"
+
+            // Fast-path: check cache
+            if let cached = decisionCache.value(for: cacheKey) {
+                return cached
+            }
+
             let legacyDecision = legacyRouteDecision(
                 destinationHost: destinationHost,
                 destinationPort: destinationPort
             )
 
             guard let policyEngine else {
-                return RouteDecisionEvaluation(
+                let evaluation = RouteDecisionEvaluation(
                     effectiveDecision: legacyDecision,
                     legacyDecision: legacyDecision,
                     policyDecision: nil,
                     shadowEnabled: false,
                     policyEnforced: false
                 )
+                decisionCache.store(evaluation, for: cacheKey)
+                return evaluation
             }
 
             let policyPlan = policyEngine.planNewTCPTransparentFlow(
@@ -111,13 +139,17 @@ final class LocalSocks5Server: @unchecked Sendable {
             let policyDecision = routeDecision(from: policyPlan.decision)
             let effectiveDecision = policyPlan.enforceTCPRouting ? policyDecision : legacyDecision
 
-            return RouteDecisionEvaluation(
+            let evaluation = RouteDecisionEvaluation(
                 effectiveDecision: effectiveDecision,
                 legacyDecision: legacyDecision,
                 policyDecision: policyDecision,
                 shadowEnabled: policyPlan.shadowEnabled,
                 policyEnforced: policyPlan.enforceTCPRouting
             )
+
+            decisionCache.store(evaluation, for: cacheKey)
+
+            return evaluation
         }
 
         private func routeDecision(from decision: DualMITMTCPRouteDecision) -> RouteDecision {

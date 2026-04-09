@@ -109,7 +109,8 @@ struct CaptureSettingsView: View {
                 }
             }
         }
-        .navigationTitle("Capture Mode")
+        .navigationTitle("VPN & Proxy Mode")
+        .navigationBarTitleDisplayMode(.inline)
         .dismissKeyboardOnTapAndScroll()
         .onAppear {
             loadConfiguration()
@@ -213,5 +214,11 @@ struct CaptureSettingsView: View {
         guard !trimmed.isEmpty else { return "DNS server cannot be empty" }
         if Validation.isValidIPAddress(trimmed) { return nil }
         return "Enter a valid IPv4 or IPv6 address"
+    }
+}
+
+#Preview {
+    NavigationStack {
+        CaptureSettingsView(vpnManager: VPNManager.shared)
     }
 }

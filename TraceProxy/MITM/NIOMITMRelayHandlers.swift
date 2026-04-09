@@ -210,7 +210,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
             let wirePayload = payloadData(from: frame)
             guard wirePayload.count <= maxFragmentedPayloadBytes else {
                 closeOnProtocolError(
-                    maskKey: direction == .sent ? frame.maskKey : nil,
                     reason: "fragment_payload_too_large",
                     context: context
                 )
@@ -276,7 +275,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         guard messageType == .continuation else {
             fragmentedAccumulator = nil
             closeOnProtocolError(
-                maskKey: direction == .sent ? accumulator.initialFrame.maskKey : nil,
                 reason: "unexpected_fragment_opcode",
                 context: context
             )
@@ -287,7 +285,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         if accumulator.wirePayload.count + chunk.count > maxFragmentedPayloadBytes {
             fragmentedAccumulator = nil
             closeOnProtocolError(
-                maskKey: direction == .sent ? accumulator.initialFrame.maskKey : nil,
                 reason: "fragment_payload_too_large",
                 context: context
             )
@@ -744,9 +741,16 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         _ frames: [WebSocketFrame],
         context: ChannelHandlerContext
     ) -> EventLoopFuture<Void> {
-        frames.reduce(context.eventLoop.makeSucceededVoidFuture()) { partial, frame in
-            partial.flatMap {
-                self.forwardFuture(self.prepareInboundFrameForForwarding(frame), context: context)
+        // RFC 7692 §7.1: RSV1 (Per-Message Compressed bit) MUST be set only on the first
+        // fragment of a compressed message and MUST be 0 on all continuation frames.
+        frames.enumerated().reduce(context.eventLoop.makeSucceededVoidFuture()) { partial, pair in
+            let (index, frame) = pair
+            return partial.flatMap {
+                var prepared = self.prepareInboundFrameForForwarding(frame)
+                if index > 0 {
+                    prepared.rsv1 = false
+                }
+                return self.forwardFuture(prepared, context: context)
             }
         }
     }
@@ -851,13 +855,31 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
     }
 
     private func prepareInboundFrameForForwarding(_ frame: WebSocketFrame) -> WebSocketFrame {
-        guard direction == .sent, frame.maskKey != nil else {
-            return frame
+        // RFC 6455 §5.1: client→server frames MUST be masked; server→client MUST NOT be masked.
+        // This handler's `direction` describes the *incoming* direction:
+        //   .sent   = frame came from the client (we are forwarding to the upstream server)
+        //   .received = frame came from the server (we are forwarding to the downstream client)
+        //
+        // When forwarding to the server (direction == .sent), we act as a WebSocket client:
+        //   – unmask the incoming client frame, then re-mask with a fresh random key.
+        // When forwarding to the client (direction == .received), we act as a WebSocket server:
+        //   – forward unmasked (strip any server-side mask key, which should not exist anyway).
+        if direction == .sent {
+            // Unmask and re-mask with a fresh key (proxy is a client to the upstream server).
+            var forwarded = frame
+            forwarded.extensionData = frame.unmaskedExtensionData
+            forwarded.data = frame.unmaskedData
+            forwarded.maskKey = WebSocketMaskingKey.random()
+            return forwarded
+        } else {
+            // Server→client: ensure no masking key leaks through.
+            guard frame.maskKey != nil else { return frame }
+            var forwarded = frame
+            forwarded.extensionData = frame.unmaskedExtensionData
+            forwarded.data = frame.unmaskedData
+            forwarded.maskKey = nil
+            return forwarded
         }
-        var forwarded = frame
-        forwarded.extensionData = frame.unmaskedExtensionData
-        forwarded.data = frame.unmaskedData
-        return forwarded
     }
 
     private func payloadData(from frame: WebSocketFrame) -> Data {
@@ -922,13 +944,16 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         if !payload.isEmpty {
             buffer.writeBytes(payload)
         }
+        // RFC 6455 §5.1: proxy→server frames (direction == .sent) MUST use a fresh mask key.
+        // proxy→client frames (direction == .received) MUST NOT be masked.
+        let maskKey: WebSocketMaskingKey? = direction == .sent ? WebSocketMaskingKey.random() : nil
         return WebSocketFrame(
             fin: true,
             rsv1: preserveCompressionFlag,
             rsv2: false,
             rsv3: false,
             opcode: websocketOpcode(for: messageType),
-            maskKey: originalFrame.maskKey,
+            maskKey: maskKey,
             data: buffer
         )
     }
@@ -1064,7 +1089,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         switch failure {
         case let .protocolError(reason):
             closeOnProtocolError(
-                maskKey: direction == .sent ? frame.maskKey : nil,
                 reason: reason,
                 context: context
             )
@@ -1099,40 +1123,72 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
     private func closeOnInvalidUTF8(frame: WebSocketFrame, context: ChannelHandlerContext) {
         var payload = context.channel.allocator.buffer(capacity: 2)
         payload.writeInteger(UInt16(1007).bigEndian)
+        // RFC 6455 §7.1.2: proxy→server frames must be masked (fresh key);
+        // proxy→client frames must NOT be masked.
+        let localMaskKey: WebSocketMaskingKey? = direction == .sent ? WebSocketMaskingKey.random() : nil
         let closeFrame = WebSocketFrame(
             fin: true,
             opcode: .connectionClose,
-            maskKey: direction == .sent ? frame.maskKey : nil,
+            maskKey: localMaskKey,
             data: payload
         )
         forward(closeFrame, context: context)
+        // RFC 6455 §5.5.1: also send a Close frame to the peer channel so both sides close cleanly.
+        if let peer = peerChannel, peer.isActive {
+            var peerPayload = peer.allocator.buffer(capacity: 2)
+            peerPayload.writeInteger(UInt16(1007).bigEndian)
+            // Peer direction is the opposite: if we are the server side (direction == .received)
+            // then peer is a client and expects masked frames from us; vice-versa.
+            let peerMaskKey: WebSocketMaskingKey? = direction == .received ? WebSocketMaskingKey.random() : nil
+            let peerCloseFrame = WebSocketFrame(
+                fin: true,
+                opcode: .connectionClose,
+                maskKey: peerMaskKey,
+                data: peerPayload
+            )
+            peer.writeAndFlush(peerCloseFrame, promise: nil)
+        }
         closeNotifier?(.failed, "invalid_utf8", context.eventLoop)
     }
 
     private func closeOnProtocolError(
-        maskKey: WebSocketMaskingKey?,
         reason: String,
         context: ChannelHandlerContext
     ) {
         var payload = context.channel.allocator.buffer(capacity: 2)
         payload.writeInteger(UInt16(1002).bigEndian)
+        // RFC 6455 §5.1: use fresh mask key when sending to the server, no mask to client.
+        let localMaskKey: WebSocketMaskingKey? = direction == .sent ? WebSocketMaskingKey.random() : nil
         let closeFrame = WebSocketFrame(
             fin: true,
             opcode: .connectionClose,
-            maskKey: maskKey,
+            maskKey: localMaskKey,
             data: payload
         )
         captureState.recordMessage(
             type: .close,
             payload: Data([0x03, 0xEA]),
             isFinal: true,
-            isMasked: maskKey != nil,
+            isMasked: localMaskKey != nil,
             direction: direction,
             wasModified: false,
             wasBlocked: true,
             metadata: ["error": reason]
         )
         forward(closeFrame, context: context)
+        // RFC 6455 §5.5.1: also send a Close frame to the peer channel.
+        if let peer = peerChannel, peer.isActive {
+            var peerPayload = peer.allocator.buffer(capacity: 2)
+            peerPayload.writeInteger(UInt16(1002).bigEndian)
+            let peerMaskKey: WebSocketMaskingKey? = direction == .received ? WebSocketMaskingKey.random() : nil
+            let peerCloseFrame = WebSocketFrame(
+                fin: true,
+                opcode: .connectionClose,
+                maskKey: peerMaskKey,
+                data: peerPayload
+            )
+            peer.writeAndFlush(peerCloseFrame, promise: nil)
+        }
         closeNotifier?(.failed, reason, context.eventLoop)
     }
 }

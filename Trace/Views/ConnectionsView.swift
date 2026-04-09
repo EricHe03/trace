@@ -28,7 +28,7 @@ struct ConnectionsView: View {
                 TraceContentUnavailableView(
                     "No Results",
                     systemImage: "magnifyingglass",
-                    description: Text("Try a different search term")
+                    description: Text("Try adjusting your search or filters")
                 )
             } else {
                 List {
@@ -268,5 +268,11 @@ private struct ConnectionRow: View {
             return "TLS (No SNI)"
         }
         return record.protocolHints.map(\.rawValue).joined(separator: ", ")
+    }
+}
+
+#Preview {
+    NavigationStack {
+        ConnectionsView()
     }
 }

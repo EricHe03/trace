@@ -123,6 +123,9 @@ let quicheArtifactsAvailable = quicheHeadersAvailable && (quicheXCFrameworkAvail
 let quicheSDKName = ProcessInfo.processInfo.environment["SDK_NAME"]?.lowercased() ?? ""
 let quichePlatformName = ProcessInfo.processInfo.environment["PLATFORM_NAME"]?.lowercased() ?? ""
 let quicheEffectivePlatformName = ProcessInfo.processInfo.environment["EFFECTIVE_PLATFORM_NAME"]?.lowercased() ?? ""
+let quicheRequiresArtifactsForBuild = quicheSDKName.contains("iphone") ||
+    quichePlatformName.contains("iphone") ||
+    quicheEffectivePlatformName.contains("iphone")
 let quichePreferredLibraryPath: String = if quicheSDKName.contains("iphonesimulator") ||
     quichePlatformName.contains("iphonesimulator") ||
     quicheEffectivePlatformName.contains("iphonesimulator") {
@@ -137,6 +140,33 @@ let quichePreferredLibraryPath: String = if quicheSDKName.contains("iphonesimula
 }
 
 let quicheLinkerFlags = [quichePreferredLibraryPath]
+
+if quicheRequiresArtifactsForBuild && !quicheArtifactsAvailable {
+    let availablePaths = [
+        quicheIncludePath,
+        quicheXCFrameworkPath,
+        quicheDeviceLibraryPath,
+        quicheSimulatorLibraryPath
+    ]
+    .filter { FileManager.default.fileExists(atPath: $0) }
+
+    let availableArtifactsDescription = if availablePaths.isEmpty {
+        "none"
+    } else {
+        availablePaths.joined(separator: ", ")
+    }
+
+    fatalError(
+        """
+        Missing quiche build artifacts required for iOS QUIC support.
+        Expected headers at: \(quicheIncludePath)
+        Expected XCFramework at: \(quicheXCFrameworkPath)
+        Expected static libraries at: \(quicheDeviceLibraryPath) and \(quicheSimulatorLibraryPath)
+        Available artifact paths: \(availableArtifactsDescription)
+        Run: ./Tools/QUIC/build_quiche_apple.sh
+        """
+    )
+}
 
 let cquicheFFICSettings: [CSetting] = quicheArtifactsAvailable
     ? [
@@ -202,8 +232,10 @@ let traceProxyDependencies: [Target.Dependency] = [
     "TraceFeatures",
     "TraceQUIC",
     .product(name: "NIOCore", package: "swift-nio"),
+    .product(name: "NIOFoundationCompat", package: "swift-nio"),
     .product(name: "NIOHTTP1", package: "swift-nio"),
     .product(name: "NIOHTTP2", package: "swift-nio-http2"),
+    .product(name: "NIOTLS", package: "swift-nio"),
     .product(name: "NIOWebSocket", package: "swift-nio"),
     .product(name: "NIOSSL", package: "swift-nio-ssl"),
     .product(name: "NIOTransportServices", package: "swift-nio-transport-services")
@@ -220,6 +252,7 @@ let traceFeaturesDependencies: [Target.Dependency] = [
 
 let traceVPNDependencies: [Target.Dependency] = [
     "TraceCore",
+    "TraceFeatures",
     "TraceSecurity",
     "TraceNetworking",
     "TraceProxy",
@@ -287,8 +320,8 @@ let packageProducts: [Product] = appProducts + [
     // App Targets
     // ═══════════════════════════════════════════════════════
     .library(
-        name: "TraceVPN",
-        targets: ["TraceVPN"]
+        name: "TraceVPNKit",
+        targets: ["TraceVPNKit"]
     )
 ]
 
@@ -461,7 +494,7 @@ let packageTargets: [Target] = quicheBinaryTargets + [
             "TraceFeatures",
             "TraceQUIC",
             "TraceUI",
-            "TraceVPN",
+            "TraceVPNKit",
             "TracePacket"
         ],
         path: "Trace",
@@ -472,7 +505,7 @@ let packageTargets: [Target] = quicheBinaryTargets + [
 
     // VPN Network Extension
     .target(
-        name: "TraceVPN",
+        name: "TraceVPNKit",
         dependencies: traceVPNDependencies,
         path: "TraceVPN"
     ),
@@ -512,7 +545,7 @@ let packageTargets: [Target] = quicheBinaryTargets + [
             .product(name: "NIOWebSocket", package: "swift-nio"),
             .product(name: "NIOSSL", package: "swift-nio-ssl"),
             .product(name: "NIOTransportServices", package: "swift-nio-transport-services"),
-            "TraceVPN",
+            "TraceVPNKit",
             "TraceWidget"
         ],
         path: "TraceTests"

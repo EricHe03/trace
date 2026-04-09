@@ -1,98 +1,151 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude ​Code (claude.ai/code) when working with code in this repository.
 
 ## Build & Run
 
-- Xcode 26.2 (Swift 6 toolchain), iOS 16.0+ deployment target
-- Open `Trace.xcodeproj` and run on a **physical device** — packet tunnel is unavailable in Simulator
-- Submodules must be initialized: `git submodule update --init --recursive`
-- Build QUIC library (only needed when updating the quiche submodule): `Tools/QUIC/build_quiche_apple.sh` (requires Rust/Cargo)
+Use `Trace.xcodeproj` for all app/extension builds. `Package.swift` mirrors the module graph and is used for indexing and focused module work only.
 
-## Tests
-
-Run full suite from CLI:
 ```bash
-xcodebuild test \
+# Open project
+open Trace.xcodeproj
+
+# Build for simulator testing (no signing required)
+xcodebuild \
   -project Trace.xcodeproj \
   -scheme Trace \
-  -testPlan Trace \
-  -destination 'platform=iOS Simulator,name=<Your Simulator Name>'
-```
+  -configuration Debug \
+  -sdk iphonesimulator \
+  -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+  -derivedDataPath DerivedData \
+  CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM="" CODE_SIGN_IDENTITY="-" \
+  build-for-testing | xcpretty
 
-Run a specific test class or method:
-```bash
-xcodebuild test \
+# Run tests
+xcodebuild \
   -project Trace.xcodeproj \
   -scheme Trace \
-  -testPlan Trace \
-  -destination 'platform=iOS Simulator,name=<Your Simulator Name>' \
-  -only-testing:TraceTests/<TestClassName>/<testMethodName>
-```
+  -configuration Debug \
+  -sdk iphonesimulator \
+  -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+  -derivedDataPath DerivedData \
+  CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM="" CODE_SIGN_IDENTITY="-" \
+  test-without-building | xcpretty
 
-VPN/packet-tunnel end-to-end tests require a physical device.
-
-## Lint & Format
-
-```bash
-# Format check (CI enforced)
+# Format and lint
 swiftformat --lint . --config .swiftformat
-
-# Format fix
-swiftformat --fix . --config .swiftformat
-
-# Lint (CI enforced, strict mode)
 swiftlint lint --strict --config .swiftlint.yml
+swiftformat . --config .swiftformat  # auto-fix
 ```
 
-## Commit Style
+**Physical device required** for: VPN/packet tunnel, full-tunnel capture, Network Extension validation.
 
-Conventional Commits titles: `feat(vpn): ...`, `fix(ui): ...`, `refactor(proxy): ...`
+**Submodules** must be initialized: `git submodule update --init --recursive`
 
 ## Architecture
 
-The project uses Swift Package Manager with four dependency layers:
+4-layer Swift Package Manager architecture. All layers are local packages in `Package.swift`; `Trace.xcodeproj` is the canonical app build.
 
 ### Layer 1 — Foundation
-- **TraceCore**: models, GRDB-backed SQLite storage (app group shared), NIO runtime lifecycle, throttling, configuration, logging
-- **TraceCompression**: Brotli/Deflate/Zstd decompression
+- **TraceCore**: models, GRDB SQLite storage (App Group shared), NIO runtime, logging, throttling, config
+- **TraceCompression**: streaming Brotli/Deflate/Zstd decoders
 
 ### Layer 2 — Infrastructure
 - **TraceSecurity**: X.509 cert generation, TLS, root CA for MITM
 - **TraceNetworking**: DNS parsing, network diagnostics
-- **TracePacket**: IP/TCP/UDP packet parsing and TCP/UDP flow reassembly
-- **TraceQUIC**: QUIC/HTTP3 via quiche FFI bindings (`CQuicheFFI` target), MITM abstractions
-- **HevSocks5Tunnel**: C submodule for full-tunnel tun2socks forwarding (`ThirdParty/hev-socks5-tunnel/`)
+- **TracePacket**: IP/TCP/UDP parsing + TCP reassembly
+- **TraceQUIC**: QUIC/HTTP3 via quiche Rust FFI (`ThirdParty/CQuicheFFI` + `build/quiche/`)
+- **HevSocks5Tunnel**: C TUN-to-SOCKS5 submodule (`ThirdParty/hev-socks5-tunnel/`)
 
 ### Layer 3 — Features
-- **TraceProxy**: NIO-based MITM proxy engine (`NIOMITMProxyEngine.swift`), HTTP/1.1 + HTTP/2 + WebSocket interception, PCAP/NDJSON logging
-- **TraceFeatures**: 18+ sub-modules — VPN management, request execution, rewrite rules, breakpoints, request maps, HAR/cURL export, scripting, profiles, widgets, notifications, data cleanup
-- **TraceUI**: shared SwiftUI components
+- **TraceProxy**: NIO MITM engine for HTTP/1.1, HTTP/2, WebSocket, SSE
+- **TraceFeatures**: 17+ submodules — VPN, rewrite rules, breakpoints, scripts, export, hosts, favorites, etc.
+- **TraceUI**: Shared SwiftUI components and design system tokens
 
 ### Layer 4 — Targets
-- **Trace** (main app): ViewModels, Repositories, SwiftUI views. App-originated traffic captured via `Trace/NetworkInterceptor.swift` (URLProtocol-based — intentional exception to the NIO path)
-- **TraceVPN** (Network Extension): `PacketTunnelProvider.swift` entry point, SOCKS5 server, UDP forwarding, QUIC flow routing
-- **TraceWidget** (WidgetKit): live activities and quick stats
+- **Trace**: Main iOS app, MVVM + Repositories pattern
+- **TraceVPN**: `NEPacketTunnelProvider` + local SOCKS5 server + PCAP capture
+- **TraceWidget**: WidgetKit, Live Activity, Control Widget
 
-### Networking Architecture
-- **Shared runtime**: `TraceCore/Networking/NIORuntime.swift` — NIOTSEventLoopGroup + AsyncHTTPClient lifecycle
-- **Request execution**: `TraceFeatures/Request/RequestExecutor.swift` uses AsyncHTTPClient
-- **MITM proxy**: `TraceProxy/MITM/MITMProxyServer.swift` → `NIOMITMProxyEngine.swift` (NIOSSL TLS)
-- **VPN path**: `TraceVPN/Providers/LocalSocks5Server.swift`, `UDPForwarder.swift`, `HevSocks5TunnelForwarder.swift`
+## Capture Pipeline
 
-## Bundle IDs & App Group
+Three capture paths all write to shared GRDB SQLite in the App Group container:
 
-| Item | Default |
+1. **System Proxy**: `MITMProxyServer` → `NIOMITMProxyEngine` (NIO pipeline)
+2. **Full-Tunnel**: TUN device → hev-socks5-tunnel → `LocalSocks5Server` → NIO forwarding
+3. **URLProtocol**: `NetworkInterceptor.swift` — intentional exception for app-originated traffic only
+
+Key NIO handler chain in `TraceProxy/MITM/`:
+- `NIOMITMInitialIngressHandler` — accepts connections, performs TLS probing
+- `NIOMITMHTTPConnectHandler+Forwarding.swift` — relay/interception dispatch (largest file, ~78KB)
+- `RequestInterceptor.swift` — applies rewrite rules, breakpoints, scripts
+
+Stream interception V2 (SSE/WebSocket) lives in `TraceProxy/MITM/Streams/` behind the `hardening.enableStreamInterceptionV2` feature flag. Legacy path remains active when false.
+
+## Key Files
+
+| File | Purpose |
+|---|---|
+| `TraceCore/Networking/NIORuntime.swift` | Shared `NIOTSEventLoopGroup` + `AsyncHTTPClient` lifecycle |
+| `TraceCore/Networking/DualMITMCircuitBreaker.swift` | Policy: proxy vs. MITM routing decisions |
+| `TraceCore/Storage/AppGroupStorage.swift` | All cross-target data APIs (~110KB, main storage layer) |
+| `TraceProxy/MITM/MITMProxyServer.swift` | Proxy entry point |
+| `TraceProxy/MITM/NIOMITMProxyEngine.swift` | NIO handler orchestration |
+| `TraceProxy/MITM/RequestInterceptor.swift` | Rules/breakpoints/scripts engine |
+| `TraceVPN/Providers/PacketTunnelProvider.swift` | `NEPacketTunnelProvider` entry |
+| `TraceVPN/Providers/LocalSocks5Server.swift` | SOCKS5 server (~41KB) |
+| `TraceFeatures/VPN/VPNManager.swift` | VPN lifecycle + IPC; contains `providerBundleIdentifier` |
+| `Trace/NetworkInterceptor.swift` | URLProtocol for app-originated traffic |
+
+## Concurrency & Patterns
+
+- **Swift 6 strict concurrency** throughout: `Sendable`, actors, no data races
+- **Actors** for stateful components: `TunnelLifecycle`, `PacketTunnelRuntimeState`
+- **Protocol abstractions**: `RequestExecutorTransport`, `CircuitBreakerController`, `InterceptionProviding`
+- **NIO handlers** (`ChannelInboundHandler`/`ChannelOutboundHandler`) for stateful stream processing — state machines, not callbacks
+- **Immutable config snapshots** taken before critical operations to avoid TOCTOU races
+- **Dual MITM mode**: system proxy + full tunnel can run simultaneously; policy is coordinated via `DualMITMCircuitBreaker`
+- Custom `LogCategory` protocol with per-module loggers (not `print` or `NSLog`)
+
+## Storage
+
+All persistent state goes through `AppGroupStorage` (GRDB SQLite in App Group `group.com.justin.trace`). Key tables: `requests`, `stream_sessions`, `stream_events`, `breakpoints`, `rewrite_rules`. Stream event journal (v2) is append-only.
+
+## Bundle IDs & Entitlements
+
+| Target | Bundle ID |
 |---|---|
 | App | `com.justin.trace` |
-| VPN extension | `com.justin.trace.vpn` — must match `providerBundleIdentifier` in `TraceFeatures/VPN/VPNManager.swift` |
+| VPN | `com.justin.trace.vpn` |
 | Widget | `com.justin.trace.tracewidget` |
-| App Group | `group.com.justin.trace` — shared across app, VPN extension, and widget |
-| Keychain group | `$(AppIdentifierPrefix)com.justin.trace` |
+| App Group | `group.com.justin.trace` |
+| Keychain | `$(AppIdentifierPrefix)com.justin.trace` |
 
-## Key Technical Context
+If bundle IDs change, update entitlements for all three targets **and** `providerBundleIdentifier` in `VPNManager.swift`.
 
-- **Swift 6 strict concurrency**: all types crossing actor boundaries must be `Sendable`; avoid introducing data races
-- **Multi-target storage**: GRDB SQLite in the app group container is read/written by all three targets
-- **QUIC submodule**: `ThirdParty/quiche/` is a Rust library; `CQuicheFFI` wraps the compiled `.xcframework` in `build/quiche/`
-- **Docs**: `Docs/SwiftNIO-Behavior-Parity-Contract.md` documents the NIO runtime contract; read before changing `NIORuntime.swift`
+## QUIC / quiche
+
+`build/quiche/` artifacts are **not tracked in git**. iOS builds need them; macOS package indexing does not.
+
+```bash
+./Tools/QUIC/build_quiche_apple.sh
+./Tools/QUIC/verify_quiche_symbols.sh build/quiche/quiche.xcframework
+```
+
+Requires Rust with targets `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios`.
+
+## Tests
+
+Unit tests: `TraceTests/` (236 files). UI tests: `TraceUITests/`. Logic-only tests: `TraceLogicTests/`.
+
+SwiftLint excludes `TraceTests` and `TraceUITests`. Packet-tunnel and full-tunnel tests require a physical device.
+
+## Commit Convention
+
+Conventional Commits: `type(scope): summary` — e.g. `feat(vpn): ...`, `fix(proxy): ...`, `refactor(storage): ...`.
+
+## Documentation
+
+- `Docs/StreamInterceptionV2.md` — stream interception design and storage model
+- `Docs/SwiftNIO-Behavior-Parity-Contract.md` — expected NIO behavior contract
+- `Docs/SwiftNIO-E2E-Capture-Test-Plan.md` — end-to-end capture validation plan

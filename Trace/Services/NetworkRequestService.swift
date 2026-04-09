@@ -28,7 +28,7 @@ class NetworkRequestService: NetworkRequestServiceProtocol {
 
     // MARK: - Initialization
 
-    nonisolated init(repository: NetworkRequestRepository) {
+    init(repository: NetworkRequestRepository) {
         self.repository = repository
     }
 

@@ -273,3 +273,20 @@ struct UDPFlowDetailView: View {
         return url
     }
 }
+
+#Preview {
+    let flow = UDPFlowMetadata(
+        sourceIP: "192.168.1.10",
+        destinationIP: "8.8.8.8",
+        sourcePort: 54321,
+        destinationPort: 53,
+        bytesFromSource: 128,
+        bytesToSource: 256,
+        datagramsFromSource: 2,
+        datagramsToSource: 2,
+        detectedProtocol: .dns
+    )
+    NavigationStack {
+        UDPFlowDetailView(flow: flow, viewModel: UDPFlowsViewModel())
+    }
+}

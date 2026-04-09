@@ -285,13 +285,15 @@ final class HevSocks5TunnelForwarder: PacketForwardingEngine, @unchecked Sendabl
     private func writePacket(_ packet: Data, proto: Int32) {
         guard bridgeFD >= 0 else { return }
         var header = UInt32(bitPattern: proto).bigEndian
-        let result = packet.withUnsafeBytes { bytes -> ssize_t in
-            guard let base = bytes.baseAddress else { return -1 }
-            var iov = [
-                iovec(iov_base: &header, iov_len: MemoryLayout<UInt32>.size),
-                iovec(iov_base: UnsafeMutableRawPointer(mutating: base), iov_len: bytes.count)
-            ]
-            return writev(bridgeFD, &iov, 2)
+        let result = withUnsafeMutablePointer(to: &header) { headerPointer in
+            packet.withUnsafeBytes { bytes -> ssize_t in
+                guard let base = bytes.baseAddress else { return -1 }
+                var iov = [
+                    iovec(iov_base: UnsafeMutableRawPointer(headerPointer), iov_len: MemoryLayout<UInt32>.size),
+                    iovec(iov_base: UnsafeMutableRawPointer(mutating: base), iov_len: bytes.count)
+                ]
+                return writev(bridgeFD, &iov, 2)
+            }
         }
 
         if result <= 0, logSampler.shouldLog(event: "vpn.socks5_tunnel_input", key: "write_error", first: 3, every: 200) {

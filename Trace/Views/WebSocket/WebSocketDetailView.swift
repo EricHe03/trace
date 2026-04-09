@@ -146,6 +146,8 @@ struct WebSocketDetailView: View {
         }
         .sheet(item: $selectedMessage) { message in
             WebSocketMessageDetailView(message: message)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showingFilters) {
             WebSocketMessageFiltersView(
@@ -154,6 +156,8 @@ struct WebSocketDetailView: View {
                 hasActiveFilters: hasActiveFilters,
                 onClear: clearFilters
             )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .task(id: connection.id) {
             await loadReplayRecords()
@@ -459,7 +463,7 @@ struct WebSocketMessageDetailView: View {
             .navigationTitle("Message Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
@@ -503,17 +507,23 @@ struct WebSocketMessageFiltersView: View {
             .navigationTitle("Filters")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Clear") {
-                        onClear()
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
                     }
-                    .disabled(!hasActiveFilters)
                 }
 
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
+                }
+
+                ToolbarItem(placement: .bottomBar) {
+                    Button("Clear All", role: .destructive) {
+                        onClear()
+                    }
+                    .disabled(!hasActiveFilters)
                 }
             }
         }

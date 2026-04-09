@@ -33,3 +33,21 @@ struct HeadersSection: View {
         }
     }
 }
+
+#Preview("With Headers") {
+    ScrollView {
+        HeadersSection(headers: [
+            TraceHTTPHeader(key: "Content-Type", value: "application/json"),
+            TraceHTTPHeader(key: "Authorization", value: "Bearer token"),
+            TraceHTTPHeader(key: "X-Request-ID", value: "abc-123")
+        ])
+        .padding()
+    }
+}
+
+#Preview("Empty") {
+    ScrollView {
+        HeadersSection(headers: [])
+            .padding()
+    }
+}

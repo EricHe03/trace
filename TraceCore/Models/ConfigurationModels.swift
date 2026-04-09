@@ -389,7 +389,7 @@ extension RewriteAction: Equatable {
 
 /// A host entry that maps a hostname to a custom IP address and port.
 /// Similar to entries in /etc/hosts but with additional port override capability.
-public struct HostEntry: Codable, Identifiable, Equatable {
+public struct HostEntry: Codable, Identifiable, Equatable, Sendable {
     public let id: UUID
     public var name: String
     public var enabled: Bool
@@ -631,7 +631,7 @@ public enum BreakpointType: String, Codable, CaseIterable, Equatable, Sendable {
     }
 }
 
-public struct Breakpoint: Identifiable, Codable, Equatable {
+public struct Breakpoint: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public var name: String
     public var configuration: BreakpointConfiguration
@@ -679,11 +679,29 @@ public struct BreakpointConfiguration: Codable, Equatable, Sendable {
     }
 }
 
-public enum BreakpointExecutionMode: String, Codable, Equatable, Sendable {
+public enum BreakpointExecutionMode: String, Codable, Equatable, Sendable, CaseIterable {
     case pause
     case editOnce
     case alwaysApply
     case logOnly
+
+    public var displayName: String {
+        switch self {
+        case .pause: "Pause Every Time"
+        case .editOnce: "Edit Once"
+        case .alwaysApply: "Always Apply"
+        case .logOnly: "Log Only"
+        }
+    }
+
+    public var description: String {
+        switch self {
+        case .pause: "Pause and wait for manual action on every match."
+        case .editOnce: "Pause once, then reuse that edit on the next matching flow."
+        case .alwaysApply: "Pause once, then keep replaying that edit until disabled."
+        case .logOnly: "Record breakpoint hits without pausing traffic."
+        }
+    }
 }
 
 public struct BreakpointCondition: Codable, Equatable, Sendable {
@@ -698,12 +716,50 @@ public struct BreakpointCondition: Codable, Equatable, Sendable {
     }
 }
 
-public enum ConditionType: String, Codable, Equatable, Sendable {
+public enum ConditionType: String, Codable, Equatable, Sendable, CaseIterable {
     case headerExists
     case headerEquals
+    case headerContains
+    case headerRegex
     case bodyContains
     case bodyRegex
     case queryParamExists
+    case queryParamEquals
+    case queryParamContains
+    case queryParamRegex
+
+    public var displayName: String {
+        switch self {
+        case .headerExists: "Header Exists"
+        case .headerEquals: "Header Equals"
+        case .headerContains: "Header Contains"
+        case .headerRegex: "Header Regex"
+        case .bodyContains: "Body Contains"
+        case .bodyRegex: "Body Regex"
+        case .queryParamExists: "Query Param Exists"
+        case .queryParamEquals: "Query Param Equals"
+        case .queryParamContains: "Query Param Contains"
+        case .queryParamRegex: "Query Param Regex"
+        }
+    }
+
+    public var requiresParameter: Bool {
+        switch self {
+        case .bodyContains, .bodyRegex:
+            false
+        case .headerExists, .headerEquals, .headerContains, .headerRegex, .queryParamExists, .queryParamEquals, .queryParamContains, .queryParamRegex:
+            true
+        }
+    }
+
+    public var requiresValue: Bool {
+        switch self {
+        case .headerExists, .queryParamExists:
+            false
+        case .headerEquals, .headerContains, .headerRegex, .bodyContains, .bodyRegex, .queryParamEquals, .queryParamContains, .queryParamRegex:
+            true
+        }
+    }
 }
 
 public enum BreakpointState: String, Codable, Equatable, Sendable {
@@ -716,14 +772,25 @@ public enum BreakpointState: String, Codable, Equatable, Sendable {
 
 public enum BreakpointAction: String, Codable, Equatable, Sendable {
     case `continue`
+    case cancel
     case drop
     case continueAndDisable
+
+    public var appliesModifications: Bool {
+        switch self {
+        case .continue, .continueAndDisable:
+            true
+        case .cancel, .drop:
+            false
+        }
+    }
 }
 
-public struct PausedRequest: Identifiable, Sendable {
+public struct PausedRequest: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public var url: String
     public var method: HTTPMethod
+    public var methodToken: String
     public var headers: [TraceHTTPHeader]
     public var body: Data?
     public var isPaused: Bool
@@ -736,6 +803,7 @@ public struct PausedRequest: Identifiable, Sendable {
 
     public var modifiedUrl: String?
     public var modifiedMethod: HTTPMethod?
+    public var modifiedMethodToken: String?
     public var modifiedHeaders: [TraceHTTPHeader]?
     public var modifiedBody: Data?
     public var modifiedStatusCode: Int?
@@ -745,6 +813,7 @@ public struct PausedRequest: Identifiable, Sendable {
         id: String,
         url: String,
         method: HTTPMethod,
+        methodToken: String? = nil,
         headers: [TraceHTTPHeader],
         body: Data? = nil,
         breakpointType: BreakpointType,
@@ -754,6 +823,7 @@ public struct PausedRequest: Identifiable, Sendable {
         self.id = id
         self.url = url
         self.method = method
+        self.methodToken = methodToken ?? method.rawValue
         self.headers = headers
         self.body = body
         self.isPaused = true
@@ -762,6 +832,22 @@ public struct PausedRequest: Identifiable, Sendable {
         self.pausedAt = Date()
         self.statusCode = statusCode
         self.statusMessage = statusMessage
+    }
+}
+
+public struct BreakpointResumeCommand: Codable, Equatable, Sendable {
+    public let requestId: String
+    public let action: BreakpointAction
+    public let updatedAt: Date
+
+    public init(
+        requestId: String,
+        action: BreakpointAction,
+        updatedAt: Date = Date()
+    ) {
+        self.requestId = requestId
+        self.action = action
+        self.updatedAt = updatedAt
     }
 }
 
@@ -780,7 +866,7 @@ public enum BreakpointNotificationKey: String {
 // MARK: - Favorites
 
 /// Represents a favorited network request with optional notes.
-public struct Favorite: Codable, Identifiable, Equatable {
+public struct Favorite: Codable, Identifiable, Equatable, Sendable {
     public let id: UUID
     public let requestId: UUID
     public var name: String?

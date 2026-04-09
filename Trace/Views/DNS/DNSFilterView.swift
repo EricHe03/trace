@@ -64,8 +64,8 @@ struct DNSFilterView: View {
             .formStyle(.grouped)
             .navigationTitle("DNS Filters")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Clear") {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Clear All", role: .destructive) {
                         viewModel.clearFilters()
                     }
                 }
@@ -77,7 +77,7 @@ struct DNSFilterView: View {
                 }
             }
         }
-        .frame(maxWidth: 400, maxHeight: 600)
+        .frame(maxWidth: 520)
     }
 }
 

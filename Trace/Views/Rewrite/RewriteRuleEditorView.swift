@@ -152,6 +152,8 @@ struct RewriteRuleEditorView: View {
                 ActionEditorView { newAction in
                     actions.append(newAction)
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .onAppear {
                 validateMatchPattern(announceIfError: false)

@@ -304,25 +304,12 @@ extension QUICFlowRouter {
             if let reason = state.lastFailureReason,
                let lastFailureAt = state.lastFailureAt,
                now.timeIntervalSince(lastFailureAt) < retryBackoff {
-                let failureDecision = shouldFailOpenForQUICFailure(
-                    host: state.host,
-                    port: state.port,
-                    reason: reason
-                )
-                let fallbackForwardingDecision = failureDecision.enabled
-                    ? failOpenForwardingDecision(
-                        current: forwardingDecision,
-                        reason: failureDecision.effectiveReason,
-                        udpForwarderAvailable: udpForwarderAvailable,
-                        tunnelUDPSupported: tunnelUDPSupported
-                    )
-                    : .dropQUIC
-                state.upstreamForwardingDecision = fallbackForwardingDecision
+                let fallbackForwardingDecision = state.upstreamForwardingDecision
                 flowStates[flowKey] = state
                 return RouteEvaluation(
-                    inspectionOutcome: failureDecision.enabled ? .passThroughMarked : .blocked,
-                    handshakeOutcome: failureDecision.enabled ? .passThrough : .blocked,
-                    failureReason: failureDecision.effectiveReason,
+                    inspectionOutcome: fallbackForwardingDecision == .dropQUIC ? .blocked : .passThroughMarked,
+                    handshakeOutcome: fallbackForwardingDecision == .dropQUIC ? .blocked : .passThrough,
+                    failureReason: reason,
                     alpn: state.negotiatedALPN,
                     sniHash: state.sniHash,
                     forwardingDecision: fallbackForwardingDecision,

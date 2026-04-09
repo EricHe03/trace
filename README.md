@@ -8,23 +8,27 @@ An iOS network debugger for capturing and inspecting HTTP(S), HTTP/2, WebSocket,
 ![License](https://img.shields.io/badge/license-MIT-blue)
 [Latest Release](https://github.com/Trace-iOS/Trace/releases/latest) | [Releases](https://github.com/Trace-iOS/Trace/releases)
 
-Trace combines a local MITM proxy with a Network Extension packet tunnel and a self-generated root CA for HTTPS inspection. Captured data stays on-device unless you choose to export or share it. The app supports proxy-only, full-tunnel, and dual-MITM capture, and includes replay, rewriting, diagnostics, packet capture, and widget/live activity controls.
+Trace combines a local MITM proxy, a Network Extension packet tunnel, and a self-generated root CA for HTTPS inspection. Captured data stays on-device unless you explicitly export or share it. The app supports proxy-only, full-tunnel, and dual-MITM capture, and includes replay, rewriting, diagnostics, packet capture, and widget/live activity controls.
 
-The repository includes both `Trace.xcodeproj` and `Package.swift`. Use the Xcode project to build and run the app and extensions. The package manifest mirrors the module graph for package-aware tooling and module-level development.
+This repository ships both `Trace.xcodeproj` and `Package.swift`:
+
+- Use `Trace.xcodeproj` to build and run the app, packet tunnel, and widget extension.
+- Use `Package.swift` for package-aware indexing, module graph inspection, and module-level development.
 
 ## Features
 
 - Proxy-only, full-tunnel, and dual-MITM capture modes
 - Unified capture for HTTP(S), HTTP/2, WebSocket, SSE, DNS, TCP/UDP transport events, and QUIC/HTTP3
-- Request inspection for headers, bodies, timings, TLS chain, and decrypted payloads when MITM is possible
+- Request inspection for headers, bodies, timings, TLS chain, initiator details, timing phases, and decrypted payloads when MITM is possible
 - Request replay, manual request builder, copy-as-cURL, and cURL import
 - Rewrite rules, request maps, breakpoints, scripts, hosts overrides, and favorites
 - Capture rules for domain filtering, body capture controls, and storage limits
 - Full-tunnel controls for custom DNS, IPv6, SOCKS5 forwarding, hybrid TCP MITM, and UDP forwarding mode
 - Network throttling profiles for Wi-Fi, cellular, offline, and custom conditions
-- Connection, UDP-flow, and DNS diagnostics plus full-tunnel self-check tooling
+- Connection, UDP-flow, and DNS diagnostics
 - HAR import/export, PCAP capture/export, and VPN NDJSON log export
 - Certificate setup wizard, MITM allowlist, notification controls, and QUIC blocking/security settings
+- gRPC metadata capture with protocol-aware body display
 - Home Screen widgets, Live Activity, Control Widget actions, and quick actions
 - Built-in utilities for Base64, URL encoding, JSON formatting, hashes, and timestamps
 
@@ -44,6 +48,7 @@ The repository includes both `Trace.xcodeproj` and `Package.swift`. Use the Xcod
 - Apple Developer signing with the Network Extension capability
 - A physical iOS device for packet-tunnel and full-tunnel validation
 - Rust is only required when rebuilding quiche artifacts in `Tools/QUIC/`
+- `swiftformat` and `swiftlint` are only required for local formatting/lint checks
 
 ## Installation
 
@@ -64,7 +69,14 @@ open Trace.xcodeproj
 3. Configure signing for `Trace`, `TraceVPN`, and `TraceWidgetExtension`.
 4. Ensure all targets use the same App Group via `APP_GROUP_IDENTIFIER`.
 5. If you change bundle identifiers, update the related entitlements and `providerBundleIdentifier` in `TraceFeatures/VPN/VPNManager.swift`.
-6. Build and run on a physical device.
+6. Build and run on a physical device for full tunnel / Network Extension validation.
+
+If you need to validate the QUIC toolchain wiring or regenerate bundled quiche artifacts, run:
+
+```bash
+./Tools/QUIC/build_quiche_apple.sh
+./Tools/QUIC/verify_quiche_symbols.sh build/quiche/quiche.xcframework
+```
 
 ## Quick Start
 
@@ -78,7 +90,7 @@ open Trace.xcodeproj
 
 - `Network` tab: captured requests and network events, filters, favorites, replay, manual request builder, and cURL import
 - `Tools` tab: rewrite rules, request maps, scripts, hosts overrides, breakpoints, and utility tools
-- `Settings` tab: capture rules and modes, network conditions, connections, certificate and MITM settings, HAR import/export, packet captures, full-tunnel self-check, notifications, and storage cleanup
+- `Settings` tab: capture rules and modes, network conditions, connections, certificate and MITM settings, HAR import/export, packet captures, notifications, and storage cleanup
 
 ## Configuration Reference
 
@@ -94,6 +106,7 @@ open Trace.xcodeproj
 
 ```text
 Trace/
+├── .github/workflows/            # GitHub Actions for build/test, format, and lint
 ├── Trace.xcodeproj/              # Xcode project used for app + extension builds
 ├── Package.swift                 # SwiftPM manifest that mirrors the module graph
 ├── Docs/                         # Architecture notes and capture test plans
@@ -109,25 +122,39 @@ Trace/
 ├── TracePacket/                  # Packet parsing and TCP/UDP reassembly
 ├── TraceFeatures/                # Feature modules (VPN, export, scripting, cleanup, etc.)
 ├── TraceUI/                      # Shared SwiftUI components and design system
-├── TraceTests/                   # Unit tests
+├── TraceTests/                   # Unit tests (full app module graph)
+├── TraceLogicTests/              # Logic-only unit tests (no UI/extension dependencies)
 ├── TraceUITests/                 # UI tests
 ├── ThirdParty/CQuicheFFI/        # C shim layer over quiche APIs
 ├── ThirdParty/quiche/            # Git submodule: QUIC/HTTP3 implementation
 ├── ThirdParty/hev-socks5-tunnel/ # Git submodule: full-tunnel SOCKS5 forwarding
-└── Tools/QUIC/                   # quiche build and verification scripts
+├── Tools/QUIC/                   # quiche build and verification scripts
+├── Tools/build-tests.sh          # CI wrapper for build-for-testing step
+└── build/quiche/                 # Generated quiche artifacts consumed by TraceQUIC/CQuicheFFI
 ```
 
-Generated QUIC build artifacts live under `build/quiche/` after running the scripts in `Tools/QUIC/`.
+Generated QUIC build artifacts live under `build/quiche/`. These artifacts are not tracked in git. iOS builds require them for QUIC/HTTP3 support, while package indexing on macOS can still resolve without them.
 
 ## Documentation
 
+- [Docs/index.md](Docs/index.md) — documentation index with guides, reference, and explanation
+- [Docs/quickstart.md](Docs/quickstart.md) — install the root CA and make your first capture
+- [Docs/guides/capture-https.md](Docs/guides/capture-https.md) — configure HTTPS MITM
+- [Docs/guides/rewrite-rules.md](Docs/guides/rewrite-rules.md) — modify requests and responses
+- [Docs/guides/export-traffic.md](Docs/guides/export-traffic.md) — export as HAR, PCAP, or cURL
+- [Docs/guides/full-tunnel-mode.md](Docs/guides/full-tunnel-mode.md) — capture apps that bypass the system proxy
+- [Docs/reference/capture-modes.md](Docs/reference/capture-modes.md) — proxy-only, full-tunnel, and dual-MITM comparison
+- [Docs/reference/configuration.md](Docs/reference/configuration.md) — bundle IDs, app group, entitlements, build flags
+- [Docs/explanation/capture-architecture.md](Docs/explanation/capture-architecture.md) — how the three capture paths work
+- [Docs/explanation/mitm-certificate.md](Docs/explanation/mitm-certificate.md) — root CA and per-host certificate generation
+- [Docs/troubleshooting.md](Docs/troubleshooting.md) — known issues, common failures, and debugging paths
 - [Docs/StreamInterceptionV2.md](Docs/StreamInterceptionV2.md) describes the stream interception design
 - [Docs/SwiftNIO-Behavior-Parity-Contract.md](Docs/SwiftNIO-Behavior-Parity-Contract.md) documents the expected NIO behavior contract
 - [Docs/SwiftNIO-E2E-Capture-Test-Plan.md](Docs/SwiftNIO-E2E-Capture-Test-Plan.md) outlines end-to-end capture validation
 
 ## Testing
 
-Run the same base checks that CI runs:
+Run the same base checks as the repository workflows in `.github/workflows/build-and-test.yml`, `.github/workflows/format.yml`, and `.github/workflows/lint.yml`:
 
 ```bash
 xcodebuild -project Trace.xcodeproj -scheme Trace -configuration Debug -sdk iphonesimulator \
@@ -140,6 +167,14 @@ swiftformat --lint . --config .swiftformat
 swiftlint lint --strict --config .swiftlint.yml
 ```
 
+The `Tools/build-tests.sh` script wraps the build-for-testing step with the flags used by CI (explicit `DerivedData` path, disabled simulator code signing).
+
+Unit tests live in two targets:
+- `TraceTests/` — XCTest suite requiring the full app module graph
+- `TraceLogicTests/` — logic-only tests with no UI or extension dependencies, runs faster in CI
+
+SwiftLint excludes both test targets. Packet-tunnel and full-tunnel tests require a physical device.
+
 For QUIC toolchain changes, also run:
 
 ```bash
@@ -147,7 +182,13 @@ For QUIC toolchain changes, also run:
 ./Tools/QUIC/verify_quiche_symbols.sh build/quiche/quiche.xcframework
 ```
 
-CI also sets an explicit `DerivedData` path, disables simulator code signing, and writes an `.xcresult` bundle for uploads.
+GitHub Actions sets an explicit `DerivedData` path, disables simulator code signing, and uploads an `.xcresult` bundle plus derived-data logs on failures.
+
+## Development Notes
+
+- `Trace.xcodeproj` is the canonical way to run the full product because it includes the app target, packet tunnel, and `TraceWidgetExtension`.
+- `Package.swift` mirrors the internal module graph (`TraceCore`, `TraceSecurity`, `TraceProxy`, `TraceFeatures`, `TraceVPN`, `TraceUI`, `TraceQUIC`, and related support targets) and is useful for navigation, indexing, and focused module work.
+- Packet-tunnel routing and full-tunnel traffic capture cannot be meaningfully validated in the iOS Simulator.
 
 ## Limitations
 

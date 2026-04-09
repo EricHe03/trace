@@ -150,8 +150,55 @@ struct TransportEventRow: View {
     }
 
     private func formattedByteCount(_ bytes: Int) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: Int64(bytes))
+        DesignSystem.formattedBytes(bytes)
+    }
+}
+
+// MARK: - Previews
+
+#Preview {
+    List {
+        TransportEventRow(request: TransportRequest(
+            sourceIP: "192.168.1.10",
+            destinationIP: "8.8.8.8",
+            sourcePort: 54321,
+            destinationPort: 53,
+            transport: .udp,
+            applicationProtocol: .dns,
+            parserOutcome: .parsed,
+            payload: .empty,
+            payloadBytes: 48,
+            ipVersion: 4,
+            protocolNumber: 17,
+            hopLimit: 64,
+            ipHeaderLength: 20,
+            totalLength: 68,
+            fragmentOffset: 0,
+            moreFragments: false,
+            udpDatagramLength: 28,
+            summary: "Query: example.com",
+            flowKey: "udp|192.168.1.10:54321|8.8.8.8:53"
+        ))
+        TransportEventRow(request: TransportRequest(
+            sourceIP: "10.0.0.5",
+            destinationIP: "93.184.216.34",
+            sourcePort: 49152,
+            destinationPort: 443,
+            transport: .tcp,
+            applicationProtocol: .tls,
+            parserOutcome: .parsed,
+            payload: .empty,
+            payloadBytes: 1400,
+            packetBytes: 1440,
+            ipVersion: 4,
+            protocolNumber: 6,
+            hopLimit: 64,
+            ipHeaderLength: 20,
+            totalLength: 1460,
+            fragmentOffset: 0,
+            moreFragments: false,
+            tcpFlags: 0x18,
+            flowKey: "tcp|10.0.0.5:49152|93.184.216.34:443"
+        ))
     }
 }

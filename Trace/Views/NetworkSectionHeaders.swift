@@ -27,13 +27,13 @@ struct SessionSectionHeader: View {
     private func headerContent(durationText: String) -> some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
             HStack {
-                Image(systemName: group.session.isActive ? "record.circle" : "checkmark.circle")
+                Image(systemName: group.session.isActive ? "record.circle.fill" : "checkmark.circle")
                     .foregroundStyle(group.session.isActive ? DesignSystem.Colors.danger : DesignSystem.Colors.success)
                 Text(group.session.displayName)
                     .font(.headline)
             }
             HStack(spacing: 12) {
-                Label("\(group.requestCount) requests", systemImage: "number")
+                Label("\(group.requestCount) requests", systemImage: "list.number")
                 Label(durationText, systemImage: "clock")
                 Label(group.totalSizeString, systemImage: "arrow.down.circle")
             }
@@ -81,12 +81,57 @@ struct DomainGroupLabel: View {
             Spacer()
             Text("\(group.requestCount)")
                 .font(.caption)
-                .foregroundStyle(.primary)
+                .foregroundStyle(.white)
                 .padding(.horizontal, DesignSystem.Badge.horizontalPadding)
                 .padding(.vertical, DesignSystem.Badge.verticalPadding)
                 .background(Capsule().fill(DesignSystem.Colors.accent))
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(group.domain), \(group.requestCount) requests")
+    }
+}
+
+// MARK: - Previews
+
+#Preview("SessionSectionHeader") {
+    let session = CaptureSession(name: "Session 1", startTime: Date().addingTimeInterval(-120))
+    let request = NetworkRequest(
+        url: "https://api.example.com/users",
+        method: .get,
+        statusCode: 200,
+        timestamp: Date(),
+        duration: 0.15
+    )
+    let group = SessionGroup(session: session, requests: [request], domainGroups: [])
+    List {
+        SessionSectionHeader(group: group)
+    }
+}
+
+#Preview("DomainSectionHeader") {
+    let request = NetworkRequest(
+        url: "https://api.example.com/users",
+        method: .get,
+        statusCode: 200,
+        timestamp: Date(),
+        duration: 0.15
+    )
+    let group = DomainGroup(domain: "api.example.com", requests: [request])
+    List {
+        DomainSectionHeader(group: group)
+    }
+}
+
+#Preview("DomainGroupLabel") {
+    let request = NetworkRequest(
+        url: "https://api.example.com/users",
+        method: .get,
+        statusCode: 200,
+        timestamp: Date(),
+        duration: 0.15
+    )
+    let group = DomainGroup(domain: "api.example.com", requests: [request])
+    List {
+        DomainGroupLabel(group: group)
     }
 }

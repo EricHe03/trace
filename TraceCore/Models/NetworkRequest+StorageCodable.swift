@@ -11,6 +11,7 @@ extension NetworkRequest: Codable {
         case requestHeaders, responseHeaders, requestBody, responseBody, protocolVersion, sessionId
         case capturePath, captureFlowID, capturePolicyModeRaw, captureMetadataVersion
         case timingPhases, tlsInfo
+        case initiatorStackTrace, initiatorDisplayName
         case wasThrottled, throttlingProfile
         case isDuplicate, duplicateOfRequestId
         case isManual
@@ -23,6 +24,15 @@ extension NetworkRequest: Codable {
         case http2Streams, http2ConnectionInfo
         case redirectChain
         case curlExecutionMetadata
+        case grpcMetadata
+        // Connection / network-path
+        case remoteAddress, remotePort, localAddress, localPort
+        case isConnectionReused, isProxyConnection
+        case isCellular, isExpensive, isConstrained
+        case resourceFetchType
+        // Wire-level sizes
+        case requestHeadersSize, responseHeadersSize
+        case requestBodyTransferSize, responseBodyTransferSize, responseBodyDecodedSize
     }
 
     private enum LegacyCodingKeys: String, CodingKey {
@@ -77,6 +87,8 @@ extension NetworkRequest: Codable {
 
         self.timingPhases = try container.decodeIfPresent(NetworkTimingPhases.self, forKey: .timingPhases)
         self.tlsInfo = try container.decodeIfPresent(TLSConnectionInfo.self, forKey: .tlsInfo)
+        self.initiatorStackTrace = try container.decodeIfPresent(String.self, forKey: .initiatorStackTrace)
+        self.initiatorDisplayName = try container.decodeIfPresent(String.self, forKey: .initiatorDisplayName)
         self.wasThrottled = try container.decodeIfPresent(Bool.self, forKey: .wasThrottled) ?? false
         self.throttlingProfile = try container.decodeIfPresent(String.self, forKey: .throttlingProfile)
         self.isDuplicate = try container.decodeIfPresent(Bool.self, forKey: .isDuplicate) ?? false
@@ -110,6 +122,25 @@ extension NetworkRequest: Codable {
         self.http2ConnectionInfo = try container.decodeIfPresent(HTTP2ConnectionInfo.self, forKey: .http2ConnectionInfo)
         self.redirectChain = try container.decodeIfPresent([RedirectInfo].self, forKey: .redirectChain) ?? []
         self.curlExecutionMetadata = try container.decodeIfPresent(CurlExecutionMetadata.self, forKey: .curlExecutionMetadata)
+        self.grpcMetadata = try container.decodeIfPresent(GRPCMetadata.self, forKey: .grpcMetadata)
+
+        // Connection / network-path
+        self.remoteAddress = try container.decodeIfPresent(String.self, forKey: .remoteAddress)
+        self.remotePort = try container.decodeIfPresent(Int.self, forKey: .remotePort)
+        self.localAddress = try container.decodeIfPresent(String.self, forKey: .localAddress)
+        self.localPort = try container.decodeIfPresent(Int.self, forKey: .localPort)
+        self.isConnectionReused = try container.decodeIfPresent(Bool.self, forKey: .isConnectionReused) ?? false
+        self.isProxyConnection = try container.decodeIfPresent(Bool.self, forKey: .isProxyConnection) ?? false
+        self.isCellular = try container.decodeIfPresent(Bool.self, forKey: .isCellular) ?? false
+        self.isExpensive = try container.decodeIfPresent(Bool.self, forKey: .isExpensive) ?? false
+        self.isConstrained = try container.decodeIfPresent(Bool.self, forKey: .isConstrained) ?? false
+        self.resourceFetchType = try container.decodeIfPresent(ResourceFetchType.self, forKey: .resourceFetchType) ?? .networkLoad
+        // Wire-level sizes
+        self.requestHeadersSize = try container.decodeIfPresent(Int.self, forKey: .requestHeadersSize)
+        self.responseHeadersSize = try container.decodeIfPresent(Int.self, forKey: .responseHeadersSize)
+        self.requestBodyTransferSize = try container.decodeIfPresent(Int.self, forKey: .requestBodyTransferSize)
+        self.responseBodyTransferSize = try container.decodeIfPresent(Int.self, forKey: .responseBodyTransferSize)
+        self.responseBodyDecodedSize = try container.decodeIfPresent(Int.self, forKey: .responseBodyDecodedSize)
 
         let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
         if self.requestMethodRaw == nil {
@@ -177,6 +208,8 @@ extension NetworkRequest: Codable {
         try container.encodeIfPresent(sessionId, forKey: .sessionId)
         try container.encodeIfPresent(timingPhases, forKey: .timingPhases)
         try container.encodeIfPresent(tlsInfo, forKey: .tlsInfo)
+        try container.encodeIfPresent(initiatorStackTrace, forKey: .initiatorStackTrace)
+        try container.encodeIfPresent(initiatorDisplayName, forKey: .initiatorDisplayName)
         try container.encode(wasThrottled, forKey: .wasThrottled)
         try container.encodeIfPresent(throttlingProfile, forKey: .throttlingProfile)
         try container.encode(isDuplicate, forKey: .isDuplicate)
@@ -207,6 +240,24 @@ extension NetworkRequest: Codable {
         try container.encodeIfPresent(http2ConnectionInfo, forKey: .http2ConnectionInfo)
         try container.encode(redirectChain, forKey: .redirectChain)
         try container.encodeIfPresent(curlExecutionMetadata, forKey: .curlExecutionMetadata)
+        try container.encodeIfPresent(grpcMetadata, forKey: .grpcMetadata)
+        // Connection / network-path
+        try container.encodeIfPresent(remoteAddress, forKey: .remoteAddress)
+        try container.encodeIfPresent(remotePort, forKey: .remotePort)
+        try container.encodeIfPresent(localAddress, forKey: .localAddress)
+        try container.encodeIfPresent(localPort, forKey: .localPort)
+        try container.encode(isConnectionReused, forKey: .isConnectionReused)
+        try container.encode(isProxyConnection, forKey: .isProxyConnection)
+        try container.encode(isCellular, forKey: .isCellular)
+        try container.encode(isExpensive, forKey: .isExpensive)
+        try container.encode(isConstrained, forKey: .isConstrained)
+        try container.encode(resourceFetchType, forKey: .resourceFetchType)
+        // Wire-level sizes
+        try container.encodeIfPresent(requestHeadersSize, forKey: .requestHeadersSize)
+        try container.encodeIfPresent(responseHeadersSize, forKey: .responseHeadersSize)
+        try container.encodeIfPresent(requestBodyTransferSize, forKey: .requestBodyTransferSize)
+        try container.encodeIfPresent(responseBodyTransferSize, forKey: .responseBodyTransferSize)
+        try container.encodeIfPresent(responseBodyDecodedSize, forKey: .responseBodyDecodedSize)
     }
 }
 

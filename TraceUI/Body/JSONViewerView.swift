@@ -41,7 +41,7 @@ public struct JSONViewerView: View {
 
                 Spacer()
 
-                if viewMode == .tree {
+                if viewMode == .tree, !shouldBypassStructuredParsing {
                     Button {
                         if expandedPaths.isEmpty || expandedPaths == ["root"] {
                             didTruncateExpansion = expandAllNodes(maxNodes: maxExpandedNodes)
@@ -68,14 +68,22 @@ public struct JSONViewerView: View {
                     .padding(.top, DesignSystem.Spacing.xs)
             }
 
+            if shouldBypassStructuredParsing {
+                Label("Showing raw JSON because structured parsing is disabled for very large payloads.", systemImage: "info.circle")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+                    .padding(.top, DesignSystem.Spacing.xs)
+            }
+
             switch viewMode {
             case .formatted:
-                ScrollView([.horizontal, .vertical]) {
+                DirectionalScrollView([.horizontal, .vertical]) {
                     formattedView
                         .padding()
                 }
             case .tree:
-                ScrollView([.horizontal, .vertical]) {
+                DirectionalScrollView([.horizontal, .vertical]) {
                     treeView
                         .padding()
                 }
@@ -98,6 +106,11 @@ public struct JSONViewerView: View {
             if isParsing {
                 ProgressView("Parsing…")
                     .frame(maxWidth: .infinity, alignment: .leading)
+            } else if shouldBypassStructuredParsing {
+                Text(jsonString)
+                    .font(DesignSystem.Typography.monospacedFont)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
             } else {
                 Text(formattedJSON ?? attributedJSONString())
                     .font(DesignSystem.Typography.monospacedFont)
@@ -111,14 +124,19 @@ public struct JSONViewerView: View {
 
     private var treeView: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
-            if didTruncateExpansion {
+            if shouldBypassStructuredParsing {
+                Text("Tree view is unavailable for very large JSON payloads.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if didTruncateExpansion {
                 Label("Showing a limited tree expansion for performance.", systemImage: "info.circle")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.bottom, DesignSystem.Spacing.sm)
             }
-
-            if let root = parsedJSON {
+            if shouldBypassStructuredParsing {
+                EmptyView()
+            } else if let root = parsedJSON {
                 jsonNode(root, key: nil, path: "root", level: 0)
             } else if let error = parseError {
                 errorView(error: error)
@@ -330,6 +348,13 @@ public struct JSONViewerView: View {
         formattedJSON = nil
         expandedPaths = ["root"]
         didTruncateExpansion = false
+        if shouldBypassStructuredParsing {
+            if viewMode == .tree {
+                viewMode = .raw
+            }
+            isParsing = false
+            return
+        }
 
         let input = jsonString
         let (json, error, formatted) = await Task.detached(priority: .userInitiated) { () -> (JSONValue?, String?, AttributedString?) in
@@ -373,18 +398,16 @@ public struct JSONViewerView: View {
         case let .array(arr):
             expandedPaths.insert(path)
             expandedCount += 1
-            for (index, item) in arr.enumerated() {
-                if collectPaths(item, path: "\(path).\(index)", expandedCount: &expandedCount, maxNodes: maxNodes) {
-                    return true
-                }
+            for (index, item) in arr.enumerated()
+                where collectPaths(item, path: "\(path).\(index)", expandedCount: &expandedCount, maxNodes: maxNodes) {
+                return true
             }
         case let .object(obj):
             expandedPaths.insert(path)
             expandedCount += 1
-            for (key, val) in obj {
-                if collectPaths(val, path: "\(path).\(key)", expandedCount: &expandedCount, maxNodes: maxNodes) {
-                    return true
-                }
+            for (key, val) in obj
+                where collectPaths(val, path: "\(path).\(key)", expandedCount: &expandedCount, maxNodes: maxNodes) {
+                return true
             }
         default:
             break
@@ -436,6 +459,10 @@ public struct JSONViewerView: View {
 
     private var isLargePayload: Bool {
         jsonString.utf8.count > 1_000_000
+    }
+
+    private var shouldBypassStructuredParsing: Bool {
+        BodyViewerPolicy.shouldBypassJSONStructuredParsing(byteCount: jsonString.utf8.count)
     }
 
     private var maxExpandedNodes: Int {

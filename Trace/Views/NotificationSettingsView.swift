@@ -77,24 +77,21 @@ struct NotificationSettingsView: View {
                 }
 
                 if settings.enableSlowRequestNotifications {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Threshold")
-                                .font(.subheadline)
-                            Spacer()
-                            Text(String(format: "%.1fs", settings.slowRequestThreshold))
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        Slider(
-                            value: $settings.slowRequestThreshold,
-                            in: 0.5 ... 10.0,
-                            step: 0.5
-                        )
-                        .accessibilityLabel("Slow request threshold")
-                        .accessibilityValue(String(format: "%.1f seconds", settings.slowRequestThreshold))
+                    HStack {
+                        Text("Threshold")
+                        Spacer()
+                        Text(String(format: "%.1fs", settings.slowRequestThreshold))
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(.vertical, 4)
+
+                    Slider(
+                        value: $settings.slowRequestThreshold,
+                        in: 0.5 ... 10.0,
+                        step: 0.5
+                    )
+                    .accessibilityLabel("Slow request threshold")
+                    .accessibilityValue(String(format: "%.1f seconds", settings.slowRequestThreshold))
+                    .listRowSeparator(.hidden)
                 }
 
                 Toggle(isOn: $settings.enableLargeDataNotifications) {
@@ -108,27 +105,24 @@ struct NotificationSettingsView: View {
                 }
 
                 if settings.enableLargeDataNotifications {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Threshold")
-                                .font(.subheadline)
-                            Spacer()
-                            Text(formatBytes(settings.largeDataThreshold))
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        Slider(
-                            value: Binding(
-                                get: { Double(settings.largeDataThreshold) },
-                                set: { settings.largeDataThreshold = Int64($0) }
-                            ),
-                            in: 1_000_000 ... 50_000_000,
-                            step: 1_000_000
-                        )
-                        .accessibilityLabel("Large data threshold")
-                        .accessibilityValue(formatBytes(settings.largeDataThreshold))
+                    HStack {
+                        Text("Threshold")
+                        Spacer()
+                        Text(formatBytes(settings.largeDataThreshold))
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(.vertical, 4)
+
+                    Slider(
+                        value: Binding(
+                            get: { Double(settings.largeDataThreshold) },
+                            set: { settings.largeDataThreshold = Int64($0) }
+                        ),
+                        in: 1_000_000 ... 50_000_000,
+                        step: 1_000_000
+                    )
+                    .accessibilityLabel("Large data threshold")
+                    .accessibilityValue(formatBytes(settings.largeDataThreshold))
+                    .listRowSeparator(.hidden)
                 }
             } header: {
                 Text("Notification Types")

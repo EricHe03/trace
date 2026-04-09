@@ -144,23 +144,21 @@ public struct URLEncoderView: View {
                         .disabled(outputText.isEmpty)
                     }
 
-                    ScrollView {
-                        Text(outputText.isEmpty ? "Result will appear here" : outputText)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(DesignSystem.Spacing.md)
-                            .background(
-                                RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
-                                    .fill(DesignSystem.Form.textEditorBackground)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
-                                    .stroke(DesignSystem.Colors.muted.opacity(0.3), lineWidth: 1)
-                            )
-                            .font(DesignSystem.Typography.monospacedFont)
-                            .foregroundStyle(outputText.isEmpty ? .secondary : .primary)
-                            .textSelection(.enabled)
-                    }
-                    .frame(minHeight: DesignSystem.Form.textEditorMinHeightMedium, maxHeight: DesignSystem.Form.outputMaxHeight)
+                    Text(outputText.isEmpty ? "Result will appear here" : outputText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(DesignSystem.Spacing.md)
+                        .background(
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .fill(DesignSystem.Form.textEditorBackground)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.md)
+                                .stroke(DesignSystem.Colors.muted.opacity(0.3), lineWidth: 1)
+                        )
+                        .font(DesignSystem.Typography.monospacedFont)
+                        .foregroundStyle(outputText.isEmpty ? .secondary : .primary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.horizontal)
 

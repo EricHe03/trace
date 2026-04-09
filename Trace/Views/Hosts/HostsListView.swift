@@ -95,7 +95,7 @@ struct HostsListView: View {
                                     } label: {
                                         Label(
                                             entry.enabled ? "Disable" : "Enable",
-                                            systemImage: entry.enabled ? "pause.circle" : "play.circle"
+                                            systemImage: entry.enabled ? "circle.slash" : "checkmark.circle"
                                         )
                                         .foregroundStyle(.white)
                                     }
@@ -111,6 +111,7 @@ struct HostsListView: View {
             }
             .listStyle(.plain)
             .navigationTitle("Hosts")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
@@ -143,7 +144,7 @@ struct HostsListView: View {
                                 showToast(message: "All entries disabled")
                             }
                         } label: {
-                            Label("Disable All", systemImage: "pause.circle")
+                            Label("Disable All", systemImage: "minus.circle")
                         }
 
                         Divider()
@@ -164,9 +165,13 @@ struct HostsListView: View {
             .searchable(text: $searchText, prompt: "Search hosts")
             .sheet(isPresented: $showingAddEntry) {
                 HostEditorView(entry: nil)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(item: $editingEntry) { entry in
                 HostEditorView(entry: entry)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
             .fileImporter(
                 isPresented: $showingImport,
@@ -252,7 +257,7 @@ struct HostsListView: View {
                 TraceContentUnavailableView(
                     "No Results",
                     systemImage: "magnifyingglass",
-                    description: Text("Try a different search term")
+                    description: Text("Try adjusting your search or filters")
                 )
             }
         }

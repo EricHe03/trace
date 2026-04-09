@@ -14,4 +14,22 @@ public enum RuntimeEnvironment {
     public static var isRunningUnitTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
+
+    public static var isAppExtension: Bool {
+        if Bundle.main.bundleURL.pathExtension == "appex" {
+            return true
+        }
+        return Bundle.main.object(forInfoDictionaryKey: "NSExtension") != nil
+    }
+
+    public static var isPacketTunnelExtension: Bool {
+        guard isAppExtension else { return false }
+
+        if let extensionInfo = Bundle.main.object(forInfoDictionaryKey: "NSExtension") as? [String: Any],
+           let extensionPointID = extensionInfo["NSExtensionPointIdentifier"] as? String {
+            return extensionPointID == "com.apple.networkextension.packet-tunnel"
+        }
+
+        return Bundle.main.bundleIdentifier?.contains("TraceVPN") == true
+    }
 }

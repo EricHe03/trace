@@ -133,6 +133,12 @@ public class MITMProxyServer: @unchecked Sendable {
                     self.transparentTLSModeEnabled
                 }
             },
+            onMITMFailure: { [weak self] host, reason in
+                guard let self else { return }
+                self.performOnQueue {
+                    self.recordMITMFailureForAutoBypass(host: host, reason: reason)
+                }
+            },
             shouldFailOpenAfterMITMFailure: { [weak self] host, port, reason, context in
                 guard let self else { return true }
                 return self.performOnQueueSync {
@@ -164,6 +170,7 @@ public class MITMProxyServer: @unchecked Sendable {
         onRequestCaptured: ((NetworkRequest) -> Void)?,
         shouldMitmConnect: @escaping (String, UInt16) -> Bool,
         isTransparentTLSEnabled: @escaping () -> Bool,
+        onMITMFailure: @escaping (String, String) -> Void,
         shouldFailOpenAfterMITMFailure: @escaping (String, UInt16, String, MITMFailoverContext) -> Bool
     ) -> any MITMEngine {
         NIOMITMProxyEngine(
@@ -181,7 +188,8 @@ public class MITMProxyServer: @unchecked Sendable {
                     self.dualMITMHttp2MITMEnabled
                 }
             },
-            shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure
+            shouldFailOpenAfterMITMFailure: shouldFailOpenAfterMITMFailure,
+            onMITMFailure: onMITMFailure
         )
     }
 
@@ -192,6 +200,7 @@ public class MITMProxyServer: @unchecked Sendable {
 
         mitmEngine?.stop()
         mitmEngine = nil
+        NIOMITMHTTPConnectHandler.clearCachedTLSContexts()
 
         ProxyLog.mitm.info("event=proxy.server_stop outcome=success")
     }
@@ -771,6 +780,33 @@ public class MITMProxyServer: @unchecked Sendable {
             return !normalized.contains("sni_invalid_or_missing")
         case .httpConnect:
             return true
+        }
+    }
+
+    private func recordMITMFailureForAutoBypass(host: String, reason: String) {
+        let normalizedHost = host
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let normalizedReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !normalizedHost.isEmpty, !normalizedReason.isEmpty else {
+            return
+        }
+
+        let decoded = LegacyReasonCodec.decode(normalizedReason)
+        switch decoded.failure {
+        case .clientRejectedMITMOrPinning,
+             .connectionClosedEarly,
+             .upstreamTimeout,
+             .upstreamConnectionClosed,
+             .upstreamTLSTrustFailed,
+             .upstreamTLSHostnameMismatch,
+             .mitmSetupFailed,
+             .nonHTTPProtocol,
+             .protocolMismatch:
+            MITMAutoBypassLookup.record(host: normalizedHost, reason: normalizedReason)
+        default:
+            break
         }
     }
 

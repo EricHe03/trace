@@ -140,11 +140,7 @@ struct NetworkViewActions {
             }
 
             DesignSystem.Haptics.success()
-            let successMessage = Self.importSuccessMessage(from: result)
-            withAnimation(DesignSystem.Accessibility.preferredAnimation) {
-                toastMessage.wrappedValue = successMessage
-            }
-            return .success(message: successMessage)
+            return .success(message: Self.importSuccessMessage(from: result))
         } catch {
             DesignSystem.Haptics.error()
             return .failure(message: "Imported responses could not be saved: \(error.localizedDescription)")

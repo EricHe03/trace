@@ -62,6 +62,7 @@ public struct TimestampToolView: View {
                         .buttonStyle(.bordered)
                         .tint(DesignSystem.Colors.accent)
                         .disabled(unixTimestamp.isEmpty)
+                        .accessibilityLabel("Copy Unix timestamp")
                     }
 
                     HStack {
@@ -120,10 +121,11 @@ public struct TimestampToolView: View {
                         .buttonStyle(.bordered)
                         .tint(DesignSystem.Colors.info)
                         .disabled(isoDateTime.isEmpty)
+                        .accessibilityLabel("Copy ISO 8601 date")
                     }
 
                     TextEditor(text: $isoDateTime)
-                        .frame(height: 80)
+                        .frame(minHeight: DesignSystem.Form.textEditorMinHeight)
                         .font(DesignSystem.Typography.monospacedFont)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()

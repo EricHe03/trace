@@ -59,3 +59,21 @@ struct SSEEventsFilterBar: View {
         .accessibilityLabel("SSE filters")
     }
 }
+
+private struct SSEEventsFilterBarPreview: View {
+    @State private var searchText = ""
+    @State private var filterType: String?
+
+    var body: some View {
+        SSEEventsFilterBar(
+            searchText: $searchText,
+            filterEventType: $filterType,
+            uniqueEventTypes: ["message", "update", "ping"]
+        )
+        .padding()
+    }
+}
+
+#Preview {
+    SSEEventsFilterBarPreview()
+}

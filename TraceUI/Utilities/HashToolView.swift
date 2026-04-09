@@ -15,6 +15,11 @@ public struct HashToolView: View {
     @State private var useHMAC = false
     @State private var toastMessage: String?
 
+    @State private var md5Hash = ""
+    @State private var sha1Hash = ""
+    @State private var sha256Hash = ""
+    @State private var sha512Hash = ""
+
     public init() {}
 
     public var body: some View {
@@ -57,6 +62,7 @@ public struct HashToolView: View {
                         )
                         .accessibilityLabel("Input text")
                         .accessibilityHint("Enter text to generate hashes")
+                        .onChangeCompat(of: inputText) { recomputeHashes() }
                 }
                 .padding(.horizontal)
 
@@ -64,6 +70,7 @@ public struct HashToolView: View {
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
                     Toggle("Use HMAC", isOn: $useHMAC)
                         .accessibilityHint("Use HMAC for hash-based message authentication")
+                        .onChangeCompat(of: useHMAC) { recomputeHashes() }
 
                     if useHMAC {
                         TextField("HMAC Key", text: $hmacKey)
@@ -75,6 +82,7 @@ public struct HashToolView: View {
                             .font(.system(.body, design: .monospaced))
                             .accessibilityLabel("HMAC key")
                             .accessibilityHint("Enter the key for HMAC authentication")
+                            .onChangeCompat(of: hmacKey) { recomputeHashes() }
                     }
 
                     Text(useHMAC ? "Hash-based Message Authentication Code" : "Standard hash functions")
@@ -101,36 +109,17 @@ public struct HashToolView: View {
                     .padding(.horizontal)
 
                     VStack(spacing: DesignSystem.Spacing.md) {
-                        HashResultCard(
-                            algorithm: "MD5",
-                            hash: computeMD5(),
-                            color: DesignSystem.Colors.accent
-                        ) {
-                            copyHash("MD5", hash: computeMD5())
+                        HashResultCard(algorithm: "MD5", hash: md5Hash, color: DesignSystem.Colors.accent) {
+                            copyHash("MD5", hash: md5Hash)
                         }
-
-                        HashResultCard(
-                            algorithm: "SHA1",
-                            hash: computeSHA1(),
-                            color: DesignSystem.Colors.success
-                        ) {
-                            copyHash("SHA1", hash: computeSHA1())
+                        HashResultCard(algorithm: "SHA1", hash: sha1Hash, color: DesignSystem.Colors.success) {
+                            copyHash("SHA1", hash: sha1Hash)
                         }
-
-                        HashResultCard(
-                            algorithm: "SHA256",
-                            hash: computeSHA256(),
-                            color: DesignSystem.Colors.warning
-                        ) {
-                            copyHash("SHA256", hash: computeSHA256())
+                        HashResultCard(algorithm: "SHA256", hash: sha256Hash, color: DesignSystem.Colors.warning) {
+                            copyHash("SHA256", hash: sha256Hash)
                         }
-
-                        HashResultCard(
-                            algorithm: "SHA512",
-                            hash: computeSHA512(),
-                            color: DesignSystem.Colors.accentAlt
-                        ) {
-                            copyHash("SHA512", hash: computeSHA512())
+                        HashResultCard(algorithm: "SHA512", hash: sha512Hash, color: DesignSystem.Colors.accentAlt) {
+                            copyHash("SHA512", hash: sha512Hash)
                         }
                     }
                     .padding(.horizontal)
@@ -146,6 +135,13 @@ public struct HashToolView: View {
     }
 
     // MARK: - Hash Computations
+
+    private func recomputeHashes() {
+        md5Hash = computeMD5()
+        sha1Hash = computeSHA1()
+        sha256Hash = computeSHA256()
+        sha512Hash = computeSHA512()
+    }
 
     private func computeMD5() -> String {
         guard !inputText.isEmpty else { return "" }

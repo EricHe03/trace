@@ -16,8 +16,8 @@ import TraceCore
 public final class RewriteManager: ObservableObject {
     public static let shared = RewriteManager()
 
-    // Use composition with the base manager
-    private let baseManager: PersistentCollectionManager<RewriteRule>
+    private let rulesManager: PersistentCollectionManager<RewriteRule>
+    private let groupsManager: PersistentCollectionManager<RuleGroup>
     private var cancellables: Set<AnyCancellable> = []
     private let maxBodyModificationBytes = 10 * 1024 * 1024
     private let ruleStatsFlushIntervalSeconds: TimeInterval = 5
@@ -27,21 +27,32 @@ public final class RewriteManager: ObservableObject {
 
     public nonisolated(unsafe) let objectWillChange = ObservableObjectPublisher()
 
-    /// Expose items through computed property
     public var rules: [RewriteRule] {
-        baseManager.items
+        rulesManager.items
+    }
+
+    public var groups: [RuleGroup] {
+        groupsManager.items.sorted { $0.priority < $1.priority }
     }
 
     private init() {
-        self.baseManager = PersistentCollectionManager(
-            fileName: "RewriteRules.json",
-            notificationName: "RewriteRulesChanged",
-            logger: FeatureLog.rewrite,
-            itemName: "rule"
+        self.rulesManager = PersistentCollectionManager(
+            descriptor: .rewriteRules,
+            logger: FeatureLog.rewrite
+        )
+        self.groupsManager = PersistentCollectionManager(
+            descriptor: .ruleGroups,
+            logger: FeatureLog.rewrite
         )
 
-        // Forward changes from the underlying store for SwiftUI observation.
-        baseManager.objectWillChange
+        rulesManager.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
+        groupsManager.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
@@ -55,28 +66,28 @@ public final class RewriteManager: ObservableObject {
     public func addRule(_ rule: RewriteRule) {
         var newRule = rule
         newRule.priority = rules.count
-        baseManager.add(newRule)
+        rulesManager.add(newRule)
         updatePriorities()
     }
 
     /// Update an existing rule
     public func updateRule(_ rule: RewriteRule) {
-        baseManager.update(rule)
+        rulesManager.update(rule)
     }
 
     /// Delete a rule
     public func deleteRule(_ rule: RewriteRule) {
-        baseManager.delete(rule)
+        rulesManager.delete(rule)
     }
 
     /// Delete rules at indices
     public func deleteRules(at indices: IndexSet) {
-        baseManager.delete(at: indices)
+        rulesManager.delete(at: indices)
     }
 
     /// Toggle rule enabled state
     public func toggleRule(_ rule: RewriteRule) {
-        baseManager.toggle(rule)
+        rulesManager.toggle(rule)
     }
 
     /// Move rules (for reordering priority)
@@ -93,8 +104,7 @@ public final class RewriteManager: ObservableObject {
             newRules.insert(item, at: adjustedDestination + offset)
         }
 
-        // Update the base manager's items directly
-        baseManager.importItems(newRules, merge: false)
+        rulesManager.replaceAll(newRules)
         updatePriorities()
     }
 
@@ -104,14 +114,64 @@ public final class RewriteManager: ObservableObject {
         for (index, _) in updatedRules.enumerated() {
             updatedRules[index].priority = index
         }
-        baseManager.importItems(updatedRules, merge: false)
+        rulesManager.replaceAll(updatedRules)
+    }
+
+    // MARK: - Group Management
+
+    public func addGroup(_ group: RuleGroup) {
+        var newGroup = group
+        newGroup.priority = groups.count
+        groupsManager.add(newGroup)
+        updateGroupPriorities()
+    }
+
+    public func updateGroup(_ group: RuleGroup) {
+        groupsManager.update(group)
+    }
+
+    public func deleteGroup(_ group: RuleGroup) {
+        groupsManager.delete(group)
+        updateGroupPriorities()
+    }
+
+    public func toggleGroup(_ group: RuleGroup) {
+        groupsManager.toggle(group)
+    }
+
+    public func moveGroups(from source: IndexSet, to destination: Int) {
+        var current = groups
+        let itemsToMove = source.sorted().reversed().map { current.remove(at: $0) }.reversed()
+        let adjustedDestination = destination - source.count(where: { $0 < destination })
+        for (offset, item) in itemsToMove.enumerated() {
+            current.insert(item, at: adjustedDestination + offset)
+        }
+        groupsManager.replaceAll(current)
+        updateGroupPriorities()
+    }
+
+    public func importGroups(_ groups: [RuleGroup], merge: Bool = true) {
+        groupsManager.importItems(groups, merge: merge)
+        updateGroupPriorities()
+    }
+
+    public func reloadGroupsIfNeeded() {
+        groupsManager.reloadIfNeeded()
+    }
+
+    private func updateGroupPriorities() {
+        var updatedGroups = groups
+        for index in updatedGroups.indices {
+            updatedGroups[index].priority = index
+        }
+        groupsManager.replaceAll(updatedGroups)
     }
 
     // MARK: - Rule Matching
 
     /// Find all enabled rules that match a given URL
     public func matchingRules(for url: String, type: RuleType? = nil) -> [RewriteRule] {
-        var matching = baseManager.matchingItems(for: url)
+        var matching = rulesManager.matchingItems(for: url)
             .sorted { $0.priority < $1.priority }
 
         if let type {
@@ -171,8 +231,10 @@ public final class RewriteManager: ObservableObject {
         }
 
         // Handle wildcard replacement in redirect URL with multiple captures.
-        if rule.matchPattern.contains("*") && redirectUrl.contains("*"),
-           let captures = wildcardCaptures(url: url, pattern: rule.matchPattern) {
+        // Use matchCriteria URL pattern when present (modern rules), falling back to legacy matchPattern.
+        let capturePattern = rule.matchCriteria?.url?.pattern ?? rule.matchPattern
+        if capturePattern.contains("*") && redirectUrl.contains("*"),
+           let captures = wildcardCaptures(url: url, pattern: capturePattern) {
             return applyWildcardCaptures(to: redirectUrl, captures: captures)
         }
 
@@ -536,29 +598,29 @@ public final class RewriteManager: ObservableObject {
 
     /// Export rules to JSON file
     public func exportRules() throws -> URL {
-        try baseManager.exportItems()
+        try rulesManager.exportItems()
     }
 
     /// Import rules from JSON file
     public func importRules(from url: URL, merge: Bool = true) throws {
-        try baseManager.importItems(from: url, merge: merge)
+        try rulesManager.importItems(from: url, merge: merge)
         updatePriorities()
     }
 
     /// Import rules from decoded data
     public func importRules(_ importedRules: [RewriteRule], merge: Bool = true) {
-        baseManager.importItems(importedRules, merge: merge)
+        rulesManager.importItems(importedRules, merge: merge)
         updatePriorities()
     }
 
     /// Clear all rules
     public func clearAllRules() {
-        baseManager.clearAll()
+        rulesManager.clearAll()
     }
 
     /// Reload rules if the backing file has changed.
     public func reloadIfNeeded() {
-        baseManager.reloadIfNeeded()
+        rulesManager.reloadIfNeeded()
     }
 
     // MARK: - Helper Methods
@@ -604,11 +666,11 @@ public final class RewriteManager: ObservableObject {
     // MARK: - Statistics (Delegate to Base Manager)
 
     public var enabledRulesCount: Int {
-        baseManager.enabledCount
+        rulesManager.enabledCount
     }
 
     public var totalRulesCount: Int {
-        baseManager.totalCount
+        rulesManager.totalCount
     }
 
     public func rulesCount(for type: RuleType) -> Int {
@@ -692,6 +754,6 @@ private extension RewriteManager {
         }
 
         guard changed else { return }
-        baseManager.importItems(updated, merge: false)
+        rulesManager.replaceAll(updated)
     }
 }

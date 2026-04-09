@@ -96,7 +96,7 @@ public struct RequestListRow: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("URL: \(request.host)\(request.path)")
 
-            Text(request.timestamp, style: .relative)
+            Text(request.timestamp, style: .time)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -161,5 +161,23 @@ public struct RequestListRow: View {
         }
 
         return description
+    }
+}
+
+#Preview {
+    let request = NetworkRequest(
+        url: "https://api.example.com/users/123",
+        method: .get,
+        statusCode: 200,
+        timestamp: Date(),
+        duration: 0.234,
+        requestHeaders: [],
+        responseHeaders: [],
+        requestBody: .empty,
+        responseBody: .empty
+    )
+    List {
+        RequestListRow(request: request, isFavorited: false)
+        RequestListRow(request: request, isFavorited: true)
     }
 }

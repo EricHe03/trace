@@ -13,6 +13,7 @@ import SwiftUI
 import TraceCore
 import TraceFeatures
 import TraceProxy
+import TraceUI
 
 @MainActor
 final class CaptureViewModel: ObservableObject {
@@ -26,6 +27,27 @@ final class CaptureViewModel: ObservableObject {
         defaults.remove(.quic)
         return defaults
     }()
+
+    struct RequestFilterSnapshot: Sendable {
+        let requests: [NetworkRequest]
+        let filterMethod: HTTPMethod?
+        let filterStatusCode: Int?
+        let filterDomains: [String]
+        let favoritedIDs: Set<UUID>?
+        let filterContentTypes: Set<ContentTypeFilter>
+        let filterMinSize: Int?
+        let filterMaxSize: Int?
+        let filterMinDuration: TimeInterval?
+        let filterMaxDuration: TimeInterval?
+        let filterRegexPattern: String?
+        let filterResponseTime: ResponseTimeFilter?
+        let filterShowDuplicatesOnly: Bool
+        let filterShowErrorsOnly: Bool
+        let searchText: String
+        let searchScope: SearchScope
+        let filterNetworkEventTypes: Set<NetworkEventType>
+        let bodySearchMatches: Set<UUID>
+    }
 
     private struct FilterCacheKey: Hashable {
         let requestsVersion: Int
@@ -135,11 +157,13 @@ final class CaptureViewModel: ObservableObject {
     }
 
     var minResponseSize: Int? {
-        get { filterMinSize } set { filterMinSize = newValue }
+        get { filterMinSize.map { $0 / 1024 } }
+        set { filterMinSize = newValue.map { $0 * 1024 } }
     }
 
     var maxResponseSize: Int? {
-        get { filterMaxSize } set { filterMaxSize = newValue }
+        get { filterMaxSize.map { $0 / 1024 } }
+        set { filterMaxSize = newValue.map { $0 * 1024 } }
     }
 
     var minDuration: TimeInterval? {
@@ -217,7 +241,7 @@ final class CaptureViewModel: ObservableObject {
 
     // Search optimization
     private var searchTask: Task<Void, Never>?
-    private let maxSearchBodySize = 100_000 // 100KB limit for body search
+    private let maxSearchBodySize = BodyViewerPolicy.networkBodySearchBytes
     @Published private var bodySearchMatches: Set<UUID> = [] {
         didSet {
             bodySearchVersion &+= 1
@@ -267,6 +291,10 @@ final class CaptureViewModel: ObservableObject {
     private var isRunningDuplicateDetection = false
     private var isLoadingThrottlingState = false
     private var isLoadingSettings = false
+    private var isSceneActive = true
+    private var hasPendingRequestRefresh = false
+    private var hasPendingTransportRefresh = false
+    private var hasPendingUDPFlowHintRefresh = false
     private static let unknownSessionID = UUID(uuidString: "00000000-0000-0000-0000-000000000000") ?? UUID()
 
     init() {
@@ -300,19 +328,19 @@ final class CaptureViewModel: ObservableObject {
         // Observe new requests from Network Extension with debouncing
         newRequestsObserverToken = storage.observeNewRequests { [weak self] in
             Task { @MainActor [weak self] in
-                self?.debouncedLoadRequests()
+                self?.handleObservedNewRequest()
             }
         }
 
         newTransportRequestsObserverToken = storage.observeNewTransportRequests { [weak self] in
             Task { @MainActor [weak self] in
-                self?.debouncedLoadTransportRequests()
+                self?.handleObservedNewTransportRequest()
             }
         }
 
         newUDPFlowsObserverToken = storage.observeNewUDPFlows { [weak self] in
             Task { @MainActor [weak self] in
-                self?.loadTransportProtocolHints()
+                self?.handleObservedNewUDPFlow()
             }
         }
 
@@ -561,6 +589,60 @@ final class CaptureViewModel: ObservableObject {
         }
 
         loadTransportRequests(triggeredByNewRequest: true)
+    }
+
+    func setSceneActive(_ isActive: Bool) {
+        guard isSceneActive != isActive else { return }
+        isSceneActive = isActive
+
+        guard isActive else {
+            loadTask?.cancel()
+            transportLoadTask?.cancel()
+            return
+        }
+
+        flushDeferredRefreshesIfNeeded()
+    }
+
+    private func handleObservedNewRequest() {
+        guard isSceneActive else {
+            hasPendingRequestRefresh = true
+            return
+        }
+        debouncedLoadRequests()
+    }
+
+    private func handleObservedNewTransportRequest() {
+        guard isSceneActive else {
+            hasPendingTransportRefresh = true
+            return
+        }
+        debouncedLoadTransportRequests()
+    }
+
+    private func handleObservedNewUDPFlow() {
+        guard isSceneActive else {
+            hasPendingUDPFlowHintRefresh = true
+            return
+        }
+        loadTransportProtocolHints()
+    }
+
+    private func flushDeferredRefreshesIfNeeded() {
+        if hasPendingRequestRefresh {
+            hasPendingRequestRefresh = false
+            debouncedLoadRequests()
+        }
+
+        if hasPendingTransportRefresh {
+            hasPendingTransportRefresh = false
+            debouncedLoadTransportRequests()
+        }
+
+        if hasPendingUDPFlowHintRefresh {
+            hasPendingUDPFlowHintRefresh = false
+            loadTransportProtocolHints()
+        }
     }
 
     private func loadRequests(triggeredByNewRequest: Bool = false, forceFullReload: Bool = false) {
@@ -993,58 +1075,130 @@ final class CaptureViewModel: ObservableObject {
             return requests
         }
 
+        let results = Self.filterRequests(using: makeRequestFilterSnapshot())
+
+        if results.count > 1, results[0].timestamp < results[1].timestamp {
+            let sorted = results.sorted { $0.timestamp > $1.timestamp }
+            filteredRequestsCache = sorted
+            filteredRequestsCacheKey = cacheKey
+            return sorted
+        }
+        filteredRequestsCache = results
+        filteredRequestsCacheKey = cacheKey
+        return results
+    }
+
+    func makeRequestFilterSnapshot() -> RequestFilterSnapshot {
+        RequestFilterSnapshot(
+            requests: requests,
+            filterMethod: filterMethod,
+            filterStatusCode: filterStatusCode,
+            filterDomains: filterDomains,
+            favoritedIDs: filterFavoritesOnly ? favoritesManager.favoritedRequestIds : nil,
+            filterContentTypes: filterContentTypes,
+            filterMinSize: filterMinSize,
+            filterMaxSize: filterMaxSize,
+            filterMinDuration: filterMinDuration,
+            filterMaxDuration: filterMaxDuration,
+            filterRegexPattern: filterRegexPattern,
+            filterResponseTime: filterResponseTime,
+            filterShowDuplicatesOnly: filterShowDuplicatesOnly,
+            filterShowErrorsOnly: filterShowErrorsOnly,
+            searchText: searchText,
+            searchScope: searchScope,
+            filterNetworkEventTypes: filterNetworkEventTypes,
+            bodySearchMatches: bodySearchMatches
+        )
+    }
+
+    // swiftlint:disable:next cyclomatic_complexity
+    nonisolated static func filterRequests(using snapshot: RequestFilterSnapshot) -> [NetworkRequest] {
+        guard snapshot.filterNetworkEventTypes.contains(.http) else { return [] }
+
+        if snapshot.requests.isEmpty {
+            return []
+        }
+
+        if snapshot.filterMethod == nil,
+           snapshot.filterStatusCode == nil,
+           snapshot.filterDomains.isEmpty,
+           snapshot.favoritedIDs == nil,
+           snapshot.filterContentTypes.isEmpty,
+           snapshot.filterMinSize == nil,
+           snapshot.filterMaxSize == nil,
+           snapshot.filterMinDuration == nil,
+           snapshot.filterMaxDuration == nil,
+           snapshot.filterRegexPattern == nil,
+           snapshot.filterResponseTime == nil,
+           !snapshot.filterShowDuplicatesOnly,
+           !snapshot.filterShowErrorsOnly,
+           snapshot.searchText.isEmpty {
+            return snapshot.requests
+        }
+
+        let regex: NSRegularExpression?
+        if let pattern = snapshot.filterRegexPattern?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !pattern.isEmpty {
+            do {
+                regex = try NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+            } catch {
+                return []
+            }
+        } else {
+            regex = nil
+        }
+
         var results: [NetworkRequest] = []
-        results.reserveCapacity(requests.count)
-        let favoritedIds = filterFavoritesOnly ? favoritesManager.favoritedRequestIds : nil
+        results.reserveCapacity(snapshot.requests.count)
 
-        for request in requests {
-            if let method = filterMethod, request.method != method { continue }
-            if let statusCode = filterStatusCode, request.statusCode != statusCode { continue }
+        for request in snapshot.requests {
+            if let method = snapshot.filterMethod, request.method != method { continue }
+            if let statusCode = snapshot.filterStatusCode, request.statusCode != statusCode { continue }
 
-            if !filterDomains.isEmpty {
+            if !snapshot.filterDomains.isEmpty {
                 let host = request.host
-                let matches = filterDomains.contains { domain in
+                let matches = snapshot.filterDomains.contains { domain in
                     matchesDomain(host: host, pattern: domain)
                 }
                 if !matches { continue }
             }
 
-            if let favoritedIds, !favoritedIds.contains(request.id) { continue }
-            if !filterContentTypes.isEmpty, !matchesContentType(request) { continue }
+            if let favoritedIDs = snapshot.favoritedIDs, !favoritedIDs.contains(request.id) { continue }
+            if !snapshot.filterContentTypes.isEmpty, !matchesContentType(request, filters: snapshot.filterContentTypes) { continue }
 
-            if filterMinSize != nil || filterMaxSize != nil {
+            if snapshot.filterMinSize != nil || snapshot.filterMaxSize != nil {
                 let size = request.responseSize ?? 0
-                if let minSize = filterMinSize, size < minSize { continue }
-                if let maxSize = filterMaxSize, size > maxSize { continue }
+                if let minSize = snapshot.filterMinSize, size < minSize { continue }
+                if let maxSize = snapshot.filterMaxSize, size > maxSize { continue }
             }
 
-            if filterMinDuration != nil || filterMaxDuration != nil {
-                if let minDuration = filterMinDuration, request.duration < minDuration { continue }
-                if let maxDuration = filterMaxDuration, request.duration > maxDuration { continue }
+            if snapshot.filterMinDuration != nil || snapshot.filterMaxDuration != nil {
+                if let minDuration = snapshot.filterMinDuration, request.duration < minDuration { continue }
+                if let maxDuration = snapshot.filterMaxDuration, request.duration > maxDuration { continue }
             }
 
-            if let responseTime = filterResponseTime, !responseTime.range.contains(request.duration) { continue }
-            if filterShowErrorsOnly, (request.statusCode ?? 0) < 400 { continue }
-            if filterShowDuplicatesOnly, !request.isDuplicate { continue }
+            if let responseTime = snapshot.filterResponseTime, !responseTime.range.contains(request.duration) { continue }
+            if snapshot.filterShowErrorsOnly, (request.statusCode ?? 0) < 400 { continue }
+            if snapshot.filterShowDuplicatesOnly, !request.isDuplicate { continue }
 
-            if let pattern = filterRegexPattern, !pattern.isEmpty, !matchesRegex(request, pattern: pattern) {
+            if let regex, !matchesRegex(request, regex: regex) {
                 continue
             }
 
-            if !searchText.isEmpty {
-                let matchesSearch: Bool = switch searchScope {
+            if !snapshot.searchText.isEmpty {
+                let matchesSearch: Bool = switch snapshot.searchScope {
                 case .all:
-                    request.url.localizedCaseInsensitiveContains(searchText) ||
-                        request.statusCodeText.contains(searchText) ||
-                        request.method.rawValue.localizedCaseInsensitiveContains(searchText) ||
-                        searchInHeaders(request, searchText) ||
-                        searchInBody(request, searchText)
+                    request.url.localizedCaseInsensitiveContains(snapshot.searchText) ||
+                        request.statusCodeText.contains(snapshot.searchText) ||
+                        request.method.rawValue.localizedCaseInsensitiveContains(snapshot.searchText) ||
+                        searchInHeaders(request, snapshot.searchText) ||
+                        snapshot.bodySearchMatches.contains(request.id)
                 case .url:
-                    request.url.localizedCaseInsensitiveContains(searchText)
+                    request.url.localizedCaseInsensitiveContains(snapshot.searchText)
                 case .headers:
-                    searchInHeaders(request, searchText)
+                    searchInHeaders(request, snapshot.searchText)
                 case .body:
-                    searchInBody(request, searchText)
+                    snapshot.bodySearchMatches.contains(request.id)
                 }
                 if !matchesSearch { continue }
             }
@@ -1052,27 +1206,13 @@ final class CaptureViewModel: ObservableObject {
             results.append(request)
         }
 
-        if results.count > 1, results[0].timestamp < results[1].timestamp {
-            results.sort { $0.timestamp > $1.timestamp }
-        }
-        filteredRequestsCache = results
-        filteredRequestsCacheKey = cacheKey
         return results
     }
 
     // MARK: - Content Type Matching
 
     private func matchesContentType(_ request: NetworkRequest) -> Bool {
-        guard let contentTypeHeader = request.responseHeaders.first(where: { $0.key.lowercased() == "content-type" }) else {
-            return false
-        }
-
-        let contentType = contentTypeHeader.value.lowercased()
-        return filterContentTypes.contains { filter in
-            filter.mimeTypes.contains { mimeType in
-                contentType.contains(mimeType.lowercased())
-            }
-        }
+        Self.matchesContentType(request, filters: filterContentTypes)
     }
 
     // MARK: - Regex Matching
@@ -1103,7 +1243,10 @@ final class CaptureViewModel: ObservableObject {
     private func matchesRegex(_ request: NetworkRequest, pattern: String) -> Bool {
         validateRegexPattern(pattern: pattern)
         guard let regex = compiledRegex else { return false }
+        return Self.matchesRegex(request, regex: regex)
+    }
 
+    private nonisolated static func matchesRegex(_ request: NetworkRequest, regex: NSRegularExpression) -> Bool {
         // Check URL
         let urlRange = NSRange(request.url.startIndex..., in: request.url)
         if regex.firstMatch(in: request.url, options: [], range: urlRange) != nil {
@@ -1123,6 +1266,10 @@ final class CaptureViewModel: ObservableObject {
     }
 
     private func searchInHeaders(_ request: NetworkRequest, _ searchText: String) -> Bool {
+        Self.searchInHeaders(request, searchText)
+    }
+
+    private nonisolated static func searchInHeaders(_ request: NetworkRequest, _ searchText: String) -> Bool {
         for header in request.requestHeaders + request.responseHeaders {
             if header.key.localizedCaseInsensitiveContains(searchText) ||
                 header.value.localizedCaseInsensitiveContains(searchText) {
@@ -1413,6 +1560,10 @@ final class CaptureViewModel: ObservableObject {
     }
 
     private func matchesDomain(host: String, pattern: String) -> Bool {
+        Self.matchesDomain(host: host, pattern: pattern)
+    }
+
+    private nonisolated static func matchesDomain(host: String, pattern: String) -> Bool {
         let lowercasedHost = host.lowercased()
         let lowercasedPattern = pattern.lowercased()
 
@@ -1433,6 +1584,19 @@ final class CaptureViewModel: ObservableObject {
         }
 
         return false
+    }
+
+    private nonisolated static func matchesContentType(_ request: NetworkRequest, filters: Set<ContentTypeFilter>) -> Bool {
+        guard let contentTypeHeader = request.responseHeaders.first(where: { $0.key.lowercased() == "content-type" }) else {
+            return false
+        }
+
+        let contentType = contentTypeHeader.value.lowercased()
+        return filters.contains { filter in
+            filter.mimeTypes.contains { mimeType in
+                contentType.contains(mimeType.lowercased())
+            }
+        }
     }
 
     // MARK: - Session Management

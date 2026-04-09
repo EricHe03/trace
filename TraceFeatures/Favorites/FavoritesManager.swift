@@ -27,15 +27,10 @@ public final class FavoritesManager: ObservableObject {
         baseManager.items
     }
 
-    /// Notification for cross-process updates
-    private let favoritesUpdatedNotificationName = Notification.Name.favoritesUpdated
-
     private init() {
         self.baseManager = PersistentCollectionManager(
-            fileName: "Favorites.json",
-            notificationName: Notification.Name.favoritesUpdated.rawValue,
-            logger: FeatureLog.storage,
-            itemName: "favorite"
+            descriptor: .favorites,
+            logger: FeatureLog.storage
         )
 
         // Forward changes from the underlying store for SwiftUI observation.
@@ -45,8 +40,6 @@ public final class FavoritesManager: ObservableObject {
                 self?.objectWillChange.send()
             }
             .store(in: &cancellables)
-
-        setupNotifications()
     }
 
     // MARK: - Favorite Management
@@ -134,18 +127,6 @@ public final class FavoritesManager: ObservableObject {
     /// Total number of favorites
     public var totalCount: Int {
         baseManager.totalCount
-    }
-
-    // MARK: - Notifications
-
-    private func setupNotifications() {
-        NotificationCenter.default.addObserver(
-            forName: favoritesUpdatedNotificationName,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.reloadFavorites()
-        }
     }
 }
 

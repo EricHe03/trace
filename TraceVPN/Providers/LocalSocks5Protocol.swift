@@ -59,3 +59,13 @@ enum ParseResult<T> {
     case invalid
     case value(T)
 }
+
+/// Result type for SOCKS5 request parsing that distinguishes the reason for rejection,
+/// so the correct RFC 1928 §6 REP code can be returned to the client.
+enum Socks5RequestParseResult {
+    case needMoreData
+    case commandNotSupported
+    case addressTypeNotSupported
+    case generalFailure
+    case value(Socks5Request)
+}

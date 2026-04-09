@@ -64,3 +64,13 @@ extension NetworkEventType {
         }
     }
 }
+
+// MARK: - Previews
+
+#Preview {
+    NetworkTypeFilters(
+        viewModel: CaptureViewModel(),
+        eventCountByType: [.http: 42, .webSocket: 5, .dns: 12],
+        onToggleType: { _ in }
+    )
+}

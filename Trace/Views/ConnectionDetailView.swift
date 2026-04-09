@@ -100,6 +100,8 @@ struct ConnectionDetailView: View {
                     }
                 }
             }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .overlay {
             if viewModel.isLoading {
@@ -828,5 +830,25 @@ private struct TCPStreamView: View {
             lines.append(String(format: "%04x  %@  %@", index, hex.padding(toLength: 3 * lineLength - 1, withPad: " ", startingAt: 0), ascii))
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+#Preview {
+    let record = PacketFlowRecord(
+        sourceIP: "192.168.1.100",
+        destinationIP: "142.250.80.46",
+        sourcePort: 54321,
+        destinationPort: 443,
+        transport: .tcp,
+        bytesFromSource: 1024,
+        bytesToSource: 4096,
+        packetsFromSource: 10,
+        packetsToSource: 20,
+        tlsSNI: "www.google.com",
+        alpn: ["h2"],
+        connectionState: .established
+    )
+    NavigationStack {
+        ConnectionDetailView(record: record)
     }
 }

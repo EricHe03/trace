@@ -15,6 +15,7 @@ import UniformTypeIdentifiers
 
 struct NetworkView: View {
     @ObservedObject var viewModel: CaptureViewModel
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var webSocketViewModel = WebSocketViewModel()
     @StateObject private var sseViewModel = SSEViewModel()
 
@@ -22,6 +23,7 @@ struct NetworkView: View {
     @State private var showingRequestBuilder = false
     @State private var showingFavorites = false
     @State private var showingCurlImport = false
+    @State private var showingThrottling = false
     @State private var showingClearAllAlert = false
     @State private var showingVPNSetupAlert = false
     @State private var toastMessage: String?
@@ -54,17 +56,30 @@ struct NetworkView: View {
         contentStack
             .sheet(isPresented: $showingFilters) {
                 FiltersView(viewModel: viewModel)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingRequestBuilder) {
                 RequestBuilderView()
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingFavorites) {
                 NavigationStack {
                     FavoritesListView()
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingCurlImport) {
                 curlImportView
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $showingThrottling) {
+                NetworkConditionProfilesView(viewModel: viewModel)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .shareSheet(item: $shareSheetItem)
             .modifier(RequestNavigationDestinationModifier(requestToOpen: $requestToOpen))
@@ -76,6 +91,12 @@ struct NetworkView: View {
             ))
             .task {
                 await performInitialLoad()
+            }
+            .onAppear {
+                syncRefreshLifecycle(for: scenePhase)
+            }
+            .onChangeCompat(of: scenePhase) { newPhase in
+                syncRefreshLifecycle(for: newPhase)
             }
             .modifier(EventRebuildModifier(
                 viewModel: viewModel,
@@ -163,7 +184,11 @@ struct NetworkView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .safeAreaInset(edge: .bottom) {
+            Color.clear.frame(height: 100)
+        }
         .navigationTitle("Network")
+        .navigationBarTitleDisplayMode(.large)
         .searchable(
             text: $viewModel.searchText,
             prompt: "Search URL, headers, or body"
@@ -184,6 +209,7 @@ struct NetworkView: View {
                 onToggleFilters: { showingFilters = true },
                 onShowFavorites: { showingFavorites = true },
                 onShowCurlImport: { showingCurlImport = true },
+                onShowThrottling: { showingThrottling = true },
                 onClearAll: { showingClearAllAlert = true }
             )
         }
@@ -268,6 +294,12 @@ struct NetworkView: View {
         FeatureLog.capture.info("event=network_view.load_all_data outcome=complete")
     }
 
+    private func syncRefreshLifecycle(for phase: ScenePhase) {
+        let isActive = phase == .active
+        webSocketViewModel.setSceneActive(isActive)
+        sseViewModel.setSceneActive(isActive)
+    }
+
     // MARK: - Computed Properties
 
     private var filteredEvents: [NetworkEvent] {
@@ -292,14 +324,16 @@ struct NetworkView: View {
             TraceContentUnavailableView(
                 "No Results",
                 systemImage: "magnifyingglass",
-                description: Text("Try adjusting your search or filters")
+                description: Text("Try adjusting your search or filters"),
+                actionTitle: "Clear Filters",
+                action: { viewModel.clearFilters() }
             )
         } else if !vpnManager.isConnected {
-            // Capture is not active
+            // Capture is not active — BottomActionBar is always visible, no duplicate button needed
             TraceContentUnavailableView(
                 "No Requests Yet",
                 systemImage: "network.slash",
-                description: Text("Start capture to see network traffic here")
+                description: Text("Tap the button below to start capturing network traffic")
             )
         } else {
             // Capture is active but no requests yet
@@ -399,8 +433,9 @@ struct NetworkView: View {
 
     @MainActor
     private func rebuildEventCaches() async {
+        let requestFilterSnapshot = viewModel.makeRequestFilterSnapshot()
         let input = EventBuildInput(
-            httpRequests: viewModel.filteredRequests,
+            requestFilterSnapshot: requestFilterSnapshot,
             transportRequests: viewModel.transportRequests,
             webSockets: webSocketViewModel.connections,
             sseConnections: sseViewModel.connections,
@@ -417,7 +452,7 @@ struct NetworkView: View {
     }
 
     private struct EventBuildInput: Sendable {
-        let httpRequests: [NetworkRequest]
+        let requestFilterSnapshot: CaptureViewModel.RequestFilterSnapshot
         let transportRequests: [TransportRequest]
         let webSockets: [WebSocketConnection]
         let sseConnections: [SSEConnection]
@@ -430,7 +465,8 @@ struct NetworkView: View {
         var eventArrays: [[NetworkEvent]] = []
 
         if input.enabledTypes.contains(.http) {
-            eventArrays.append(input.httpRequests.map { .httpRequest($0) })
+            let filteredRequests = CaptureViewModel.filterRequests(using: input.requestFilterSnapshot)
+            eventArrays.append(filteredRequests.map { .httpRequest($0) })
         }
 
         if input.enabledTypes.contains(.webSocket) {

@@ -31,9 +31,15 @@ public class CertificateManager {
 
     /// Stores the UserDefaults key for the known Root CA fingerprint.
     private let knownFingerprintKey = "com.trace.rootCA.knownFingerprint"
+    private let rootCACacheLock = NSLock()
+    private var cachedRootCA: (certificate: SecCertificate, privateKey: SecKey)?
 
     /// Posts when the Root CA fingerprint changes.
     public static let rootCAMismatchNotification = Notification.Name("TraceRootCAMismatchNotification")
+    private static let keychainAccessGroupLogLock = NSLock()
+    private nonisolated(unsafe) static var didLogKeychainAccessGroup = false
+    private static let runtimeCacheInvalidatorLock = NSLock()
+    private nonisolated(unsafe) static var runtimeCacheInvalidators: [@Sendable () -> Void] = []
 
     // MARK: - Keychain identifiers (per-domain leafs)
 
@@ -163,7 +169,15 @@ public class CertificateManager {
     }()
 
     /// Logs the current keychain access group for diagnostics.
-    public static func logKeychainAccessGroup() {
+    public static func logKeychainAccessGroup(force: Bool = false) {
+        keychainAccessGroupLogLock.lock()
+        let shouldLog = force || !didLogKeychainAccessGroup
+        if shouldLog {
+            didLogKeychainAccessGroup = true
+        }
+        keychainAccessGroupLogLock.unlock()
+
+        guard shouldLog else { return }
         if let group = keychainAccessGroup {
             SecurityLog.keychain.info("event=keychain.access_group outcome=success group=\(group, privacy: .private)")
         } else {
@@ -172,6 +186,44 @@ public class CertificateManager {
     }
 
     private init() {}
+
+    private func loadCachedRootCA() -> (certificate: SecCertificate, privateKey: SecKey)? {
+        rootCACacheLock.lock()
+        defer { rootCACacheLock.unlock() }
+        return cachedRootCA
+    }
+
+    private func storeCachedRootCA(_ rootCA: (certificate: SecCertificate, privateKey: SecKey)) {
+        rootCACacheLock.lock()
+        cachedRootCA = rootCA
+        rootCACacheLock.unlock()
+    }
+
+    private func clearCachedRootCA() {
+        rootCACacheLock.lock()
+        cachedRootCA = nil
+        rootCACacheLock.unlock()
+    }
+
+    public static func registerRuntimeCacheInvalidator(_ invalidator: @escaping @Sendable () -> Void) {
+        runtimeCacheInvalidatorLock.lock()
+        runtimeCacheInvalidators.append(invalidator)
+        runtimeCacheInvalidatorLock.unlock()
+    }
+
+    func clearRuntimeCaches() {
+        SecurityLog.certificate.debug("event=ca.runtime_cache_clear outcome=pending")
+        clearCachedRootCA()
+        TLSHandler.clearCertificateCache()
+
+        Self.runtimeCacheInvalidatorLock.lock()
+        let invalidators = Self.runtimeCacheInvalidators
+        Self.runtimeCacheInvalidatorLock.unlock()
+
+        for invalidator in invalidators {
+            invalidator()
+        }
+    }
 
     // MARK: - Root CA Management
 
@@ -187,6 +239,10 @@ public class CertificateManager {
 
     /// Generates or retrieves the Root CA certificate and private key.
     public func getRootCA(allowCreate: Bool = true) throws -> (certificate: SecCertificate, privateKey: SecKey) {
+        if let cachedRootCA = loadCachedRootCA() {
+            return cachedRootCA
+        }
+
         SecurityLog.certificate.debug("event=ca.get_root outcome=pending action=retrieve")
 
         Self.logKeychainAccessGroup()
@@ -195,6 +251,7 @@ public class CertificateManager {
             SecurityLog.certificate.debug("event=ca.keychain_check outcome=pending")
             let existing = try loadRootCAFromKeychain()
             let summary = SecCertificateCopySubjectSummary(existing.certificate) as String? ?? "unknown"
+            storeCachedRootCA(existing)
             SecurityLog.certificate.info("event=ca.load outcome=success subject=\(summary, privacy: .private(mask: .hash))")
             return existing
         } catch {
@@ -223,6 +280,7 @@ public class CertificateManager {
         SecurityLog.certificate.info("event=ca.generate outcome=pending")
         let result = try generateRootCA()
         let summary = SecCertificateCopySubjectSummary(result.certificate) as String? ?? "unknown"
+        storeCachedRootCA(result)
         SecurityLog.certificate.info("event=ca.generate outcome=success subject=\(summary, privacy: .private(mask: .hash))")
         return result
     }
@@ -619,7 +677,6 @@ public class CertificateManager {
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         ]
         addQuery[kSecAttrAccessGroup as String] = accessGroup
-        SecurityLog.keychain.debug("event=keychain.access_group outcome=success group=\(accessGroup, privacy: .private)")
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)
 
@@ -964,7 +1021,7 @@ public class CertificateManager {
         SecurityLog.certificate.info("event=ca.reset outcome=pending")
 
         SecurityLog.certificate.debug("event=ca.reset_cache outcome=pending")
-        TLSHandler.clearCertificateCache()
+        clearRuntimeCaches()
 
         SecurityLog.certificate.debug("event=ca.reset_domain_certs outcome=pending")
         let accessGroup = try requireKeychainAccessGroup()
