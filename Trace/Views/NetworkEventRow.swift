@@ -66,3 +66,27 @@ struct NetworkEventRow<ContextMenu: View>: View {
         )
     }
 }
+
+// MARK: - Previews
+
+#Preview {
+    let request = NetworkRequest(
+        url: "https://api.example.com/users",
+        method: .get,
+        statusCode: 200,
+        timestamp: Date(),
+        duration: 0.15
+    )
+    List {
+        NetworkEventRow(
+            event: .httpRequest(request),
+            webSocketViewModel: WebSocketViewModel(),
+            sseViewModel: SSEViewModel(),
+            isSimulator: true,
+            onToggleFavorite: { _ in },
+            onDeleteRequest: { _ in },
+            onShareRequest: { _ in },
+            contextMenuContent: { _ in EmptyView() }
+        )
+    }
+}

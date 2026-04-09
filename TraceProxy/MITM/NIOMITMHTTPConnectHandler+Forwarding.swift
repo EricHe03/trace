@@ -119,6 +119,7 @@ extension NIOMITMHTTPConnectHandler {
                             outcome: "start",
                             detail: "deadline_seconds=\(Self.upstreamHTTPResponseDeadlineSeconds)"
                         )
+                        self.requestSentAt = Date()
                         if responsePipeline == .streamAndCapture {
                             self.forwardStreamingUpstreamResponse(
                                 httpClient: httpClient,
@@ -137,6 +138,7 @@ extension NIOMITMHTTPConnectHandler {
                                 guard let self, self.state == .forwardingHTTPRequest else { return }
                                 switch result {
                                 case let .success(response):
+                                    self.responseHeadAt = Date()
                                     var forwardedHeaders = response.headers
                                     if blockQUIC, outboundContext.url.lowercased().hasPrefix("https://") {
                                         forwardedHeaders.remove(name: "Alt-Svc")
@@ -159,6 +161,9 @@ extension NIOMITMHTTPConnectHandler {
                                     captured.statusCode = Int(response.status.code)
                                     captured.statusMessage = response.status.reasonPhrase
                                     captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
+                                    if captured.isGRPC {
+                                        captured.grpcMetadata = GRPCTrailerExtractor.extract(from: forwardedHeaders)
+                                    }
                                     let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
                                     let responseContentType = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-type" })?.value
                                     let responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
@@ -177,6 +182,9 @@ extension NIOMITMHTTPConnectHandler {
                                         captureConfig: captureConfig
                                     )
                                     let responseBodyData = self.byteBufferToData(responseBodyBuffer)
+                                    if captured.isGRPC {
+                                        captured.grpcMetadata?.responseMessageCount = GRPCTrailerExtractor.countMessages(in: responseBodyData)
+                                    }
                                     self.logResponseCaptureDecision(
                                         pipeline: "buffer_and_intercept",
                                         requestID: captured.id,
@@ -365,278 +373,295 @@ extension NIOMITMHTTPConnectHandler {
         )
         let sendableContext = NIOMITMUncheckedSendableBox(value: context)
 
-        let bootstrap = NIOTSConnectionBootstrap(group: group)
-        bootstrap.connect(host: targetHost, port: targetPort).whenComplete { [weak self] result in
-            context.eventLoop.execute {
-                guard let self, self.state == .forwardingHTTPRequest else {
-                    if case let .success(upstream) = result {
-                        upstream.close(promise: nil)
+        // Apply host override before connecting: use the overridden IP while keeping
+        // targetHost for TLS SNI and the HTTP Host header.
+        let capturedURL = outboundContext.url
+        let capturedHost = targetHost
+        let capturedPort = targetPort
+        Task { [weak self, capturedURL, capturedHost, capturedPort, sendableContext, sseCapture, streamingRequestHead, requestHead] in
+            guard let self else { return }
+            let override = await RequestInterceptor.shared.hostOverride(for: capturedURL)
+            let connectHost = override?.ip ?? capturedHost
+            let connectPort = override?.port ?? capturedPort
+            if let override {
+                ProxyLog.mitm.info(
+                    "event=proxy.sse_host_override outcome=applied original_host=\(capturedHost, privacy: .private(mask: .hash)) override_ip=\(override.ip, privacy: .private(mask: .hash)) url=\(capturedURL, privacy: .private(mask: .hash))"
+                )
+            }
+            let bootstrap = NIOTSConnectionBootstrap(group: self.group)
+            bootstrap.connect(host: connectHost, port: connectPort).whenComplete { [weak self] result in
+                let context = sendableContext.value
+                context.eventLoop.execute {
+                    guard let self, self.state == .forwardingHTTPRequest else {
+                        if case let .success(upstream) = result {
+                            upstream.close(promise: nil)
+                        }
+                        return
                     }
-                    return
-                }
 
-                switch result {
-                case let .success(upstream):
-                    self.upstreamChannel = upstream
-                    var closeAfterSend = false
-                    var responseHeadSeen = false
-                    let sseInterceptionRuntime = SSEInterceptionRuntime()
-                    var bodyRelayChain = context.eventLoop.makeSucceededVoidFuture()
+                    switch result {
+                    case let .success(upstream):
+                        self.upstreamChannel = upstream
+                        var closeAfterSend = false
+                        var responseHeadSeen = false
+                        let sseInterceptionRuntime = SSEInterceptionRuntime()
+                        var bodyRelayChain = context.eventLoop.makeSucceededVoidFuture()
 
-                    let onPart: @Sendable (HTTPClientResponsePart) -> Void = { [weak self, weak upstream] part in
-                        let context = sendableContext.value
-                        guard let self, let upstream else { return }
-                        context.eventLoop.execute {
-                            guard self.state == .forwardingHTTPRequest else { return }
-                            switch part {
-                            case let .head(head):
-                                responseHeadSeen = true
-                                closeAfterSend = self.shouldCloseConnection(requestHead: requestHead, responseHeaders: head.headers)
-                                sseCapture.beginResponse(
-                                    head: head,
-                                    captureConfig: self.captureConfigProvider(),
-                                    onRequestCaptured: self.onRequestCaptured
-                                )
-                                if let streamRuntime {
-                                    streamRuntime.updateResponseHeaders(
-                                        self.captureConfigProvider().captureHeaders
-                                            ? self.traceHeaders(from: head.headers)
-                                            : []
-                                    )
-                                    streamRuntime.setStatus(.streaming)
-                                    self.persistStreamRuntimeSnapshot(streamRuntime)
-                                }
-                                var forwardedHead = head
-                                forwardedHead.headers.remove(name: "Proxy-Connection")
-                                context.write(self.wrapOutboundOut(.head(forwardedHead)), promise: nil)
-                            case let .body(buffer):
-                                let chunkData = self.byteBufferToData(buffer)
-                                guard let streamRuntime else {
-                                    sseCapture.consume(
-                                        bodyChunk: chunkData,
+                        let onPart: @Sendable (HTTPClientResponsePart) -> Void = { [weak self, weak upstream] part in
+                            let context = sendableContext.value
+                            guard let self, let upstream else { return }
+                            context.eventLoop.execute {
+                                guard self.state == .forwardingHTTPRequest else { return }
+                                switch part {
+                                case let .head(head):
+                                    responseHeadSeen = true
+                                    closeAfterSend = self.shouldCloseConnection(requestHead: requestHead, responseHeaders: head.headers)
+                                    sseCapture.beginResponse(
+                                        head: head,
                                         captureConfig: self.captureConfigProvider(),
                                         onRequestCaptured: self.onRequestCaptured
                                     )
-                                    context.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
-                                    return
-                                }
-
-                                bodyRelayChain = bodyRelayChain.flatMap {
-                                    sseInterceptionRuntime.interceptChunk(
-                                        chunkData,
-                                        runtime: streamRuntime,
-                                        decisionProvider: { [weak self] session, event, eventLoop in
-                                            guard let self else {
-                                                return eventLoop.makeSucceededFuture(.forward)
-                                            }
-                                            return self.streamEventInterceptionFuture(
-                                                session: session,
-                                                event: event,
-                                                eventLoop: eventLoop
-                                            )
-                                        },
-                                        replayEngine: .shared,
-                                        eventLoop: context.eventLoop
-                                    )
-                                }.flatMap { forwardedChunk in
-                                    sseCapture.consume(
-                                        bodyChunk: forwardedChunk,
-                                        captureConfig: self.captureConfigProvider(),
-                                        onRequestCaptured: self.onRequestCaptured
-                                    )
-                                    guard !forwardedChunk.isEmpty else {
-                                        return context.eventLoop.makeSucceededVoidFuture()
+                                    if let streamRuntime {
+                                        streamRuntime.updateResponseHeaders(
+                                            self.captureConfigProvider().captureHeaders
+                                                ? self.traceHeaders(from: head.headers)
+                                                : []
+                                        )
+                                        streamRuntime.setStatus(.streaming)
+                                        self.persistStreamRuntimeSnapshot(streamRuntime)
                                     }
-                                    let forwardedBuffer = self.byteBuffer(
-                                        from: forwardedChunk,
-                                        allocator: context.channel.allocator
-                                    )
-                                    let promise = context.eventLoop.makePromise(of: Void.self)
-                                    context.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(forwardedBuffer))), promise: promise)
-                                    return promise.futureResult
-                                }
-                                bodyRelayChain.whenFailure { [weak self] error in
-                                    guard let self else { return }
-                                    let failureReason = self.classifyMITMFailure(error)
-                                    self.finalizeActiveRequestAsFailure(reason: failureReason)
-                                    self.reportMITMFailure(reason: failureReason)
-                                    self.completeStreamRuntime(
-                                        streamRuntime,
-                                        status: .failed,
-                                        reason: error.localizedDescription,
-                                        eventLoop: context.eventLoop
-                                    )
-                                }
-                            case let .end(trailers):
-                                bodyRelayChain.flatMap {
-                                    sseCapture.finish(
-                                        succeeded: true,
-                                        captureConfig: self.captureConfigProvider(),
-                                        onRequestCaptured: self.onRequestCaptured
-                                    )
-                                    self.completeStreamRuntime(
-                                        streamRuntime,
-                                        status: .closed,
-                                        reason: nil,
-                                        eventLoop: context.eventLoop
-                                    )
-                                    let promise = context.eventLoop.makePromise(of: Void.self)
-                                    promise.futureResult.whenComplete { _ in
-                                        self.upstreamChannel = nil
-                                        upstream.close(promise: nil)
-                                        self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
+                                    var forwardedHead = head
+                                    forwardedHead.headers.remove(name: "Proxy-Connection")
+                                    context.write(self.wrapOutboundOut(.head(forwardedHead)), promise: nil)
+                                case let .body(buffer):
+                                    let chunkData = self.byteBufferToData(buffer)
+                                    guard let streamRuntime else {
+                                        sseCapture.consume(
+                                            bodyChunk: chunkData,
+                                            captureConfig: self.captureConfigProvider(),
+                                            onRequestCaptured: self.onRequestCaptured
+                                        )
+                                        context.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+                                        return
                                     }
-                                    context.writeAndFlush(self.wrapOutboundOut(.end(trailers)), promise: promise)
-                                    return promise.futureResult
-                                }.whenFailure { error in
-                                    let failureReason = self.classifyMITMFailure(error)
-                                    self.finalizeActiveRequestAsFailure(reason: failureReason)
-                                    self.reportMITMFailure(reason: failureReason)
-                                    self.completeStreamRuntime(
-                                        streamRuntime,
-                                        status: .failed,
-                                        reason: error.localizedDescription,
-                                        eventLoop: context.eventLoop
-                                    )
+
+                                    bodyRelayChain = bodyRelayChain.flatMap {
+                                        sseInterceptionRuntime.interceptChunk(
+                                            chunkData,
+                                            runtime: streamRuntime,
+                                            decisionProvider: { [weak self] session, event, eventLoop in
+                                                guard let self else {
+                                                    return eventLoop.makeSucceededFuture(.forward)
+                                                }
+                                                return self.streamEventInterceptionFuture(
+                                                    session: session,
+                                                    event: event,
+                                                    eventLoop: eventLoop
+                                                )
+                                            },
+                                            replayEngine: .shared,
+                                            eventLoop: context.eventLoop
+                                        )
+                                    }.flatMap { forwardedChunk in
+                                        sseCapture.consume(
+                                            bodyChunk: forwardedChunk,
+                                            captureConfig: self.captureConfigProvider(),
+                                            onRequestCaptured: self.onRequestCaptured
+                                        )
+                                        guard !forwardedChunk.isEmpty else {
+                                            return context.eventLoop.makeSucceededVoidFuture()
+                                        }
+                                        let forwardedBuffer = self.byteBuffer(
+                                            from: forwardedChunk,
+                                            allocator: context.channel.allocator
+                                        )
+                                        let promise = context.eventLoop.makePromise(of: Void.self)
+                                        context.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(forwardedBuffer))), promise: promise)
+                                        return promise.futureResult
+                                    }
+                                    bodyRelayChain.whenFailure { [weak self] error in
+                                        guard let self else { return }
+                                        let failureReason = self.classifyMITMFailure(error)
+                                        self.finalizeActiveRequestAsFailure(reason: failureReason)
+                                        self.reportMITMFailure(reason: failureReason)
+                                        self.completeStreamRuntime(
+                                            streamRuntime,
+                                            status: .failed,
+                                            reason: error.localizedDescription,
+                                            eventLoop: context.eventLoop
+                                        )
+                                    }
+                                case let .end(trailers):
+                                    bodyRelayChain.flatMap {
+                                        sseCapture.finish(
+                                            succeeded: true,
+                                            captureConfig: self.captureConfigProvider(),
+                                            onRequestCaptured: self.onRequestCaptured
+                                        )
+                                        self.completeStreamRuntime(
+                                            streamRuntime,
+                                            status: .closed,
+                                            reason: nil,
+                                            eventLoop: context.eventLoop
+                                        )
+                                        let promise = context.eventLoop.makePromise(of: Void.self)
+                                        promise.futureResult.whenComplete { _ in
+                                            self.upstreamChannel = nil
+                                            upstream.close(promise: nil)
+                                            self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
+                                        }
+                                        context.writeAndFlush(self.wrapOutboundOut(.end(trailers)), promise: promise)
+                                        return promise.futureResult
+                                    }.whenFailure { error in
+                                        let failureReason = self.classifyMITMFailure(error)
+                                        self.finalizeActiveRequestAsFailure(reason: failureReason)
+                                        self.reportMITMFailure(reason: failureReason)
+                                        self.completeStreamRuntime(
+                                            streamRuntime,
+                                            status: .failed,
+                                            reason: error.localizedDescription,
+                                            eventLoop: context.eventLoop
+                                        )
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    let onError: @Sendable (Error) -> Void = { [weak self] error in
-                        let context = sendableContext.value
-                        context.eventLoop.execute {
-                            guard let self, self.state == .forwardingHTTPRequest else { return }
-                            let failureReason = self.classifyMITMFailure(error)
-                            self.finalizeActiveRequestAsHTTPFailure(
-                                status: .badGateway,
-                                reason: failureReason
-                            )
-                            self.reportMITMFailure(reason: failureReason)
-                            ProxyLog.mitm.warning(
-                                "event=proxy.nio_sse_upstream_error outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
-                            )
-                            sseCapture.finish(
-                                succeeded: false,
-                                captureConfig: self.captureConfigProvider(),
-                                onRequestCaptured: self.onRequestCaptured
-                            )
-                            self.completeStreamRuntime(
-                                streamRuntime,
-                                status: .failed,
-                                reason: error.localizedDescription,
-                                eventLoop: context.eventLoop
-                            )
-                            self.sendResponse(
-                                status: .badGateway,
-                                body: "Upstream SSE request failed",
-                                closeAfterSend: true,
-                                context: context
-                            )
-                            self.state = .closed
-                            self.upstreamChannel = nil
+                        let onError: @Sendable (Error) -> Void = { [weak self] error in
+                            let context = sendableContext.value
+                            context.eventLoop.execute {
+                                guard let self, self.state == .forwardingHTTPRequest else { return }
+                                let failureReason = self.classifyMITMFailure(error)
+                                self.finalizeActiveRequestAsHTTPFailure(
+                                    status: .badGateway,
+                                    reason: failureReason
+                                )
+                                self.reportMITMFailure(reason: failureReason)
+                                ProxyLog.mitm.warning(
+                                    "event=proxy.nio_sse_upstream_error outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                                )
+                                sseCapture.finish(
+                                    succeeded: false,
+                                    captureConfig: self.captureConfigProvider(),
+                                    onRequestCaptured: self.onRequestCaptured
+                                )
+                                self.completeStreamRuntime(
+                                    streamRuntime,
+                                    status: .failed,
+                                    reason: error.localizedDescription,
+                                    eventLoop: context.eventLoop
+                                )
+                                self.sendResponse(
+                                    status: .badGateway,
+                                    body: "Upstream SSE request failed",
+                                    closeAfterSend: true,
+                                    context: context
+                                )
+                                self.state = .closed
+                                self.upstreamChannel = nil
+                            }
                         }
-                    }
 
-                    let onInactive: @Sendable () -> Void = { [weak self] in
-                        let context = sendableContext.value
-                        context.eventLoop.execute {
-                            guard let self, self.state == .forwardingHTTPRequest else { return }
-                            sseCapture.finish(
-                                succeeded: responseHeadSeen,
-                                captureConfig: self.captureConfigProvider(),
-                                onRequestCaptured: self.onRequestCaptured
-                            )
-                            self.completeStreamRuntime(
-                                streamRuntime,
-                                status: responseHeadSeen ? .closed : .failed,
-                                reason: responseHeadSeen ? nil : "upstream_inactive",
-                                eventLoop: context.eventLoop
-                            )
-                            self.state = .closed
-                            context.close(promise: nil)
+                        let onInactive: @Sendable () -> Void = { [weak self] in
+                            let context = sendableContext.value
+                            context.eventLoop.execute {
+                                guard let self, self.state == .forwardingHTTPRequest else { return }
+                                sseCapture.finish(
+                                    succeeded: responseHeadSeen,
+                                    captureConfig: self.captureConfigProvider(),
+                                    onRequestCaptured: self.onRequestCaptured
+                                )
+                                self.completeStreamRuntime(
+                                    streamRuntime,
+                                    status: responseHeadSeen ? .closed : .failed,
+                                    reason: responseHeadSeen ? nil : "upstream_inactive",
+                                    eventLoop: context.eventLoop
+                                )
+                                self.state = .closed
+                                context.close(promise: nil)
+                            }
                         }
-                    }
 
-                    self.installStreamingUpstreamHTTPPipeline(
-                        on: upstream,
-                        onResponsePart: onPart,
-                        onError: onError,
-                        onInactive: onInactive
-                    )
-                    .flatMap {
-                        self.installStreamingUpstreamTLSIfNeeded(
+                        self.installStreamingUpstreamHTTPPipeline(
                             on: upstream,
-                            url: targetURL,
-                            serverHostname: targetHost
+                            onResponsePart: onPart,
+                            onError: onError,
+                            onInactive: onInactive
                         )
-                    }
-                    .flatMap {
-                        self.writeAndFlushStreamingUpstreamRequest(
-                            head: streamingRequestHead,
-                            body: outboundContext.body,
-                            to: upstream
-                        )
-                    }
-                    .whenComplete { [weak self] pipelineResult in
-                        guard let self else { return }
-                        if case let .failure(error) = pipelineResult {
-                            let failureReason = self.classifyMITMFailure(error)
-                            self.finalizeActiveRequestAsHTTPFailure(
-                                status: .badGateway,
-                                reason: failureReason
+                        .flatMap {
+                            self.installStreamingUpstreamTLSIfNeeded(
+                                on: upstream,
+                                url: targetURL,
+                                serverHostname: targetHost
                             )
-                            self.reportMITMFailure(reason: failureReason)
-                            ProxyLog.mitm.warning(
-                                "event=proxy.nio_sse_setup outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
-                            )
-                            sseCapture.finish(
-                                succeeded: false,
-                                captureConfig: self.captureConfigProvider(),
-                                onRequestCaptured: self.onRequestCaptured
-                            )
-                            self.completeStreamRuntime(
-                                streamRuntime,
-                                status: .failed,
-                                reason: error.localizedDescription,
-                                eventLoop: context.eventLoop
-                            )
-                            self.sendResponse(
-                                status: .badGateway,
-                                body: "Failed to establish SSE upstream",
-                                closeAfterSend: true,
-                                context: context
-                            )
-                            self.state = .closed
-                            self.upstreamChannel = nil
-                            upstream.close(promise: nil)
                         }
+                        .flatMap {
+                            self.writeAndFlushStreamingUpstreamRequest(
+                                head: streamingRequestHead,
+                                body: outboundContext.body,
+                                to: upstream
+                            )
+                        }
+                        .whenComplete { [weak self] pipelineResult in
+                            guard let self else { return }
+                            if case let .failure(error) = pipelineResult {
+                                let failureReason = self.classifyMITMFailure(error)
+                                self.finalizeActiveRequestAsHTTPFailure(
+                                    status: .badGateway,
+                                    reason: failureReason
+                                )
+                                self.reportMITMFailure(reason: failureReason)
+                                ProxyLog.mitm.warning(
+                                    "event=proxy.nio_sse_setup outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                                )
+                                sseCapture.finish(
+                                    succeeded: false,
+                                    captureConfig: self.captureConfigProvider(),
+                                    onRequestCaptured: self.onRequestCaptured
+                                )
+                                self.completeStreamRuntime(
+                                    streamRuntime,
+                                    status: .failed,
+                                    reason: error.localizedDescription,
+                                    eventLoop: context.eventLoop
+                                )
+                                self.sendResponse(
+                                    status: .badGateway,
+                                    body: "Failed to establish SSE upstream",
+                                    closeAfterSend: true,
+                                    context: context
+                                )
+                                self.state = .closed
+                                self.upstreamChannel = nil
+                                upstream.close(promise: nil)
+                            }
+                        }
+                    case let .failure(error):
+                        let failureReason = self.classifyMITMFailure(error)
+                        self.finalizeActiveRequestAsHTTPFailure(
+                            status: .badGateway,
+                            reason: failureReason
+                        )
+                        self.reportMITMFailure(reason: failureReason)
+                        ProxyLog.mitm.warning(
+                            "event=proxy.nio_sse_connect outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                        )
+                        self.completeStreamRuntime(
+                            streamRuntime,
+                            status: .failed,
+                            reason: error.localizedDescription,
+                            eventLoop: context.eventLoop
+                        )
+                        self.sendResponse(
+                            status: .badGateway,
+                            body: "Failed to establish SSE upstream",
+                            closeAfterSend: true,
+                            context: context
+                        )
                     }
-                case let .failure(error):
-                    let failureReason = self.classifyMITMFailure(error)
-                    self.finalizeActiveRequestAsHTTPFailure(
-                        status: .badGateway,
-                        reason: failureReason
-                    )
-                    self.reportMITMFailure(reason: failureReason)
-                    ProxyLog.mitm.warning(
-                        "event=proxy.nio_sse_connect outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
-                    )
-                    self.completeStreamRuntime(
-                        streamRuntime,
-                        status: .failed,
-                        reason: error.localizedDescription,
-                        eventLoop: context.eventLoop
-                    )
-                    self.sendResponse(
-                        status: .badGateway,
-                        body: "Failed to establish SSE upstream",
-                        closeAfterSend: true,
-                        context: context
-                    )
                 }
             }
-        }
+        } // end Task (host override + connect)
     }
 
     func forwardWebSocketStreamLegacy(
@@ -679,295 +704,325 @@ extension NIOMITMHTTPConnectHandler {
             sessionID: streamRuntime?.snapshot().id
         )
         let sendableContext = NIOMITMUncheckedSendableBox(value: context)
+        let taskState = NIOMITMUncheckedSendableBox(
+            value: (
+                outboundURL: outboundContext.url,
+                requestSnapshot: outboundContext.requestSnapshot,
+                requestBody: outboundContext.body,
+                requestHead: requestHead,
+                targetURL: targetURL,
+                targetHost: targetHost,
+                targetPort: targetPort,
+                normalizedURL: normalizedURL,
+                streamingRequestHead: streamingRequestHead,
+                streamRuntime: streamRuntime,
+                wsCapture: wsCapture
+            )
+        )
 
-        let bootstrap = NIOTSConnectionBootstrap(group: group)
-        bootstrap.connect(host: targetHost, port: targetPort).whenComplete { [weak self] result in
-            context.eventLoop.execute {
-                guard let self, self.state == .forwardingHTTPRequest else {
-                    if case let .success(upstream) = result {
-                        upstream.close(promise: nil)
+        // Apply host override before connecting: use the overridden IP while keeping
+        // targetHost for TLS SNI and the HTTP Host header.
+        Task { [weak self, sendableContext, taskState] in
+            guard let self else { return }
+            let state = taskState.value
+            let context = sendableContext.value
+            let override = await RequestInterceptor.shared.hostOverride(for: state.outboundURL)
+            let connectHost = override?.ip ?? state.targetHost
+            let connectPort = override?.port ?? state.targetPort
+            if let override {
+                ProxyLog.mitm.info(
+                    "event=proxy.ws_host_override outcome=applied original_host=\(state.targetHost, privacy: .private(mask: .hash)) override_ip=\(override.ip, privacy: .private(mask: .hash)) url=\(state.outboundURL, privacy: .private(mask: .hash))"
+                )
+            }
+            let bootstrap = NIOTSConnectionBootstrap(group: self.group)
+            bootstrap.connect(host: connectHost, port: connectPort).whenComplete { [weak self] result in
+                context.eventLoop.execute {
+                    guard let self, self.state == .forwardingHTTPRequest else {
+                        if case let .success(upstream) = result {
+                            upstream.close(promise: nil)
+                        }
+                        return
                     }
-                    return
-                }
 
-                switch result {
-                case let .success(upstream):
-                    self.upstreamChannel = upstream
-                    var responseHead: HTTPResponseHead?
-                    var responseBody = context.channel.allocator.buffer(capacity: 0)
-                    var closeAfterSend = false
+                    switch result {
+                    case let .success(upstream):
+                        self.upstreamChannel = upstream
+                        var responseHead: HTTPResponseHead?
+                        var responseBody = context.channel.allocator.buffer(capacity: 0)
+                        var closeAfterSend = false
 
-                    let onPart: @Sendable (HTTPClientResponsePart) -> Void = { [weak self, weak upstream] part in
-                        let context = sendableContext.value
-                        guard let self, let upstream else { return }
-                        context.eventLoop.execute {
-                            guard self.state == .forwardingHTTPRequest else { return }
-                            switch part {
-                            case let .head(head):
-                                responseHead = head
-                                closeAfterSend = self.shouldCloseConnection(
-                                    requestHead: requestHead,
-                                    responseHeaders: head.headers
-                                )
-                                if let streamRuntime {
-                                    streamRuntime.updateResponseHeaders(
-                                        self.captureConfigProvider().captureHeaders
-                                            ? self.traceHeaders(from: head.headers)
-                                            : []
+                        let onPart: @Sendable (HTTPClientResponsePart) -> Void = { [weak self, weak upstream] part in
+                            let context = sendableContext.value
+                            guard let self, let upstream else { return }
+                            context.eventLoop.execute {
+                                guard self.state == .forwardingHTTPRequest else { return }
+                                switch part {
+                                case let .head(head):
+                                    responseHead = head
+                                    closeAfterSend = self.shouldCloseConnection(
+                                        requestHead: state.requestHead,
+                                        responseHeaders: head.headers
                                     )
-                                    self.persistStreamRuntimeSnapshot(streamRuntime)
-                                }
-                                var forwardedHead = head
-                                forwardedHead.headers.remove(name: "Proxy-Connection")
-                                context.write(self.wrapOutboundOut(.head(forwardedHead)), promise: nil)
-                            case let .body(buffer):
-                                guard responseHead?.status != .switchingProtocols else { return }
-                                var mutable = buffer
-                                responseBody.writeBuffer(&mutable)
-                                context.write(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
-                            case let .end(trailers):
-                                guard let head = responseHead else {
-                                    self.sendResponse(
-                                        status: .badGateway,
-                                        body: "Invalid WebSocket upstream response",
-                                        closeAfterSend: true,
-                                        context: context
-                                    )
-                                    self.state = .closed
-                                    self.upstreamChannel = nil
-                                    upstream.close(promise: nil)
-                                    wsCapture.markFailed()
-                                    return
-                                }
+                                    if let streamRuntime = state.streamRuntime {
+                                        streamRuntime.updateResponseHeaders(
+                                            self.captureConfigProvider().captureHeaders
+                                                ? self.traceHeaders(from: head.headers)
+                                                : []
+                                        )
+                                        self.persistStreamRuntimeSnapshot(streamRuntime)
+                                    }
+                                    var forwardedHead = head
+                                    forwardedHead.headers.remove(name: "Proxy-Connection")
+                                    context.write(self.wrapOutboundOut(.head(forwardedHead)), promise: nil)
+                                case let .body(buffer):
+                                    guard responseHead?.status != .switchingProtocols else { return }
+                                    var mutable = buffer
+                                    responseBody.writeBuffer(&mutable)
+                                    context.write(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+                                case let .end(trailers):
+                                    guard let head = responseHead else {
+                                        self.sendResponse(
+                                            status: .badGateway,
+                                            body: "Invalid WebSocket upstream response",
+                                            closeAfterSend: true,
+                                            context: context
+                                        )
+                                        self.state = .closed
+                                        self.upstreamChannel = nil
+                                        upstream.close(promise: nil)
+                                        wsCapture.markFailed()
+                                        return
+                                    }
 
-                                let isUpgrade = head.status == .switchingProtocols &&
-                                    self.isWebSocketUpgrade(headers: head.headers)
-                                if isUpgrade {
-                                    let perMessageDeflateEnabled = self.webSocketPerMessageDeflateEnabled(headers: head.headers)
+                                    let isUpgrade = head.status == .switchingProtocols &&
+                                        self.isWebSocketUpgrade(headers: head.headers)
+                                    if isUpgrade {
+                                        let perMessageDeflateEnabled = self.webSocketPerMessageDeflateEnabled(headers: head.headers)
+                                        ProxyLog.mitm.info(
+                                            "event=proxy.nio_ws_upgrade outcome=accepted ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) permessage_deflate=\(perMessageDeflateEnabled, privacy: .public)"
+                                        )
+                                        self.eventLog?.append(
+                                            type: "proxy_nio_ws_upgrade",
+                                            msg: "outcome=accepted mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(state.normalizedURL)) permessage_deflate=\(perMessageDeflateEnabled)"
+                                        )
+                                        wsCapture.markOpen(
+                                            responseHeaders: self.captureConfigProvider().captureHeaders
+                                                ? self.traceHeaders(from: head.headers)
+                                                : []
+                                        )
+                                        if let streamRuntime = state.streamRuntime {
+                                            streamRuntime.setStatus(.open)
+                                            self.persistStreamRuntimeSnapshot(streamRuntime)
+                                        }
+                                        let promise = context.eventLoop.makePromise(of: Void.self)
+                                        promise.futureResult.whenComplete { [weak self] _ in
+                                            guard let self else { return }
+                                            self.installWebSocketRelay(
+                                                clientContext: context,
+                                                upstream: upstream,
+                                                captureState: wsCapture,
+                                                streamRuntime: state.streamRuntime,
+                                                perMessageDeflateEnabled: perMessageDeflateEnabled
+                                            )
+                                        }
+                                        context.writeAndFlush(self.wrapOutboundOut(.end(trailers)), promise: promise)
+                                        return
+                                    }
+
                                     ProxyLog.mitm.info(
-                                        "event=proxy.nio_ws_upgrade outcome=accepted ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) permessage_deflate=\(perMessageDeflateEnabled, privacy: .public)"
+                                        "event=proxy.nio_ws_upgrade outcome=rejected ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) status=\(Int(head.status.code), privacy: .public)"
                                     )
                                     self.eventLog?.append(
                                         type: "proxy_nio_ws_upgrade",
-                                        msg: "outcome=accepted mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(normalizedURL)) permessage_deflate=\(perMessageDeflateEnabled)"
+                                        msg: "outcome=rejected mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(state.normalizedURL)) status=\(head.status.code)"
                                     )
-                                    wsCapture.markOpen(
-                                        responseHeaders: self.captureConfigProvider().captureHeaders
-                                            ? self.traceHeaders(from: head.headers)
-                                            : []
+                                    let responseBodyData = self.byteBufferToData(responseBody)
+                                    let captureConfig = self.captureConfigProvider()
+                                    let responseHeadersTrace = self.traceHeaders(from: head.headers)
+                                    let declaredContentLength = self.contentLength(from: head.headers)
+                                    self.completeStreamRuntime(
+                                        state.streamRuntime,
+                                        status: .failed,
+                                        reason: "websocket_upgrade_rejected",
+                                        eventLoop: context.eventLoop
                                     )
-                                    if let streamRuntime {
-                                        streamRuntime.setStatus(.open)
-                                        self.persistStreamRuntimeSnapshot(streamRuntime)
-                                    }
+                                    var captured = state.requestSnapshot
+                                    captured.protocolVersion = self.mergedCapturedProtocolVersion(
+                                        current: captured.protocolVersion,
+                                        fallback: head.version
+                                    )
+                                    captured.statusCode = Int(head.status.code)
+                                    captured.statusMessage = head.status.reasonPhrase
+                                    captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
+                                    let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
+                                    let responseContentType = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-type" })?.value
+                                    let responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
+                                    let effectiveCaptureBodyLimit = self.effectiveBodyCaptureLimit(
+                                        captureConfig: captureConfig,
+                                        contentType: responseContentType,
+                                        contentEncoding: responseContentEncoding
+                                    )
+                                    captured.responseBody = self.bodyStorage(
+                                        from: responseBodyData,
+                                        charset: responseCharset,
+                                        contentType: responseContentType,
+                                        contentEncoding: responseContentEncoding,
+                                        captureConfig: captureConfig
+                                    )
+                                    self.logResponseCaptureDecision(
+                                        pipeline: "websocket_http_fallback",
+                                        requestID: captured.id,
+                                        statusCode: Int(head.status.code),
+                                        responseHeaders: responseHeadersTrace,
+                                        bodyStorage: captured.responseBody,
+                                        observedBodyBytes: responseBodyData.count,
+                                        declaredContentLength: declaredContentLength,
+                                        captureBodyEnabled: captureConfig.captureBody,
+                                        captureBodyLimit: effectiveCaptureBodyLimit,
+                                        decodeCompressedContent: true,
+                                        storageContentEncoding: responseContentEncoding
+                                    )
+                                    self.annotateCaptureMetadata(&captured)
+                                    captured.extractHTTPFields()
+                                    NetworkThrottlingController.shared.applyMetadata(to: &captured)
+                                    self.finalizeCapturedDuration(for: &captured)
+                                    self.activeCapturedRequest = captured
+                                    self.publishCapturedRequest(captured)
+
                                     let promise = context.eventLoop.makePromise(of: Void.self)
-                                    promise.futureResult.whenComplete { [weak self] _ in
-                                        guard let self else { return }
-                                        self.installWebSocketRelay(
-                                            clientContext: context,
-                                            upstream: upstream,
-                                            captureState: wsCapture,
-                                            streamRuntime: streamRuntime,
-                                            perMessageDeflateEnabled: perMessageDeflateEnabled
-                                        )
+                                    promise.futureResult.whenComplete { _ in
+                                        self.upstreamChannel = nil
+                                        upstream.close(promise: nil)
+                                        self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
                                     }
                                     context.writeAndFlush(self.wrapOutboundOut(.end(trailers)), promise: promise)
-                                    return
                                 }
-
-                                ProxyLog.mitm.info(
-                                    "event=proxy.nio_ws_upgrade outcome=rejected ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) status=\(Int(head.status.code), privacy: .public)"
-                                )
-                                self.eventLog?.append(
-                                    type: "proxy_nio_ws_upgrade",
-                                    msg: "outcome=rejected mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(normalizedURL)) status=\(head.status.code)"
-                                )
-                                let responseBodyData = self.byteBufferToData(responseBody)
-                                let captureConfig = self.captureConfigProvider()
-                                let responseHeadersTrace = self.traceHeaders(from: head.headers)
-                                let declaredContentLength = self.contentLength(from: head.headers)
-                                self.completeStreamRuntime(
-                                    streamRuntime,
-                                    status: .failed,
-                                    reason: "websocket_upgrade_rejected",
-                                    eventLoop: context.eventLoop
-                                )
-                                var captured = outboundContext.requestSnapshot
-                                captured.protocolVersion = self.mergedCapturedProtocolVersion(
-                                    current: captured.protocolVersion,
-                                    fallback: head.version
-                                )
-                                captured.statusCode = Int(head.status.code)
-                                captured.statusMessage = head.status.reasonPhrase
-                                captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
-                                let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
-                                let responseContentType = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-type" })?.value
-                                let responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
-                                let effectiveCaptureBodyLimit = self.effectiveBodyCaptureLimit(
-                                    captureConfig: captureConfig,
-                                    contentType: responseContentType,
-                                    contentEncoding: responseContentEncoding
-                                )
-                                captured.responseBody = self.bodyStorage(
-                                    from: responseBodyData,
-                                    charset: responseCharset,
-                                    contentType: responseContentType,
-                                    contentEncoding: responseContentEncoding,
-                                    captureConfig: captureConfig
-                                )
-                                self.logResponseCaptureDecision(
-                                    pipeline: "websocket_http_fallback",
-                                    requestID: captured.id,
-                                    statusCode: Int(head.status.code),
-                                    responseHeaders: responseHeadersTrace,
-                                    bodyStorage: captured.responseBody,
-                                    observedBodyBytes: responseBodyData.count,
-                                    declaredContentLength: declaredContentLength,
-                                    captureBodyEnabled: captureConfig.captureBody,
-                                    captureBodyLimit: effectiveCaptureBodyLimit,
-                                    decodeCompressedContent: true,
-                                    storageContentEncoding: responseContentEncoding
-                                )
-                                self.annotateCaptureMetadata(&captured)
-                                captured.extractHTTPFields()
-                                NetworkThrottlingController.shared.applyMetadata(to: &captured)
-                                self.finalizeCapturedDuration(for: &captured)
-                                self.activeCapturedRequest = captured
-                                self.publishCapturedRequest(captured)
-
-                                let promise = context.eventLoop.makePromise(of: Void.self)
-                                promise.futureResult.whenComplete { _ in
-                                    self.upstreamChannel = nil
-                                    upstream.close(promise: nil)
-                                    self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
-                                }
-                                context.writeAndFlush(self.wrapOutboundOut(.end(trailers)), promise: promise)
                             }
                         }
-                    }
 
-                    let onError: @Sendable (Error) -> Void = { [weak self] error in
-                        let context = sendableContext.value
-                        context.eventLoop.execute {
-                            guard let self, self.state == .forwardingHTTPRequest else { return }
-                            let failureReason = self.classifyMITMFailure(error)
-                            self.finalizeActiveRequestAsHTTPFailure(
-                                status: .badGateway,
-                                reason: failureReason
-                            )
-                            self.reportMITMFailure(reason: failureReason)
-                            ProxyLog.mitm.warning(
-                                "event=proxy.nio_ws_upstream_error outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
-                            )
-                            wsCapture.markFailed()
-                            self.completeStreamRuntime(
-                                streamRuntime,
-                                status: .failed,
-                                reason: error.localizedDescription,
-                                eventLoop: context.eventLoop
-                            )
-                            self.sendResponse(
-                                status: .badGateway,
-                                body: "Upstream WebSocket request failed",
-                                closeAfterSend: true,
-                                context: context
-                            )
-                            self.state = .closed
-                            self.upstreamChannel = nil
+                        let onError: @Sendable (Error) -> Void = { [weak self] error in
+                            let context = sendableContext.value
+                            context.eventLoop.execute {
+                                guard let self, self.state == .forwardingHTTPRequest else { return }
+                                let failureReason = self.classifyMITMFailure(error)
+                                self.finalizeActiveRequestAsHTTPFailure(
+                                    status: .badGateway,
+                                    reason: failureReason
+                                )
+                                self.reportMITMFailure(reason: failureReason)
+                                ProxyLog.mitm.warning(
+                                    "event=proxy.nio_ws_upstream_error outcome=failure host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                                )
+                                wsCapture.markFailed()
+                                self.completeStreamRuntime(
+                                    state.streamRuntime,
+                                    status: .failed,
+                                    reason: error.localizedDescription,
+                                    eventLoop: context.eventLoop
+                                )
+                                self.sendResponse(
+                                    status: .badGateway,
+                                    body: "Upstream WebSocket request failed",
+                                    closeAfterSend: true,
+                                    context: context
+                                )
+                                self.state = .closed
+                                self.upstreamChannel = nil
+                            }
                         }
-                    }
 
-                    let onInactive: @Sendable () -> Void = { [weak self] in
-                        let context = sendableContext.value
-                        context.eventLoop.execute {
-                            guard let self, self.state == .forwardingHTTPRequest else { return }
-                            wsCapture.markClosed(code: nil, reason: nil)
-                            self.completeStreamRuntime(
-                                streamRuntime,
-                                status: .closed,
-                                reason: nil,
-                                eventLoop: context.eventLoop
-                            )
-                            self.state = .closed
-                            context.close(promise: nil)
+                        let onInactive: @Sendable () -> Void = { [weak self] in
+                            let context = sendableContext.value
+                            context.eventLoop.execute {
+                                guard let self, self.state == .forwardingHTTPRequest else { return }
+                                wsCapture.markClosed(code: nil, reason: nil)
+                                self.completeStreamRuntime(
+                                    state.streamRuntime,
+                                    status: .closed,
+                                    reason: nil,
+                                    eventLoop: context.eventLoop
+                                )
+                                self.state = .closed
+                                context.close(promise: nil)
+                            }
                         }
-                    }
 
-                    self.installStreamingUpstreamHTTPPipeline(
-                        on: upstream,
-                        onResponsePart: onPart,
-                        onError: onError,
-                        onInactive: onInactive
-                    )
-                    .flatMap {
-                        self.installStreamingUpstreamTLSIfNeeded(
+                        self.installStreamingUpstreamHTTPPipeline(
                             on: upstream,
-                            url: targetURL,
-                            serverHostname: targetHost
+                            onResponsePart: onPart,
+                            onError: onError,
+                            onInactive: onInactive
                         )
-                    }
-                    .flatMap {
-                        self.writeAndFlushStreamingUpstreamRequest(
-                            head: streamingRequestHead,
-                            body: outboundContext.body,
-                            to: upstream
-                        )
-                    }
-                    .whenComplete { [weak self] pipelineResult in
-                        guard let self else { return }
-                        if case let .failure(error) = pipelineResult {
-                            let failureReason = self.classifyMITMFailure(error)
-                            self.finalizeActiveRequestAsHTTPFailure(
-                                status: .badGateway,
-                                reason: failureReason
+                        .flatMap {
+                            self.installStreamingUpstreamTLSIfNeeded(
+                                on: upstream,
+                                url: state.targetURL,
+                                serverHostname: state.targetHost
                             )
-                            self.reportMITMFailure(reason: failureReason)
-                            ProxyLog.mitm.warning(
-                                "event=proxy.nio_ws_setup outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
-                            )
-                            wsCapture.markFailed()
-                            self.completeStreamRuntime(
-                                streamRuntime,
-                                status: .failed,
-                                reason: error.localizedDescription,
-                                eventLoop: context.eventLoop
-                            )
-                            self.sendResponse(
-                                status: .badGateway,
-                                body: "Failed to establish WebSocket upstream",
-                                closeAfterSend: true,
-                                context: context
-                            )
-                            self.state = .closed
-                            self.upstreamChannel = nil
-                            upstream.close(promise: nil)
                         }
+                        .flatMap {
+                            self.writeAndFlushStreamingUpstreamRequest(
+                                head: state.streamingRequestHead,
+                                body: state.requestBody,
+                                to: upstream
+                            )
+                        }
+                        .whenComplete { [weak self] pipelineResult in
+                            guard let self else { return }
+                            if case let .failure(error) = pipelineResult {
+                                let failureReason = self.classifyMITMFailure(error)
+                                self.finalizeActiveRequestAsHTTPFailure(
+                                    status: .badGateway,
+                                    reason: failureReason
+                                )
+                                self.reportMITMFailure(reason: failureReason)
+                                ProxyLog.mitm.warning(
+                                    "event=proxy.nio_ws_setup outcome=failure host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                                )
+                                wsCapture.markFailed()
+                                self.completeStreamRuntime(
+                                    state.streamRuntime,
+                                    status: .failed,
+                                    reason: error.localizedDescription,
+                                    eventLoop: context.eventLoop
+                                )
+                                self.sendResponse(
+                                    status: .badGateway,
+                                    body: "Failed to establish WebSocket upstream",
+                                    closeAfterSend: true,
+                                    context: context
+                                )
+                                self.state = .closed
+                                self.upstreamChannel = nil
+                                upstream.close(promise: nil)
+                            }
+                        }
+                    case let .failure(error):
+                        let failureReason = self.classifyMITMFailure(error)
+                        self.finalizeActiveRequestAsHTTPFailure(
+                            status: .badGateway,
+                            reason: failureReason
+                        )
+                        self.reportMITMFailure(reason: failureReason)
+                        ProxyLog.mitm.warning(
+                            "event=proxy.nio_ws_connect outcome=failure host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                        )
+                        self.completeStreamRuntime(
+                            state.streamRuntime,
+                            status: .failed,
+                            reason: error.localizedDescription,
+                            eventLoop: context.eventLoop
+                        )
+                        self.sendResponse(
+                            status: .badGateway,
+                            body: "Failed to establish WebSocket upstream",
+                            closeAfterSend: true,
+                            context: context
+                        )
                     }
-                case let .failure(error):
-                    let failureReason = self.classifyMITMFailure(error)
-                    self.finalizeActiveRequestAsHTTPFailure(
-                        status: .badGateway,
-                        reason: failureReason
-                    )
-                    self.reportMITMFailure(reason: failureReason)
-                    ProxyLog.mitm.warning(
-                        "event=proxy.nio_ws_connect outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
-                    )
-                    self.completeStreamRuntime(
-                        streamRuntime,
-                        status: .failed,
-                        reason: error.localizedDescription,
-                        eventLoop: context.eventLoop
-                    )
-                    self.sendResponse(
-                        status: .badGateway,
-                        body: "Failed to establish WebSocket upstream",
-                        closeAfterSend: true,
-                        context: context
-                    )
                 }
             }
-        }
+        } // end Task (host override + connect)
     }
 
     func makeRawStreamingRequestBuffer(
@@ -1231,6 +1286,7 @@ extension NIOMITMHTTPConnectHandler {
 
                 responseHead = head
                 responseHeadSent = true
+                if self.responseHeadAt == nil { self.responseHeadAt = Date() }
                 declaredResponseBodyBytes = self.contentLength(from: head.headers)
                 capturedRequest.protocolVersion = self.mergedCapturedProtocolVersion(
                     current: capturedRequest.protocolVersion,
@@ -1383,6 +1439,10 @@ extension NIOMITMHTTPConnectHandler {
                 capturedRequest.statusCode = Int(finalStatus.code)
                 capturedRequest.statusMessage = finalStatus.reasonPhrase
                 capturedRequest.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
+                if capturedRequest.isGRPC, let responseHead {
+                    capturedRequest.grpcMetadata = GRPCTrailerExtractor.extract(from: responseHead.headers)
+                    capturedRequest.grpcMetadata?.responseMessageCount = GRPCTrailerExtractor.countMessages(in: capturedBodyData)
+                }
                 let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
                 let observedResponseBodyBytes = max(receivedBodyBytes, capturedBodyData.count)
                 let resolvedResponseBodyBytes = self.resolvedResponseBodyBytes(

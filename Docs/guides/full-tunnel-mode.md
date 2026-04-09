@@ -69,17 +69,6 @@ Blocking QUIC is useful when you want Trace to MITM traffic from apps that prefe
 |---|---|
 | UDP forwarding mode | `direct` sends UDP packets to the real destination; `socks5` wraps them through the upstream SOCKS5 proxy |
 
-## Run the full-tunnel self-check
-
-**Settings → Full Tunnel → Self-Check** runs a built-in diagnostic that verifies:
-
-- The tunnel is established and routing packets.
-- DNS is resolving through the configured server.
-- A test TCP connection succeeds.
-- A test UDP packet is forwarded.
-
-Review the self-check results if traffic is not appearing in the Network tab after enabling full-tunnel mode.
-
 ## Limitations
 
 - The packet tunnel requires a physical iOS device. It cannot run in the iOS Simulator.

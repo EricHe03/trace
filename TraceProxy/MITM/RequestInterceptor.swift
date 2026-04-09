@@ -47,6 +47,7 @@ public actor RequestInterceptor {
     private var lastScriptsFileDate: Date?
     private var lastGroupsFileDate: Date?
     private var lastProfilesFileDate: Date?
+    private var lastHostsFileDate: Date?
 
     // MARK: - Metrics
 
@@ -97,7 +98,8 @@ public actor RequestInterceptor {
             (.requestMapsUpdated, "maps"),
             (.scriptsUpdated, "scripts"),
             (.ruleGroupsUpdated, "rule_groups"),
-            (.profilesUpdated, "profiles")
+            (.profilesUpdated, "profiles"),
+            (.hostsUpdated, "hosts")
         ]
 
         notificationObservers = observedCollections.map { notificationName, label in
@@ -158,12 +160,18 @@ public actor RequestInterceptor {
         // Concurrency: ScriptManager is Sendable.
         let scripts = scriptManager.scripts
 
+        let hostEntries = await MainActor.run {
+            HostsManager.shared.reloadEntries()
+            return HostsManager.shared.entries
+        }
+
         configSnapshot = ConfigSnapshot(
             rewriteRules: rules,
             requestMaps: maps,
             scripts: scripts,
             ruleGroups: groups,
-            activeProfile: activeProfile
+            activeProfile: activeProfile,
+            hostEntries: hostEntries
         )
 
         lastRulesFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.rewriteRules.fileName)
@@ -171,6 +179,7 @@ public actor RequestInterceptor {
         lastScriptsFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.scripts.fileName)
         lastGroupsFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.ruleGroups.fileName)
         lastProfilesFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.profiles.fileName)
+        lastHostsFileDate = AppGroupStorage.shared.configFileModificationDate(for: PersistentCollectionDescriptor.hostEntries.fileName)
 
         lastConfigRefresh = now
         metrics.configReloadCount += 1
@@ -329,22 +338,9 @@ public actor RequestInterceptor {
                 )
                 return .blocked
 
-            case .continueAndDisable:
+            case .continueAndDisable, .continue:
                 ProxyLog.interceptor.debug(
-                    "event=intercept.breakpoint_disable outcome=success request_id=\(flowIdString, privacy: .public)"
-                )
-                await breakpointManager.setEnabled(false)
-                fallthrough
-
-            case .cancel:
-                ProxyLog.interceptor.debug(
-                    "event=intercept.breakpoint_cancel outcome=success request_id=\(flowIdString, privacy: .public)"
-                )
-                fallthrough
-
-            case .continue:
-                ProxyLog.interceptor.debug(
-                    "event=intercept.breakpoint_continue outcome=success request_id=\(flowIdString, privacy: .public)"
+                    "event=intercept.breakpoint_\(action == .continueAndDisable ? "disable" : "continue", privacy: .public) outcome=success request_id=\(flowIdString, privacy: .public)"
                 )
                 if let pausedRequest = await breakpointManager.consumeResumedRequest(id: flowIdString) {
                     modifiedRequest.url = pausedRequest.effectiveUrl
@@ -358,6 +354,14 @@ public actor RequestInterceptor {
                         modifiedRequest.requestBodyModified = true
                     }
                 }
+                if action == .continueAndDisable {
+                    await breakpointManager.setEnabled(false)
+                }
+
+            case .cancel:
+                ProxyLog.interceptor.debug(
+                    "event=intercept.breakpoint_cancel outcome=success request_id=\(flowIdString, privacy: .public)"
+                )
             }
         }
         if !didPauseForBreakpoint {
@@ -496,9 +500,11 @@ public actor RequestInterceptor {
         // Phase 10: Breakpoint (Response)
         let breakpointStart = DispatchTime.now()
         var didPauseForResponseBreakpoint = false
+        let currentStatusCode = modifiedRequest.statusCode ?? statusCode
+        let currentStatusMessage = modifiedRequest.statusMessage ?? statusMessage
         if await breakpointManager.shouldBreakOnResponse(
             url: modifiedRequest.url,
-            statusCode: statusCode,
+            statusCode: currentStatusCode,
             headers: modifiedRequest.responseHeaders,
             body: modifiedRequest.responseBody.getData()
         ) {
@@ -506,7 +512,7 @@ public actor RequestInterceptor {
             metrics.breakpointHits += 1
             modifiedRequest.hitBreakpoint = true
             ProxyLog.interceptor.info(
-                "event=intercept.response_breakpoint_hit status=\(statusCode) url=\(modifiedRequest.url, privacy: .private(mask: .hash)) request_id=\(flowIdString, privacy: .public)"
+                "event=intercept.response_breakpoint_hit status=\(currentStatusCode) url=\(modifiedRequest.url, privacy: .private(mask: .hash)) request_id=\(flowIdString, privacy: .public)"
             )
 
             let action = await breakpointManager.pauseResponse(
@@ -514,10 +520,10 @@ public actor RequestInterceptor {
                 url: modifiedRequest.url,
                 method: modifiedRequest.method,
                 methodToken: modifiedRequest.methodToken,
-                statusCode: statusCode,
-                statusMessage: statusMessage,
-                headers: headers,
-                body: body
+                statusCode: currentStatusCode,
+                statusMessage: currentStatusMessage,
+                headers: modifiedRequest.responseHeaders,
+                body: modifiedRequest.responseBody.getData()
             )
 
             switch action {
@@ -530,22 +536,9 @@ public actor RequestInterceptor {
                 modifiedRequest.responseBody = .empty
                 modifiedRequest.wasBlocked = true
 
-            case .continueAndDisable:
+            case .continueAndDisable, .continue:
                 ProxyLog.interceptor.debug(
-                    "event=intercept.response_breakpoint_disable outcome=success request_id=\(flowIdString, privacy: .public)"
-                )
-                await breakpointManager.setEnabled(false)
-                fallthrough
-
-            case .cancel:
-                ProxyLog.interceptor.debug(
-                    "event=intercept.response_breakpoint_cancel outcome=success request_id=\(flowIdString, privacy: .public)"
-                )
-                fallthrough
-
-            case .continue:
-                ProxyLog.interceptor.debug(
-                    "event=intercept.response_breakpoint_continue outcome=success request_id=\(flowIdString, privacy: .public)"
+                    "event=intercept.response_breakpoint_\(action == .continueAndDisable ? "disable" : "continue", privacy: .public) outcome=success request_id=\(flowIdString, privacy: .public)"
                 )
                 if let pausedRequest = await breakpointManager.consumeResumedRequest(id: flowIdString) {
                     if let code = pausedRequest.effectiveStatusCode {
@@ -559,6 +552,14 @@ public actor RequestInterceptor {
                         modifiedRequest.responseBody = BodyStorage.from(data: modifiedBody, charset: charset)
                     }
                 }
+                if action == .continueAndDisable {
+                    await breakpointManager.setEnabled(false)
+                }
+
+            case .cancel:
+                ProxyLog.interceptor.debug(
+                    "event=intercept.response_breakpoint_cancel outcome=success request_id=\(flowIdString, privacy: .public)"
+                )
             }
         }
         if !didPauseForResponseBreakpoint {
@@ -657,14 +658,16 @@ public actor RequestInterceptor {
         let scriptsDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.scripts.fileName)
         let groupsDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.ruleGroups.fileName)
         let profilesDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.profiles.fileName)
+        let hostsDate = storage.configFileModificationDate(for: PersistentCollectionDescriptor.hostEntries.fileName)
 
         let rulesChanged = (rulesDate ?? .distantPast) > (lastRulesFileDate ?? .distantPast)
         let mapsChanged = (mapsDate ?? .distantPast) > (lastMapsFileDate ?? .distantPast)
         let scriptsChanged = (scriptsDate ?? .distantPast) > (lastScriptsFileDate ?? .distantPast)
         let groupsChanged = (groupsDate ?? .distantPast) > (lastGroupsFileDate ?? .distantPast)
         let profilesChanged = (profilesDate ?? .distantPast) > (lastProfilesFileDate ?? .distantPast)
+        let hostsChanged = (hostsDate ?? .distantPast) > (lastHostsFileDate ?? .distantPast)
 
-        return rulesChanged || mapsChanged || scriptsChanged || groupsChanged || profilesChanged
+        return rulesChanged || mapsChanged || scriptsChanged || groupsChanged || profilesChanged || hostsChanged
     }
 
     // MARK: - Public Utilities
@@ -702,6 +705,16 @@ public actor RequestInterceptor {
         let activeProfileEnabled = configSnapshot.activeProfile != nil
 
         return hasEnabledRewriteRules || hasEnabledRequestMaps || hasEnabledScripts || breakpointsEnabled || activeProfileEnabled
+    }
+
+    /// Returns the connect-time host override (IP + optional port) from enabled host entries.
+    ///
+    /// Call this **before** `NIOTSConnectionBootstrap.connect(host:port:)` to redirect the TCP
+    /// connection to the overridden IP while keeping the original hostname for TLS SNI and
+    /// the HTTP `Host` header.
+    public func hostOverride(for url: String) async -> (ip: String, port: Int?)? {
+        await refreshConfigSnapshotIfNeeded()
+        return configSnapshot.hostOverride(for: url)
     }
 
     // MARK: - Response Pipeline Decision
@@ -792,25 +805,30 @@ public actor RequestInterceptor {
             case .drop:
                 return .drop
             case .continueAndDisable:
-                await breakpointManager.setEnabled(false)
+                fallthrough
+            case .continue:
+                if let pausedEvent = await breakpointManager.consumeResumedRequest(id: event.id.uuidString),
+                   let modifiedBody = pausedEvent.effectiveBody {
+                    payloadData = modifiedBody
+                    metadata["breakpoint"] = "modified"
+                    didModify = true
+                }
+                if action == .continueAndDisable {
+                    await breakpointManager.setEnabled(false)
+                }
             case .cancel:
                 break
-            case .continue:
-                break
-            }
-
-            if let pausedEvent = await breakpointManager.consumeResumedRequest(id: event.id.uuidString),
-               let modifiedBody = pausedEvent.effectiveBody {
-                payloadData = modifiedBody
-                metadata["breakpoint"] = "modified"
-                didModify = true
             }
         }
 
         if !didPauseForStreamBreakpoint {
             var storedPayload: Data? = payloadData
-            if await breakpointManager.applyStoredStreamModifications(to: &storedPayload),
-               let storedPayload {
+            if await breakpointManager.applyStoredStreamModifications(
+                url: session.url,
+                headers: session.requestHeaders,
+                to: &storedPayload
+            ),
+                let storedPayload {
                 payloadData = storedPayload
                 metadata["breakpoint"] = "stored_modifications_applied"
                 didModify = true

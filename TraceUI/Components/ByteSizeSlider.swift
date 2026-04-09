@@ -67,3 +67,22 @@ public struct ByteSizeSlider: View {
         .accessibilityElement(children: .contain)
     }
 }
+
+private struct ByteSizeSliderPreview: View {
+    @State private var value = 10 * 1024 * 1024
+
+    var body: some View {
+        Form {
+            ByteSizeSlider(
+                title: "Max Body Size",
+                value: $value,
+                range: 1 * 1024 * 1024 ... 100 * 1024 * 1024,
+                step: 1 * 1024 * 1024
+            )
+        }
+    }
+}
+
+#Preview {
+    ByteSizeSliderPreview()
+}

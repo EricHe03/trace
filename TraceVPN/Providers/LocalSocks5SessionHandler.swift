@@ -8,6 +8,7 @@ import Foundation
 import NIOCore
 import NIOTransportServices
 import TraceCore
+import TraceFeatures
 
 final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
@@ -205,7 +206,15 @@ final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Sendable {
                 switch parseRequest() {
                 case .needMoreData:
                     return
-                case .invalid:
+                case .commandNotSupported:
+                    sendReply(.commandNotSupported, context: context)
+                    closeConnection(context: context)
+                    return
+                case .addressTypeNotSupported:
+                    sendReply(.addressTypeNotSupported, context: context)
+                    closeConnection(context: context)
+                    return
+                case .generalFailure:
                     sendReply(.generalFailure, context: context)
                     closeConnection(context: context)
                     return
@@ -238,6 +247,10 @@ final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Sendable {
         let destinationHost = request.address.host
         let destinationPort = request.port
         let destinationHash = LogRedaction.hash(destinationHost)
+
+        // Apply host override for direct (non-MITM) connections.
+        // On the MITM route the proxy itself handles the upstream, so no override needed there.
+        let hostOverride = HostsManager.shared.matchingEntry(for: destinationHost)
         let routeEvaluation = tcpConnectRoutingPolicy.evaluateRouteDecision(
             destinationHost: destinationHost,
             destinationPort: destinationPort
@@ -291,9 +304,14 @@ final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Sendable {
                 "local_socks5_connect_route",
                 "session=\(sessionID) destination_hash=\(destinationHash) sni_hash=\(destinationHash) upstream_hash=\(destinationHash) destination_port=\(destinationPort) route=direct route_decision=direct fallback_applied=false bypass_reason=\(reason) policy=\(tcpConnectRoutingPolicy.dualMITMPolicy.rawValue)"
             )
+            // Apply host entry override for direct connections (e.g. redirect api.example.com → 192.168.1.100).
+            // The original hostname is preserved for the SOCKS5 address field; only the TCP connect
+            // target is overridden so TLS SNI and Host headers remain correct.
+            let effectiveHost = hostOverride?.targetIP ?? destinationHost
+            let effectivePort = hostOverride.flatMap { $0.targetPort.map { UInt16($0) } } ?? destinationPort
             attemptDirectConnect(
-                host: destinationHost,
-                port: destinationPort,
+                host: effectiveHost,
+                port: effectivePort,
                 destinationHash: destinationHash,
                 fallbackApplied: false,
                 bypassReason: reason,
@@ -877,7 +895,7 @@ final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Sendable {
         return .value(methods.contains(0x00))
     }
 
-    private func parseRequest() -> ParseResult<Socks5Request> {
+    private func parseRequest() -> Socks5RequestParseResult {
         guard buffer.readableBytes >= 4 else {
             return .needMoreData
         }
@@ -886,20 +904,26 @@ final class Socks5SessionHandler: ChannelDuplexHandler, @unchecked Sendable {
               let commandRaw = buffer.getInteger(at: buffer.readerIndex + 1, as: UInt8.self),
               let atypRaw = buffer.getInteger(at: buffer.readerIndex + 3, as: UInt8.self)
         else {
-            return .invalid
+            return .generalFailure
         }
 
         guard version == 0x05 else {
-            return .invalid
+            return .generalFailure
         }
 
-        guard let command = Socks5Command(rawValue: commandRaw) else {
-            return .invalid
+        guard Socks5Command(rawValue: commandRaw) != nil else {
+            // RFC 1928 §6 REP 0x07: Command not supported.
+            _ = buffer.readSlice(length: buffer.readableBytes)
+            return .commandNotSupported
         }
 
         guard let atyp = Socks5AddressType(rawValue: atypRaw) else {
-            return .invalid
+            // RFC 1928 §6 REP 0x08: Address type not supported.
+            _ = buffer.readSlice(length: buffer.readableBytes)
+            return .addressTypeNotSupported
         }
+
+        let command = Socks5Command(rawValue: commandRaw)!
 
         let checkpoint = buffer
 

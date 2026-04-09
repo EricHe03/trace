@@ -274,19 +274,11 @@ public struct MultipartFormView: View {
     // MARK: - Empty State
 
     private var emptyOrErrorState: some View {
-        VStack(spacing: DesignSystem.Spacing.lg) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 50))
-                .foregroundStyle(.secondary)
-
-            Text("Unable to Parse")
-                .font(.headline)
-
-            Text("Could not parse multipart data")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        TraceContentUnavailableView(
+            "Unable to Parse",
+            systemImage: "exclamationmark.triangle",
+            description: Text("Could not parse multipart data")
+        )
     }
 
     // MARK: - Parsing

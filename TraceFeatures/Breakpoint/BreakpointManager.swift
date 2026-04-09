@@ -31,6 +31,9 @@ public actor BreakpointManager {
     private nonisolated(unsafe) let storage: AppGroupStorage
     private nonisolated(unsafe) let configFileName = "BreakpointConfiguration.json"
     private let sharedCommandPollIntervalNs: UInt64 = 100_000_000
+    /// Maximum time to wait for user action before auto-resuming. Prevents NIO channels from
+    /// hanging forever if the app is force-quit or crashes while a request is paused.
+    private let continuationTimeoutSeconds: TimeInterval = 300 // 5 minutes
 
     private init() {
         self.storage = AppGroupStorage.shared
@@ -76,7 +79,18 @@ public actor BreakpointManager {
     /// Updates the breakpoint configuration and persists it.
     /// - Parameter config: The new breakpoint configuration.
     public func updateConfiguration(_ config: BreakpointConfiguration) {
+        let previousMode = configuration.executionMode
         configuration = config
+        // Clear stored modifications when the user switches away from a mode that accumulates them.
+        // Without this, stale edits would silently apply on the next matching request.
+        if previousMode != config.executionMode,
+           config.executionMode != .editOnce,
+           config.executionMode != .alwaysApply {
+            storedRequestModifications = nil
+            storedResponseModifications = nil
+            storedStreamModifications = nil
+            editOnceApplied = false
+        }
         saveConfiguration()
     }
 
@@ -216,7 +230,24 @@ public actor BreakpointManager {
                     userInfo: userInfo
                 )
             }
+
+            // Safety: auto-resume after timeout so NIO channels never hang forever if the
+            // app is force-quit or the user leaves a breakpoint paused indefinitely.
+            let timeoutNs = UInt64(self.continuationTimeoutSeconds * 1_000_000_000)
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: timeoutNs)
+                guard let self else { return }
+                await self.autoResumeIfStillPaused(id: id)
+            }
         }
+    }
+
+    private func autoResumeIfStillPaused(id: String) {
+        guard continuations[id] != nil else { return }
+        FeatureLog.breakpoint.warning(
+            "event=breakpoint.auto_resume outcome=timeout request_id=\(id, privacy: .public) timeout_seconds=\(self.continuationTimeoutSeconds)"
+        )
+        completeResume(id: id, action: .continue)
     }
 
     private func startPollingForSharedResumeCommand(id: String) {
@@ -491,6 +522,13 @@ public actor BreakpointManager {
 
     public func applyStoredRequestModifications(to request: inout NetworkRequest) -> Bool {
         guard let stored = storedRequestModifications else { return false }
+        guard configuration.shouldBreakOnRequest(url: request.url, method: request.method) else { return false }
+        guard conditionsPass(
+            url: request.url,
+            headers: request.requestHeaders,
+            body: request.requestBody.getData()
+        ) else { return false }
+
         var didApply = false
         if request.url != stored.effectiveUrl {
             request.url = stored.effectiveUrl
@@ -511,11 +549,27 @@ public actor BreakpointManager {
             request.requestBody = BodyStorage.from(data: modifiedBody)
             didApply = true
         }
+
+        if configuration.executionMode == .editOnce {
+            storedRequestModifications = nil
+            editOnceApplied = false
+        }
+
         return didApply
     }
 
     public func applyStoredResponseModifications(to request: inout NetworkRequest) -> Bool {
         guard let stored = storedResponseModifications else { return false }
+        guard configuration.shouldBreakOnResponse(
+            url: request.url,
+            statusCode: request.statusCode ?? stored.statusCode ?? 200
+        ) else { return false }
+        guard conditionsPass(
+            url: request.url,
+            headers: request.responseHeaders,
+            body: request.responseBody.getData()
+        ) else { return false }
+
         var didApply = false
         if request.responseHeaders != stored.effectiveHeaders {
             request.responseHeaders = stored.effectiveHeaders
@@ -533,12 +587,31 @@ public actor BreakpointManager {
             request.statusMessage = message
             didApply = true
         }
+
+        if configuration.executionMode == .editOnce {
+            storedResponseModifications = nil
+            editOnceApplied = false
+        }
+
         return didApply
     }
 
-    public func applyStoredStreamModifications(to body: inout Data?) -> Bool {
+    public func applyStoredStreamModifications(
+        url: String,
+        headers: [TraceHTTPHeader],
+        to body: inout Data?
+    ) -> Bool {
         guard let stored = storedStreamModifications else { return false }
+        guard configuration.shouldBreakOnStream(url: url) else { return false }
+        guard conditionsPass(url: url, headers: headers, body: body) else { return false }
+
         body = stored.effectiveBody
+
+        if configuration.executionMode == .editOnce {
+            storedStreamModifications = nil
+            editOnceApplied = false
+        }
+
         return stored.effectiveBody != nil
     }
 

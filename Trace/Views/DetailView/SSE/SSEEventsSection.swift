@@ -232,3 +232,20 @@ private struct FallbackLoadResult {
     let events: [ServerSentEvent]
     let shouldContinuePolling: Bool
 }
+
+#Preview {
+    let request = NetworkRequest(
+        url: "https://api.example.com/events",
+        method: .get,
+        statusCode: 200,
+        timestamp: Date(),
+        duration: 0.0,
+        requestHeaders: [],
+        responseHeaders: [TraceHTTPHeader(key: "Content-Type", value: "text/event-stream")],
+        requestBody: .empty,
+        responseBody: .empty
+    )
+    ScrollView {
+        SSEEventsSection(request: request)
+    }
+}

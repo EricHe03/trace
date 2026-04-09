@@ -556,3 +556,28 @@ struct RequestRowDetailed: View {
         .padding(.vertical, 3)
     }
 }
+
+#Preview("Small Widget") {
+    SmallWidgetView(
+        data: WidgetData(isCapturing: true, requestCount: 42, dataTransferred: "1.2 MB", recentRequests: []),
+        configuration: ConfigurationAppIntent()
+    )
+    .frame(width: 155, height: 155)
+    .clipShape(RoundedRectangle(cornerRadius: 22))
+}
+
+#Preview("Medium Widget") {
+    MediumWidgetView(
+        data: WidgetData(isCapturing: false, requestCount: 157, dataTransferred: "8.4 MB", recentRequests: []),
+        configuration: ConfigurationAppIntent()
+    )
+    .frame(width: 329, height: 155)
+    .clipShape(RoundedRectangle(cornerRadius: 22))
+}
+
+#Preview("Accessory Circular") {
+    AccessoryCircularView(
+        data: WidgetData(isCapturing: true, requestCount: 42, dataTransferred: "1.2 MB", recentRequests: [])
+    )
+    .frame(width: 44, height: 44)
+}

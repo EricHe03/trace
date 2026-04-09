@@ -121,3 +121,23 @@ public struct DomainListEditor: View {
         newItem = ""
     }
 }
+
+private struct DomainListEditorPreview: View {
+    @State private var items = ["example.com", "api.github.com"]
+
+    var body: some View {
+        Form {
+            DomainListEditor(
+                title: "MITM Allowlist",
+                items: $items,
+                addLabel: "Add Domain",
+                placeholder: "example.com",
+                helperText: "Only allowlisted domains will be intercepted for HTTPS."
+            )
+        }
+    }
+}
+
+#Preview {
+    DomainListEditorPreview()
+}

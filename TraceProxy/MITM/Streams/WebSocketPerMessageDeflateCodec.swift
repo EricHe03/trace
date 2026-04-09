@@ -11,6 +11,11 @@ import Foundation
 import zlib
 #endif
 
+/// Stateless helpers for permessage-deflate encode/decode (no context takeover).
+///
+/// RFC 7692 §7.2.1 / §7.2.2: Each call uses a fresh zlib context, which satisfies
+/// both `client_no_context_takeover` and `server_no_context_takeover`. When context
+/// takeover is allowed, use `WebSocketDeflateContext` instead.
 enum WebSocketPerMessageDeflateCodec {
     static func decode(_ compressed: Data) -> Data? {
         #if canImport(zlib)
@@ -139,4 +144,28 @@ enum WebSocketPerMessageDeflateCodec {
         return output
     }
     #endif
+}
+
+/// Negotiated permessage-deflate parameters (RFC 7692 §7.1).
+///
+/// These are parsed from the Sec-WebSocket-Extensions header and control whether
+/// each side resets its LZ77 sliding window between messages.
+struct WebSocketDeflateParameters: Sendable {
+    /// Server must reset its DEFLATE context after each message (proxy→client direction).
+    var serverNoContextTakeover: Bool = false
+    /// Client must reset its DEFLATE context after each message (client→proxy direction).
+    var clientNoContextTakeover: Bool = false
+
+    /// Parse from a single Sec-WebSocket-Extensions header value.
+    static func parse(from extensionValue: String) -> WebSocketDeflateParameters {
+        var params = WebSocketDeflateParameters()
+        let tokens = extensionValue
+            .split(separator: ";")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        for token in tokens {
+            if token == "server_no_context_takeover" { params.serverNoContextTakeover = true }
+            if token == "client_no_context_takeover" { params.clientNoContextTakeover = true }
+        }
+        return params
+    }
 }

@@ -2,7 +2,7 @@
 //  TunnelProviderConfiguration.swift
 //  TraceVPN
 //
-//  Created by Codex on 2026/03/17.
+//  Created by Justin on 2026/03/17.
 //
 
 import Foundation

@@ -8,23 +8,66 @@
 import Foundation
 import TraceCore
 
+// MARK: - Metrics Delegate
+
+/// Captures URLSessionTaskMetrics for each forwarded task and delivers them to the waiting interceptor.
+private final class NetworkInterceptorSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    // Maps task identifier → pending interceptor (weak to avoid retain cycles)
+    private var pendingMetrics: [Int: URLSessionTaskMetrics] = [:]
+    private var pendingInterceptors: [Int: NetworkInterceptor] = [:]
+    private let lock = NSLock()
+
+    func register(_ interceptor: NetworkInterceptor, for task: URLSessionTask) {
+        lock.withLock {
+            pendingInterceptors[task.taskIdentifier] = interceptor
+        }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        // Relay data to the URLProtocol client — the session delegate intercepts data delivery,
+        // so we must re-deliver it here.
+        lock.withLock { pendingInterceptors[dataTask.taskIdentifier] }?
+            .relayData(data)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        let interceptor = lock.withLock { pendingInterceptors.removeValue(forKey: task.taskIdentifier) }
+        let metrics = lock.withLock { pendingMetrics.removeValue(forKey: task.taskIdentifier) }
+        interceptor?.relayCompletion(response: task.response, error: error, metrics: metrics)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        lock.withLock { pendingInterceptors[dataTask.taskIdentifier] }?
+            .relayResponse(response)
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        lock.withLock { pendingMetrics[task.taskIdentifier] = metrics }
+    }
+}
+
+// MARK: - NetworkInterceptor
+
 /// Intercepts and captures network requests via URLProtocol.
 class NetworkInterceptor: URLProtocol {
     // MARK: - Properties
 
     private var dataTask: URLSessionDataTask?
-    private var receivedData: Data?
-    private var response: URLResponse?
+    private var accumulatedData = Data()
     private var startTime: Date?
 
     // Rule: Prevent re-entrancy to avoid recursive interception.
     private static let handledKey = "NetworkInterceptorHandled"
 
+    private static let sessionDelegate = NetworkInterceptorSessionDelegate()
+
     private static let forwardingSession: URLSession = {
         let config = URLSessionConfiguration.default
         // Rule: Exclude this protocol to avoid an interception loop.
         config.protocolClasses = config.protocolClasses?.filter { $0 != NetworkInterceptor.self }
-        return URLSession(configuration: config)
+        // Delegate is required to receive URLSessionTaskMetrics via didFinishCollecting.
+        return URLSession(configuration: config, delegate: sessionDelegate, delegateQueue: nil)
     }()
 
     // MARK: - URLProtocol Overrides
@@ -62,33 +105,11 @@ class NetworkInterceptor: URLProtocol {
         }
         URLProtocol.setProperty(true, forKey: NetworkInterceptor.handledKey, in: mutableRequest)
 
-        // Performance: Reuse a shared session to avoid per-request session creation.
-        dataTask = NetworkInterceptor.forwardingSession.dataTask(with: mutableRequest as URLRequest) { [weak self] data, response, error in
-            guard let self else { return }
-
-            self.response = response
-            self.receivedData = data
-
-            if let error {
-                self.captureRequest(error: error)
-                self.client?.urlProtocol(self, didFailWithError: error)
-                return
-            }
-
-            if let response {
-                self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .allowed)
-            }
-
-            if let data {
-                self.client?.urlProtocol(self, didLoad: data)
-            }
-
-            self.captureRequest()
-
-            self.client?.urlProtocolDidFinishLoading(self)
-        }
-
-        dataTask?.resume()
+        // The session delegate receives data/response/completion events and URLSessionTaskMetrics.
+        let task = NetworkInterceptor.forwardingSession.dataTask(with: mutableRequest as URLRequest)
+        NetworkInterceptor.sessionDelegate.register(self, for: task)
+        dataTask = task
+        task.resume()
     }
 
     /// Stops loading the request.
@@ -97,54 +118,86 @@ class NetworkInterceptor: URLProtocol {
         dataTask = nil
     }
 
+    // MARK: - Relay (called by the shared delegate)
+
+    func relayResponse(_ response: URLResponse) {
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .allowed)
+    }
+
+    func relayData(_ data: Data) {
+        accumulatedData.append(data)
+        client?.urlProtocol(self, didLoad: data)
+    }
+
+    func relayCompletion(response: URLResponse?, error: Error?, metrics: URLSessionTaskMetrics?) {
+        if let error {
+            captureRequest(response: response, error: error, metrics: metrics)
+            client?.urlProtocol(self, didFailWithError: error)
+        } else {
+            captureRequest(response: response, error: nil, metrics: metrics)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+
     // MARK: - Private Methods
 
-    /// Capture the initiator stack trace, filtering out framework internals
+    /// Capture the initiator stack trace at request start time, filtering out framework internals.
     private func captureInitiatorStackTrace() -> String? {
         let symbols = Thread.callStackSymbols
-
-        // Filter out framework internals and keep only app code frames
         let appFrames = symbols.dropFirst(2).prefix(10).filter { symbol in
-            // Keep frames from the app/Trace targets, filter out Foundation/NIO
             !symbol.contains("Foundation") &&
-            !symbol.contains("Darwin") &&
-            !symbol.contains("SwiftUI") &&
-            !symbol.contains("NIOCore") &&
-            !symbol.contains("AsyncHTTPClient") &&
-            !symbol.contains("CoreFoundation")
+                !symbol.contains("Darwin") &&
+                !symbol.contains("SwiftUI") &&
+                !symbol.contains("NIOCore") &&
+                !symbol.contains("AsyncHTTPClient") &&
+                !symbol.contains("CoreFoundation")
         }
-
         let filtered = Array(appFrames)
         guard !filtered.isEmpty else { return nil }
-
-        // Format stack trace as readable string with line breaks
         return filtered.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
     }
 
-    /// Compute timing phases from URLProtocol data
-    /// For URLProtocol, we can estimate phases based on response characteristics
-    private func computeTimingPhases(duration: TimeInterval, statusCode: Int?) -> NetworkTimingPhases? {
-        // URLProtocol measures wall-clock time, but doesn't break down DNS/TCP/TLS
-        // We distribute the duration heuristically:
-        // - requestSent: ~5-10% of total time (send to server)
-        // - ttfb: ~25-50% of total time (waiting for response)
-        // - contentDownload: remainder
+    /// Build real NetworkTimingPhases from URLSessionTaskMetrics.
+    /// All values come directly from the URL Loading System — no estimates.
+    private func timingPhases(from metrics: URLSessionTaskMetrics) -> NetworkTimingPhases? {
+        // Use the last transaction (covers the final, non-redirect leg).
+        guard let tx = metrics.transactionMetrics.last else { return nil }
 
-        guard duration > 0 else { return nil }
+        func interval(from start: Date?, to end: Date?) -> TimeInterval? {
+            guard let s = start, let e = end, e > s else { return nil }
+            return e.timeIntervalSince(s)
+        }
 
-        // Conservative estimates for timing breakdown
-        let requestSent = duration * 0.08  // ~8% for sending request
-        let ttfb = duration * 0.35         // ~35% waiting for first byte
-        let contentDownload = duration - requestSent - ttfb
+        let dnsLookup = interval(from: tx.domainLookupStartDate, to: tx.domainLookupEndDate)
+        let tcpConnection = interval(from: tx.connectStartDate, to: tx.connectEndDate)
+        let tlsHandshake = interval(from: tx.secureConnectionStartDate, to: tx.secureConnectionEndDate)
+        let requestSent = interval(from: tx.requestStartDate, to: tx.requestEndDate)
+        let ttfb = interval(from: tx.requestEndDate, to: tx.responseStartDate)
+        let contentDownload = interval(from: tx.responseStartDate, to: tx.responseEndDate)
 
-        return NetworkTimingPhases(
-            requestSent: requestSent > 0.001 ? requestSent : nil,
-            ttfb: ttfb > 0.001 ? ttfb : nil,
-            contentDownload: contentDownload > 0.001 ? contentDownload : nil
+        // Redirect time: sum of all transactions except the last.
+        let redirectTransactions = metrics.transactionMetrics.dropLast()
+        let redirectTime: TimeInterval? = if redirectTransactions.isEmpty {
+            nil
+        } else {
+            redirectTransactions.compactMap { t in
+                interval(from: t.fetchStartDate, to: t.responseEndDate)
+            }.reduce(0, +)
+        }
+
+        let phases = NetworkTimingPhases(
+            dnsLookup: dnsLookup,
+            tcpConnection: tcpConnection,
+            tlsHandshake: tlsHandshake,
+            requestSent: requestSent,
+            ttfb: ttfb,
+            contentDownload: contentDownload,
+            redirectTime: redirectTime
         )
+        return phases.hasData ? phases : nil
     }
 
-    private func captureRequest(error: Error? = nil) {
+    private func captureRequest(response: URLResponse?, error: Error?, metrics: URLSessionTaskMetrics?) {
         let endTime = Date()
         let duration = endTime.timeIntervalSince(startTime ?? endTime)
 
@@ -159,7 +212,6 @@ class NetworkInterceptor: URLProtocol {
         if let bodyData = request.httpBody {
             requestBodyStorage = BodyStorage.from(data: bodyData)
         } else if request.httpBodyStream != nil {
-            // Note: We cannot safely read the stream without consuming it; record a note instead.
             requestHeaders.append(
                 TraceHTTPHeader(key: "X-Trace-Note", value: "Streamed body not captured")
             )
@@ -177,13 +229,11 @@ class NetworkInterceptor: URLProtocol {
             responseHeaders = HTTPHeaderNormalizer.flatten(httpResponse.allHeaderFields)
         }
 
+        let data = accumulatedData
         let responseBodyStorage: BodyStorage
-        if let data = receivedData {
+        if !data.isEmpty {
             let contentEncoding = responseHeaders.first { $0.key.lowercased() == "content-encoding" }?.value
-
             let charset = BodyStorage.extractCharset(from: responseHeaders)
-
-            // Rule: Only pretty-print JSON when the payload is not compressed.
             if contentEncoding == nil || contentEncoding?.lowercased() == "identity",
                let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []),
                let prettyData = try? JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted]) {
@@ -194,6 +244,8 @@ class NetworkInterceptor: URLProtocol {
         } else {
             responseBodyStorage = .empty
         }
+
+        let realTimingPhases = metrics.flatMap { timingPhases(from: $0) }
 
         let networkRequest = NetworkRequest(
             url: url,
@@ -206,11 +258,10 @@ class NetworkInterceptor: URLProtocol {
             responseHeaders: responseHeaders,
             requestBody: requestBodyStorage,
             responseBody: responseBodyStorage,
-            timingPhases: computeTimingPhases(duration: duration, statusCode: statusCode),
+            timingPhases: realTimingPhases,
             initiatorStackTrace: captureInitiatorStackTrace()
         )
 
-        // Concurrency: NetworkCaptureStore updates run on the MainActor.
         DispatchQueue.main.async {
             NetworkCaptureStore.shared.addRequest(networkRequest)
         }

@@ -102,3 +102,35 @@ struct ImportHARView: View {
             .padding()
     }
 }
+
+#Preview("RuleWizardView") {
+    NavigationStack { RuleWizardView() }
+}
+
+#Preview("VisualRuleEditorView") {
+    NavigationStack { VisualRuleEditorView() }
+}
+
+#Preview("RequestComposerView") {
+    NavigationStack { RequestComposerView() }
+}
+
+#Preview("RuleTestingView") {
+    NavigationStack { RuleTestingView() }
+}
+
+#Preview("ImportProxymanView") {
+    NavigationStack { ImportProxymanView() }
+}
+
+#Preview("ImportCharlesView") {
+    NavigationStack { ImportCharlesView() }
+}
+
+#Preview("ImportFiddlerView") {
+    NavigationStack { ImportFiddlerView() }
+}
+
+#Preview("ImportHARView") {
+    NavigationStack { ImportHARView() }
+}

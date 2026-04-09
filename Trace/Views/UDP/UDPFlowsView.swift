@@ -402,3 +402,9 @@ private struct UDPFlowFiltersView: View {
         }
     }
 }
+
+#Preview {
+    NavigationStack {
+        UDPFlowsView()
+    }
+}

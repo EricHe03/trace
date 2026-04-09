@@ -162,3 +162,9 @@ struct CaptureRulesView: View {
         Validation.isValidDomainPattern(value) ? nil : "Invalid domain pattern"
     }
 }
+
+#Preview {
+    NavigationStack {
+        CaptureRulesView()
+    }
+}

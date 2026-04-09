@@ -12,6 +12,7 @@ Trace is an on-device iOS network debugger. It captures HTTP(S), HTTP/2, WebSock
 |---|---|
 | [Capture HTTPS traffic](guides/capture-https.md) | Install the root CA and configure HTTPS MITM |
 | [Use rewrite rules](guides/rewrite-rules.md) | Modify requests and responses on the fly |
+| [Use breakpoints](guides/breakpoints.md) | Pause and edit requests or responses mid-flight |
 | [Export traffic](guides/export-traffic.md) | Export as HAR, PCAP, or cURL |
 | [Full-tunnel mode](guides/full-tunnel-mode.md) | Capture apps that ignore system proxy settings |
 

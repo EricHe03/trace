@@ -93,3 +93,9 @@ struct BodyStorageSettingsView: View {
         persistConfig()
     }
 }
+
+#Preview {
+    NavigationStack {
+        BodyStorageSettingsView()
+    }
+}

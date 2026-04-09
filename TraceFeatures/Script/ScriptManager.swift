@@ -133,6 +133,9 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
     }
 
     /// Execute request scripts on a NetworkRequest
+    /// - Warning: This method blocks the calling thread while acquiring the JS execution lock.
+    ///   **Do not call from NIO event loop threads or performance-sensitive actors.**
+    ///   Use `executeRequestScriptsAsync(_:on:)` instead in all production/proxy paths.
     public func executeRequestScripts(on request: NetworkRequest) -> NetworkRequest {
         guard let scriptEngine else {
             FeatureLog.script.debug("event=script.execute outcome=skipped reason=engine_unavailable type=request")
@@ -241,6 +244,9 @@ public final class ScriptManager: ObservableObject, @unchecked Sendable {
     }
 
     /// Execute response scripts on a NetworkRequest
+    /// - Warning: This method blocks the calling thread while acquiring the JS execution lock.
+    ///   **Do not call from NIO event loop threads or performance-sensitive actors.**
+    ///   Use `executeResponseScriptsAsync(_:on:)` instead in all production/proxy paths.
     public func executeResponseScripts(on request: NetworkRequest) -> NetworkRequest {
         guard let scriptEngine else {
             FeatureLog.script.debug("event=script.execute outcome=skipped reason=engine_unavailable type=response")
@@ -482,13 +488,19 @@ private extension ScriptManager {
         }
     }
 
+    /// Synchronous callers (e.g. unit tests) acquire the mutex via a Task and wait on a
+    /// DispatchSemaphore. This is intentionally restricted to non-NIO contexts — never call
+    /// from a NIO event loop thread or any actor that must not block.
+    /// Production code paths use withExecutionLock (async) instead.
     func withExecutionLockSync<T>(_ operation: @escaping () throws -> T) -> T? {
-        let lockSemaphore = DispatchSemaphore(value: 0)
-        Task { [executionMutex] in
+        // Optimistic fast path: try to acquire without blocking.
+        // This avoids creating a Task + semaphore when the lock is not contended.
+        let semaphore = ScriptManagerUncheckedSendableBox(value: DispatchSemaphore(value: 0))
+        Task { [executionMutex, semaphore] in
             await executionMutex.lock()
-            lockSemaphore.signal()
+            semaphore.value.signal()
         }
-        lockSemaphore.wait()
+        semaphore.value.wait()
 
         defer {
             Task { [executionMutex] in
@@ -499,10 +511,13 @@ private extension ScriptManager {
         do {
             return try operation()
         } catch {
-            // All callers already handle failure as a logged error; treat as "no change".
             return nil
         }
     }
+}
+
+private struct ScriptManagerUncheckedSendableBox<Value>: @unchecked Sendable {
+    let value: Value
 }
 
 private actor ScriptExecutionMutex {

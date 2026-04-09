@@ -206,6 +206,12 @@ struct ConnectionSettingsView: View {
     }
 }
 
+#Preview {
+    NavigationStack {
+        ConnectionSettingsView()
+    }
+}
+
 private struct ConnectionSummaryRow: View {
     let record: PacketFlowRecord
     private var accessibilityValue: String {

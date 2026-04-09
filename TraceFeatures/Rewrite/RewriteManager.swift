@@ -231,8 +231,10 @@ public final class RewriteManager: ObservableObject {
         }
 
         // Handle wildcard replacement in redirect URL with multiple captures.
-        if rule.matchPattern.contains("*") && redirectUrl.contains("*"),
-           let captures = wildcardCaptures(url: url, pattern: rule.matchPattern) {
+        // Use matchCriteria URL pattern when present (modern rules), falling back to legacy matchPattern.
+        let capturePattern = rule.matchCriteria?.url?.pattern ?? rule.matchPattern
+        if capturePattern.contains("*") && redirectUrl.contains("*"),
+           let captures = wildcardCaptures(url: url, pattern: capturePattern) {
             return applyWildcardCaptures(to: redirectUrl, captures: captures)
         }
 

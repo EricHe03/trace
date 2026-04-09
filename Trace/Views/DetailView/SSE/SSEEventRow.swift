@@ -46,3 +46,23 @@ struct SSEEventRow: View {
         .padding(.vertical, DesignSystem.Spacing.xs)
     }
 }
+
+#Preview {
+    List {
+        SSEEventRow(event: ServerSentEvent(
+            eventId: "42",
+            eventType: "message",
+            data: "{\"user\": \"alice\", \"text\": \"Hello world\"}",
+            timestamp: Date()
+        ))
+        SSEEventRow(event: ServerSentEvent(
+            eventType: "ping",
+            data: "keepalive",
+            timestamp: Date().addingTimeInterval(-5)
+        ))
+        SSEEventRow(event: ServerSentEvent(
+            data: "A very long data payload that exceeds the preview limit and should be truncated with an ellipsis at the end of the visible area",
+            timestamp: Date().addingTimeInterval(-10)
+        ))
+    }
+}

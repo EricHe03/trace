@@ -175,14 +175,18 @@ public class HARExporter {
             headers: request.requestHeaders.map { HARHeader(name: $0.key, value: $0.value, comment: nil) },
             queryString: extractQueryString(from: request.url),
             cookies: extractCookies(from: request.requestHeaders),
-            headersSize: -1,
-            bodySize: request.requestBody.totalSize,
+            headersSize: request.requestHeadersSize ?? -1,
+            bodySize: request.requestBodyTransferSize ?? request.requestBody.totalSize,
             postData: request.requestBody.getString().map { buildPostData(body: $0, headers: request.requestHeaders) },
             comment: nil
         )
 
         let responseMimeType = extractContentType(from: request.responseHeaders)
         let responseBody = makeHARContentBody(from: request.responseBody, mimeType: responseMimeType)
+
+        let redirectURL = request.redirectChain.last?.toURL
+            ?? request.responseHeaders.first(where: { $0.key.lowercased() == "location" })?.value
+            ?? ""
 
         // Build response
         let harResponse = HARResponse(
@@ -192,28 +196,31 @@ public class HARExporter {
             headers: request.responseHeaders.map { HARHeader(name: $0.key, value: $0.value, comment: nil) },
             cookies: extractCookies(from: request.responseHeaders),
             content: HARContent(
-                size: request.responseBody.totalSize,
-                compression: nil,
+                size: request.responseBodyDecodedSize ?? request.responseBody.totalSize,
+                compression: request.responseBodyDecodedSize.flatMap { decoded in
+                    request.responseBodyTransferSize.map { decoded - $0 }
+                },
                 mimeType: responseMimeType,
                 text: responseBody.text,
                 encoding: responseBody.encoding,
                 comment: nil
             ),
-            redirectURL: "",
-            headersSize: -1,
-            bodySize: request.responseBody.totalSize,
+            redirectURL: redirectURL,
+            headersSize: request.responseHeadersSize ?? -1,
+            bodySize: request.responseBodyTransferSize ?? request.responseBody.totalSize,
             comment: nil
         )
 
-        // Build timings (simplified)
+        // Build timings from real NetworkTimingPhases when available; fall back to total duration in wait.
+        let phases = request.timingPhases
         let timings = HARTimings(
-            send: 0,
-            wait: time,
-            receive: 0,
+            send: (phases?.requestSent.map { $0 * 1000 }) ?? 0,
+            wait: (phases?.ttfb.map { $0 * 1000 }) ?? time,
+            receive: (phases?.contentDownload.map { $0 * 1000 }) ?? 0,
             blocked: nil,
-            dns: nil,
-            connect: nil,
-            ssl: nil,
+            dns: phases?.dnsLookup.map { $0 * 1000 },
+            connect: phases?.tcpConnection.map { $0 * 1000 },
+            ssl: phases?.tlsHandshake.map { $0 * 1000 },
             comment: nil
         )
 
@@ -224,8 +231,8 @@ public class HARExporter {
             response: harResponse,
             cache: HARCache(),
             timings: timings,
-            serverIPAddress: nil,
-            connection: nil,
+            serverIPAddress: request.remoteAddress,
+            connection: request.isConnectionReused ? "reused" : request.remoteAddress.map { "\($0):\(request.remotePort ?? 0)" },
             pageref: nil,
             comment: nil
         )

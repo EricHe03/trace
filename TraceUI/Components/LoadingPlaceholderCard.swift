@@ -33,3 +33,13 @@ public struct LoadingPlaceholderCard: View {
         }
     }
 }
+
+#Preview {
+    ScrollView {
+        LoadingPlaceholderCard(
+            title: "SSE Events",
+            message: "Loading captured stream events..."
+        )
+        .padding()
+    }
+}

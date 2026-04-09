@@ -110,7 +110,6 @@ struct DetailView: View {
                 VStack(spacing: DesignSystem.Spacing.lg) {
                     HeadersSection(headers: request.responseHeaders)
                     responseBodySection
-                    compressionInfoSection
                 }
                 .padding()
             }
@@ -130,7 +129,6 @@ struct DetailView: View {
             VStack(spacing: DesignSystem.Spacing.lg) {
                 requestBodySection
                 responseBodySection
-                compressionInfoSection
                 emptyBodyMessage
             }
             .padding()
@@ -221,13 +219,6 @@ struct DetailView: View {
                     .buttonStyle(.bordered)
                 }
             }
-        }
-    }
-
-    @ViewBuilder
-    private var compressionInfoSection: some View {
-        if let compressionInfo = request.responseBody.getCompressionInfo() {
-            CompressionInfoView(compressionInfo: compressionInfo)
         }
     }
 

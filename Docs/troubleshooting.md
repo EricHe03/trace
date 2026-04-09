@@ -41,17 +41,6 @@
 
 ## Full-tunnel mode
 
-### Full-tunnel self-check fails
-
-Run **Settings → Full Tunnel → Self-Check** for a guided diagnosis. Common failures:
-
-| Check | Failure reason | Fix |
-|---|---|---|
-| Tunnel established | Network Extension crashed or was killed | Force-quit Trace and reopen; rebuild and reinstall if it persists |
-| DNS resolving | Custom DNS server is unreachable | Use a known-good DNS server (e.g. `1.1.1.1`) or clear the custom DNS field |
-| TCP connection | Firewall or SOCKS5 upstream is blocking | Verify SOCKS5 upstream settings or disable the upstream proxy |
-| UDP forwarded | UDP forwarding mode misconfigured | Set UDP forwarding mode to `direct` and retry |
-
 ### Apps not captured in full-tunnel mode
 
 Some apps install their own VPN or use a Network Extension of their own. iOS only supports one active packet tunnel at a time. If another VPN is active, Trace's tunnel may not take precedence.

@@ -23,6 +23,9 @@ public enum QUICMitmFailureReason: String, Sendable {
     case tunnelRequiredUnavailable
     case protocolError
     case internalError
+    /// Transparent proxy downgraded h3→h2/http1.1 because TCP MITM cannot handle QUIC.
+    /// The QUIC engine was not invoked; enable full-tunnel mode to capture HTTP/3 traffic.
+    case alpnH3Downgraded
 }
 
 public struct QUICMitmCertificateMaterial: Sendable {

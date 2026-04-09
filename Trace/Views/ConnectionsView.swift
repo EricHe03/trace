@@ -270,3 +270,9 @@ private struct ConnectionRow: View {
         return record.protocolHints.map(\.rawValue).joined(separator: ", ")
     }
 }
+
+#Preview {
+    NavigationStack {
+        ConnectionsView()
+    }
+}

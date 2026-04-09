@@ -69,5 +69,5 @@ Each rule has an on/off toggle. Disabled rules are preserved but not evaluated. 
 ## Related tools
 
 - **Request Maps** (Tools tab) — redirect entire URLs or URL prefixes to a different host or local file, without per-field action editing
-- **Breakpoints** (Tools tab) — pause a request mid-flight and edit it interactively before it continues
+- **Breakpoints** (Tools tab) — pause a request mid-flight and edit it interactively before it continues; see [Use Breakpoints](breakpoints.md) for execution modes and examples
 - **Scripts** (Tools tab) — apply JavaScript-based transformations for logic that cannot be expressed as declarative rules

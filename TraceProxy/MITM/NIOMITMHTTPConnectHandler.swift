@@ -98,6 +98,8 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
     var connectTargetHost: String?
     var connectTargetPort: Int?
     var connectRequestStartTime: Date?
+    var requestSentAt: Date?
+    var responseHeadAt: Date?
     var didLogTunnelStatePassthrough = false
     var didEmitForwardingErrorResponse = false
     var shouldCloseAfterForwardingResponse = false
@@ -412,6 +414,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
 
         didEmitForwardingErrorResponse = false
         shouldCloseAfterForwardingResponse = false
+        resetProxyPathTimingState()
         state = .forwardingHTTPRequest
         requestInterceptionFuture(
             RequestInterceptionContext(

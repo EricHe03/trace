@@ -90,3 +90,21 @@ public struct TraceContentUnavailableView: View {
         }
     }
 }
+
+#Preview("No Data") {
+    TraceContentUnavailableView(
+        "No Requests Yet",
+        systemImage: "network.slash",
+        description: Text("Start capturing to see network requests here")
+    )
+}
+
+#Preview("With Action") {
+    TraceContentUnavailableView(
+        "No Connections",
+        systemImage: "antenna.radiowaves.left.and.right.slash",
+        description: Text("Enable capture to start monitoring connections"),
+        actionTitle: "Start Capture",
+        action: {}
+    )
+}
