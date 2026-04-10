@@ -12,7 +12,7 @@ import WidgetKit
 
 // MARK: - Control Value Provider
 
-/// Provides the current capture state for the Control Widget.
+/// Reads the current capture state from the shared App Group storage.
 @available(iOS 18.0, *)
 struct CaptureStateProvider: AppIntentControlValueProvider {
     typealias Value = Bool
@@ -29,10 +29,10 @@ struct CaptureStateProvider: AppIntentControlValueProvider {
 
 // MARK: - Control Widget
 
-/// Provides a Control Center widget for quick network capture toggling.
+/// Control Center, Lock Screen, and Action Button widget for toggling network capture.
 ///
-/// This control allows users to toggle network capture directly from Control Center,
-/// the Lock Screen, or the Action Button without opening the app.
+/// The system applies Liquid Glass automatically in iOS 26.
+/// Tint (.blue) drives the Liquid Glass colored variant when active.
 @available(iOS 18.0, *)
 struct TraceWidgetControl: ControlWidget {
     static let kind: String = "Justin.Trace.TraceWidgetControl"
@@ -49,6 +49,7 @@ struct TraceWidgetControl: ControlWidget {
                 Label {
                     Text(isCapturing ? "Capturing" : "Capture")
                 } icon: {
+                    // SF Symbol transitions with .replace effect on state change
                     Image(systemName: isCapturing ? "record.circle.fill" : "network")
                 }
             }
