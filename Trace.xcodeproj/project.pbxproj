@@ -127,7 +127,6 @@
 			membershipExceptions = (
 				LocalSocks5ServerTests.swift,
 				NIOMITMProxyEngineTests.swift,
-				NIOMITMWebSocketRelayHandlerBehaviorTests.swift,
 			);
 			target = 5F13B006316A9C1100A7E321 /* TraceLogicTests */;
 		};

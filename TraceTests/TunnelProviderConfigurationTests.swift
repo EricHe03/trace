@@ -118,8 +118,7 @@ final class TunnelProviderConfigurationTests: XCTestCase {
             dualMITMPolicyEngineEnforcedProxy: dualMITMPolicyEngineEnforcedProxy,
             dualMITMPolicyEngineEnforcedQUIC: false,
             dualMITMHttp2MITMEnabled: dualMITMHttp2MITMEnabled,
-            dualMITMStrictEnforcementHardFail: dualMITMStrictEnforcementHardFail,
-            enableStreamInterceptionV2: false
+            dualMITMStrictEnforcementHardFail: dualMITMStrictEnforcementHardFail
         )
 
         return TunnelProviderConfiguration(

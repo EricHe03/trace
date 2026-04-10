@@ -315,8 +315,7 @@ open class AppGroupStorage: @unchecked Sendable {
             "hardening.dualMitmPolicyEngineEnforcedProxy",
             "hardening.dualMitmPolicyEngineEnforcedQUIC",
             "hardening.dualMitmHttp2MITMEnabled",
-            "hardening.dualMitmStrictEnforcementHardFail",
-            "hardening.enableStreamInterceptionV2"
+            "hardening.dualMitmStrictEnforcementHardFail"
         ]
     }
 
@@ -579,10 +578,6 @@ open class AppGroupStorage: @unchecked Sendable {
             return storageError
         }
         return .databaseUnavailable
-    }
-
-    private var streamInterceptionV2Enabled: Bool {
-        loadSettingValue(Bool.self, scope: SettingScope.hardening, key: "hardening.enableStreamInterceptionV2") ?? false
     }
 
     // MARK: - Request Storage
@@ -1522,11 +1517,9 @@ open class AppGroupStorage: @unchecked Sendable {
 
     /// Loads all WebSocket connections from the shared container
     public func loadAllWebSocketConnections() throws -> [WebSocketConnection] {
-        if streamInterceptionV2Enabled {
-            let projected = try loadProjectedWebSocketConnections()
-            if !projected.isEmpty {
-                return projected
-            }
+        let projected = try loadProjectedWebSocketConnections()
+        if !projected.isEmpty {
+            return projected
         }
 
         do {
@@ -1617,11 +1610,9 @@ open class AppGroupStorage: @unchecked Sendable {
 
     /// Loads all SSE connections from the shared container
     public func loadAllSSEConnections() throws -> [SSEConnection] {
-        if streamInterceptionV2Enabled {
-            let projected = try loadProjectedSSEConnections()
-            if !projected.isEmpty {
-                return projected
-            }
+        let projected = try loadProjectedSSEConnections()
+        if !projected.isEmpty {
+            return projected
         }
 
         do {

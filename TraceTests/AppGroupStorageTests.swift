@@ -620,10 +620,7 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(loaded?.endTime, endedAt)
     }
 
-    func testLoadAllWebSocketConnectionsUsesStreamProjectionWhenV2Enabled() throws {
-        try storage.saveHardeningSetting(true, forKey: "hardening.enableStreamInterceptionV2")
-        defer { try? storage.saveHardeningSetting(false, forKey: "hardening.enableStreamInterceptionV2") }
-
+    func testLoadAllWebSocketConnectionsUsesStreamProjection() throws {
         let sessionID = UUID()
         try storage.upsertStreamSession(
             StreamSession(
@@ -653,10 +650,7 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(connections[0].messages[0].textPayload, "from stream")
     }
 
-    func testLoadAllSSEConnectionsUsesStreamProjectionWhenV2Enabled() throws {
-        try storage.saveHardeningSetting(true, forKey: "hardening.enableStreamInterceptionV2")
-        defer { try? storage.saveHardeningSetting(false, forKey: "hardening.enableStreamInterceptionV2") }
-
+    func testLoadAllSSEConnectionsUsesStreamProjection() throws {
         let sessionID = UUID()
         try storage.upsertStreamSession(
             StreamSession(

@@ -2,10 +2,9 @@
 
 ## Overview
 
-Stream Interception V2 introduces an event-first pipeline for SSE and WebSocket traffic with parity to the HTTP interception model.
+Stream Interception V2 is the sole event-first pipeline for SSE and WebSocket traffic, with parity to the HTTP interception model.
 
-- Feature flag: `hardening.enableStreamInterceptionV2`
-- Legacy path remains available when the flag is `false`
+- Feature flag: removed (V2 is the only path)
 - Canonical persistence is append-only (`stream_sessions` + `stream_events`)
 
 ## Runtime Flow
@@ -23,9 +22,7 @@ Stream Interception V2 introduces an event-first pipeline for SSE and WebSocket 
    - WebSocket: frame-aware relay with event decisions, UTF-8 validation for text, fragmented-message reassembly for interception/mutation, and replay injection.
    - WebSocket RFC6455 guards are enforced before interception: continuation sequencing, RSV bit validation, control-frame FIN/payload limits, and close-frame payload/code validity.
    - Compression-aware mutation path for `permessage-deflate` (`RSV1`) using decode/edit/re-encode helpers.
-5. Capture state dual-writes into:
-   - legacy snapshots (`sse_connections` / `websocket_connections`)
-   - canonical event journal (`stream_sessions` / `stream_events`)
+5. Capture state dual-writes into the canonical event journal (`stream_sessions` / `stream_events`)
 
 ## Storage Model
 

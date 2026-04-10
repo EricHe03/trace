@@ -143,14 +143,6 @@ extension NIOMITMHTTPConnectHandler {
         return promise.futureResult
     }
 
-    func streamInterceptionV2EnabledFuture(eventLoop: EventLoop) -> EventLoopFuture<Bool> {
-        let promise = eventLoop.makePromise(of: Bool.self)
-        promise.completeWithTask {
-            await HardeningConfig.shared.enableStreamInterceptionV2
-        }
-        return promise.futureResult
-    }
-
     func streamOpenInterceptionFuture(
         session: StreamSession,
         eventLoop: EventLoop

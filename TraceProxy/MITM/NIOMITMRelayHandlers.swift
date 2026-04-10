@@ -102,9 +102,8 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
 
     weak var peerChannel: Channel?
     let direction: WebSocketDirection
-    let captureState: NIOMITMWebSocketCaptureState
-    let streamRuntime: StreamSessionRuntime?
-    let interceptDecisionProvider: (@Sendable (StreamSession, StreamEvent, EventLoop) -> EventLoopFuture<StreamInterceptionDecision>)?
+    let streamRuntime: StreamSessionRuntime
+    let interceptDecisionProvider: @Sendable (StreamSession, StreamEvent, EventLoop) -> EventLoopFuture<StreamInterceptionDecision>
     let closeNotifier: (@Sendable (StreamSessionStatus, String?, EventLoop) -> Void)?
     let replayEngine: StreamReplayEngine
     let perMessageDeflateEnabled: Bool
@@ -115,16 +114,14 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
     init(
         peerChannel: Channel,
         direction: WebSocketDirection,
-        captureState: NIOMITMWebSocketCaptureState,
-        streamRuntime: StreamSessionRuntime? = nil,
-        interceptDecisionProvider: (@Sendable (StreamSession, StreamEvent, EventLoop) -> EventLoopFuture<StreamInterceptionDecision>)? = nil,
+        streamRuntime: StreamSessionRuntime,
+        interceptDecisionProvider: @escaping @Sendable (StreamSession, StreamEvent, EventLoop) -> EventLoopFuture<StreamInterceptionDecision>,
         closeNotifier: (@Sendable (StreamSessionStatus, String?, EventLoop) -> Void)? = nil,
         replayEngine: StreamReplayEngine = .shared,
         perMessageDeflateEnabled: Bool = false
     ) {
         self.peerChannel = peerChannel
         self.direction = direction
-        self.captureState = captureState
         self.streamRuntime = streamRuntime
         self.interceptDecisionProvider = interceptDecisionProvider
         self.closeNotifier = closeNotifier
@@ -134,11 +131,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let frame = unwrapInboundIn(data)
-        guard let streamRuntime, let interceptDecisionProvider else {
-            captureState.recordFrame(frame, direction: direction)
-            forward(prepareInboundFrameForForwarding(frame), context: context)
-            return
-        }
 
         let sequenceStart = relayChain ?? context.eventLoop.makeSucceededVoidFuture()
         relayChain = sequenceStart.flatMap { [weak self] in
@@ -147,25 +139,21 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
             }
             return self.processFrameWithInterception(
                 frame,
-                runtime: streamRuntime,
-                decisionProvider: interceptDecisionProvider,
+                runtime: self.streamRuntime,
+                decisionProvider: self.interceptDecisionProvider,
                 context: context
             )
         }
-        relayChain?.whenFailure { [weak self] _ in
-            self?.captureState.markFailed()
-        }
+        relayChain?.whenFailure { _ in }
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        captureState.markClosed(code: nil, reason: nil)
         closeNotifier?(.closed, nil, context.eventLoop)
         peerChannel?.close(promise: nil)
         context.fireChannelInactive()
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        captureState.markFailed()
         closeNotifier?(.failed, error.localizedDescription, context.eventLoop)
         peerChannel?.close(promise: nil)
         context.close(promise: nil)
@@ -187,7 +175,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         }
 
         guard let messageType = websocketMessageType(for: frame.opcode) else {
-            captureState.recordFrame(frame, direction: direction)
             forward(prepareInboundFrameForForwarding(frame), context: context)
             return context.eventLoop.makeSucceededVoidFuture()
         }
@@ -244,7 +231,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         }
 
         guard let messageType = websocketMessageType(for: frame.opcode) else {
-            captureState.recordFrame(frame, direction: direction)
             forward(prepareInboundFrameForForwarding(frame), context: context)
             return context.eventLoop.makeSucceededVoidFuture()
         }
@@ -305,16 +291,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         )
         let textPayload = accumulator.messageType == .text ? String(data: decodedPayload, encoding: .utf8) : nil
         if accumulator.messageType == .text, textPayload == nil {
-            captureState.recordMessage(
-                type: .text,
-                payload: accumulator.wirePayload,
-                isFinal: true,
-                isMasked: accumulator.initialFrame.maskKey != nil,
-                direction: direction,
-                wasModified: false,
-                wasBlocked: true,
-                metadata: ["error": "invalid_utf8_fragmented"]
-            )
             closeOnInvalidUTF8(frame: accumulator.initialFrame, context: context)
             return context.eventLoop.makeSucceededVoidFuture()
         }
@@ -362,7 +338,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         context: ChannelHandlerContext
     ) -> EventLoopFuture<Void> {
         guard let messageType = websocketMessageType(for: frame.opcode) else {
-            captureState.recordFrame(frame, direction: direction)
             forward(prepareInboundFrameForForwarding(frame), context: context)
             return context.eventLoop.makeSucceededVoidFuture()
         }
@@ -385,16 +360,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
         let decodedPayload = decodePayloadIfNeeded(rawPayload, frame: frame, type: messageType)
         let textPayload = messageType == .text ? String(data: decodedPayload, encoding: .utf8) : nil
         if messageType == .text, textPayload == nil {
-            captureState.recordMessage(
-                type: .text,
-                payload: rawPayload,
-                isFinal: frame.fin,
-                isMasked: frame.maskKey != nil,
-                direction: direction,
-                wasModified: false,
-                wasBlocked: true,
-                metadata: ["error": "invalid_utf8"]
-            )
             closeOnInvalidUTF8(frame: frame, context: context)
             return context.eventLoop.makeSucceededVoidFuture()
         }
@@ -444,18 +409,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
     ) -> EventLoopFuture<Void> {
         switch decision {
         case .forward:
-            captureState.recordMessage(
-                type: messageType,
-                payload: decodedPayload,
-                isFinal: originalFrame.fin,
-                isMasked: originalFrame.maskKey != nil,
-                direction: direction,
-                wasModified: false,
-                wasBlocked: false,
-                metadata: [
-                    "permessage_deflate": perMessageDeflateEnabled && originalFrame.rsv1 ? "true" : "false"
-                ]
-            )
             forward(prepareInboundFrameForForwarding(originalFrame), context: context)
             return context.eventLoop.makeSucceededVoidFuture()
 
@@ -478,49 +431,13 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
                 messageType: messageType,
                 preserveCompressionFlag: useRSV1
             )
-            captureState.recordMessage(
-                type: messageType,
-                payload: modifiedPayload,
-                isFinal: modifiedFrame.fin,
-                isMasked: modifiedFrame.maskKey != nil,
-                direction: direction,
-                wasModified: true,
-                wasBlocked: false,
-                metadata: mutation.metadata.merging([
-                    "permessage_deflate": useRSV1 ? "true" : "false"
-                ]) { _, new in new }
-            )
             forward(modifiedFrame, context: context)
             return context.eventLoop.makeSucceededVoidFuture()
 
         case .block, .drop:
-            captureState.recordMessage(
-                type: messageType,
-                payload: decodedPayload,
-                isFinal: originalFrame.fin,
-                isMasked: originalFrame.maskKey != nil,
-                direction: direction,
-                wasModified: false,
-                wasBlocked: true,
-                metadata: [
-                    "permessage_deflate": perMessageDeflateEnabled && originalFrame.rsv1 ? "true" : "false"
-                ]
-            )
             return context.eventLoop.makeSucceededVoidFuture()
 
         case let .inject(mutations):
-            captureState.recordMessage(
-                type: messageType,
-                payload: decodedPayload,
-                isFinal: originalFrame.fin,
-                isMasked: originalFrame.maskKey != nil,
-                direction: direction,
-                wasModified: false,
-                wasBlocked: false,
-                metadata: [
-                    "permessage_deflate": perMessageDeflateEnabled && originalFrame.rsv1 ? "true" : "false"
-                ]
-            )
             let baseFuture = forwardFuture(prepareInboundFrameForForwarding(originalFrame), context: context)
             return mutations.reduce(baseFuture) { partial, mutation in
                 partial.flatMap {
@@ -543,36 +460,11 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
                         messageType: injectedType,
                         preserveCompressionFlag: useRSV1
                     )
-                    self.captureState.recordMessage(
-                        type: injectedType,
-                        payload: injectedPayload,
-                        isFinal: true,
-                        isMasked: injectedFrame.maskKey != nil,
-                        direction: self.direction,
-                        wasModified: true,
-                        wasBlocked: false,
-                        metadata: mutation.metadata.merging([
-                            "injected": "true",
-                            "permessage_deflate": useRSV1 ? "true" : "false"
-                        ]) { _, new in new }
-                    )
                     return self.forwardFuture(injectedFrame, context: context)
                 }
             }
 
         case let .replay(spec):
-            captureState.recordMessage(
-                type: messageType,
-                payload: decodedPayload,
-                isFinal: originalFrame.fin,
-                isMasked: originalFrame.maskKey != nil,
-                direction: direction,
-                wasModified: false,
-                wasBlocked: false,
-                metadata: [
-                    "permessage_deflate": perMessageDeflateEnabled && originalFrame.rsv1 ? "true" : "false"
-                ]
-            )
             let baseFuture = forwardFuture(prepareInboundFrameForForwarding(originalFrame), context: context)
             let maskKey = direction == .sent ? originalFrame.maskKey : nil
             return applyReplayDecision(
@@ -594,20 +486,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
     ) -> EventLoopFuture<Void> {
         switch decision {
         case .forward:
-            captureState.recordMessage(
-                type: accumulator.messageType,
-                payload: decodedPayload,
-                isFinal: true,
-                isMasked: accumulator.initialFrame.maskKey != nil,
-                direction: direction,
-                wasModified: false,
-                wasBlocked: false,
-                metadata: [
-                    "permessage_deflate": accumulator.compressed ? "true" : "false",
-                    "is_fragmented": "true",
-                    "fragment_count": String(accumulator.frames.count)
-                ]
-            )
             return forwardOriginalFramesFuture(accumulator.frames, context: context)
 
         case let .modify(mutation):
@@ -626,54 +504,12 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
                 messageType: accumulator.messageType,
                 preserveCompressionFlag: useRSV1
             )
-            captureState.recordMessage(
-                type: accumulator.messageType,
-                payload: modifiedPayload,
-                isFinal: true,
-                isMasked: modifiedFrame.maskKey != nil,
-                direction: direction,
-                wasModified: true,
-                wasBlocked: false,
-                metadata: mutation.metadata.merging([
-                    "permessage_deflate": useRSV1 ? "true" : "false",
-                    "is_fragmented": "true",
-                    "fragment_count": String(accumulator.frames.count)
-                ]) { _, new in new }
-            )
             return forwardFuture(modifiedFrame, context: context)
 
         case .block, .drop:
-            captureState.recordMessage(
-                type: accumulator.messageType,
-                payload: decodedPayload,
-                isFinal: true,
-                isMasked: accumulator.initialFrame.maskKey != nil,
-                direction: direction,
-                wasModified: false,
-                wasBlocked: true,
-                metadata: [
-                    "permessage_deflate": accumulator.compressed ? "true" : "false",
-                    "is_fragmented": "true",
-                    "fragment_count": String(accumulator.frames.count)
-                ]
-            )
             return context.eventLoop.makeSucceededVoidFuture()
 
         case let .inject(mutations):
-            captureState.recordMessage(
-                type: accumulator.messageType,
-                payload: decodedPayload,
-                isFinal: true,
-                isMasked: accumulator.initialFrame.maskKey != nil,
-                direction: direction,
-                wasModified: false,
-                wasBlocked: false,
-                metadata: [
-                    "permessage_deflate": accumulator.compressed ? "true" : "false",
-                    "is_fragmented": "true",
-                    "fragment_count": String(accumulator.frames.count)
-                ]
-            )
             let baseFuture = forwardOriginalFramesFuture(accumulator.frames, context: context)
             return mutations.reduce(baseFuture) { partial, mutation in
                 partial.flatMap {
@@ -692,39 +528,11 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
                         messageType: injectedType,
                         preserveCompressionFlag: false
                     )
-                    self.captureState.recordMessage(
-                        type: injectedType,
-                        payload: injectedPayload,
-                        isFinal: true,
-                        isMasked: injectedFrame.maskKey != nil,
-                        direction: self.direction,
-                        wasModified: true,
-                        wasBlocked: false,
-                        metadata: mutation.metadata.merging([
-                            "injected": "true",
-                            "permessage_deflate": "false",
-                            "is_fragmented": "true"
-                        ]) { _, new in new }
-                    )
                     return self.forwardFuture(injectedFrame, context: context)
                 }
             }
 
         case let .replay(spec):
-            captureState.recordMessage(
-                type: accumulator.messageType,
-                payload: decodedPayload,
-                isFinal: true,
-                isMasked: accumulator.initialFrame.maskKey != nil,
-                direction: direction,
-                wasModified: false,
-                wasBlocked: false,
-                metadata: [
-                    "permessage_deflate": accumulator.compressed ? "true" : "false",
-                    "is_fragmented": "true",
-                    "fragment_count": String(accumulator.frames.count)
-                ]
-            )
             let baseFuture = forwardOriginalFramesFuture(accumulator.frames, context: context)
             let maskKey = direction == .sent ? accumulator.initialFrame.maskKey : nil
             return applyReplayDecision(
@@ -813,19 +621,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
             if let messageType = self.websocketMessageType(for: replayFrame.frame.opcode) {
                 let rawPayload = self.payloadDataForOutboundFrame(replayFrame.frame)
                 let decodedPayload = self.decodePayloadIfNeeded(rawPayload, frame: replayFrame.frame, type: messageType)
-                self.captureState.recordMessage(
-                    type: messageType,
-                    payload: decodedPayload,
-                    isFinal: replayFrame.frame.fin,
-                    isMasked: replayFrame.frame.maskKey != nil,
-                    direction: self.direction,
-                    wasModified: true,
-                    wasBlocked: false,
-                    metadata: [
-                        "replay": "true",
-                        "permessage_deflate": self.perMessageDeflateEnabled && replayFrame.frame.rsv1 ? "true" : "false"
-                    ]
-                )
             }
             return self.forwardFuture(replayFrame.frame, context: context)
         }
@@ -1093,16 +888,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
                 context: context
             )
         case let .invalidUTF8(reason):
-            captureState.recordMessage(
-                type: messageType,
-                payload: payload,
-                isFinal: frame.fin,
-                isMasked: frame.maskKey != nil,
-                direction: direction,
-                wasModified: false,
-                wasBlocked: true,
-                metadata: ["error": reason]
-            )
             closeOnInvalidUTF8(frame: frame, context: context)
         }
 
@@ -1164,16 +949,6 @@ final class NIOMITMWebSocketRelayHandler: ChannelInboundHandler, @unchecked Send
             opcode: .connectionClose,
             maskKey: localMaskKey,
             data: payload
-        )
-        captureState.recordMessage(
-            type: .close,
-            payload: Data([0x03, 0xEA]),
-            isFinal: true,
-            isMasked: localMaskKey != nil,
-            direction: direction,
-            wasModified: false,
-            wasBlocked: true,
-            metadata: ["error": reason]
         )
         forward(closeFrame, context: context)
         // RFC 6455 §5.5.1: also send a Close frame to the peer channel.
