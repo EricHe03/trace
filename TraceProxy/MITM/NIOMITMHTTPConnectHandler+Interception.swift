@@ -18,10 +18,33 @@ struct RequestInterceptionContext {
 }
 
 extension NIOMITMHTTPConnectHandler {
+    private static let streamPersistenceQueue = DispatchQueue(
+        label: "com.trace.proxy.stream.persistence",
+        qos: .utility
+    )
+
     func persistStreamRuntimeSnapshot(_ runtime: StreamSessionRuntime) {
         let snapshot = runtime.snapshot()
-        DispatchQueue.global(qos: .utility).async {
+        Self.streamPersistenceQueue.async {
             try? AppGroupStorage.shared.upsertStreamSession(snapshot)
+        }
+    }
+
+    func persistStreamEvent(
+        _ event: StreamEvent,
+        runtime: StreamSessionRuntime,
+        countPayloadBytes: Bool = true
+    ) {
+        Self.streamPersistenceQueue.async {
+            do {
+                try AppGroupStorage.shared.appendStreamEvent(event)
+                runtime.recordPersistedEvent(event, countPayloadBytes: countPayloadBytes)
+                try AppGroupStorage.shared.upsertStreamSession(runtime.snapshot())
+            } catch {
+                ProxyLog.mitm.warning(
+                    "event=proxy.stream_event_persist outcome=failure session_id=\(event.sessionID.uuidString, privacy: .public) sequence=\(event.sequence, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                )
+            }
         }
     }
 

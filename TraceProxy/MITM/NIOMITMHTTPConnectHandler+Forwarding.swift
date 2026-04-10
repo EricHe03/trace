@@ -403,10 +403,25 @@ extension NIOMITMHTTPConnectHandler {
                                                     eventLoop: eventLoop
                                                 )
                                             },
+                                            eventRecorder: { [weak self] event in
+                                                guard let self else { return }
+                                                self.persistStreamEvent(
+                                                    event,
+                                                    runtime: streamRuntime,
+                                                    countPayloadBytes: false
+                                                )
+                                            },
                                             replayEngine: .shared,
                                             eventLoop: context.eventLoop
                                         )
                                     }.flatMap { forwardedChunk in
+                                        if !forwardedChunk.isEmpty {
+                                            streamRuntime.recordTransferredBytes(
+                                                direction: .received,
+                                                count: forwardedChunk.count
+                                            )
+                                            self.persistStreamRuntimeSnapshot(streamRuntime)
+                                        }
                                         guard !forwardedChunk.isEmpty else {
                                             return context.eventLoop.makeSucceededVoidFuture()
                                         }

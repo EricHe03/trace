@@ -46,7 +46,7 @@ final class SSEFlowHandler {
                     )
                 case let .modify(mutation):
                     runtime.mergeMetadata(mutation.metadata)
-                    self.persistSession(runtime.snapshot())
+                    self.connectHandler.persistStreamRuntimeSnapshot(runtime)
                     self.connectHandler.forwardSSEStreamTransport(
                         outboundContext,
                         requestHead: requestHead,
@@ -55,7 +55,7 @@ final class SSEFlowHandler {
                         streamRuntime: runtime
                     )
                 case .forward, .inject, .replay:
-                    self.persistSession(runtime.snapshot())
+                    self.connectHandler.persistStreamRuntimeSnapshot(runtime)
                     self.connectHandler.forwardSSEStreamTransport(
                         outboundContext,
                         requestHead: requestHead,
@@ -65,12 +65,6 @@ final class SSEFlowHandler {
                     )
                 }
             }
-        }
-    }
-
-    private func persistSession(_ session: StreamSession) {
-        DispatchQueue.global(qos: .utility).async {
-            try? AppGroupStorage.shared.upsertStreamSession(session)
         }
     }
 }

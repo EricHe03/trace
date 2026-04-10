@@ -10,6 +10,13 @@ import NIOCore
 import TraceCore
 
 final class SSEInterceptionRuntime: @unchecked Sendable {
+    private struct InterceptionContext {
+        let runtime: StreamSessionRuntime
+        let streamEvent: StreamEvent
+        let baseEvent: ServerSentEvent
+        let eventRecorder: @Sendable (StreamEvent) -> Void
+    }
+
     private let lock = NSLock()
     private var parser = SSEParser()
     private var utf8Remainder = Data()
@@ -18,6 +25,7 @@ final class SSEInterceptionRuntime: @unchecked Sendable {
         _ chunk: Data,
         runtime: StreamSessionRuntime,
         decisionProvider: @escaping @Sendable (StreamSession, StreamEvent, EventLoop) -> EventLoopFuture<StreamInterceptionDecision>,
+        eventRecorder: @escaping @Sendable (StreamEvent) -> Void,
         replayEngine: StreamReplayEngine,
         eventLoop: EventLoop
     ) -> EventLoopFuture<Data> {
@@ -57,9 +65,13 @@ final class SSEInterceptionRuntime: @unchecked Sendable {
                     .flatMap { decision in
                         self.applyDecision(
                             decision,
-                            baseEvent: event,
-                            currentPayload: state.payload,
-                            changed: state.changed,
+                            context: InterceptionContext(
+                                runtime: runtime,
+                                streamEvent: streamEvent,
+                                baseEvent: event,
+                                eventRecorder: eventRecorder
+                            ),
+                            state: state,
                             replayEngine: replayEngine,
                             eventLoop: eventLoop
                         )
@@ -81,19 +93,19 @@ final class SSEInterceptionRuntime: @unchecked Sendable {
 
     private func applyDecision(
         _ decision: StreamInterceptionDecision,
-        baseEvent: ServerSentEvent,
-        currentPayload: String,
-        changed: Bool,
+        context: InterceptionContext,
+        state: (payload: String, changed: Bool),
         replayEngine: StreamReplayEngine,
         eventLoop: EventLoop
     ) -> EventLoopFuture<(payload: String, changed: Bool)> {
         switch decision {
         case .forward:
-            let payload = currentPayload + SSEPayloadSerializer.serialize(events: [baseEvent])
-            return eventLoop.makeSucceededFuture((payload, changed))
+            context.eventRecorder(context.streamEvent)
+            let payload = state.payload + SSEPayloadSerializer.serialize(events: [context.baseEvent])
+            return eventLoop.makeSucceededFuture((payload, state.changed))
 
         case let .modify(mutation):
-            var patched = baseEvent
+            var patched = context.baseEvent
             if let text = mutation.payload?.text {
                 patched.data = text
             } else if let binary = mutation.payload?.binary,
@@ -109,14 +121,29 @@ final class SSEInterceptionRuntime: @unchecked Sendable {
             if let retry = mutation.metadata["retry"], let parsed = Int(retry) {
                 patched.retry = parsed
             }
-            let payload = currentPayload + SSEPayloadSerializer.serialize(events: [patched])
+            var recordedEvent = context.streamEvent
+            recordedEvent.payload = .text(
+                patched.data,
+                contentType: mutation.payload?.contentType ?? context.streamEvent.payload.contentType
+            )
+            recordedEvent.wasModified = true
+            recordedEvent.metadata = context.streamEvent.metadata.merging(mutation.metadata) { _, new in new }
+            recordedEvent.metadata["event_id"] = patched.eventId ?? ""
+            recordedEvent.metadata["event_type"] = patched.eventType ?? ""
+            recordedEvent.metadata["retry"] = patched.retry.map(String.init) ?? ""
+            context.eventRecorder(recordedEvent)
+            let payload = state.payload + SSEPayloadSerializer.serialize(events: [patched])
             return eventLoop.makeSucceededFuture((payload, true))
 
         case .block, .drop:
-            return eventLoop.makeSucceededFuture((currentPayload, true))
+            var recordedEvent = context.streamEvent
+            recordedEvent.wasBlocked = true
+            context.eventRecorder(recordedEvent)
+            return eventLoop.makeSucceededFuture((state.payload, true))
 
         case let .inject(mutations):
-            var serialized = currentPayload + SSEPayloadSerializer.serialize(events: [baseEvent])
+            context.eventRecorder(context.streamEvent)
+            var serialized = state.payload + SSEPayloadSerializer.serialize(events: [context.baseEvent])
             for mutation in mutations {
                 let data = mutation.payload?.text
                     ?? mutation.payload?.binary.flatMap { String(data: $0, encoding: .utf8) }
@@ -127,11 +154,28 @@ final class SSEInterceptionRuntime: @unchecked Sendable {
                     data: data,
                     retry: mutation.metadata["retry"].flatMap(Int.init)
                 )
+                let recordedEvent = context.runtime.makeEvent(
+                    direction: .received,
+                    kind: .sseEvent,
+                    payload: .text(
+                        injectedEvent.data,
+                        contentType: mutation.payload?.contentType ?? "text/event-stream; charset=utf-8"
+                    ),
+                    wasModified: true,
+                    metadata: [
+                        "event_id": injectedEvent.eventId ?? "",
+                        "event_type": injectedEvent.eventType ?? "",
+                        "retry": injectedEvent.retry.map(String.init) ?? "",
+                        "injected": "true"
+                    ].merging(mutation.metadata) { _, new in new }
+                )
+                context.eventRecorder(recordedEvent)
                 serialized += SSEPayloadSerializer.serialize(events: [injectedEvent])
             }
             return eventLoop.makeSucceededFuture((serialized, true))
 
         case let .replay(spec):
+            context.eventRecorder(context.streamEvent)
             return replayEngine.beginReplay(spec, eventLoop: eventLoop)
                 .flatMap { replayID in
                     replayEngine.loadReplaySSEPayload(spec, eventLoop: eventLoop)
@@ -155,8 +199,28 @@ final class SSEInterceptionRuntime: @unchecked Sendable {
                                 ),
                                 eventLoop: eventLoop
                             ).map {
-                                let serialized = currentPayload
-                                    + SSEPayloadSerializer.serialize(events: [baseEvent])
+                                let parser = SSEParser()
+                                let replayEvents = parser.parse(replayPayload)
+                                for replayEvent in replayEvents {
+                                    let recordedEvent = context.runtime.makeEvent(
+                                        direction: .received,
+                                        kind: .sseEvent,
+                                        payload: .text(
+                                            replayEvent.data,
+                                            contentType: "text/event-stream; charset=utf-8"
+                                        ),
+                                        wasModified: true,
+                                        metadata: [
+                                            "event_id": replayEvent.eventId ?? "",
+                                            "event_type": replayEvent.eventType ?? "",
+                                            "retry": replayEvent.retry.map(String.init) ?? "",
+                                            "replay": "true"
+                                        ]
+                                    )
+                                    context.eventRecorder(recordedEvent)
+                                }
+                                let serialized = state.payload
+                                    + SSEPayloadSerializer.serialize(events: [context.baseEvent])
                                     + replayPayload
                                 return (serialized, true)
                             }
@@ -174,7 +238,7 @@ final class SSEInterceptionRuntime: @unchecked Sendable {
                                 ),
                                 eventLoop: eventLoop
                             ).map {
-                                let serialized = currentPayload + SSEPayloadSerializer.serialize(events: [baseEvent])
+                                let serialized = state.payload + SSEPayloadSerializer.serialize(events: [context.baseEvent])
                                 return (serialized, true)
                             }
                         }

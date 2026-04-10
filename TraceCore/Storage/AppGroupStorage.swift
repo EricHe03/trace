@@ -1920,8 +1920,9 @@ open class AppGroupStorage: @unchecked Sendable {
                     }
 
                     let now = Date().timeIntervalSince1970
-                    let bytesIn = event.direction == .received ? payloadSize : 0
-                    let bytesOut = event.direction == .sent ? payloadSize : 0
+                    let countsPayloadBytes = protocolType == .websocket || protocolType == nil
+                    let bytesIn = countsPayloadBytes && event.direction == .received ? payloadSize : 0
+                    let bytesOut = countsPayloadBytes && event.direction == .sent ? payloadSize : 0
                     try db.execute(
                         sql: """
                         UPDATE stream_sessions

@@ -402,6 +402,10 @@ extension NIOMITMHTTPConnectHandler {
             }
             return self.streamEventInterceptionFuture(session: session, event: event, eventLoop: eventLoop)
         }
+        let eventRecorder: @Sendable (StreamEvent) -> Void = { [weak self] event in
+            guard let self else { return }
+            self.persistStreamEvent(event, runtime: streamRuntime)
+        }
         let closeNotifier: @Sendable (StreamSessionStatus, String?, EventLoop) -> Void = { [weak self] status, reason, eventLoop in
             self?.completeStreamRuntime(
                 streamRuntime,
@@ -433,6 +437,7 @@ extension NIOMITMHTTPConnectHandler {
                         direction: .received,
                         streamRuntime: streamRuntime,
                         interceptDecisionProvider: decisionProvider,
+                        streamEventRecorder: eventRecorder,
                         closeNotifier: closeNotifier,
                         perMessageDeflateEnabled: perMessageDeflateEnabled
                     ),
@@ -455,6 +460,7 @@ extension NIOMITMHTTPConnectHandler {
                         direction: .sent,
                         streamRuntime: streamRuntime,
                         interceptDecisionProvider: decisionProvider,
+                        streamEventRecorder: eventRecorder,
                         closeNotifier: closeNotifier,
                         perMessageDeflateEnabled: perMessageDeflateEnabled
                     ),
@@ -482,6 +488,12 @@ extension NIOMITMHTTPConnectHandler {
                     self?.eventLog?.append(
                         type: "proxy_nio_ws_relay_install",
                         msg: "outcome=failure mode=\(self?.ingressModeLabel ?? "unknown") id=\(self?.connectionID ?? "unknown") session_id=\(streamRuntime.snapshot().id.uuidString) error=\(error.localizedDescription)"
+                    )
+                    self?.completeStreamRuntime(
+                        streamRuntime,
+                        status: .failed,
+                        reason: error.localizedDescription,
+                        eventLoop: clientChannel.eventLoop
                     )
                     self?.state = .closed
                     upstream.close(promise: nil)

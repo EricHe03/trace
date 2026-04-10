@@ -46,7 +46,7 @@ final class WebSocketFlowHandler {
                     )
                 case let .modify(mutation):
                     runtime.mergeMetadata(mutation.metadata)
-                    self.persistSession(runtime.snapshot())
+                    self.connectHandler.persistStreamRuntimeSnapshot(runtime)
                     self.connectHandler.forwardWebSocketStreamTransport(
                         outboundContext,
                         requestHead: requestHead,
@@ -55,7 +55,7 @@ final class WebSocketFlowHandler {
                         streamRuntime: runtime
                     )
                 case .forward, .inject, .replay:
-                    self.persistSession(runtime.snapshot())
+                    self.connectHandler.persistStreamRuntimeSnapshot(runtime)
                     self.connectHandler.forwardWebSocketStreamTransport(
                         outboundContext,
                         requestHead: requestHead,
@@ -65,12 +65,6 @@ final class WebSocketFlowHandler {
                     )
                 }
             }
-        }
-    }
-
-    private func persistSession(_ session: StreamSession) {
-        DispatchQueue.global(qos: .utility).async {
-            try? AppGroupStorage.shared.upsertStreamSession(session)
         }
     }
 }
