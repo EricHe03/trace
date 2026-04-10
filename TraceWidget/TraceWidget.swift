@@ -41,7 +41,12 @@ struct TraceWidget: Widget {
 private extension View {
     @ViewBuilder
     func traceWidgetContainerBackgroundIfAvailable() -> some View {
-        if #available(iOS 17.0, *) {
+        if #available(iOS 26.0, *) {
+            // iOS 26: Liquid Glass clear appearance for the "clear" widget style.
+            // The system automatically applies desaturation + translucency + highlights
+            // in accented/clear appearance; we use `.fill.tertiary` as the full-color base.
+            containerBackground(.fill.tertiary, for: .widget)
+        } else if #available(iOS 17.0, *) {
             containerBackground(.fill.tertiary, for: .widget)
         } else {
             self

@@ -9,34 +9,10 @@ import SwiftUI
 import TraceCore
 import WidgetKit
 
-@available(iOS 17.0, *)
-#Preview(as: .systemSmall) {
-    TraceWidget()
-} timeline: {
-    TraceEntry(
-        date: .now,
-        configuration: ConfigurationAppIntent(),
-        data: WidgetData(
-            isCapturing: true,
-            requestCount: 42,
-            dataTransferred: "2.3 MB",
-            recentRequests: []
-        )
-    )
-    TraceEntry(
-        date: .now,
-        configuration: ConfigurationAppIntent(),
-        data: WidgetData(
-            isCapturing: false,
-            requestCount: 0,
-            dataTransferred: "0 B",
-            recentRequests: []
-        )
-    )
-}
+// Additional preview states. Primary previews are in TraceWidgetViews.swift.
 
 @available(iOS 17.0, *)
-#Preview(as: .systemMedium) {
+#Preview("Extra Large — Capturing", as: .systemExtraLarge) {
     TraceWidget()
 } timeline: {
     TraceEntry(
@@ -44,111 +20,29 @@ import WidgetKit
         configuration: ConfigurationAppIntent(),
         data: WidgetData(
             isCapturing: true,
-            requestCount: 156,
-            dataTransferred: "5.7 MB",
+            requestCount: 512,
+            dataTransferred: "34.7 MB",
             recentRequests: [
-                WidgetRequest(id: UUID(), method: "GET", host: "api.example.com", path: "/users", statusCode: 200, timestamp: Date().addingTimeInterval(-5)),
-                WidgetRequest(id: UUID(), method: "POST", host: "api.example.com", path: "/auth", statusCode: 201, timestamp: Date().addingTimeInterval(-12)),
-                WidgetRequest(id: UUID(), method: "GET", host: "cdn.example.com", path: "/image.png", statusCode: 304, timestamp: Date().addingTimeInterval(-30))
+                WidgetRequest(id: UUID(), method: "GET",    host: "api.github.com",    path: "/repos/org/app",      statusCode: 200, timestamp: Date().addingTimeInterval(-3)),
+                WidgetRequest(id: UUID(), method: "POST",   host: "api.stripe.com",    path: "/v1/charges",          statusCode: 201, timestamp: Date().addingTimeInterval(-10)),
+                WidgetRequest(id: UUID(), method: "GET",    host: "cdn.fastly.com",    path: "/assets/bundle.js",    statusCode: 304, timestamp: Date().addingTimeInterval(-22)),
+                WidgetRequest(id: UUID(), method: "PUT",    host: "api.example.com",   path: "/users/42",            statusCode: 200, timestamp: Date().addingTimeInterval(-38)),
+                WidgetRequest(id: UUID(), method: "DELETE", host: "api.example.com",   path: "/sessions/abc",        statusCode: 500, timestamp: Date().addingTimeInterval(-55)),
+                WidgetRequest(id: UUID(), method: "PATCH",  host: "api.example.com",   path: "/profile/settings",    statusCode: 404, timestamp: Date().addingTimeInterval(-80)),
+                WidgetRequest(id: UUID(), method: "GET",    host: "fonts.googleapis.com", path: "/css2?family=Inter", statusCode: 200, timestamp: Date().addingTimeInterval(-95)),
+                WidgetRequest(id: UUID(), method: "POST",   host: "analytics.example.com", path: "/events",          statusCode: 201, timestamp: Date().addingTimeInterval(-110)),
             ]
         )
     )
 }
 
 @available(iOS 17.0, *)
-#Preview(as: .systemLarge) {
+#Preview("Accessory Inline — Idle", as: .accessoryInline) {
     TraceWidget()
 } timeline: {
     TraceEntry(
         date: .now,
         configuration: ConfigurationAppIntent(),
-        data: WidgetData(
-            isCapturing: true,
-            requestCount: 234,
-            dataTransferred: "12.4 MB",
-            recentRequests: [
-                WidgetRequest(id: UUID(), method: "GET", host: "api.example.com", path: "/users/profile", statusCode: 200, timestamp: Date().addingTimeInterval(-5)),
-                WidgetRequest(id: UUID(), method: "POST", host: "api.example.com", path: "/auth/login", statusCode: 201, timestamp: Date().addingTimeInterval(-12)),
-                WidgetRequest(id: UUID(), method: "GET", host: "cdn.example.com", path: "/assets/logo.png", statusCode: 304, timestamp: Date().addingTimeInterval(-30)),
-                WidgetRequest(id: UUID(), method: "PUT", host: "api.example.com", path: "/settings", statusCode: 200, timestamp: Date().addingTimeInterval(-45)),
-                WidgetRequest(id: UUID(), method: "DELETE", host: "api.example.com", path: "/cache", statusCode: 204, timestamp: Date().addingTimeInterval(-60)),
-                WidgetRequest(id: UUID(), method: "GET", host: "api.example.com", path: "/data", statusCode: 500, timestamp: Date().addingTimeInterval(-90))
-            ]
-        )
-    )
-}
-
-@available(iOS 17.0, *)
-#Preview(as: .systemExtraLarge) {
-    TraceWidget()
-} timeline: {
-    TraceEntry(
-        date: .now,
-        configuration: ConfigurationAppIntent(),
-        data: WidgetData(
-            isCapturing: true,
-            requestCount: 345,
-            dataTransferred: "18.2 MB",
-            recentRequests: [
-                WidgetRequest(id: UUID(), method: "GET", host: "api.example.com", path: "/users/profile", statusCode: 200, timestamp: Date().addingTimeInterval(-5)),
-                WidgetRequest(id: UUID(), method: "POST", host: "api.example.com", path: "/auth/login", statusCode: 201, timestamp: Date().addingTimeInterval(-12)),
-                WidgetRequest(id: UUID(), method: "GET", host: "cdn.example.com", path: "/assets/logo.png", statusCode: 304, timestamp: Date().addingTimeInterval(-30)),
-                WidgetRequest(id: UUID(), method: "PUT", host: "api.example.com", path: "/settings", statusCode: 200, timestamp: Date().addingTimeInterval(-45)),
-                WidgetRequest(id: UUID(), method: "DELETE", host: "api.example.com", path: "/cache", statusCode: 204, timestamp: Date().addingTimeInterval(-60)),
-                WidgetRequest(id: UUID(), method: "GET", host: "api.example.com", path: "/data", statusCode: 500, timestamp: Date().addingTimeInterval(-90)),
-                WidgetRequest(id: UUID(), method: "PATCH", host: "api.example.com", path: "/profile", statusCode: 200, timestamp: Date().addingTimeInterval(-120)),
-                WidgetRequest(id: UUID(), method: "GET", host: "cdn.example.com", path: "/image2.png", statusCode: 200, timestamp: Date().addingTimeInterval(-150))
-            ]
-        )
-    )
-}
-
-@available(iOS 17.0, *)
-#Preview(as: .accessoryCircular) {
-    TraceWidget()
-} timeline: {
-    TraceEntry(
-        date: .now,
-        configuration: ConfigurationAppIntent(),
-        data: WidgetData(
-            isCapturing: true,
-            requestCount: 42,
-            dataTransferred: "2.3 MB",
-            recentRequests: []
-        )
-    )
-}
-
-@available(iOS 17.0, *)
-#Preview(as: .accessoryRectangular) {
-    TraceWidget()
-} timeline: {
-    TraceEntry(
-        date: .now,
-        configuration: ConfigurationAppIntent(),
-        data: WidgetData(
-            isCapturing: true,
-            requestCount: 156,
-            dataTransferred: "5.7 MB",
-            recentRequests: [
-                WidgetRequest(id: UUID(), method: "GET", host: "api.example.com", path: "/users", statusCode: 200, timestamp: Date().addingTimeInterval(-5))
-            ]
-        )
-    )
-}
-
-@available(iOS 17.0, *)
-#Preview(as: .accessoryInline) {
-    TraceWidget()
-} timeline: {
-    TraceEntry(
-        date: .now,
-        configuration: ConfigurationAppIntent(),
-        data: WidgetData(
-            isCapturing: true,
-            requestCount: 42,
-            dataTransferred: "2.3 MB",
-            recentRequests: []
-        )
+        data: WidgetData(isCapturing: false, requestCount: 88, dataTransferred: "3.2 MB", recentRequests: [])
     )
 }
