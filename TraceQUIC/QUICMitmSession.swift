@@ -31,10 +31,13 @@ public enum QUICMitmFailureReason: String, Sendable {
 public struct QUICMitmCertificateMaterial: Sendable {
     public let leafCertificateDER: Data
     public let privateKeyDER: Data
+    /// The notAfter date of the upstream server certificate, used to derive cache TTL.
+    public let upstreamNotAfter: Date?
 
-    public init(leafCertificateDER: Data, privateKeyDER: Data) {
+    public init(leafCertificateDER: Data, privateKeyDER: Data, upstreamNotAfter: Date? = nil) {
         self.leafCertificateDER = leafCertificateDER
         self.privateKeyDER = privateKeyDER
+        self.upstreamNotAfter = upstreamNotAfter
     }
 }
 

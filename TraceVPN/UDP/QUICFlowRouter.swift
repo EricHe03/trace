@@ -197,17 +197,17 @@ final class QUICFlowRouter: @unchecked Sendable {
     let cleanupInterval: TimeInterval = 30
     let flowIdleTimeout: TimeInterval = 120
     let retryBackoff: TimeInterval = 15
-    let hostFailOpenBackoff: TimeInterval
+    let hostFailOpenBackoff: TimeInterval = 900
     let maxRouteDecisionLogEntries = 4096
     let maxHostFailOpenEntries = 2048
     let maxQueuedIngestsPerFlow = 16
     let maxBufferedDatagramsPerFlow = 64
     let maxAuthorityRetryAttempts: Int
     let sessionTickInterval: UInt64 = 25_000_000
-    let noProgressGracePeriod: TimeInterval
-    let noProgressIdleTimeout: TimeInterval
-    let noProgressAbsoluteTimeout: TimeInterval
-    let noProgressMinimumClientDatagrams: Int
+    let noProgressGracePeriod: TimeInterval = 5.0
+    let noProgressIdleTimeout: TimeInterval = 8.0
+    let noProgressAbsoluteTimeout: TimeInterval = 20.0
+    let noProgressMinimumClientDatagrams: Int = 4
     let maxFailOpenReplayDatagrams = 32
     let maxFailOpenReplayDatagramBytes = 4096
 
@@ -215,13 +215,7 @@ final class QUICFlowRouter: @unchecked Sendable {
         interceptor: (any InterceptionProviding)? = nil,
         http3ClientFactory: @escaping @Sendable () -> any HTTP3Client = { URLSessionHTTP3Client() },
         engineStatusProvider: @escaping @Sendable () -> QUICEngineStatus = { QUICEngineRuntime.currentStatus() },
-        hostFailOpenBackoff: TimeInterval = 1800,
-        noProgressGracePeriod: TimeInterval = 6.0,
-        noProgressIdleTimeout: TimeInterval = 6.0,
-        noProgressAbsoluteTimeout: TimeInterval = 20.0,
-        noProgressMinimumClientDatagrams: Int = 6,
         maxAuthorityRetryAttempts: Int = 1,
-        certificateMaterialCacheTTL: TimeInterval = 1800,
         dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
         dualMITMCircuitBreakerEnabled: Bool = true,
         dualMITMPolicyEngine: DualMITMPolicyEngine? = nil,
@@ -232,20 +226,14 @@ final class QUICFlowRouter: @unchecked Sendable {
         self.interceptor = interceptor
         self.http3ClientFactory = http3ClientFactory
         self.engineStatusProvider = engineStatusProvider
-        self.hostFailOpenBackoff = max(60, hostFailOpenBackoff)
-        self.noProgressGracePeriod = max(0.5, noProgressGracePeriod)
-        self.noProgressIdleTimeout = max(0.5, noProgressIdleTimeout)
-        self.noProgressAbsoluteTimeout = max(2.0, noProgressAbsoluteTimeout)
+        self.maxAuthorityRetryAttempts = max(0, min(2, maxAuthorityRetryAttempts))
         self.dualMITMPolicy = dualMITMPolicy
         self.dualMITMCircuitBreakerEnabled = dualMITMCircuitBreakerEnabled
         self.dualMITMPolicyEngine = dualMITMPolicyEngine
         self.eventLogHandler = eventLogHandler
         self.downstreamDatagramSink = downstreamDatagramSink
         self.upstreamDatagramSink = upstreamDatagramSink
-        self.noProgressMinimumClientDatagrams = max(1, min(8, noProgressMinimumClientDatagrams))
-        self.maxAuthorityRetryAttempts = max(0, min(2, maxAuthorityRetryAttempts))
         self.certificateMaterialProvider = QUICCertificateMaterialProvider(
-            ttl: max(60, certificateMaterialCacheTTL),
             materialGenerator: { authority in
                 QUICFlowRouter.makeCertificateMaterial(
                     for: authority,
@@ -440,6 +428,7 @@ final class QUICFlowRouter: @unchecked Sendable {
         do {
             let (certificate, privateKey) = try CertificateManager.shared.generateCertificateForDomain(normalized)
             let certificateDER = SecCertificateCopyData(certificate) as Data
+            let upstreamNotAfter = CertificateManager.shared.certificateExpirationDate(for: certificate)
             var keyError: Unmanaged<CFError>?
             guard let privateKeyDER = SecKeyCopyExternalRepresentation(privateKey, &keyError) as Data? else {
                 let detail = keyError?.takeRetainedValue().localizedDescription ?? "unknown"
@@ -455,7 +444,8 @@ final class QUICFlowRouter: @unchecked Sendable {
             )
             return QUICMitmCertificateMaterial(
                 leafCertificateDER: certificateDER,
-                privateKeyDER: privateKeyDER
+                privateKeyDER: privateKeyDER,
+                upstreamNotAfter: upstreamNotAfter
             )
         } catch {
             eventLogHandler?(

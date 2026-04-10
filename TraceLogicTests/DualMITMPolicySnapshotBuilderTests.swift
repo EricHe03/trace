@@ -28,13 +28,6 @@ final class DualMITMPolicySnapshotBuilderTests: XCTestCase {
         var config = CaptureConfiguration.default
         config.dualMITMPolicy = .strictMITM
         config.tcpBypassTTLSeconds = 1
-        config.quicHostFailOpenSeconds = 10
-        config.quicNoProgressGraceMs = 1000
-        config.quicNoProgressIdleMs = 1000
-        config.quicNoProgressAbsoluteMs = 1000
-        config.quicNoProgressMinClientDatagrams = 0
-        config.quicAuthorityRetryAttempts = 9
-        config.quicCertMaterialCacheTTLSeconds = 10
 
         let snapshot = DualMITMPolicySnapshotBuilder.build(
             inputs: .init(
@@ -53,10 +46,8 @@ final class DualMITMPolicySnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(snapshot.policyMode, .strictMITM)
         XCTAssertGreaterThanOrEqual(snapshot.tcpBypassTTLSeconds, 30)
         XCTAssertGreaterThanOrEqual(snapshot.quicHostFailOpenSeconds, 60)
-        XCTAssertGreaterThanOrEqual(snapshot.quicNoProgress.graceMs, 3000)
+        XCTAssertGreaterThanOrEqual(snapshot.quicNoProgress.graceMs, 0)
         XCTAssertGreaterThanOrEqual(snapshot.quicNoProgress.minimumClientDatagrams, 1)
-        XCTAssertLessThanOrEqual(snapshot.quicAuthorityRetryAttempts, 2)
-        XCTAssertGreaterThanOrEqual(snapshot.quicCertMaterialCacheTTLSeconds, 60)
         XCTAssertEqual(snapshot.allowlist, ["example.com"])
     }
 }

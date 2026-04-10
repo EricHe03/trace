@@ -61,10 +61,10 @@ public struct QUICNoProgressConfig: Sendable, Codable, Equatable {
     public var minimumClientDatagrams: Int
 
     public init(
-        graceMs: Int = 6000,
-        idleMs: Int = 6000,
+        graceMs: Int = 5000,
+        idleMs: Int = 8000,
         absoluteMs: Int = 20000,
-        minimumClientDatagrams: Int = 6
+        minimumClientDatagrams: Int = 4
     ) {
         self.graceMs = max(0, graceMs)
         self.idleMs = max(0, idleMs)
@@ -83,8 +83,6 @@ public struct DualMITMPolicySnapshot: Sendable, Equatable {
     public var tcpBypassTTLSeconds: Int
     public var quicHostFailOpenSeconds: Int
     public var quicNoProgress: QUICNoProgressConfig
-    public var quicAuthorityRetryAttempts: Int
-    public var quicCertMaterialCacheTTLSeconds: Int
     public var allowlist: [String]
     public var mitmEnabled: Bool
     public var quicHandlingMode: QUICHandlingMode
@@ -98,10 +96,8 @@ public struct DualMITMPolicySnapshot: Sendable, Equatable {
         policyMode: DualMITMPolicy,
         circuitBreakerEnabled: Bool,
         tcpBypassTTLSeconds: Int = 180,
-        quicHostFailOpenSeconds: Int = 1800,
+        quicHostFailOpenSeconds: Int = 900,
         quicNoProgress: QUICNoProgressConfig = QUICNoProgressConfig(),
-        quicAuthorityRetryAttempts: Int = 1,
-        quicCertMaterialCacheTTLSeconds: Int = 1800,
         allowlist: [String] = ["*"],
         mitmEnabled: Bool = true,
         quicHandlingMode: QUICHandlingMode = .intercept,
@@ -116,8 +112,6 @@ public struct DualMITMPolicySnapshot: Sendable, Equatable {
         self.tcpBypassTTLSeconds = max(30, tcpBypassTTLSeconds)
         self.quicHostFailOpenSeconds = max(60, quicHostFailOpenSeconds)
         self.quicNoProgress = quicNoProgress
-        self.quicAuthorityRetryAttempts = max(0, quicAuthorityRetryAttempts)
-        self.quicCertMaterialCacheTTLSeconds = max(60, quicCertMaterialCacheTTLSeconds)
         self.allowlist = allowlist
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { !$0.isEmpty }
