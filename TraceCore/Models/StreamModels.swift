@@ -10,6 +10,7 @@ import Foundation
 public enum StreamProtocolType: String, Codable, CaseIterable, Sendable {
     case sse
     case websocket
+    case grpc
 }
 
 public enum StreamSessionStatus: String, Codable, CaseIterable, Sendable {

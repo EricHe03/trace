@@ -1762,6 +1762,8 @@ open class AppGroupStorage: @unchecked Sendable {
             notifyNewSSE()
         case .websocket:
             notifyNewWebSocket()
+        case .grpc:
+            notifyNewGRPC()
         }
     }
 
@@ -1920,7 +1922,7 @@ open class AppGroupStorage: @unchecked Sendable {
                     }
 
                     let now = Date().timeIntervalSince1970
-                    let countsPayloadBytes = protocolType == .websocket || protocolType == nil
+                    let countsPayloadBytes = protocolType == .websocket || protocolType == .grpc || protocolType == nil
                     let bytesIn = countsPayloadBytes && event.direction == .received ? payloadSize : 0
                     let bytesOut = countsPayloadBytes && event.direction == .sent ? payloadSize : 0
                     try db.execute(
@@ -1958,6 +1960,8 @@ open class AppGroupStorage: @unchecked Sendable {
             notifyNewSSE()
         case .websocket:
             notifyNewWebSocket()
+        case .grpc:
+            notifyNewGRPC()
         case .none:
             break
         }
@@ -2530,6 +2534,7 @@ open class AppGroupStorage: @unchecked Sendable {
     private var transportRequestObservers: [UUID: NotificationObserver] = [:]
     private var webSocketObservers: [UUID: NotificationObserver] = [:]
     private var sseObservers: [UUID: NotificationObserver] = [:]
+    private var grpcObservers: [UUID: NotificationObserver] = [:]
     private var streamObservers: [UUID: NotificationObserver] = [:]
     private var udpFlowObservers: [UUID: NotificationObserver] = [:]
     private var breakpointObservers: [UUID: NotificationObserver] = [:]
@@ -2563,6 +2568,13 @@ open class AppGroupStorage: @unchecked Sendable {
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let notificationName = "com.trace.newSSE" as CFString
 
+        CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
+    }
+
+    /// Notifies the main app that a new gRPC stream session was created/updated
+    private func notifyNewGRPC() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let notificationName = "com.trace.newGRPC" as CFString
         CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
     }
 
@@ -2692,6 +2704,33 @@ open class AppGroupStorage: @unchecked Sendable {
         notificationObserversLock.lock()
         let observers = Array(sseObservers.values)
         sseObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
+    }
+
+    /// Sets up listener for new gRPC stream session notifications (call from main app).
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeNewGRPC(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.newGRPC", handler: handler)
+        notificationObserversLock.lock()
+        grpcObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.grpcObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingNewGRPC() {
+        notificationObserversLock.lock()
+        let observers = Array(grpcObservers.values)
+        grpcObservers.removeAll()
         notificationObserversLock.unlock()
         observers.forEach { $0.stop() }
     }

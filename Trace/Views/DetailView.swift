@@ -121,6 +121,11 @@ struct DetailView: View {
             ScrollView {
                 SSEEventsSection(request: request)
             }
+
+        case .grpcStream:
+            ScrollView {
+                GRPCMessagesSection(request: request)
+            }
         }
     }
 
@@ -129,9 +134,48 @@ struct DetailView: View {
             VStack(spacing: DesignSystem.Spacing.lg) {
                 requestBodySection
                 responseBodySection
+                if request.isGRPC, let messages = viewModel.responseProtobufMessages, !messages.isEmpty {
+                    grpcDecodedSection(messages: messages)
+                }
                 emptyBodyMessage
             }
             .padding()
+        }
+        .sheet(isPresented: $viewModel.showProtoImport) {
+            ProtobufSchemaImportSheet(isPresented: $viewModel.showProtoImport) { protoText in
+                viewModel.importProtoSchema(text: protoText, for: request)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func grpcDecodedSection(messages: [[ProtobufDecoder.Field]]) -> some View {
+        SectionCard(title: "gRPC Messages", systemImage: "square.stack.3d.up") {
+            HStack {
+                Text("\(messages.count) message\(messages.count == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    viewModel.showProtoImport = true
+                } label: {
+                    Label("Import .proto", systemImage: "doc.badge.plus")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+            }
+
+            ForEach(Array(messages.enumerated()), id: \.offset) { index, fields in
+                if index > 0 { Divider() }
+                VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
+                    Text("Message \(index + 1)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, index > 0 ? DesignSystem.Spacing.xs : 0)
+                    ProtobufMessageView(fields: fields, depth: 0)
+                }
+            }
         }
     }
 

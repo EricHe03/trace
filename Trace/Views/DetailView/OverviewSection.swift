@@ -219,6 +219,11 @@ struct OverviewSection: View {
                 TLSDetailSection(tlsInfo: tlsInfo)
                     .padding(.horizontal)
             }
+
+            // gRPC Metadata
+            if let grpcMetadata = request.grpcMetadata {
+                GRPCMetadataSection(metadata: grpcMetadata)
+            }
         }
         .padding()
     }

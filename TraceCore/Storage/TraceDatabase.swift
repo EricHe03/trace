@@ -221,6 +221,12 @@ final class TraceDatabase {
             try Self.backfillLegacySSESessionsIntoStreamJournal(db)
         }
 
+        migrator.registerMigration("v4_grpc_stream_support") { _ in
+            // No DDL: stream_sessions.protocol_type is TEXT without a CHECK constraint,
+            // so it already accepts "grpc" rows inserted by the new code path.
+            // This migration anchors the feature activation point for future column additions.
+        }
+
         return migrator
     }
 }

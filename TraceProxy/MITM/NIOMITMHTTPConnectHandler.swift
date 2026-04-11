@@ -72,6 +72,7 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
         case none
         case webSocket
         case sse
+        case grpc
     }
 
     let group: NIOTSEventLoopGroup

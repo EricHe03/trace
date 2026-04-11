@@ -28,6 +28,7 @@ public struct HardeningConfigSnapshot: Sendable {
     public let dualMITMPolicyEngineEnforcedQUIC: Bool
     public let dualMITMHttp2MITMEnabled: Bool
     public let dualMITMStrictEnforcementHardFail: Bool
+    public let enableGRPCStreamInterception: Bool
 
     public func toDictionary() -> [String: Any] {
         [
@@ -47,7 +48,8 @@ public struct HardeningConfigSnapshot: Sendable {
             "dualMitmPolicyEngineEnforcedProxy": dualMITMPolicyEngineEnforcedProxy,
             "dualMitmPolicyEngineEnforcedQUIC": dualMITMPolicyEngineEnforcedQUIC,
             "dualMitmHttp2MITMEnabled": dualMITMHttp2MITMEnabled,
-            "dualMitmStrictEnforcementHardFail": dualMITMStrictEnforcementHardFail
+            "dualMitmStrictEnforcementHardFail": dualMITMStrictEnforcementHardFail,
+            "enableGRPCStreamInterception": enableGRPCStreamInterception
         ]
     }
 }
@@ -80,6 +82,7 @@ public actor HardeningConfig {
         case dualMITMPolicyEngineEnforcedQUIC = "hardening.dualMitmPolicyEngineEnforcedQUIC"
         case dualMITMHttp2MITMEnabled = "hardening.dualMitmHttp2MITMEnabled"
         case dualMITMStrictEnforcementHardFail = "hardening.dualMitmStrictEnforcementHardFail"
+        case enableGRPCStreamInterception = "hardening.enableGRPCStreamInterception"
     }
 
     // MARK: - Rollout Stages
@@ -113,6 +116,11 @@ public actor HardeningConfig {
     private var _dualMITMPolicyEngineEnforcedQUIC: Bool
     private var _dualMITMHttp2MITMEnabled: Bool
     private var _dualMITMStrictEnforcementHardFail: Bool
+    private var _enableGRPCStreamInterception: Bool
+    // Nonisolated sync read of the gRPC stream interception flag for use on NIO event loop threads.
+    // Safe: written only from actor-isolated setters; read-only access from NIO handlers
+    // is benign since the flag is not time-critical.
+    nonisolated(unsafe) private var _enableGRPCStreamInterceptionRaw = false
 
     // MARK: - Initialization
 
@@ -191,6 +199,8 @@ public actor HardeningConfig {
         _dualMITMPolicyEngineEnforcedQUIC = boolValue(.dualMITMPolicyEngineEnforcedQUIC, default: false)
         _dualMITMHttp2MITMEnabled = boolValue(.dualMITMHttp2MITMEnabled, default: false)
         _dualMITMStrictEnforcementHardFail = boolValue(.dualMITMStrictEnforcementHardFail, default: true)
+        _enableGRPCStreamInterception = boolValue(.enableGRPCStreamInterception, default: false)
+        _enableGRPCStreamInterceptionRaw = _enableGRPCStreamInterception
 
         // Rationale: Apply rollout stage restrictions inline to avoid actor isolation in init.
         switch _rolloutStage {
@@ -307,6 +317,16 @@ public actor HardeningConfig {
     /// Returns whether strict enforcement hard-fail behavior is enabled.
     public var dualMITMStrictEnforcementHardFail: Bool {
         _dualMITMStrictEnforcementHardFail
+    }
+
+    /// Returns whether per-message gRPC stream interception is enabled.
+    public var enableGRPCStreamInterception: Bool {
+        _enableGRPCStreamInterception
+    }
+
+    /// Synchronous snapshot for NIO event loop code paths that cannot await the actor.
+    public nonisolated var enableGRPCStreamInterceptionSync: Bool {
+        _enableGRPCStreamInterceptionRaw
     }
 
     // MARK: - Configuration Updates
@@ -446,6 +466,14 @@ public actor HardeningConfig {
         ProxyLog.mitm.info("event=config.dual_mitm_strict_hard_fail outcome=success enabled=\(enabled)")
     }
 
+    /// Updates gRPC stream interception setting.
+    public func setEnableGRPCStreamInterception(_ enabled: Bool) {
+        _enableGRPCStreamInterception = enabled
+        _enableGRPCStreamInterceptionRaw = enabled
+        persistHardeningValue(enabled, for: .enableGRPCStreamInterception)
+        ProxyLog.mitm.info("event=config.grpc_stream_interception outcome=success enabled=\(enabled)")
+    }
+
     private func persistHardeningValue(_ value: some Encodable, for key: ConfigKey) {
         do {
             try storage.saveHardeningSetting(value, forKey: key.rawValue)
@@ -522,6 +550,8 @@ public actor HardeningConfig {
         _dualMITMPolicyEngineEnforcedQUIC = false
         _dualMITMHttp2MITMEnabled = false
         _dualMITMStrictEnforcementHardFail = true
+        _enableGRPCStreamInterception = false
+        _enableGRPCStreamInterceptionRaw = false
         _enableRawCapture = false
         _maxRawCaptureSize = 10_485_760
 
@@ -542,6 +572,7 @@ public actor HardeningConfig {
         persistHardeningValue(_dualMITMStrictEnforcementHardFail, for: .dualMITMStrictEnforcementHardFail)
         persistHardeningValue(_enableRawCapture, for: .enableRawCapture)
         persistHardeningValue(_maxRawCaptureSize, for: .maxRawCaptureSize)
+        persistHardeningValue(_enableGRPCStreamInterception, for: .enableGRPCStreamInterception)
 
         ProxyLog.mitm.info("event=config.reset_defaults outcome=success")
     }
@@ -565,7 +596,8 @@ public actor HardeningConfig {
             dualMITMPolicyEngineEnforcedProxy: _dualMITMPolicyEngineEnforcedProxy,
             dualMITMPolicyEngineEnforcedQUIC: _dualMITMPolicyEngineEnforcedQUIC,
             dualMITMHttp2MITMEnabled: _dualMITMHttp2MITMEnabled,
-            dualMITMStrictEnforcementHardFail: _dualMITMStrictEnforcementHardFail
+            dualMITMStrictEnforcementHardFail: _dualMITMStrictEnforcementHardFail,
+            enableGRPCStreamInterception: _enableGRPCStreamInterception
         )
     }
 
