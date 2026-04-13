@@ -121,6 +121,50 @@ final class RequestDetailViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.responseProtobufMessages?.first?.first?.fieldNumber, 1)
     }
 
+    func testImportProtoSchemaSelectsRPCRequestAndResponseDescriptors() async {
+        let requestPayload = Data([0x08, 0x2A]) // query = 42
+        let responsePayload = Data([0x08, 0x07]) // reply = 7
+        let request = NetworkRequest(
+            url: "https://example.com/trace.example.EchoService/Echo",
+            method: .post,
+            statusCode: 200,
+            timestamp: Date(),
+            duration: 0.1,
+            requestHeaders: [TraceHTTPHeader(key: "Content-Type", value: "application/grpc+proto")],
+            responseHeaders: [TraceHTTPHeader(key: "Content-Type", value: "application/grpc+proto")],
+            requestBody: .inline(makeGRPCFrame(flag: 0x00, payload: requestPayload)),
+            responseBody: .inline(makeGRPCFrame(flag: 0x00, payload: responsePayload))
+        )
+        let proto = """
+        syntax = "proto3";
+        package trace.example;
+
+        message EchoRequest {
+            uint64 query = 1;
+        }
+
+        message EchoResponse {
+            uint64 reply = 1;
+        }
+
+        service EchoService {
+            rpc Echo(EchoRequest) returns (EchoResponse);
+        }
+        """
+
+        let viewModel = RequestDetailViewModel()
+        await viewModel.loadInitialBodyPreview(for: request)
+        viewModel.importProtoSchema(text: proto, for: request)
+        await waitForDecodedMessageNames(
+            requestFieldName: "query",
+            responseFieldName: "reply",
+            in: viewModel
+        )
+
+        XCTAssertEqual(viewModel.requestProtobufMessages?.first?.first?.name, "query")
+        XCTAssertEqual(viewModel.responseProtobufMessages?.first?.first?.name, "reply")
+    }
+
     private func makeRequest(id: UUID, requestBody: BodyStorage, responseBody: BodyStorage) -> NetworkRequest {
         NetworkRequest(
             id: id,
@@ -152,6 +196,21 @@ final class RequestDetailViewModelTests: XCTestCase {
     private func waitForDecodedMessages(in viewModel: RequestDetailViewModel) async {
         for _ in 0 ..< 20 {
             if viewModel.requestProtobufMessages != nil, viewModel.responseProtobufMessages != nil {
+                return
+            }
+            await Task.yield()
+        }
+    }
+
+    private func waitForDecodedMessageNames(
+        requestFieldName: String,
+        responseFieldName: String,
+        in viewModel: RequestDetailViewModel
+    ) async {
+        for _ in 0 ..< 50 {
+            if viewModel.requestProtobufMessages?.first?.first?.name == requestFieldName,
+               viewModel.responseProtobufMessages?.first?.first?.name == responseFieldName
+            {
                 return
             }
             await Task.yield()

@@ -2245,19 +2245,36 @@ open class AppGroupStorage: @unchecked Sendable {
     }
 
     /// Deletes stream sessions that ended before a cutoff (or started before cutoff if still open).
+    /// - Parameters:
+    ///   - cutoffDate: Sessions ending before this date are deleted.
+    ///   - protocolType: Optional stream protocol filter.
     /// - Returns: Number of deleted sessions.
-    public func deleteStreamSessions(olderThan cutoffDate: Date) throws -> Int {
+    public func deleteStreamSessions(
+        olderThan cutoffDate: Date,
+        protocolType: StreamProtocolType? = nil
+    ) throws -> Int {
         do {
             var deleted = 0
             try withDatabase { pool in
                 try pool.write { db in
-                    try db.execute(
-                        sql: """
-                        DELETE FROM stream_sessions
-                        WHERE COALESCE(end_time, start_time) < ?
-                        """,
-                        arguments: [cutoffDate.timeIntervalSince1970]
-                    )
+                    if let protocolType {
+                        try db.execute(
+                            sql: """
+                            DELETE FROM stream_sessions
+                            WHERE protocol_type = ?
+                              AND COALESCE(end_time, start_time) < ?
+                            """,
+                            arguments: [protocolType.rawValue, cutoffDate.timeIntervalSince1970]
+                        )
+                    } else {
+                        try db.execute(
+                            sql: """
+                            DELETE FROM stream_sessions
+                            WHERE COALESCE(end_time, start_time) < ?
+                            """,
+                            arguments: [cutoffDate.timeIntervalSince1970]
+                        )
+                    }
                     deleted = db.changesCount
                 }
             }

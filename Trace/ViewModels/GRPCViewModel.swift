@@ -55,8 +55,7 @@ final class GRPCViewModel: ObservableObject {
 
     func clearSessions() {
         do {
-            // Delete all sessions older than now (effectively all gRPC sessions).
-            _ = try storage.deleteStreamSessions(olderThan: Date())
+            _ = try storage.deleteStreamSessions(olderThan: Date(), protocolType: .grpc)
             sessions = []
         } catch {}
     }

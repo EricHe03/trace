@@ -209,17 +209,26 @@ final class RequestDetailViewModel: ObservableObject {
 
     func decodeProtobufMessages(for request: NetworkRequest) {
         guard request.isGRPC else { return }
-        let descriptor = activeProtobufSchema?.firstMessage
+        let requestDescriptor = protobufDescriptor(for: request, messageKind: .request)
+        let responseDescriptor = protobufDescriptor(for: request, messageKind: .response)
         let respData = responseBodyRawData
         let reqData = requestBodyRawData
         let responseContentType = responseContentType(from: request)
         let requestContentType = requestContentType(from: request)
         Task.detached(priority: .userInitiated) { [weak self] in
             let respMessages = respData.map {
-                ProtobufDecoder.decodeGRPCMessages(from: $0, contentType: responseContentType, descriptor: descriptor)
+                ProtobufDecoder.decodeGRPCMessages(
+                    from: $0,
+                    contentType: responseContentType,
+                    descriptor: responseDescriptor
+                )
             }
             let reqMessages = reqData.map {
-                ProtobufDecoder.decodeGRPCMessages(from: $0, contentType: requestContentType, descriptor: descriptor)
+                ProtobufDecoder.decodeGRPCMessages(
+                    from: $0,
+                    contentType: requestContentType,
+                    descriptor: requestDescriptor
+                )
             }
             await MainActor.run { [weak self] in
                 self?.responseProtobufMessages = respMessages
@@ -264,6 +273,44 @@ final class RequestDetailViewModel: ObservableObject {
         }
         let bodySize = request.responseBody.totalSize
         return bodySize > 0 ? bodySize : nil
+    }
+
+    private enum ProtobufMessageKind {
+        case request
+        case response
+    }
+
+    private func protobufDescriptor(
+        for request: NetworkRequest,
+        messageKind: ProtobufMessageKind
+    ) -> ProtobufSchema.MessageDescriptor? {
+        guard let schema = activeProtobufSchema else { return nil }
+
+        if let methodPath = grpcMethodPath(for: request),
+           let rpc = schema.rpcDescriptor(forMethodPath: methodPath)
+        {
+            let typeReference = switch messageKind {
+            case .request:
+                rpc.inputType
+            case .response:
+                rpc.outputType
+            }
+            if let descriptor = schema.descriptor(forTypeReference: typeReference) {
+                return descriptor
+            }
+        }
+
+        return schema.firstMessage
+    }
+
+    private func grpcMethodPath(for request: NetworkRequest) -> String? {
+        if let url = URL(string: request.url), !url.path.isEmpty {
+            return url.path
+        }
+        if request.url.hasPrefix("/") {
+            return request.url
+        }
+        return nil
     }
 
     func copyToClipboard(_ text: String, toastMessage: String = "Copied to clipboard") {

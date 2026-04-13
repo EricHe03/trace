@@ -24,6 +24,7 @@ final class AppGroupStorageTests: XCTestCase {
         try? storage.clearAllTransportRequests()
         try? storage.clearAllWebSocketConnections()
         try? storage.clearAllSSEConnections()
+        _ = try? storage.deleteStreamSessions(olderThan: .distantFuture)
         storage.setTransportStoreBudgetBytesForTesting(nil)
         storage.resetStoredSettings()
     }
@@ -34,6 +35,7 @@ final class AppGroupStorageTests: XCTestCase {
         try? storage.clearAllTransportRequests()
         try? storage.clearAllWebSocketConnections()
         try? storage.clearAllSSEConnections()
+        _ = try? storage.deleteStreamSessions(olderThan: .distantFuture)
         storage.setTransportStoreBudgetBytesForTesting(nil)
         storage.resetStoredSettings()
         super.tearDown()
@@ -618,6 +620,44 @@ final class AppGroupStorageTests: XCTestCase {
         let loaded = try storage.loadStreamSession(sessionID)
         XCTAssertEqual(loaded?.status, .closed)
         XCTAssertEqual(loaded?.endTime, endedAt)
+    }
+
+    func testDeleteStreamSessionsCanFilterByProtocol() throws {
+        let cutoff = Date()
+        let grpcSessionID = UUID()
+        let sseSessionID = UUID()
+        let oldStart = cutoff.addingTimeInterval(-60)
+
+        try storage.upsertStreamSession(
+            StreamSession(
+                id: grpcSessionID,
+                protocolType: .grpc,
+                url: "https://example.com/trace.Echo/Call",
+                startTime: oldStart,
+                endTime: oldStart.addingTimeInterval(1),
+                status: .closed,
+                requestHeaders: [],
+                responseHeaders: []
+            )
+        )
+        try storage.upsertStreamSession(
+            StreamSession(
+                id: sseSessionID,
+                protocolType: .sse,
+                url: "https://example.com/events",
+                startTime: oldStart,
+                endTime: oldStart.addingTimeInterval(1),
+                status: .closed,
+                requestHeaders: [],
+                responseHeaders: []
+            )
+        )
+
+        let deleted = try storage.deleteStreamSessions(olderThan: cutoff, protocolType: .grpc)
+
+        XCTAssertEqual(deleted, 1)
+        XCTAssertNil(try storage.loadStreamSession(grpcSessionID))
+        XCTAssertNotNil(try storage.loadStreamSession(sseSessionID))
     }
 
     func testLoadAllWebSocketConnectionsUsesStreamProjection() throws {

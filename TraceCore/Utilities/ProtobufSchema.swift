@@ -32,6 +32,28 @@ public struct ProtobufSchema: Sendable {
         }
     }
 
+    public struct RPCDescriptor: Sendable {
+        public let name: String
+        public let inputType: String
+        public let outputType: String
+
+        public init(name: String, inputType: String, outputType: String) {
+            self.name = name
+            self.inputType = inputType
+            self.outputType = outputType
+        }
+    }
+
+    public struct ServiceDescriptor: Sendable {
+        public let name: String
+        public let methods: [String: RPCDescriptor]
+
+        public init(name: String, methods: [String: RPCDescriptor]) {
+            self.name = name
+            self.methods = methods
+        }
+    }
+
     // MARK: - Errors
 
     public enum ParseError: Error, LocalizedError {
@@ -50,6 +72,8 @@ public struct ProtobufSchema: Sendable {
 
     /// All top-level message descriptors parsed from the .proto text.
     public let messages: [String: MessageDescriptor]
+    /// All top-level service descriptors parsed from the .proto text.
+    public let services: [String: ServiceDescriptor]
 
     // MARK: - Parsing
 
@@ -61,10 +85,18 @@ public struct ProtobufSchema: Sendable {
         let tokens = tokenize(protoText)
         var index = 0
         var messages: [String: MessageDescriptor] = [:]
+        var services: [String: ServiceDescriptor] = [:]
         while index < tokens.count {
             if tokens[index] == "message" {
                 if let (descriptor, nextIndex) = parseMessage(tokens: tokens, from: index) {
                     messages[descriptor.name] = descriptor
+                    index = nextIndex
+                } else {
+                    index += 1
+                }
+            } else if tokens[index] == "service" {
+                if let (descriptor, nextIndex) = parseService(tokens: tokens, from: index) {
+                    services[descriptor.name] = descriptor
                     index = nextIndex
                 } else {
                     index += 1
@@ -76,7 +108,7 @@ public struct ProtobufSchema: Sendable {
         if messages.isEmpty {
             throw ParseError.noMessageFound
         }
-        return ProtobufSchema(messages: messages)
+        return ProtobufSchema(messages: messages, services: services)
     }
 
     // MARK: - Private Parsing
@@ -258,6 +290,104 @@ public struct ProtobufSchema: Sendable {
         let descriptor = MessageDescriptor(name: messageName, fields: fields, nested: nested)
         return (descriptor, index)
     }
+
+    private static func parseService(tokens: [String], from start: Int) -> (ServiceDescriptor, Int)? {
+        var index = start
+        guard index < tokens.count, tokens[index] == "service" else { return nil }
+        index += 1
+        guard index < tokens.count else { return nil }
+        let serviceName = tokens[index]
+        index += 1
+        guard index < tokens.count, tokens[index] == "{" else { return nil }
+        index += 1
+
+        var methods: [String: RPCDescriptor] = [:]
+        var depth = 1
+
+        while index < tokens.count, depth > 0 {
+            let token = tokens[index]
+
+            if token == "{" {
+                depth += 1
+                index += 1
+                continue
+            }
+
+            if token == "}" {
+                depth -= 1
+                index += 1
+                if depth == 0 { break }
+                continue
+            }
+
+            if depth == 1, token == "rpc" {
+                if let (rpc, nextIndex) = parseRPC(tokens: tokens, from: index) {
+                    methods[rpc.name] = rpc
+                    index = nextIndex
+                } else {
+                    index += 1
+                }
+                continue
+            }
+
+            index += 1
+        }
+
+        return (ServiceDescriptor(name: serviceName, methods: methods), index)
+    }
+
+    private static func parseRPC(tokens: [String], from start: Int) -> (RPCDescriptor, Int)? {
+        var index = start
+        guard index < tokens.count, tokens[index] == "rpc" else { return nil }
+        index += 1
+        guard index < tokens.count else { return nil }
+        let methodName = tokens[index]
+        index += 1
+
+        guard index < tokens.count, tokens[index] == "(" else { return nil }
+        index += 1
+        if index < tokens.count, tokens[index] == "stream" {
+            index += 1
+        }
+        guard index < tokens.count else { return nil }
+        let inputType = tokens[index]
+        index += 1
+
+        guard index < tokens.count, tokens[index] == ")" else { return nil }
+        index += 1
+        guard index < tokens.count, tokens[index] == "returns" else { return nil }
+        index += 1
+        guard index < tokens.count, tokens[index] == "(" else { return nil }
+        index += 1
+        if index < tokens.count, tokens[index] == "stream" {
+            index += 1
+        }
+        guard index < tokens.count else { return nil }
+        let outputType = tokens[index]
+        index += 1
+
+        guard index < tokens.count, tokens[index] == ")" else { return nil }
+        index += 1
+
+        if index < tokens.count, tokens[index] == "{" {
+            var depth = 1
+            index += 1
+            while index < tokens.count, depth > 0 {
+                if tokens[index] == "{" { depth += 1 }
+                if tokens[index] == "}" { depth -= 1 }
+                index += 1
+            }
+        } else {
+            while index < tokens.count, tokens[index] != ";" && tokens[index] != "}" {
+                index += 1
+            }
+            if index < tokens.count, tokens[index] == ";" {
+                index += 1
+            }
+        }
+
+        return (RPCDescriptor(name: methodName, inputType: inputType, outputType: outputType), index)
+    }
 }
 
 extension ProtobufSchema {
@@ -266,8 +396,68 @@ extension ProtobufSchema {
         messages[name]
     }
 
+    public func descriptor(forTypeReference typeReference: String) -> MessageDescriptor? {
+        let normalized = normalizeQualifiedName(typeReference)
+        if let descriptor = messages[normalized] {
+            return descriptor
+        }
+        if let shortName = normalized.split(separator: ".").last.map(String.init),
+           let descriptor = messages[shortName]
+        {
+            return descriptor
+        }
+
+        let matches = messages.compactMap { name, descriptor -> MessageDescriptor? in
+            let candidate = normalizeQualifiedName(name)
+            return normalized == candidate || normalized.hasSuffix(".\(candidate)") ? descriptor : nil
+        }
+        return matches.count == 1 ? matches.first : nil
+    }
+
+    public func rpcDescriptor(forMethodPath methodPath: String) -> RPCDescriptor? {
+        let trimmedPath = methodPath
+            .split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+            .first
+            .map(String.init) ?? methodPath
+        let components = trimmedPath
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        guard components.count >= 2 else { return nil }
+
+        let serviceName = components[components.count - 2]
+        let methodName = components[components.count - 1]
+        guard let service = serviceDescriptor(matching: serviceName) else { return nil }
+        return service.methods[methodName]
+    }
+
     /// Convenience: return the first message descriptor if only one exists.
     public var firstMessage: MessageDescriptor? {
-        messages.values.first
+        messages.count == 1 ? messages.values.first : nil
+    }
+
+    private func serviceDescriptor(matching serviceName: String) -> ServiceDescriptor? {
+        let normalized = normalizeQualifiedName(serviceName)
+        if let descriptor = services[normalized] {
+            return descriptor
+        }
+        if let shortName = normalized.split(separator: ".").last.map(String.init),
+           let descriptor = services[shortName]
+        {
+            return descriptor
+        }
+
+        let matches = services.compactMap { name, descriptor -> ServiceDescriptor? in
+            let candidate = normalizeQualifiedName(name)
+            return normalized == candidate || normalized.hasSuffix(".\(candidate)") ? descriptor : nil
+        }
+        return matches.count == 1 ? matches.first : nil
+    }
+
+    private func normalizeQualifiedName(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix(".") {
+            return String(trimmed.dropFirst())
+        }
+        return trimmed
     }
 }

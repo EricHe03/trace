@@ -732,7 +732,6 @@ extension NIOMITMHTTPConnectHandler {
                                         )
                                     }.flatMap { forwardedChunk in
                                         if !forwardedChunk.isEmpty {
-                                            streamRuntime.recordTransferredBytes(direction: .received, count: forwardedChunk.count)
                                             self.persistStreamRuntimeSnapshot(streamRuntime)
                                         }
                                         guard !forwardedChunk.isEmpty else { return context.eventLoop.makeSucceededVoidFuture() }
@@ -1507,8 +1506,44 @@ extension NIOMITMHTTPConnectHandler {
                             },
                             replayEngine: .shared,
                             eventLoop: context.eventLoop
-                        ).map { _ in () }
+                        )
+                    }.flatMap { forwardedChunk in
+                        guard !forwardedChunk.isEmpty else {
+                            promise.succeed(())
+                            return context.eventLoop.makeSucceededVoidFuture()
+                        }
+
+                        let forwardedBuffer = self.byteBuffer(
+                            from: forwardedChunk,
+                            allocator: context.channel.allocator
+                        )
+                        let writeChunk = {
+                            context.writeAndFlush(
+                                self.wrapOutboundOut(.body(.byteBuffer(forwardedBuffer))),
+                                promise: promise
+                            )
+                        }
+                        if forwardedBuffer.readableBytes > 0 {
+                            self.throttle(
+                                direction: .download,
+                                bytes: forwardedBuffer.readableBytes,
+                                context: context,
+                                operation: writeChunk
+                            )
+                        } else {
+                            writeChunk()
+                        }
+                        return promise.futureResult
                     }
+                    grpcBodyRelayChain.whenFailure { [weak self] error in
+                        guard let self else { return }
+                        promise.fail(error)
+                        let failureReason = self.classifyMITMFailure(error)
+                        self.finalizeActiveRequestAsFailure(reason: failureReason)
+                        self.reportMITMFailure(reason: failureReason)
+                        self.completeStreamRuntime(gRPCRuntime, status: .failed, reason: error.localizedDescription, eventLoop: context.eventLoop)
+                    }
+                    return
                 }
 
                 let writeChunk = {
