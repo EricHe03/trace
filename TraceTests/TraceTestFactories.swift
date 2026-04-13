@@ -26,9 +26,7 @@ func makeNetworkRequest(
     requestHeaders: [TraceHTTPHeader] = [],
     responseHeaders: [TraceHTTPHeader] = [],
     requestBody: BodyStorage = .empty,
-    responseBody: BodyStorage = .empty,
-    wasThrottled: Bool = false,
-    throttlingProfile: String? = nil
+    responseBody: BodyStorage = .empty
 ) -> NetworkRequest {
     NetworkRequest(
         id: id,
@@ -41,9 +39,7 @@ func makeNetworkRequest(
         requestHeaders: requestHeaders,
         responseHeaders: responseHeaders,
         requestBody: requestBody,
-        responseBody: responseBody,
-        wasThrottled: wasThrottled,
-        throttlingProfile: throttlingProfile
+        responseBody: responseBody
     )
 }
 
@@ -59,9 +55,7 @@ func makeVPNNetworkRequest(
     requestHeaders: [TraceHTTPHeader] = [],
     responseHeaders: [TraceHTTPHeader] = [],
     requestBody: BodyStorage = .empty,
-    responseBody: BodyStorage = .empty,
-    wasThrottled: Bool = false,
-    throttlingProfile: String? = nil
+    responseBody: BodyStorage = .empty
 ) -> NetworkRequest {
     NetworkRequest(
         id: id,
@@ -74,9 +68,7 @@ func makeVPNNetworkRequest(
         requestHeaders: requestHeaders,
         responseHeaders: responseHeaders,
         requestBody: requestBody,
-        responseBody: responseBody,
-        wasThrottled: wasThrottled,
-        throttlingProfile: throttlingProfile
+        responseBody: responseBody
     )
 }
 
@@ -115,25 +107,6 @@ func makeBodyStorage(string: String) -> BodyStorage {
 /// Creates test BodyStorage with data
 func makeBodyStorage(data: Data) -> BodyStorage {
     BodyStorage.from(data: data)
-}
-
-// MARK: - VPN Component Factories
-
-/// Creates a NetworkThrottlingState for testing
-func makeThrottlingState(
-    enabled: Bool = true,
-    latency: Int = 100,
-    downloadSpeed: Int = 1024,
-    uploadSpeed: Int = 512,
-    packetLoss: Double = 0.0
-) -> NetworkThrottlingState {
-    let condition = NetworkCondition.custom(
-        download: downloadSpeed,
-        upload: uploadSpeed,
-        latency: latency,
-        packetLoss: packetLoss
-    )
-    return NetworkThrottlingState(enabled: enabled, condition: condition)
 }
 
 // MARK: - HTTP Parser Factories

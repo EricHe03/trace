@@ -62,7 +62,6 @@ final class TagTypeTests: XCTestCase {
 
     func testTagTypeDisplayTextPerformance() {
         XCTAssertEqual(TagType.slow(duration: 10.5).displayText, "Slow")
-        XCTAssertEqual(TagType.throttled(profile: nil).displayText, "Throttled")
         XCTAssertEqual(TagType.stalled(duration: 5.0).displayText, "Stalled")
     }
 
@@ -101,7 +100,6 @@ final class TagTypeTests: XCTestCase {
 
     func testTagTypePriorityHigh() {
         XCTAssertEqual(TagType.slow(duration: 10).priority, .high)
-        XCTAssertEqual(TagType.throttled(profile: nil).priority, .high)
         XCTAssertEqual(TagType.stalled(duration: 5).priority, .high)
         XCTAssertEqual(TagType.h2.priority, .high)
         XCTAssertEqual(TagType.h3.priority, .high)
@@ -157,9 +155,6 @@ final class TagTypeTests: XCTestCase {
     func testTagTypeTooltipPerformance() {
         let slowTooltip = TagType.slow(duration: 10.5).tooltip
         XCTAssertTrue(slowTooltip.contains("10.5"))
-
-        XCTAssertEqual(TagType.throttled(profile: nil).tooltip, "Throttled")
-        XCTAssertTrue(TagType.throttled(profile: "3G").tooltip.contains("3G"))
 
         let stalledTooltip = TagType.stalled(duration: 5.2).tooltip
         XCTAssertTrue(stalledTooltip.contains("5.2"))

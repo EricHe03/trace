@@ -8,7 +8,7 @@
 import Foundation
 
 /// Controls how frequently in-flight SSE captures should emit snapshot updates.
-public struct SSECapturePublishThrottle {
+public struct SSECapturePublishGate {
     private let minEventDelta: Int
     private let minInterval: TimeInterval
     private var lastPublishedEventCount: Int

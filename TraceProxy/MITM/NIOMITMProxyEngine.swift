@@ -108,7 +108,6 @@ final class NIOMITMProxyEngine: @unchecked Sendable {
     private let lock = NSLock()
     private let port: UInt16
     private weak var eventLog: NDJSONLogWriter?
-    private let throttler: PacketThrottler?
     private let interceptor: (any InterceptionProviding)?
     private let captureConfigProvider: () -> CaptureConfiguration
     private let onRequestCaptured: ((NetworkRequest) -> Void)?
@@ -125,7 +124,6 @@ final class NIOMITMProxyEngine: @unchecked Sendable {
     init(
         port: UInt16,
         eventLog: NDJSONLogWriter?,
-        throttler: PacketThrottler? = nil,
         interceptor: (any InterceptionProviding)? = nil,
         captureConfigProvider: @escaping () -> CaptureConfiguration = { .default },
         onRequestCaptured: ((NetworkRequest) -> Void)? = nil,
@@ -144,7 +142,6 @@ final class NIOMITMProxyEngine: @unchecked Sendable {
     ) {
         self.port = port
         self.eventLog = eventLog
-        self.throttler = throttler
         self.interceptor = interceptor
         self.captureConfigProvider = captureConfigProvider
         self.onRequestCaptured = onRequestCaptured
@@ -189,7 +186,6 @@ final class NIOMITMProxyEngine: @unchecked Sendable {
                 let ingressHandler = NIOMITMInitialIngressHandler(
                     group: group,
                     eventLog: self.eventLog,
-                    throttler: self.throttler,
                     interceptor: self.interceptor,
                     captureConfigProvider: self.captureConfigProvider,
                     onRequestCaptured: self.onRequestCaptured,

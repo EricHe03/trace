@@ -438,11 +438,6 @@ struct ActionEditorView: View {
                 .autocorrectionDisabled()
                 .accessibilityLabel("JSONPath")
 
-        case .throttle:
-            TextField("Bandwidth (bytes/sec)", text: binding(for: "bandwidth"))
-                .keyboardType(.asciiCapableNumberPad)
-                .accessibilityLabel("Bandwidth in bytes per second")
-
         case .addJitter:
             TextField("Base Delay (ms)", text: binding(for: "baseDelay"))
                 .keyboardType(.asciiCapableNumberPad)
@@ -502,8 +497,6 @@ struct ActionEditorView: View {
             parameters = ["path": "", "value": ""]
         case .jsonPathDelete:
             parameters = ["path": ""]
-        case .throttle:
-            parameters = ["bandwidth": "10240"]
         case .addJitter:
             parameters = ["baseDelay": "200", "variance": "50"]
         case .setBodyFromTemplate:

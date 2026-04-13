@@ -47,7 +47,7 @@ swiftformat . --config .swiftformat  # auto-fix
 4-layer Swift Package Manager architecture. All layers are local packages in `Package.swift`; `Trace.xcodeproj` is the canonical app build.
 
 ### Layer 1 — Foundation
-- **TraceCore**: models, GRDB SQLite storage (App Group shared), NIO runtime, logging, throttling, config
+- **TraceCore**: models, GRDB SQLite storage (App Group shared), NIO runtime, logging, config
 - **TraceCompression**: streaming Brotli/Deflate/Zstd decoders
 
 ### Layer 2 — Infrastructure

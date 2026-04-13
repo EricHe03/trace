@@ -85,16 +85,6 @@ final class PacketTunnelProviderTests: XCTestCase {
         XCTAssertEqual(message.command, "updateHardeningConfig")
     }
 
-    func testIPCMessageUpdateThrottlingState() {
-        struct IPCMessage: Codable {
-            let command: String
-        }
-
-        let message = IPCMessage(command: "updateThrottlingState")
-
-        XCTAssertEqual(message.command, "updateThrottlingState")
-    }
-
     func testIPCMessageClearRequests() {
         struct IPCMessage: Codable {
             let command: String
@@ -583,36 +573,6 @@ final class PacketTunnelProviderTests: XCTestCase {
         let error = TunnelError.settingsFailed
 
         XCTAssertNotNil(error)
-    }
-
-    // MARK: - Throttling Tests
-
-    func testThrottlingStateEnabled() {
-        struct ThrottlingState {
-            let enabled: Bool
-            let downloadKBps: Int
-            let uploadKBps: Int
-        }
-
-        let state = ThrottlingState(
-            enabled: true,
-            downloadKBps: 1024,
-            uploadKBps: 512
-        )
-
-        XCTAssertTrue(state.enabled)
-        XCTAssertEqual(state.downloadKBps, 1024)
-        XCTAssertEqual(state.uploadKBps, 512)
-    }
-
-    func testThrottlingStateDisabled() {
-        struct ThrottlingState {
-            let enabled: Bool
-        }
-
-        let state = ThrottlingState(enabled: false)
-
-        XCTAssertFalse(state.enabled)
     }
 
     // MARK: - Capture Configuration Tests

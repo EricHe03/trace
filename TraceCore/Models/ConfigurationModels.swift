@@ -200,7 +200,6 @@ public struct RewriteAction: Codable, Identifiable, Sendable {
         case xmlToJson
         case jsonPathSet
         case jsonPathDelete
-        case throttle
         case addJitter
         case dropConnection
         case resetConnection
@@ -232,7 +231,6 @@ public struct RewriteAction: Codable, Identifiable, Sendable {
             case .xmlToJson: "XML to JSON"
             case .jsonPathSet: "JSONPath Set"
             case .jsonPathDelete: "JSONPath Delete"
-            case .throttle: "Throttle"
             case .addJitter: "Add Jitter"
             case .dropConnection: "Drop Connection"
             case .resetConnection: "Reset Connection"
@@ -338,10 +336,6 @@ public struct RewriteAction: Codable, Identifiable, Sendable {
 
     public var templateBody: String? {
         parameters["template"]
-    }
-
-    public var throttleBytesPerSecond: Int? {
-        parameters["bandwidth"].flatMap(Int.init)
     }
 
     public var jitterBaseMs: Int? {

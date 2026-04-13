@@ -181,15 +181,6 @@ final class CaptureViewModel: ObservableObject {
     /// Saved filter presets
     @Published var savedFilterPresets: [SavedFilterPreset] = []
 
-    /// Network Throttling
-    @Published var throttlingEnabled: Bool = false {
-        didSet { handleThrottlingStateChange() }
-    }
-
-    @Published var selectedNetworkCondition: NetworkCondition? {
-        didSet { handleThrottlingStateChange() }
-    }
-
     /// Capture Settings
     @Published var captureOptions: CaptureOptions = .default {
         didSet { persistCaptureOptions() }
@@ -286,10 +277,8 @@ final class CaptureViewModel: ObservableObject {
     private var newRequestsObserverToken: AppGroupStorageObserverToken?
     private var newTransportRequestsObserverToken: AppGroupStorageObserverToken?
     private var newUDPFlowsObserverToken: AppGroupStorageObserverToken?
-    private var throttlingUpdateTask: Task<Void, Never>?
     private var duplicateDetectionTask: Task<Void, Never>?
     private var isRunningDuplicateDetection = false
-    private var isLoadingThrottlingState = false
     private var isLoadingSettings = false
     private var isSceneActive = true
     private var hasPendingRequestRefresh = false
@@ -322,7 +311,6 @@ final class CaptureViewModel: ObservableObject {
         loadSavedPresets()
         loadSessions()
         cleanupOrphanedSessions()
-        loadThrottlingState()
         loadSettings()
 
         // Observe new requests from Network Extension with debouncing
@@ -380,7 +368,6 @@ final class CaptureViewModel: ObservableObject {
         transportLoadTask?.cancel()
         activeTransportLoadTask?.cancel()
         activeUDPFlowHintLoadTask?.cancel()
-        throttlingUpdateTask?.cancel()
         duplicateDetectionTask?.cancel()
 
         newRequestsObserverToken?.cancel()
@@ -506,50 +493,6 @@ final class CaptureViewModel: ObservableObject {
                     )
                 }
             }
-        }
-    }
-
-    private func loadThrottlingState() {
-        isLoadingThrottlingState = true
-        let state = storage.loadThrottlingState()
-        throttlingEnabled = state.enabled
-        selectedNetworkCondition = state.condition ?? (state.enabled ? .wifi : nil)
-        isLoadingThrottlingState = false
-    }
-
-    private func handleThrottlingStateChange() {
-        guard !isLoadingThrottlingState else { return }
-
-        if throttlingEnabled, selectedNetworkCondition == nil {
-            selectedNetworkCondition = .wifi
-            return
-        }
-
-        throttlingUpdateTask?.cancel()
-        throttlingUpdateTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
-            guard let self else { return }
-            self.persistThrottlingState()
-        }
-    }
-
-    private func persistThrottlingState() {
-        let state = NetworkThrottlingState(
-            enabled: throttlingEnabled,
-            condition: selectedNetworkCondition
-        )
-
-        do {
-            try storage.saveThrottlingState(state)
-        } catch {
-            CoreLog.storage.error(
-                "event=storage.throttling_state_save outcome=failure error=\(error.localizedDescription, privacy: .public)"
-            )
-        }
-
-        Task {
-            await VPNManager.shared.updateThrottlingState(state)
         }
     }
 

@@ -538,8 +538,6 @@ public class ScriptEngine {
         updatedRequest.protocolVersion = original.protocolVersion
         updatedRequest.timingPhases = original.timingPhases
         updatedRequest.tlsInfo = original.tlsInfo
-        updatedRequest.wasThrottled = original.wasThrottled
-        updatedRequest.throttlingProfile = original.throttlingProfile
         updatedRequest.isDuplicate = original.isDuplicate
         updatedRequest.duplicateOfRequestId = original.duplicateOfRequestId
         updatedRequest.sessionId = original.sessionId

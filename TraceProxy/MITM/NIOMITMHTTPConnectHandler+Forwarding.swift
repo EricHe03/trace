@@ -89,193 +89,185 @@ extension NIOMITMHTTPConnectHandler {
             return
         }
 
-        throttle(
-            direction: .upload,
-            bytes: outboundBodyData.count,
-            context: context
-        ) { [weak self] in
-            guard let self else { return }
-            self.responsePipelineFuture(for: outboundContext.url, eventLoop: context.eventLoop)
-                .and(self.blockQUICEnabledFuture(eventLoop: context.eventLoop))
-                .whenComplete { [weak self] planResult in
-                    context.eventLoop.execute {
-                        guard let self, self.state == .forwardingHTTPRequest else { return }
+        self.responsePipelineFuture(for: outboundContext.url, eventLoop: context.eventLoop)
+            .and(self.blockQUICEnabledFuture(eventLoop: context.eventLoop))
+            .whenComplete { [weak self] planResult in
+                context.eventLoop.execute {
+                    guard let self, self.state == .forwardingHTTPRequest else { return }
 
-                        let responsePipeline: ResponsePipeline
-                        let blockQUIC: Bool
-                        switch planResult {
-                        case let .success(plan):
-                            responsePipeline = plan.0
-                            blockQUIC = plan.1
-                        case let .failure(error):
-                            responsePipeline = .bufferAndIntercept
-                            blockQUIC = true
-                            ProxyLog.mitm.warning(
-                                "event=proxy.nio_response_pipeline outcome=failure url=\(outboundContext.url, privacy: .private(mask: .hash)) error=\(error.localizedDescription, privacy: .public)"
-                            )
-                        }
-
-                        self.logConnectStage(
-                            stage: "response_pipeline",
-                            outcome: "selected",
-                            detail: responsePipeline == .streamAndCapture ? "stream_and_capture" : "buffer_and_intercept"
+                    let responsePipeline: ResponsePipeline
+                    let blockQUIC: Bool
+                    switch planResult {
+                    case let .success(plan):
+                        responsePipeline = plan.0
+                        blockQUIC = plan.1
+                    case let .failure(error):
+                        responsePipeline = .bufferAndIntercept
+                        blockQUIC = true
+                        ProxyLog.mitm.warning(
+                            "event=proxy.nio_response_pipeline outcome=failure url=\(outboundContext.url, privacy: .private(mask: .hash)) error=\(error.localizedDescription, privacy: .public)"
                         )
+                    }
 
-                        let upstreamDeadline = NIODeadline.now() + .seconds(Self.upstreamHTTPResponseDeadlineSeconds)
-                        self.logConnectStage(
-                            stage: "http_upstream",
-                            outcome: "start",
-                            detail: "deadline_seconds=\(Self.upstreamHTTPResponseDeadlineSeconds)"
+                    self.logConnectStage(
+                        stage: "response_pipeline",
+                        outcome: "selected",
+                        detail: responsePipeline == .streamAndCapture ? "stream_and_capture" : "buffer_and_intercept"
+                    )
+
+                    let upstreamDeadline = NIODeadline.now() + .seconds(Self.upstreamHTTPResponseDeadlineSeconds)
+                    self.logConnectStage(
+                        stage: "http_upstream",
+                        outcome: "start",
+                        detail: "deadline_seconds=\(Self.upstreamHTTPResponseDeadlineSeconds)"
+                    )
+                    self.requestSentAt = Date()
+                    if responsePipeline == .streamAndCapture {
+                        self.forwardStreamingUpstreamResponse(
+                            httpClient: httpClient,
+                            request: outboundRequest,
+                            outboundContext: outboundContext,
+                            requestHead: requestHead,
+                            context: context,
+                            blockQUIC: blockQUIC,
+                            upstreamDeadline: upstreamDeadline,
+                            metricsAsParsedResponse: true
                         )
-                        self.requestSentAt = Date()
-                        if responsePipeline == .streamAndCapture {
-                            self.forwardStreamingUpstreamResponse(
-                                httpClient: httpClient,
-                                request: outboundRequest,
-                                outboundContext: outboundContext,
-                                requestHead: requestHead,
-                                context: context,
-                                blockQUIC: blockQUIC,
-                                upstreamDeadline: upstreamDeadline,
-                                metricsAsParsedResponse: true
-                            )
-                            return
-                        }
-                        httpClient.execute(request: outboundRequest, deadline: upstreamDeadline).whenComplete { [weak self] result in
-                            context.eventLoop.execute {
-                                guard let self, self.state == .forwardingHTTPRequest else { return }
-                                switch result {
-                                case let .success(response):
-                                    self.responseHeadAt = Date()
-                                    var forwardedHeaders = response.headers
-                                    if blockQUIC, outboundContext.url.lowercased().hasPrefix("https://") {
-                                        forwardedHeaders.remove(name: "Alt-Svc")
-                                        forwardedHeaders.add(name: "Alt-Svc", value: "clear")
-                                    }
-                                    self.logConnectStage(
-                                        stage: "http_upstream",
-                                        outcome: "response",
-                                        detail: "version=\(response.version.major).\(response.version.minor),status=\(response.status.code)"
-                                    )
-
-                                    let responseHeadersTrace = self.traceHeaders(from: forwardedHeaders)
-                                    let declaredContentLength = self.contentLength(from: forwardedHeaders)
-                                    let captureConfig = self.captureConfigProvider()
-                                    var captured = outboundContext.requestSnapshot
-                                    captured.protocolVersion = self.mergedCapturedProtocolVersion(
-                                        current: captured.protocolVersion,
-                                        fallback: response.version
-                                    )
-                                    captured.statusCode = Int(response.status.code)
-                                    captured.statusMessage = response.status.reasonPhrase
-                                    captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
-                                    let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
-                                    let responseContentType = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-type" })?.value
-                                    let responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
-                                    let effectiveCaptureBodyLimit = self.effectiveBodyCaptureLimit(
-                                        captureConfig: captureConfig,
-                                        contentType: responseContentType,
-                                        contentEncoding: responseContentEncoding
-                                    )
-                                    // Optimization: Pass ByteBuffer directly to avoid intermediate Data conversion
-                                    let responseBodyBuffer = response.body ?? ByteBuffer()
-                                    captured.responseBody = self.bodyStorage(
-                                        from: responseBodyBuffer,
-                                        charset: responseCharset,
-                                        contentType: responseContentType,
-                                        contentEncoding: responseContentEncoding,
-                                        captureConfig: captureConfig
-                                    )
-                                    let responseBodyData = self.byteBufferToData(responseBodyBuffer)
-                                    if captured.isGRPC {
-                                        let ct = responseContentType ?? ""
-                                        if GRPCTrailerExtractor.isGRPCWeb(contentType: ct) {
-                                            captured.grpcMetadata = GRPCTrailerExtractor.extractFromWebBody(
-                                                responseBody: responseBodyData, contentType: ct)
-                                        } else {
-                                            captured.grpcMetadata = GRPCTrailerExtractor.extract(from: forwardedHeaders)
-                                        }
-                                        // Request-header-derived fields
-                                        captured.grpcMetadata?.timeout = outboundHeaders["grpc-timeout"].first
-                                        captured.grpcMetadata?.acceptEncoding = outboundHeaders["grpc-accept-encoding"].first
-                                        if captured.grpcMetadata?.statusDetailsBin == nil {
-                                            captured.grpcMetadata?.statusDetailsBin = forwardedHeaders["grpc-status-details-bin"].first
-                                        }
-                                        // Message counts
-                                        captured.grpcMetadata?.requestMessageCount = GRPCTrailerExtractor.countMessages(in: outboundBodyData)
-                                        let isGRPCWebText = GRPCTrailerExtractor.isGRPCWebText(contentType: ct)
-                                        captured.grpcMetadata?.responseMessageCount = isGRPCWebText
-                                            ? GRPCTrailerExtractor.countMessagesInGRPCWebText(in: responseBodyData)
-                                            : GRPCTrailerExtractor.countMessages(in: responseBodyData)
-                                    }
-                                    self.logResponseCaptureDecision(
-                                        pipeline: "buffer_and_intercept",
-                                        requestID: captured.id,
-                                        statusCode: Int(response.status.code),
-                                        responseHeaders: responseHeadersTrace,
-                                        bodyStorage: captured.responseBody,
-                                        observedBodyBytes: responseBodyData.count,
-                                        declaredContentLength: declaredContentLength,
-                                        captureBodyEnabled: captureConfig.captureBody,
-                                        captureBodyLimit: effectiveCaptureBodyLimit,
-                                        decodeCompressedContent: true,
-                                        storageContentEncoding: responseContentEncoding
-                                    )
-                                    captured.extractHTTPFields()
-                                    NetworkThrottlingController.shared.applyMetadata(to: &captured)
-
-                                    self.responseInterceptionFuture(
-                                        fallbackRequest: captured,
-                                        statusCode: Int(response.status.code),
-                                        statusMessage: response.status.reasonPhrase,
-                                        responseHeaders: responseHeadersTrace,
-                                        responseBodyData: responseBodyData,
-                                        eventLoop: context.eventLoop
-                                    ).whenComplete { [weak self] interceptResult in
-                                        context.eventLoop.execute {
-                                            guard let self, self.state == .forwardingHTTPRequest else { return }
-                                            switch interceptResult {
-                                            case let .success(interceptedRequest):
-                                                self.deliverCapturedResponse(
-                                                    interceptedRequest,
-                                                    requestHead: requestHead,
-                                                    context: context,
-                                                    metricsAsParsedResponse: true
-                                                )
-                                            case .failure:
-                                                self.deliverCapturedResponse(
-                                                    captured,
-                                                    requestHead: requestHead,
-                                                    context: context,
-                                                    metricsAsParsedResponse: true
-                                                )
-                                            }
-                                        }
-                                    }
-                                case let .failure(error):
-                                    let targetHost = URL(string: outboundContext.url)?.host ?? "unknown"
-                                    let failureReason = self.classifyMITMFailure(error)
-                                    self.finalizeActiveRequestAsHTTPFailure(
-                                        status: .badGateway,
-                                        reason: failureReason
-                                    )
-                                    self.logUpstreamHTTPFailure(
-                                        error: error,
-                                        methodToken: outboundContext.methodToken,
-                                        targetHost: targetHost
-                                    )
-                                    self.sendResponse(
-                                        status: .badGateway,
-                                        body: "Upstream HTTP request failed",
-                                        closeAfterSend: true,
-                                        context: context
-                                    )
+                        return
+                    }
+                    httpClient.execute(request: outboundRequest, deadline: upstreamDeadline).whenComplete { [weak self] result in
+                        context.eventLoop.execute {
+                            guard let self, self.state == .forwardingHTTPRequest else { return }
+                            switch result {
+                            case let .success(response):
+                                self.responseHeadAt = Date()
+                                var forwardedHeaders = response.headers
+                                if blockQUIC, outboundContext.url.lowercased().hasPrefix("https://") {
+                                    forwardedHeaders.remove(name: "Alt-Svc")
+                                    forwardedHeaders.add(name: "Alt-Svc", value: "clear")
                                 }
+                                self.logConnectStage(
+                                    stage: "http_upstream",
+                                    outcome: "response",
+                                    detail: "version=\(response.version.major).\(response.version.minor),status=\(response.status.code)"
+                                )
+
+                                let responseHeadersTrace = self.traceHeaders(from: forwardedHeaders)
+                                let declaredContentLength = self.contentLength(from: forwardedHeaders)
+                                let captureConfig = self.captureConfigProvider()
+                                var captured = outboundContext.requestSnapshot
+                                captured.protocolVersion = self.mergedCapturedProtocolVersion(
+                                    current: captured.protocolVersion,
+                                    fallback: response.version
+                                )
+                                captured.statusCode = Int(response.status.code)
+                                captured.statusMessage = response.status.reasonPhrase
+                                captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
+                                let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
+                                let responseContentType = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-type" })?.value
+                                let responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
+                                let effectiveCaptureBodyLimit = self.effectiveBodyCaptureLimit(
+                                    captureConfig: captureConfig,
+                                    contentType: responseContentType,
+                                    contentEncoding: responseContentEncoding
+                                )
+                                // Optimization: Pass ByteBuffer directly to avoid intermediate Data conversion
+                                let responseBodyBuffer = response.body ?? ByteBuffer()
+                                captured.responseBody = self.bodyStorage(
+                                    from: responseBodyBuffer,
+                                    charset: responseCharset,
+                                    contentType: responseContentType,
+                                    contentEncoding: responseContentEncoding,
+                                    captureConfig: captureConfig
+                                )
+                                let responseBodyData = self.byteBufferToData(responseBodyBuffer)
+                                if captured.isGRPC {
+                                    let ct = responseContentType ?? ""
+                                    if GRPCTrailerExtractor.isGRPCWeb(contentType: ct) {
+                                        captured.grpcMetadata = GRPCTrailerExtractor.extractFromWebBody(
+                                            responseBody: responseBodyData, contentType: ct)
+                                    } else {
+                                        captured.grpcMetadata = GRPCTrailerExtractor.extract(from: forwardedHeaders)
+                                    }
+                                    // Request-header-derived fields
+                                    captured.grpcMetadata?.timeout = outboundHeaders["grpc-timeout"].first
+                                    captured.grpcMetadata?.acceptEncoding = outboundHeaders["grpc-accept-encoding"].first
+                                    if captured.grpcMetadata?.statusDetailsBin == nil {
+                                        captured.grpcMetadata?.statusDetailsBin = forwardedHeaders["grpc-status-details-bin"].first
+                                    }
+                                    // Message counts
+                                    captured.grpcMetadata?.requestMessageCount = GRPCTrailerExtractor.countMessages(in: outboundBodyData)
+                                    let isGRPCWebText = GRPCTrailerExtractor.isGRPCWebText(contentType: ct)
+                                    captured.grpcMetadata?.responseMessageCount = isGRPCWebText
+                                        ? GRPCTrailerExtractor.countMessagesInGRPCWebText(in: responseBodyData)
+                                        : GRPCTrailerExtractor.countMessages(in: responseBodyData)
+                                }
+                                self.logResponseCaptureDecision(
+                                    pipeline: "buffer_and_intercept",
+                                    requestID: captured.id,
+                                    statusCode: Int(response.status.code),
+                                    responseHeaders: responseHeadersTrace,
+                                    bodyStorage: captured.responseBody,
+                                    observedBodyBytes: responseBodyData.count,
+                                    declaredContentLength: declaredContentLength,
+                                    captureBodyEnabled: captureConfig.captureBody,
+                                    captureBodyLimit: effectiveCaptureBodyLimit,
+                                    decodeCompressedContent: true,
+                                    storageContentEncoding: responseContentEncoding
+                                )
+                                captured.extractHTTPFields()
+
+                                self.responseInterceptionFuture(
+                                    fallbackRequest: captured,
+                                    statusCode: Int(response.status.code),
+                                    statusMessage: response.status.reasonPhrase,
+                                    responseHeaders: responseHeadersTrace,
+                                    responseBodyData: responseBodyData,
+                                    eventLoop: context.eventLoop
+                                ).whenComplete { [weak self] interceptResult in
+                                    context.eventLoop.execute {
+                                        guard let self, self.state == .forwardingHTTPRequest else { return }
+                                        switch interceptResult {
+                                        case let .success(interceptedRequest):
+                                            self.deliverCapturedResponse(
+                                                interceptedRequest,
+                                                requestHead: requestHead,
+                                                context: context,
+                                                metricsAsParsedResponse: true
+                                            )
+                                        case .failure:
+                                            self.deliverCapturedResponse(
+                                                captured,
+                                                requestHead: requestHead,
+                                                context: context,
+                                                metricsAsParsedResponse: true
+                                            )
+                                        }
+                                    }
+                                }
+                            case let .failure(error):
+                                let targetHost = URL(string: outboundContext.url)?.host ?? "unknown"
+                                let failureReason = self.classifyMITMFailure(error)
+                                self.finalizeActiveRequestAsHTTPFailure(
+                                    status: .badGateway,
+                                    reason: failureReason
+                                )
+                                self.logUpstreamHTTPFailure(
+                                    error: error,
+                                    methodToken: outboundContext.methodToken,
+                                    targetHost: targetHost
+                                )
+                                self.sendResponse(
+                                    status: .badGateway,
+                                    body: "Upstream HTTP request failed",
+                                    closeAfterSend: true,
+                                    context: context
+                                )
                             }
                         }
                     }
                 }
-        }
+            }
     }
 
     func streamingRequestKind(requestHead: HTTPRequestHead, headers: HTTPHeaders) -> StreamingRequestKind {
@@ -1030,7 +1022,6 @@ extension NIOMITMHTTPConnectHandler {
                                     )
                                     self.annotateCaptureMetadata(&captured)
                                     captured.extractHTTPFields()
-                                    NetworkThrottlingController.shared.applyMetadata(to: &captured)
                                     self.finalizeCapturedDuration(for: &captured)
                                     self.activeCapturedRequest = captured
                                     self.publishCapturedRequest(captured)
@@ -1275,25 +1266,22 @@ extension NIOMITMHTTPConnectHandler {
         let responseBodyBuffer = byteBuffer(from: responseBodyData, allocator: context.channel.allocator)
 
         queueTerminalCapturedRequest(request)
-        throttle(direction: .download, bytes: responseBodyData.count, context: context) { [weak self] in
+        sendHTTPResponse(
+            status: responseStatus,
+            headers: sanitizedHeaders,
+            body: responseBodyBuffer,
+            closeAfterSend: closeAfterSend,
+            context: context
+        ) { [weak self] in
             guard let self else { return }
-            self.sendHTTPResponse(
-                status: responseStatus,
-                headers: sanitizedHeaders,
-                body: responseBodyBuffer,
-                closeAfterSend: closeAfterSend,
-                context: context
-            ) { [weak self] in
-                guard let self else { return }
-                self.publishQueuedTerminalCapturedRequest()
-                if metricsAsParsedResponse {
-                    Task {
-                        await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
-                        await ProxyNetworkMetrics.shared.recordHTTPTransactionCompleted()
-                    }
+            self.publishQueuedTerminalCapturedRequest()
+            if metricsAsParsedResponse {
+                Task {
+                    await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
+                    await ProxyNetworkMetrics.shared.recordHTTPTransactionCompleted()
                 }
-                self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
             }
+            self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
         }
     }
 
@@ -1315,25 +1303,22 @@ extension NIOMITMHTTPConnectHandler {
         let responseBodyBuffer = byteBuffer(from: bodyData, allocator: context.channel.allocator)
 
         queueTerminalCapturedRequest(capturedRequest)
-        throttle(direction: .download, bytes: bodyData.count, context: context) { [weak self] in
+        sendHTTPResponse(
+            status: status,
+            headers: sanitizedHeaders,
+            body: responseBodyBuffer,
+            closeAfterSend: closeAfterSend,
+            context: context
+        ) { [weak self] in
             guard let self else { return }
-            self.sendHTTPResponse(
-                status: status,
-                headers: sanitizedHeaders,
-                body: responseBodyBuffer,
-                closeAfterSend: closeAfterSend,
-                context: context
-            ) { [weak self] in
-                guard let self else { return }
-                self.publishQueuedTerminalCapturedRequest()
-                if metricsAsParsedResponse {
-                    Task {
-                        await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
-                        await ProxyNetworkMetrics.shared.recordHTTPTransactionCompleted()
-                    }
+            self.publishQueuedTerminalCapturedRequest()
+            if metricsAsParsedResponse {
+                Task {
+                    await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
+                    await ProxyNetworkMetrics.shared.recordHTTPTransactionCompleted()
                 }
-                self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
             }
+            self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
         }
     }
 
@@ -1523,16 +1508,7 @@ extension NIOMITMHTTPConnectHandler {
                                 promise: promise
                             )
                         }
-                        if forwardedBuffer.readableBytes > 0 {
-                            self.throttle(
-                                direction: .download,
-                                bytes: forwardedBuffer.readableBytes,
-                                context: context,
-                                operation: writeChunk
-                            )
-                        } else {
-                            writeChunk()
-                        }
+                        writeChunk()
                         return promise.futureResult
                     }
                     grpcBodyRelayChain.whenFailure { [weak self] error in
@@ -1549,16 +1525,7 @@ extension NIOMITMHTTPConnectHandler {
                 let writeChunk = {
                     context.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: promise)
                 }
-                if buffer.readableBytes > 0 {
-                    self.throttle(
-                        direction: .download,
-                        bytes: buffer.readableBytes,
-                        context: context,
-                        operation: writeChunk
-                    )
-                } else {
-                    writeChunk()
-                }
+                writeChunk()
             }
             return promise.futureResult
         }
@@ -1637,7 +1604,6 @@ extension NIOMITMHTTPConnectHandler {
                     decodeCompressedContent: true,
                     storageContentEncoding: responseContentEncoding
                 )
-                NetworkThrottlingController.shared.applyMetadata(to: &capturedRequest)
                 self.queueTerminalCapturedRequest(capturedRequest)
 
                 // Close native gRPC stream session if active.
@@ -1706,7 +1672,6 @@ extension NIOMITMHTTPConnectHandler {
                     failedRequest.executionErrors.append(
                         ExecutionError(message: self.classifyMITMFailure(error))
                     )
-                    NetworkThrottlingController.shared.applyMetadata(to: &failedRequest)
                     self.publishCapturedRequest(failedRequest)
                     self.state = .closed
                     context.close(promise: nil)

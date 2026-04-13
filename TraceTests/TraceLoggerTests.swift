@@ -348,37 +348,6 @@ final class TraceLoggerTests: XCTestCase {
         XCTAssertTrue(sampler.shouldLog(event: "dns", key: "request_1", first: 1, every: 10))
     }
 
-    // MARK: - LogThrottle Tests
-
-    func testLogThrottleFirstCall() {
-        let throttle = LogThrottle()
-
-        // First call should always pass.
-        XCTAssertTrue(throttle.shouldLog(key: "throttle_test", minInterval: 1.0))
-    }
-
-    func testLogThrottleWithinInterval() {
-        let throttle = LogThrottle()
-
-        // First call passes.
-        XCTAssertTrue(throttle.shouldLog(key: "interval_test", minInterval: 1.0))
-
-        // Immediate second call should be throttled.
-        XCTAssertFalse(throttle.shouldLog(key: "interval_test", minInterval: 1.0))
-    }
-
-    func testLogThrottleDifferentKeys() {
-        let throttle = LogThrottle()
-
-        // Different keys are independent.
-        XCTAssertTrue(throttle.shouldLog(key: "key_x", minInterval: 1.0))
-        XCTAssertTrue(throttle.shouldLog(key: "key_y", minInterval: 1.0))
-
-        // Same keys are still throttled.
-        XCTAssertFalse(throttle.shouldLog(key: "key_x", minInterval: 1.0))
-        XCTAssertFalse(throttle.shouldLog(key: "key_y", minInterval: 1.0))
-    }
-
     // MARK: - LegacyLogCategory Tests
 
     func testLegacyLogCategoryMapping() {

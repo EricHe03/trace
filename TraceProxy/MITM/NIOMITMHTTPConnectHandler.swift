@@ -77,7 +77,6 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
 
     let group: NIOTSEventLoopGroup
     weak var eventLog: NDJSONLogWriter?
-    let throttler: PacketThrottler?
     let interceptor: (any InterceptionProviding)?
     let captureConfigProvider: () -> CaptureConfiguration
     let onRequestCaptured: ((NetworkRequest) -> Void)?
@@ -110,7 +109,6 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
     init(
         group: NIOTSEventLoopGroup,
         eventLog: NDJSONLogWriter?,
-        throttler: PacketThrottler?,
         interceptor: (any InterceptionProviding)?,
         captureConfigProvider: @escaping () -> CaptureConfiguration,
         onRequestCaptured: ((NetworkRequest) -> Void)?,
@@ -124,7 +122,6 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
     ) {
         self.group = group
         self.eventLog = eventLog
-        self.throttler = throttler
         self.interceptor = interceptor
         self.captureConfigProvider = captureConfigProvider
         self.onRequestCaptured = onRequestCaptured
@@ -474,7 +471,6 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
             blocked.responseBody = .empty
             annotateCaptureMetadata(&blocked)
             blocked.extractHTTPFields()
-            NetworkThrottlingController.shared.applyMetadata(to: &blocked)
             finalizeCapturedDuration(for: &blocked)
             onRequestCaptured?(blocked)
             clearActiveCapturedRequest()
@@ -536,7 +532,6 @@ final class NIOMITMHTTPConnectHandler: ChannelInboundHandler, @unchecked Sendabl
         var snapshot = request
         annotateCaptureMetadata(&snapshot)
         snapshot.extractHTTPFields()
-        NetworkThrottlingController.shared.applyMetadata(to: &snapshot)
         onRequestCaptured(snapshot)
         var fields = [
             "outcome=pending_saved",

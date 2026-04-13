@@ -29,14 +29,6 @@ final class ProxyLogTests: XCTestCase {
         XCTAssertNotNil(logger)
     }
 
-    func testThrottlingLoggerExists() {
-        // Given / When
-        let logger = ProxyLog.throttling
-
-        // Then
-        XCTAssertNotNil(logger)
-    }
-
     func testMetricsLoggerExists() {
         // Given / When
         let logger = ProxyLog.metrics
@@ -95,30 +87,6 @@ final class ProxyLogTests: XCTestCase {
         }
     }
 
-    func testThrottleEventCreation() {
-        // Given
-        let action = "apply"
-
-        // When
-        let event = LogEvent.throttle(action)
-
-        // Then
-        XCTAssertTrue(String(describing: event).hasPrefix("event=throttle.\(action)"))
-    }
-
-    func testThrottleEventWithDifferentActions() {
-        // Given
-        let actions = ["apply", "delay", "profile_change", "remove"]
-
-        for action in actions {
-            // When
-            let event = LogEvent.throttle(action)
-
-            // Then
-            XCTAssertTrue(String(describing: event).hasPrefix("event=throttle.\(action)"))
-        }
-    }
-
     // MARK: - Event Formatting Tests
 
     func testEventFormattedStringWithMetadata() {
@@ -141,17 +109,6 @@ final class ProxyLogTests: XCTestCase {
 
         // Then
         XCTAssertTrue(formatted.hasPrefix("event=intercept.request"))
-    }
-
-    func testEventFormattedStringForThrottle() {
-        // Given
-        let event = LogEvent.throttle("delay")
-
-        // When
-        let formatted = String(describing: event)
-
-        // Then
-        XCTAssertTrue(formatted.hasPrefix("event=throttle.delay"))
     }
 
     // MARK: - Edge Cases
@@ -178,14 +135,4 @@ final class ProxyLogTests: XCTestCase {
         XCTAssertTrue(String(describing: event).hasPrefix("event=intercept.\(action)"))
     }
 
-    func testThrottleEventWithLongAction() {
-        // Given
-        let action = String(repeating: "a", count: 1000)
-
-        // When
-        let event = LogEvent.throttle(action)
-
-        // Then
-        XCTAssertTrue(String(describing: event).hasPrefix("event=throttle.\(action)"))
-    }
 }

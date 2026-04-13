@@ -176,24 +176,6 @@ func XCTAssertExecutionTimeWithin(
     )
 }
 
-/// Asserts that throttling was applied (delay is within expected range)
-func XCTAssertThrottlingApplied(
-    expectedDelay: TimeInterval,
-    actualDelay: TimeInterval,
-    tolerance: TimeInterval = 0.1,
-    file: StaticString = #filePath,
-    line: UInt = #line
-) {
-    let difference = abs(actualDelay - expectedDelay)
-    XCTAssertLessThanOrEqual(
-        difference,
-        tolerance,
-        "Throttling delay \(actualDelay)s differs from expected \(expectedDelay)s by \(difference)s (tolerance: \(tolerance)s)",
-        file: file,
-        line: line
-    )
-}
-
 // MARK: - Async Assertions
 
 func XCTAssertThrowsError<T>(

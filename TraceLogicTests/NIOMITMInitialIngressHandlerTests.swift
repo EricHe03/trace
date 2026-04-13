@@ -81,7 +81,6 @@ final class NIOMITMInitialIngressHandlerTests: XCTestCase {
         NIOMITMInitialIngressHandler(
             group: group,
             eventLog: nil,
-            throttler: nil,
             interceptor: nil,
             captureConfigProvider: { .default },
             onRequestCaptured: nil,

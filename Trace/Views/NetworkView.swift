@@ -23,7 +23,6 @@ struct NetworkView: View {
     @State private var showingRequestBuilder = false
     @State private var showingFavorites = false
     @State private var showingCurlImport = false
-    @State private var showingThrottling = false
     @State private var showingClearAllAlert = false
     @State private var showingVPNSetupAlert = false
     @State private var toastMessage: String?
@@ -73,11 +72,6 @@ struct NetworkView: View {
             }
             .sheet(isPresented: $showingCurlImport) {
                 curlImportView
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-            }
-            .sheet(isPresented: $showingThrottling) {
-                NetworkConditionProfilesView(viewModel: viewModel)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
@@ -209,7 +203,6 @@ struct NetworkView: View {
                 onToggleFilters: { showingFilters = true },
                 onShowFavorites: { showingFavorites = true },
                 onShowCurlImport: { showingCurlImport = true },
-                onShowThrottling: { showingThrottling = true },
                 onClearAll: { showingClearAllAlert = true }
             )
         }

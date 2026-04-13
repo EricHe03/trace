@@ -482,7 +482,7 @@ public final class RewriteManager: ObservableObject {
                 request.wasRewritten = true
             }
 
-        case .throttle, .addJitter, .dropConnection, .resetConnection, .corruptData, .timeout, .packetLoss:
+        case .addJitter, .dropConnection, .resetConnection, .corruptData, .timeout, .packetLoss:
             // These are handled in the RequestInterceptor pipeline.
             break
         }

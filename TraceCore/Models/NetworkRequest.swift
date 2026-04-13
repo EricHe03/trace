@@ -135,10 +135,6 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
     /// Bytes sent for the request body (URLSessionTaskTransactionMetrics.countOfRequestBodyBytesSent)
     public var requestBodyTransferSize: Int?
 
-    // Network Throttling
-    public var wasThrottled: Bool = false
-    public var throttlingProfile: String?
-
     // Duplicate Detection
     public var isDuplicate: Bool = false
     public var duplicateOfRequestId: UUID?
@@ -287,8 +283,6 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         tlsInfo: TLSConnectionInfo? = nil,
         initiatorStackTrace: String? = nil,
         initiatorDisplayName: String? = nil,
-        wasThrottled: Bool = false,
-        throttlingProfile: String? = nil,
         executionLog: [ExecutionLogEntry] = [],
         executionErrors: [ExecutionError] = [],
         appliedRuleIds: [UUID] = [],
@@ -316,8 +310,6 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         self.tlsInfo = tlsInfo
         self.initiatorStackTrace = initiatorStackTrace
         self.initiatorDisplayName = initiatorDisplayName
-        self.wasThrottled = wasThrottled
-        self.throttlingProfile = throttlingProfile
         self.executionLog = executionLog
         self.executionErrors = executionErrors
         self.appliedRuleIds = appliedRuleIds
@@ -343,8 +335,6 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
         protocolVersion: HTTPProtocolVersion? = nil,
         timingPhases: NetworkTimingPhases? = nil,
         tlsInfo: TLSConnectionInfo? = nil,
-        wasThrottled: Bool = false,
-        throttlingProfile: String? = nil,
         executionLog: [ExecutionLogEntry] = [],
         executionErrors: [ExecutionError] = [],
         appliedRuleIds: [UUID] = [],
@@ -367,8 +357,6 @@ public struct NetworkRequest: Identifiable, Hashable, @unchecked Sendable {
             protocolVersion: protocolVersion,
             timingPhases: timingPhases,
             tlsInfo: tlsInfo,
-            wasThrottled: wasThrottled,
-            throttlingProfile: throttlingProfile,
             executionLog: executionLog,
             executionErrors: executionErrors,
             appliedRuleIds: appliedRuleIds,

@@ -320,22 +320,6 @@ public extension AppGroupStorage {
         }
     }
 
-    func saveThrottlingState(_ state: NetworkThrottlingState) throws {
-        try saveSettingValue(state, scope: SettingScope.capture, key: DefaultsKey.throttlingState)
-    }
-
-    func loadThrottlingState() -> NetworkThrottlingState {
-        if let state = loadSettingValue(
-            NetworkThrottlingState.self,
-            scope: SettingScope.capture,
-            key: DefaultsKey.throttlingState
-        ) {
-            return state
-        }
-
-        return .disabled
-    }
-
     func savePausedBreakpointRequest(_ request: PausedRequest) throws {
         let data = try makeEncoder().encode(request)
         try saveData(data, to: breakpointPausedRequestBlobName(for: request.id))

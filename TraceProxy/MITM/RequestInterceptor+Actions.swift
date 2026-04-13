@@ -29,7 +29,7 @@ extension RequestInterceptor {
             applyBodyEncodingAction(action, to: &request, target: target)
         case .jsonToXml, .xmlToJson, .jsonPathSet, .jsonPathDelete:
             applyStructuredBodyAction(action, to: &request, target: target)
-        case .addDelay, .redirectTo, .throttle, .addJitter, .dropConnection, .resetConnection, .corruptData, .timeout, .packetLoss:
+        case .addDelay, .redirectTo, .addJitter, .dropConnection, .resetConnection, .corruptData, .timeout, .packetLoss:
             false
         }
     }

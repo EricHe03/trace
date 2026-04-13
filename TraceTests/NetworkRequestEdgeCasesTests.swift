@@ -339,24 +339,6 @@ final class NetworkRequestEdgeCasesTests: XCTestCase {
         XCTAssertEqual(request1.hashValue, request2.hashValue)
     }
 
-    // MARK: - Throttling Metadata Tests
-
-    func testThrottlingMetadata_WhenSet() {
-        var request = makeNetworkRequest()
-        request.wasThrottled = true
-        request.throttlingProfile = "3G"
-
-        XCTAssertTrue(request.wasThrottled)
-        XCTAssertEqual(request.throttlingProfile, "3G")
-    }
-
-    func testThrottlingMetadata_DefaultValues() {
-        let request = makeNetworkRequest()
-
-        XCTAssertFalse(request.wasThrottled)
-        XCTAssertNil(request.throttlingProfile)
-    }
-
     // MARK: - Duplicate Detection Tests
 
     func testDuplicateDetection_Flags() {

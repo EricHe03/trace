@@ -12,7 +12,6 @@ extension NetworkRequest: Codable {
         case capturePath, captureFlowID, capturePolicyModeRaw, captureMetadataVersion
         case timingPhases, tlsInfo
         case initiatorStackTrace, initiatorDisplayName
-        case wasThrottled, throttlingProfile
         case isDuplicate, duplicateOfRequestId
         case isManual
         case wasBlocked, wasCancelled, wasRewritten, isMocked, isReplayed
@@ -89,8 +88,6 @@ extension NetworkRequest: Codable {
         self.tlsInfo = try container.decodeIfPresent(TLSConnectionInfo.self, forKey: .tlsInfo)
         self.initiatorStackTrace = try container.decodeIfPresent(String.self, forKey: .initiatorStackTrace)
         self.initiatorDisplayName = try container.decodeIfPresent(String.self, forKey: .initiatorDisplayName)
-        self.wasThrottled = try container.decodeIfPresent(Bool.self, forKey: .wasThrottled) ?? false
-        self.throttlingProfile = try container.decodeIfPresent(String.self, forKey: .throttlingProfile)
         self.isDuplicate = try container.decodeIfPresent(Bool.self, forKey: .isDuplicate) ?? false
         self.duplicateOfRequestId = try container.decodeIfPresent(UUID.self, forKey: .duplicateOfRequestId)
         self.isManual = try container.decodeIfPresent(Bool.self, forKey: .isManual) ?? false
@@ -210,8 +207,6 @@ extension NetworkRequest: Codable {
         try container.encodeIfPresent(tlsInfo, forKey: .tlsInfo)
         try container.encodeIfPresent(initiatorStackTrace, forKey: .initiatorStackTrace)
         try container.encodeIfPresent(initiatorDisplayName, forKey: .initiatorDisplayName)
-        try container.encode(wasThrottled, forKey: .wasThrottled)
-        try container.encodeIfPresent(throttlingProfile, forKey: .throttlingProfile)
         try container.encode(isDuplicate, forKey: .isDuplicate)
         try container.encodeIfPresent(duplicateOfRequestId, forKey: .duplicateOfRequestId)
         try container.encode(isManual, forKey: .isManual)

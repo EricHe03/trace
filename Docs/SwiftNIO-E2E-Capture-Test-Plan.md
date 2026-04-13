@@ -42,7 +42,7 @@ Note:
    - `captureBody = true`
    - `maxBodySize >= 10 MB`
 3. Baseline run settings:
-   - Disable rewrite rules, scripts, breakpoints, throttling.
+   - Disable rewrite rules, scripts, breakpoints.
 4. Clean slate:
    - Clear captured HTTP requests, WebSocket connections, SSE connections.
    - Start fresh `log.txt` and `vpn_events.ndjson`.

@@ -24,7 +24,6 @@ This repository ships both `Trace.xcodeproj` and `Package.swift`:
 - Rewrite rules, request maps, breakpoints, scripts, hosts overrides, and favorites
 - Capture rules for domain filtering, body capture controls, and storage limits
 - Full-tunnel controls for custom DNS, IPv6, SOCKS5 forwarding, hybrid TCP MITM, and UDP forwarding mode
-- Network throttling profiles for Wi-Fi, cellular, offline, and custom conditions
 - Connection, UDP-flow, and DNS diagnostics
 - HAR import/export, PCAP capture/export, and VPN NDJSON log export
 - Certificate setup wizard, MITM allowlist, notification controls, and QUIC blocking/security settings
@@ -90,7 +89,7 @@ If you need to validate the QUIC toolchain wiring or regenerate bundled quiche a
 
 - `Network` tab: captured requests and network events, filters, favorites, replay, manual request builder, and cURL import
 - `Tools` tab: rewrite rules, request maps, scripts, hosts overrides, breakpoints, and utility tools
-- `Settings` tab: capture rules and modes, network conditions, connections, certificate and MITM settings, HAR import/export, packet captures, notifications, and storage cleanup
+- `Settings` tab: capture rules and modes, connections, certificate and MITM settings, HAR import/export, packet captures, notifications, and storage cleanup
 
 ## Configuration Reference
 

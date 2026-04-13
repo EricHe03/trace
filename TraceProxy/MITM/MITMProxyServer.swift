@@ -41,7 +41,6 @@ public class MITMProxyServer: @unchecked Sendable {
 
     // Rationale: Inject the event log to avoid multiple writers racing on the same file.
     private weak var eventLog: NDJSONLogWriter?
-    private let throttler = PacketThrottler()
     private var pcapWriter: PCAPWriting?
     private var rawCaptureEnabled = false
     private var rawCaptureLimit: UInt64 = 0
@@ -55,11 +54,6 @@ public class MITMProxyServer: @unchecked Sendable {
         self.port = port
         self.eventLog = eventLog
         queue.setSpecific(key: queueKey, value: ())
-    }
-
-    /// Updates the throttling state.
-    public func updateThrottlingState(_ state: NetworkThrottlingState) {
-        throttler.updateState(state)
     }
 
     /// Configures raw capture settings.
@@ -113,7 +107,6 @@ public class MITMProxyServer: @unchecked Sendable {
         let engine = makeMITMEngine(
             port: port,
             eventLog: eventLog,
-            throttler: throttler,
             interceptor: interceptor,
             captureConfigProvider: { AppGroupStorage.shared.loadConfiguration() },
             onRequestCaptured: { [weak self] request in
@@ -164,7 +157,6 @@ public class MITMProxyServer: @unchecked Sendable {
     private func makeMITMEngine(
         port: UInt16,
         eventLog: NDJSONLogWriter?,
-        throttler: PacketThrottler,
         interceptor: (any InterceptionProviding)?,
         captureConfigProvider: @escaping () -> CaptureConfiguration,
         onRequestCaptured: ((NetworkRequest) -> Void)?,
@@ -176,7 +168,6 @@ public class MITMProxyServer: @unchecked Sendable {
         NIOMITMProxyEngine(
             port: port,
             eventLog: eventLog,
-            throttler: throttler,
             interceptor: interceptor,
             captureConfigProvider: captureConfigProvider,
             onRequestCaptured: onRequestCaptured,

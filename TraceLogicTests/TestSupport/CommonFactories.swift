@@ -13,9 +13,7 @@ func makeNetworkRequest(
     requestHeaders: [TraceHTTPHeader] = [],
     responseHeaders: [TraceHTTPHeader] = [],
     requestBody: BodyStorage = .empty,
-    responseBody: BodyStorage = .empty,
-    wasThrottled: Bool = false,
-    throttlingProfile: String? = nil
+    responseBody: BodyStorage = .empty
 ) -> NetworkRequest {
     NetworkRequest(
         id: id,
@@ -28,9 +26,7 @@ func makeNetworkRequest(
         requestHeaders: requestHeaders,
         responseHeaders: responseHeaders,
         requestBody: requestBody,
-        responseBody: responseBody,
-        wasThrottled: wasThrottled,
-        throttlingProfile: throttlingProfile
+        responseBody: responseBody
     )
 }
 

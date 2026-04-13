@@ -518,19 +518,6 @@ public final class VPNManager: ObservableObject, VPNManaging {
         }
     }
 
-    /// Sends the latest throttling state to the Network Extension if connected.
-    public func updateThrottlingState(_ state: NetworkThrottlingState) async {
-        guard isConnected else { return }
-        guard let stateDict = state.asJSONDictionary() else { return }
-
-        let message: [String: Any] = [
-            "command": "updateThrottlingState",
-            "state": stateDict
-        ]
-
-        try? await sendMessage(message)
-    }
-
     // MARK: - Status Observation
 
     /// Observes VPN status changes
@@ -585,10 +572,6 @@ public final class VPNManager: ObservableObject, VPNManaging {
             FeatureLog.vpn.info("event=vpn.status_change status=connecting previous=\(previousStatus.description, privacy: .public)")
         case .connected:
             FeatureLog.vpn.info("event=vpn.status_change status=connected previous=\(previousStatus.description, privacy: .public)")
-            Task {
-                let state = AppGroupStorage.shared.loadThrottlingState()
-                await updateThrottlingState(state)
-            }
         case .reasserting:
             FeatureLog.vpn.warning("event=vpn.status_change status=reasserting previous=\(previousStatus.description, privacy: .public) connection_changed=\(connectionChanged)")
         case .disconnecting:

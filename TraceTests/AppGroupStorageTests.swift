@@ -884,20 +884,6 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(Set(loaded.map(\.reason)), Set(["direct-host", "alias-host"]))
     }
 
-    func testSaveAndLoadThrottlingState() throws {
-        let state = NetworkThrottlingState(
-            enabled: true,
-            condition: .custom(download: 1500, upload: 600, latency: 120, packetLoss: 0.02)
-        )
-
-        try storage.saveThrottlingState(state)
-
-        let loaded = storage.loadThrottlingState()
-
-        XCTAssertEqual(loaded.enabled, state.enabled)
-        XCTAssertEqual(loaded.condition, state.condition)
-    }
-
     // MARK: - Generic Storage Tests
 
     func testSaveAndLoadData() throws {

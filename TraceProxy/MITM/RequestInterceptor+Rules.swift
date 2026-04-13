@@ -101,7 +101,7 @@ extension RequestInterceptor {
             .flatMap(\.actions)
             .filter { action in
                 switch action.actionType {
-                case .throttle, .addJitter, .dropConnection, .resetConnection, .corruptData, .timeout, .packetLoss:
+                case .addJitter, .dropConnection, .resetConnection, .corruptData, .timeout, .packetLoss:
                     true
                 default:
                     false
@@ -115,25 +115,17 @@ extension RequestInterceptor {
         target: ActionTarget
     ) async -> RequestInterceptionFailure? {
         guard !actions.isEmpty else { return nil }
-        let simulator = NetworkSimulator()
 
         for action in actions {
             switch action.actionType {
             case .addJitter:
                 let baseDelay = action.jitterBaseMs ?? 0
                 let variance = action.jitterVarianceMs ?? 0
-                await simulator.applyJitter(baseDelay: baseDelay, variance: variance)
-
-            case .throttle:
-                let bandwidth = action.throttleBytesPerSecond ?? 0
-                let data = target == .request ? (request.requestBody.getData() ?? Data()) : (request.responseBody.getData() ?? Data())
-                let throttled = await simulator.applyThrottle(bandwidth: bandwidth, to: data)
-                if target == .request {
-                    request.requestBody = BodyStorage.from(data: throttled)
-                    request.requestBodyModified = true
-                } else {
-                    request.responseBody = BodyStorage.from(data: throttled)
-                    request.wasRewritten = true
+                let delay = Self.jitteredDelayMs(baseDelay: baseDelay, variance: variance)
+                if delay > 0 {
+                    let maxDelayMs = UInt64.max / 1_000_000
+                    let delayMs = min(UInt64(delay), maxDelayMs)
+                    try? await Task.sleep(nanoseconds: delayMs * 1_000_000)
                 }
 
             case .corruptData:
@@ -156,6 +148,14 @@ extension RequestInterceptor {
             }
         }
         return nil
+    }
+
+    private static func jitteredDelayMs(baseDelay: Int, variance: Int) -> Int {
+        let normalizedVariance: Int = variance == Int.min ? Int.max : Swift.abs(variance)
+        let jitter = Int.random(in: -normalizedVariance ... normalizedVariance)
+        let (sum, overflow) = baseDelay.addingReportingOverflow(jitter)
+        let safeSum: Int = overflow ? ((baseDelay >= 0 && jitter >= 0) ? Int.max : Int.min) : sum
+        return max(0, safeSum)
     }
 
     func matchingRules(for request: NetworkRequest, type: RuleType, target: MatchTarget) -> [RewriteRule] {

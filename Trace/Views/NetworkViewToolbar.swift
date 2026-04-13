@@ -15,7 +15,6 @@ struct NetworkViewToolbar: ToolbarContent {
     let onToggleFilters: () -> Void
     let onShowFavorites: () -> Void
     let onShowCurlImport: () -> Void
-    let onShowThrottling: () -> Void
     let onClearAll: () -> Void
 
     var body: some ToolbarContent {
@@ -78,17 +77,6 @@ struct NetworkViewToolbar: ToolbarContent {
                     onShowCurlImport()
                 } label: {
                     Label("Import cURL", systemImage: "square.and.arrow.down")
-                }
-
-                Button {
-                    onShowThrottling()
-                } label: {
-                    if viewModel.throttlingEnabled, let condition = viewModel.selectedNetworkCondition {
-                        Label("Throttle: \(condition.displayName)", systemImage: "speedometer.medium")
-                            .foregroundStyle(DesignSystem.Colors.accent)
-                    } else {
-                        Label("Throttle", systemImage: "speedometer")
-                    }
                 }
 
                 Divider()

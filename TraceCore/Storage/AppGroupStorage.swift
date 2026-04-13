@@ -45,7 +45,6 @@ open class AppGroupStorage: @unchecked Sendable {
     private let transportRequestsDirectory = "TransportRequests"
     private let packetFlowsDirectory = "PacketFlows"
     private let udpFlowsDirectory = "UDPFlows"
-    private let throttlingConfigFileName = "throttling.json"
     private let captureOptionsFileName = "capture_options.json"
     private let bodyStorageConfigFileName = "body_storage.json"
     private let samplingConfigFileName = "sampling.json"
@@ -64,15 +63,13 @@ open class AppGroupStorage: @unchecked Sendable {
         static let bodyStorageConfig = "trace.settings.bodyStorageConfig"
         static let samplingConfig = "trace.settings.samplingConfig"
         static let mitmAllowlist = "trace.settings.mitmAllowlist"
-        static let throttlingState = "trace.settings.throttlingState"
 
         static let all: [String] = [
             captureConfiguration,
             captureOptions,
             bodyStorageConfig,
             samplingConfig,
-            mitmAllowlist,
-            throttlingState
+            mitmAllowlist
         ]
     }
 
@@ -206,8 +203,7 @@ open class AppGroupStorage: @unchecked Sendable {
             captureOptionsFileName,
             bodyStorageConfigFileName,
             samplingConfigFileName,
-            mitmAllowlistFileName,
-            throttlingConfigFileName
+            mitmAllowlistFileName
         ]
         for fileName in legacyFiles {
             if let url = configFileURL(for: fileName) {
@@ -471,7 +467,6 @@ open class AppGroupStorage: @unchecked Sendable {
                 bodyStorageConfigFileName,
                 samplingConfigFileName,
                 mitmAllowlistFileName,
-                throttlingConfigFileName,
                 "DNSMessages.json",
                 "BreakpointConfiguration.json",
                 "rewrite_rules.json",

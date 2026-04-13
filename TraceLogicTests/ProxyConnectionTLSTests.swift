@@ -35,10 +35,9 @@ final class ProxyConnectionTLSTests: XCTestCase {
         server.stop()
     }
 
-    func testMITMServerThrottlingAndRawCaptureUpdatesDoNotCrash() {
+    func testMITMServerRawCaptureUpdatesDoNotCrash() {
         let server = MITMProxyServer(port: 0)
 
-        server.updateThrottlingState(.disabled)
         server.configureRawCapture(enabled: false, writer: nil, limit: 0)
         server.updateRawCaptureLimit(8 * 1024 * 1024)
 

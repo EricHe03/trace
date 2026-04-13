@@ -600,22 +600,4 @@ extension NIOMITMHTTPConnectHandler {
         return phases.hasData ? phases : nil
     }
 
-    func throttle(
-        direction: PacketThrottler.Direction,
-        bytes: Int,
-        context: ChannelHandlerContext,
-        operation: @escaping () -> Void
-    ) {
-        guard let throttler, bytes > 0 else {
-            operation()
-            return
-        }
-        let markerBytes = min(max(bytes, 1), 64 * 1024)
-        let marker = Data(repeating: 0, count: markerBytes)
-        throttler.process(packet: marker, direction: direction) {
-            context.eventLoop.execute {
-                operation()
-            }
-        }
-    }
 }

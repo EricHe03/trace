@@ -40,7 +40,6 @@ final class NIOMITMInitialIngressHandler: ChannelInboundHandler, RemovableChanne
 
     let group: NIOTSEventLoopGroup
     weak var eventLog: NDJSONLogWriter?
-    let throttler: PacketThrottler?
     let interceptor: (any InterceptionProviding)?
     let captureConfigProvider: () -> CaptureConfiguration
     let onRequestCaptured: ((NetworkRequest) -> Void)?
@@ -84,7 +83,6 @@ final class NIOMITMInitialIngressHandler: ChannelInboundHandler, RemovableChanne
     init(
         group: NIOTSEventLoopGroup,
         eventLog: NDJSONLogWriter?,
-        throttler: PacketThrottler?,
         interceptor: (any InterceptionProviding)?,
         captureConfigProvider: @escaping () -> CaptureConfiguration,
         onRequestCaptured: ((NetworkRequest) -> Void)?,
@@ -96,7 +94,6 @@ final class NIOMITMInitialIngressHandler: ChannelInboundHandler, RemovableChanne
     ) {
         self.group = group
         self.eventLog = eventLog
-        self.throttler = throttler
         self.interceptor = interceptor
         self.captureConfigProvider = captureConfigProvider
         self.onRequestCaptured = onRequestCaptured
@@ -1033,7 +1030,6 @@ extension NIOMITMInitialIngressHandler {
         NIOMITMHTTPConnectHandler(
             group: group,
             eventLog: eventLog,
-            throttler: throttler,
             interceptor: interceptor,
             captureConfigProvider: captureConfigProvider,
             onRequestCaptured: onRequestCaptured,

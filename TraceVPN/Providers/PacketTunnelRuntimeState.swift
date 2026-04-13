@@ -94,7 +94,6 @@ actor PacketTunnelRuntimeState {
     private var quicHandlingMode: QUICHandlingMode = .intercept
     private var udpTunnelSupported = false
     private var isStopping = false
-    private let throttler = PacketThrottler()
 
     func setStopping(_ value: Bool) {
         isStopping = value
@@ -519,18 +518,6 @@ actor PacketTunnelRuntimeState {
 
     func proxyConnectionCount() -> Int {
         proxyServer?.activeConnectionCount() ?? 0
-    }
-
-    func applyThrottlingState(
-        _ state: NetworkThrottlingState,
-        reason: String
-    ) {
-        throttler.updateState(state)
-        proxyServer?.updateThrottlingState(state)
-        NetworkThrottlingController.shared.updateState(state)
-
-        let conditionName = state.condition?.displayName ?? "none"
-        VPNLog.proxy.info("event=vpn.throttling_update outcome=success reason=\(reason) enabled=\(state.enabled) profile=\(conditionName)")
     }
 
     private func emitInterceptionEvent(_ event: InterceptionEvent) {

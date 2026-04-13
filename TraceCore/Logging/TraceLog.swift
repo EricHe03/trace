@@ -147,8 +147,6 @@ public extension TraceLog {
         case proxyMITM = "Proxy.MITM"
         /// Describes request interception.
         case proxyInterceptor = "Proxy.Interceptor"
-        /// Describes network throttling.
-        case proxyThrottling = "Proxy.Throttling"
         /// Describes metrics collection.
         case proxyMetrics = "Proxy.Metrics"
 

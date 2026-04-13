@@ -37,7 +37,6 @@ public enum TagType: Hashable {
     // MARK: - Performance
 
     case slow(duration: TimeInterval)
-    case throttled(profile: String?)
     case stalled(duration: TimeInterval)
 
     // MARK: - Caching and Routing
@@ -61,7 +60,7 @@ public enum TagType: Hashable {
         switch self {
         case .failed, .timeout, .blocked, .cancelled, .tlsPassthrough, .pinned:
             .critical
-        case .slow, .throttled, .stalled, .h2, .h3, .ws, .sse, .grpc, .graphql:
+        case .slow, .stalled, .h2, .h3, .ws, .sse, .grpc, .graphql:
             .high
         case .manual, .replayed, .script, .mock, .cached, .redirected, .rewritten:
             .medium
@@ -86,7 +85,6 @@ public enum TagType: Hashable {
         case .tlsPassthrough: "TLS"
         case .pinned: "Pinned"
         case .slow: "Slow"
-        case .throttled: "Throttled"
         case .stalled: "Stalled"
         case .cached: "Cached"
         case .stale: "Stale"
@@ -108,8 +106,6 @@ public enum TagType: Hashable {
             .red
         case .timeout, .slow, .retry, .stale, .stalled:
             .orange
-        case .throttled:
-            .yellow.opacity(0.8)
         case .h2, .h3, .ws, .sse, .grpc, .graphql:
             .purple
         case .tlsPassthrough:
@@ -155,8 +151,6 @@ public enum TagType: Hashable {
         case .pinned:
             "Certificate Pinning Detected – App refuses MITM certificates"
         case let .slow(duration): String(format: "%.1fs – Slower than 5s", duration)
-        case let .throttled(profile):
-            "Throttled" + (profile.map { ": \($0)" } ?? "")
         case let .stalled(duration):
             String(format: "Stalled %.1fs waiting", duration)
         case let .cached(source):

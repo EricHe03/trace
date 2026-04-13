@@ -3,7 +3,7 @@ Date: 2026-02-13 (last updated: 2026-03-08)
 Repository: `/Users/lujuncheng/Trace-iOS/Trace`
 
 ## Scope and Non-Negotiables
-- Keep product behavior unchanged: capture fidelity, throttling, PCAP behavior, metrics, sampling, body limits, bypass logic, redirect/cookie semantics, and user-visible error mapping.
+- Keep product behavior unchanged: capture fidelity, PCAP behavior, metrics, sampling, body limits, bypass logic, redirect/cookie semantics, and user-visible error mapping.
 - Rollout remains phased by subsystem.
 - Transport backend for iOS + Network Extension paths is NIOTS-first (`swift-nio-transport-services`).
 - Custom protocol parsing/framing for HTTP/1.1, HTTP/2, and WebSocket must be replaced by NIO codecs/handlers.
@@ -120,7 +120,7 @@ Source of truth is existing code + tests in this repo snapshot.
 | Curl analyze preflight | `TraceFeatures/Request/CurlCommandAnalyzer.swift` | Optional runtime preflight via `TraceCurlRuntime` | Keep parser/analyzer diagnostics deterministic; remove runtime preflight branch. |
 | Curl execute runtime path | `TraceFeatures/Request/CurlCommandExecutor.swift` | Optional runtime CLI execution via `TraceCurlRuntime` | Execute parsed transfers via RequestExecutor transport abstraction only; remove runtime branch. |
 | Curl parser/export compatibility | `TraceFeatures/Parsers/CurlParser.swift`, `TraceFeatures/Parsers/CurlOptionRegistry.swift`, `TraceFeatures/Export/CurlCommandGenerator.swift` | Independent of runtime backend | Preserve unchanged unless parity tests require bug-fix adjustments. |
-| MITM proxy public lifecycle API | `TraceProxy/MITM/MITMProxyServer.swift` (`start/stop/updateConfiguration/setMitmAllowlist/setMitmEnabled/updateThrottlingState/configureRawCapture/updateRawCaptureLimit/activeConnectionCount/setDualMITMPolicyEngine/setDualMITMProxyPolicyEnforcement`) | NIO listener/channel internals (migration complete) | Public API stable; internals replaced with NIO listener/channel pipelines. |
+| MITM proxy public lifecycle API | `TraceProxy/MITM/MITMProxyServer.swift` (`start/stop/updateConfiguration/setMitmAllowlist/setMitmEnabled/configureRawCapture/updateRawCaptureLimit/activeConnectionCount/setDualMITMPolicyEngine/setDualMITMProxyPolicyEnforcement`) | NIO listener/channel internals (migration complete) | Public API stable; internals replaced with NIO listener/channel pipelines. |
 | HTTP CONNECT handling + marker capture | `TraceProxy/MITM/NIOMITMHTTPConnectHandler.swift` | NIO HTTP/1.1 codec + CONNECT handler | NIO HTTP/1.1 codec + CONNECT handler; marker request emission and bypass behavior preserved. |
 | Transparent TLS mode (optional) | `TraceProxy/MITM/MITMProxyServer.swift` (ClientHello sniff path) | NIO byte pipeline with TLS sniff gate | NIO byte pipeline with TLS sniff gate preserving current opt-in semantics. |
 | MITM allowlist + auto-bypass cache | `TraceProxy/MITM/MITMProxyServer.swift`, `TraceProxy/MITM/MITMAutoBypassCache.swift`, `TraceCore/Networking/Interception/HostBypassStore.swift` | Logic layer + `DualMITMPolicyEngine` | Matching rules, auto-bypass reasons/TTL, and emitted events preserved; now also routed through policy engine. |
@@ -132,7 +132,6 @@ Source of truth is existing code + tests in this repo snapshot.
 | WebSocket upgrade + frame capture | `TraceProxy/MITM/Streams/WebSocketFlowHandler.swift`, `NIOMITMWebSocketRelayHandler` | NIO WebSocket codecs (migration complete) | NIO HTTP upgrader + WebSocket codecs; frame/message capture behavior and limits preserved. Legacy `WebSocketHandler` removed. |
 | SSE streaming capture | `TraceProxy/MITM/Streams/SSEFlowHandler.swift`, `SSEInterceptionRuntime` | NIO HTTP response-part handling (migration complete) | NIO channel bytes with incremental SSE parser; chunked/content-decoding behaviors preserved. Legacy `SSEHandler` removed. |
 | Interception contract (rewrite/mock/breakpoint/scripts) | `TraceProxy/MITM/RequestInterceptor.swift` | Actor-based logic independent of transport | Keep interface/behavior unchanged; adapt call sites to NIO pipeline events. |
-| Throttling behavior | `TraceProxy/Throttling/PacketThrottler.swift` | NIO channel handlers | Ported to NIO channel handlers preserving latency/bandwidth/loss semantics. Legacy TLS-local throttler in `TLSProxyConnection` removed. |
 | PCAP writing and size cap | `TraceProxy/Core/PCAPWriter.swift`, `TraceProxy/Core/RollingPCAPWriter.swift`, capture calls in `TraceProxy/MITM/MITMProxyServer.swift` and `TraceVPN/Providers/PacketFlowLoop.swift` | File I/O + current capture synthesis | Preserve output format, rotation/size caps, and disable-on-limit behavior. |
 | Metrics counters | `TraceProxy/Core/ProxyNetworkMetrics.swift` + VPN event metrics in VPN providers | Current actor/log counters | Preserve counter dimensions and update points across NIO code paths. |
 | Sampling + domain filter persistence gates | `TraceProxy/MITM/MITMProxyServer.swift` (`shouldSample`, `shouldPersist`) + `TraceCore/Config/SamplingConfig.swift` + `TraceCore/Storage/AppGroupStorage.swift` | None (logic layer) | Preserve identical sampling/filter decisions; no behavior drift. |
@@ -174,7 +173,6 @@ Source of truth is existing code + tests in this repo snapshot.
 - Chunked HTTP parsing primitives in `TraceTests/MITMProxyServerTests.swift` (parser-level).
 - HTTP/2 model/parser/state unit coverage in `TraceTests/HTTP2ConnectionTests.swift` and `TraceTests/HTTP2StreamManagerTests.swift`.
 - SSE and WebSocket parser/model behavior in `TraceTests/SSEHandlerTests.swift` and `TraceTests/WebSocketHandlerTests.swift`.
-- Throttling unit behavior in `TraceTests/PacketThrottlerTests.swift`.
 - Rolling PCAP rotation behavior in `TraceTests/RollingPCAPWriterRotationTests.swift`.
 - NIO proxy engine smoke tests (start/stop, HTTP/1.1 keep-alive, CONNECT relay) in `TraceTests/NIOMITMProxyEngineTests.swift`.
 - SOCKS5 server integration tests in `TraceTests/LocalSocks5ServerTests.swift`.
@@ -234,7 +232,6 @@ Source of truth is existing code + tests in this repo snapshot.
 - [ ] HostBypassStore TTL expiration and LRU eviction correctness.
 
 ### Regression gates
-- [ ] Throttling semantics parity.
 - [ ] PCAP format + cap/rotation behavior parity.
 - [ ] Metrics counters/timing parity.
 - [ ] Sampling/filter/body-limit/truncation parity.

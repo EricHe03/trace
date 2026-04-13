@@ -34,13 +34,6 @@ extension PacketTunnelProvider {
             if let config = message.payload["hardeningConfig"] as? [String: Any] {
                 await updateHardeningConfiguration(config)
             }
-        case .updateThrottlingState:
-            if let stateDict = message.payload["state"] as? [String: Any],
-               let state = NetworkThrottlingState.fromJSONDictionary(stateDict) {
-                applyThrottlingState(state, reason: "app update")
-            } else {
-                VPNLog.tunnel.warning("event=vpn.throttling_update outcome=failure reason=invalid_payload")
-            }
         case .clearRequests:
             await clearCapturedRequests()
         }
@@ -454,17 +447,6 @@ extension PacketTunnelProvider {
             VPNLog.certificate.error(
                 "event=vpn.ca_load outcome=failure error=\(String(describing: error), privacy: .public)"
             )
-        }
-    }
-
-    func loadInitialThrottlingState() {
-        let state = AppGroupStorage.shared.loadThrottlingState()
-        applyThrottlingState(state, reason: "startup")
-    }
-
-    func applyThrottlingState(_ state: NetworkThrottlingState, reason: String) {
-        Task {
-            await runtimeState.applyThrottlingState(state, reason: reason)
         }
     }
 

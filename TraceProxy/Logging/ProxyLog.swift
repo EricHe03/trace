@@ -19,7 +19,6 @@ import TraceCore
 /// |--------|----------|----------|
 /// | `mitm` | Proxy.MITM | MITM proxy core operations |
 /// | `interceptor` | Proxy.Interceptor | Request interception |
-/// | `throttling` | Proxy.Throttling | Network throttling |
 /// | `metrics` | Proxy.Metrics | Performance metrics collection |
 ///
 /// ## Usage
@@ -30,9 +29,6 @@ import TraceCore
 ///
 /// // Interception
 /// ProxyLog.interceptor.info("event=intercept.request method=\(method, privacy: .public) host=\(host, privacy: .private(mask: .hash))")
-///
-/// // Throttling
-/// ProxyLog.throttling.debug("event=throttle.delay duration_ms=\(delay) profile=\(profile, privacy: .public)")
 /// ```
 ///
 /// ## Privacy Guidelines
@@ -40,7 +36,6 @@ import TraceCore
 /// - Client IPs: `.private` (or don't log at all)
 /// - Request hosts: `.private(mask: .hash)` for correlation
 /// - HTTP methods, status codes: `.public`
-/// - Throttling profiles: `.public`
 ///
 /// ## Console Filtering
 /// ```
@@ -69,16 +64,6 @@ public enum ProxyLog {
         category: .proxyInterceptor
     )
 
-    /// Provides network throttling operation logging.
-    ///
-    /// Log levels:
-    /// - `.info`: Throttling profile applied/changed
-    /// - `.debug`: Individual delay events (rate-limit)
-    public static let throttling = TraceLog.make(
-        module: .proxy,
-        category: .proxyThrottling
-    )
-
     /// Provides metrics collection logging.
     ///
     /// Log levels:
@@ -104,11 +89,5 @@ public extension LogEvent {
     /// - Parameter action: The action (e.g., "request", "response", "bypass").
     static func intercept(_ action: String) -> LogEvent {
         LogEvent(domain: "intercept", action: action)
-    }
-
-    /// Creates a throttling event.
-    /// - Parameter action: The action (e.g., "apply", "delay", "profile_change").
-    static func throttle(_ action: String) -> LogEvent {
-        LogEvent(domain: "throttle", action: action)
     }
 }

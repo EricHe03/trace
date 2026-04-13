@@ -69,7 +69,6 @@ enum AppCommand: String {
     case updateConfig
     case updateCaptureConfig
     case updateHardeningConfig
-    case updateThrottlingState
     case clearRequests
 }
 
@@ -93,7 +92,7 @@ struct AppMessage {
 /// - Start/stop the local MITM proxy server
 /// - Manage root CA certificate lifecycle
 /// - Handle IPC messages from the main app for configuration updates
-/// - Coordinate network throttling, QUIC blocking, and raw packet capture
+/// - Coordinate QUIC blocking and raw packet capture
 ///
 /// Thread safety:
 /// - This class is `@unchecked Sendable` to satisfy Swift concurrency checks.
@@ -105,7 +104,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// Serializes tunnel lifecycle across concurrent NE callbacks.
     let lifecycle = TunnelLifecycle()
 
-    /// Encapsulates mutable runtime state (proxy server, raw capture, throttling).
+    /// Encapsulates mutable runtime state (proxy server, raw capture).
     let runtimeState = PacketTunnelRuntimeState()
     let captureRuntimeController = CaptureRuntimeController()
     let completionQueue = DispatchQueue(label: "com.trace.vpn.completion")
@@ -302,8 +301,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         if debugLoggingEnabled {
             startHeartbeatTask()
         }
-
-        loadInitialThrottlingState()
     }
 
     private func logProtocolRoutingConfiguration() async {

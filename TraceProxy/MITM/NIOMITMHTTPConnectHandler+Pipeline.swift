@@ -20,7 +20,6 @@ import TraceSecurity
 final class NIOMITMTunneledHTTP2StreamHandlerFactory: @unchecked Sendable {
     let group: NIOTSEventLoopGroup
     weak var eventLog: NDJSONLogWriter?
-    let throttler: PacketThrottler?
     let interceptor: (any InterceptionProviding)?
     let captureConfigProvider: () -> CaptureConfiguration
     let onRequestCaptured: ((NetworkRequest) -> Void)?
@@ -35,7 +34,6 @@ final class NIOMITMTunneledHTTP2StreamHandlerFactory: @unchecked Sendable {
     init(
         group: NIOTSEventLoopGroup,
         eventLog: NDJSONLogWriter?,
-        throttler: PacketThrottler?,
         interceptor: (any InterceptionProviding)?,
         captureConfigProvider: @escaping () -> CaptureConfiguration,
         onRequestCaptured: ((NetworkRequest) -> Void)?,
@@ -49,7 +47,6 @@ final class NIOMITMTunneledHTTP2StreamHandlerFactory: @unchecked Sendable {
     ) {
         self.group = group
         self.eventLog = eventLog
-        self.throttler = throttler
         self.interceptor = interceptor
         self.captureConfigProvider = captureConfigProvider
         self.onRequestCaptured = onRequestCaptured
@@ -66,7 +63,6 @@ final class NIOMITMTunneledHTTP2StreamHandlerFactory: @unchecked Sendable {
         NIOMITMHTTPConnectHandler(
             group: group,
             eventLog: eventLog,
-            throttler: throttler,
             interceptor: interceptor,
             captureConfigProvider: captureConfigProvider,
             onRequestCaptured: onRequestCaptured,
@@ -249,7 +245,6 @@ extension NIOMITMHTTPConnectHandler {
         NIOMITMHTTPConnectHandler(
             group: group,
             eventLog: eventLog,
-            throttler: throttler,
             interceptor: interceptor,
             captureConfigProvider: captureConfigProvider,
             onRequestCaptured: onRequestCaptured,
@@ -270,7 +265,6 @@ extension NIOMITMHTTPConnectHandler {
         NIOMITMTunneledHTTP2StreamHandlerFactory(
             group: group,
             eventLog: eventLog,
-            throttler: throttler,
             interceptor: interceptor,
             captureConfigProvider: captureConfigProvider,
             onRequestCaptured: onRequestCaptured,

@@ -61,7 +61,6 @@ final class FullTunnelRegressionTests: XCTestCase {
         let handler = NIOMITMHTTPConnectHandler(
             group: group,
             eventLog: nil,
-            throttler: nil,
             interceptor: nil,
             captureConfigProvider: { .default },
             onRequestCaptured: nil,
@@ -175,7 +174,6 @@ final class FullTunnelRegressionTests: XCTestCase {
         let handler = NIOMITMInitialIngressHandler(
             group: group,
             eventLog: nil,
-            throttler: nil,
             interceptor: nil,
             captureConfigProvider: { .default },
             onRequestCaptured: nil,

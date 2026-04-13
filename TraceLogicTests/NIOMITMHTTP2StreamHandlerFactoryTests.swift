@@ -17,7 +17,6 @@ final class NIOMITMHTTP2StreamHandlerFactoryTests: XCTestCase {
         var setupHandler: NIOMITMHTTPConnectHandler? = NIOMITMHTTPConnectHandler(
             group: group,
             eventLog: nil,
-            throttler: nil,
             interceptor: nil,
             captureConfigProvider: { CaptureConfiguration.default },
             onRequestCaptured: nil,

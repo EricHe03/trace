@@ -18,7 +18,6 @@ public class TLSHandler {
     // Rule: Diagnostics are best-effort; callers must handle nil when no failure detail is available.
     private nonisolated(unsafe) static var _lastServerTLSOptionsError: String?
     private static let debugSampler = LogSampler()
-    private static let warningThrottle = LogThrottle()
 
     private static func debugSampled(
         _ key: String,
@@ -190,14 +189,12 @@ public class TLSHandler {
                     leafTrustOK = ok
                 }
                 if !leafTrustOK {
-                    if warningThrottle.shouldLog(key: "tls.leaf_trust.failure.\(domain)", minInterval: 30) {
-                        SecurityLog.tls.warning(
-                            LogEvent.tls("leaf_trust")
-                                .failure()
-                                .with("domain", value: domain, privacy: .hash)
-                                .with("action", value: "bypass_mitm")
-                        )
-                    }
+                    SecurityLog.tls.warning(
+                        LogEvent.tls("leaf_trust")
+                            .failure()
+                            .with("domain", value: domain, privacy: .hash)
+                            .with("action", value: "bypass_mitm")
+                    )
                     return nil
                 }
 
@@ -237,14 +234,12 @@ public class TLSHandler {
             let leafTrustOK = debugValidateLeafCertificate(certificate: certificate, domain: domain)
             if !leafTrustOK {
                 // Rationale: Returning nil forces passthrough when the system rejects the leaf.
-                if warningThrottle.shouldLog(key: "tls.leaf_trust.failure.\(domain)", minInterval: 30) {
-                    SecurityLog.tls.warning(
-                        LogEvent.tls("leaf_trust")
-                            .failure()
-                            .with("domain", value: domain, privacy: .hash)
-                            .with("action", value: "bypass_mitm")
-                    )
-                }
+                SecurityLog.tls.warning(
+                    LogEvent.tls("leaf_trust")
+                        .failure()
+                        .with("domain", value: domain, privacy: .hash)
+                        .with("action", value: "bypass_mitm")
+                )
                 let detail = lastServerTLSOptionsError() ?? "leaf_trust_failed:unknown"
                 setLeafTrustPreflight(ok: false, detail: detail, for: domain)
                 return nil
@@ -644,10 +639,8 @@ public class TLSHandler {
                         let errorDesc = (error as Error?)?.localizedDescription ?? "unknown error"
                         let errorCode = (error as Error?)?._code ?? -1
                         onTrustFailure?(domain, errorDesc, errorCode)
-                        if warningThrottle.shouldLog(key: "tls.verify_server.failure.\(domain)", minInterval: 30) {
-                            SecurityLog.tls.warning("event=tls.verify_server outcome=failure domain=\(domain, privacy: .private(mask: .hash)) error=\(errorDesc) code=\(errorCode)")
-                            SecurityLog.tls.error("event=tls.verify_server action=reject domain=\(domain, privacy: .private(mask: .hash))")
-                        }
+                        SecurityLog.tls.warning("event=tls.verify_server outcome=failure domain=\(domain, privacy: .private(mask: .hash)) error=\(errorDesc) code=\(errorCode)")
+                        SecurityLog.tls.error("event=tls.verify_server action=reject domain=\(domain, privacy: .private(mask: .hash))")
                         complete(false)
                     }
                 }

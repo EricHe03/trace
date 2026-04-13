@@ -289,7 +289,6 @@ public extension NetworkRequest {
 
     private func appendPerformanceTags(to tags: inout [TagType]) {
         if duration > 5.0 { tags.append(.slow(duration: duration)) }
-        if wasThrottled { tags.append(.throttled(profile: throttlingProfile)) }
         if let stall = stallDuration, stall > 2.0 { tags.append(.stalled(duration: stall)) }
     }
 

@@ -140,8 +140,8 @@ final class SSEHandlerTests: XCTestCase {
         XCTAssertEqual(reparsed.first?.data, "hello")
     }
 
-    func testSSECapturePublishThrottlePublishesFirstAndTerminalSnapshots() {
-        var throttle = SSECapturePublishThrottle(minEventDelta: 5, minInterval: 60)
+    func testSSECapturePublishGatePublishesFirstAndTerminalSnapshots() {
+        var gate = SSECapturePublishGate(minEventDelta: 5, minInterval: 60)
         let now = Date()
 
         var connection = SSEConnection(
@@ -153,10 +153,10 @@ final class SSEHandlerTests: XCTestCase {
             responseHeaders: []
         )
 
-        XCTAssertTrue(throttle.shouldPublish(connection: connection, now: now))
-        XCTAssertFalse(throttle.shouldPublish(connection: connection, now: now.addingTimeInterval(1)))
+        XCTAssertTrue(gate.shouldPublish(connection: connection, now: now))
+        XCTAssertFalse(gate.shouldPublish(connection: connection, now: now.addingTimeInterval(1)))
 
         connection.status = .closed
-        XCTAssertTrue(throttle.shouldPublish(connection: connection, now: now.addingTimeInterval(2)))
+        XCTAssertTrue(gate.shouldPublish(connection: connection, now: now.addingTimeInterval(2)))
     }
 }

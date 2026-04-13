@@ -361,7 +361,6 @@ extension NIOMITMHTTPConnectHandler {
         )
         annotateCaptureMetadata(&marker)
         marker.extractHTTPFields()
-        NetworkThrottlingController.shared.applyMetadata(to: &marker)
         onRequestCaptured(marker)
     }
 }

@@ -36,7 +36,6 @@ final class MITMProxyServerTests: XCTestCase {
         ])
         server.setMitmAllowlist([" Example.com ", "", "api.example.com"])
         server.setMitmEnabled(true)
-        server.updateThrottlingState(.disabled)
         server.updateRawCaptureLimit(16 * 1024 * 1024)
         server.configureRawCapture(enabled: false, writer: nil, limit: 0)
 
