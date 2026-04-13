@@ -96,16 +96,34 @@ final class StreamSessionRuntime: @unchecked Sendable {
         )
     }
 
-    func recordPersistedEvent(_ event: StreamEvent) {
+    func recordPersistedEvent(_ event: StreamEvent, countPayloadBytes: Bool = true) {
         lock.lock()
         defer { lock.unlock() }
 
         session.eventCount += 1
+        guard countPayloadBytes else { return }
+
         switch event.direction {
         case .received:
             session.bytesIn += event.payload.byteCount
         case .sent:
             session.bytesOut += event.payload.byteCount
+        case .system:
+            break
+        }
+    }
+
+    func recordTransferredBytes(direction: StreamEventDirection, count: Int) {
+        guard count > 0 else { return }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        switch direction {
+        case .received:
+            session.bytesIn += count
+        case .sent:
+            session.bytesOut += count
         case .system:
             break
         }

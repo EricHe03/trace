@@ -46,15 +46,6 @@ public enum DualMITMPolicySnapshotBuilder {
             policyMode: normalized.dualMITMPolicy,
             circuitBreakerEnabled: normalized.dualMITMCircuitBreakerEnabled,
             tcpBypassTTLSeconds: normalized.tcpBypassTTLSeconds,
-            quicHostFailOpenSeconds: normalized.quicHostFailOpenSeconds,
-            quicNoProgress: QUICNoProgressConfig(
-                graceMs: normalized.quicNoProgressGraceMs,
-                idleMs: normalized.quicNoProgressIdleMs,
-                absoluteMs: normalized.quicNoProgressAbsoluteMs,
-                minimumClientDatagrams: normalized.quicNoProgressMinClientDatagrams
-            ),
-            quicAuthorityRetryAttempts: normalized.quicAuthorityRetryAttempts,
-            quicCertMaterialCacheTTLSeconds: normalized.quicCertMaterialCacheTTLSeconds,
             allowlist: inputs.mitmAllowlist,
             mitmEnabled: inputs.mitmEnabled,
             quicHandlingMode: inputs.quicHandlingMode,

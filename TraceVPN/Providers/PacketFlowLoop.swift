@@ -329,14 +329,7 @@ final class PacketFlowLoop: @unchecked Sendable {
     private var quicAuthorityHintsByIP: [String: QUICAuthorityHint] = [:]
     private var observedQUICFlows: Set<String> = []
     private let dualMITMPolicy: DualMITMPolicy
-    private let quicHostFailOpenSeconds: Int
     private let dualMITMCircuitBreakerEnabled: Bool
-    private let quicNoProgressGraceMs: Int
-    private let quicNoProgressIdleMs: Int
-    private let quicNoProgressAbsoluteMs: Int
-    private let quicNoProgressMinClientDatagrams: Int
-    private let quicAuthorityRetryAttempts: Int
-    private let quicCertMaterialCacheTTLSeconds: Int
     private let dualMITMPolicyEngine: DualMITMPolicyEngine?
     private var lastDualMITMDegradedState = false
     private var lastDualMITMTCPDegradedState = false
@@ -350,14 +343,7 @@ final class PacketFlowLoop: @unchecked Sendable {
         udpForwardingMode: UDPForwardingMode,
         quicHandlingMode: QUICHandlingMode,
         dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
-        quicHostFailOpenSeconds: Int = 1800,
         dualMITMCircuitBreakerEnabled: Bool = true,
-        quicNoProgressGraceMs: Int = 2500,
-        quicNoProgressIdleMs: Int = 2500,
-        quicNoProgressAbsoluteMs: Int = 9000,
-        quicNoProgressMinClientDatagrams: Int = 2,
-        quicAuthorityRetryAttempts: Int = 1,
-        quicCertMaterialCacheTTLSeconds: Int = 1800,
         dualMITMPolicyEngine: DualMITMPolicyEngine? = nil,
         quicInterceptor: (any InterceptionProviding)? = nil,
         eventLogHandler: (@Sendable (String, String) -> Void)? = nil
@@ -369,14 +355,7 @@ final class PacketFlowLoop: @unchecked Sendable {
         self.udpForwardingMode = udpForwardingMode
         self.quicHandlingMode = quicHandlingMode
         self.dualMITMPolicy = dualMITMPolicy
-        self.quicHostFailOpenSeconds = quicHostFailOpenSeconds
         self.dualMITMCircuitBreakerEnabled = dualMITMCircuitBreakerEnabled
-        self.quicNoProgressGraceMs = quicNoProgressGraceMs
-        self.quicNoProgressIdleMs = quicNoProgressIdleMs
-        self.quicNoProgressAbsoluteMs = quicNoProgressAbsoluteMs
-        self.quicNoProgressMinClientDatagrams = quicNoProgressMinClientDatagrams
-        self.quicAuthorityRetryAttempts = quicAuthorityRetryAttempts
-        self.quicCertMaterialCacheTTLSeconds = quicCertMaterialCacheTTLSeconds
         self.dualMITMPolicyEngine = dualMITMPolicyEngine
         self.initialQUICInterceptor = quicInterceptor
         self.eventLogHandler = eventLogHandler
@@ -440,13 +419,6 @@ final class PacketFlowLoop: @unchecked Sendable {
     private func makeQUICFlowRouter() -> QUICFlowRouter {
         QUICFlowRouter(
             interceptor: initialQUICInterceptor,
-            hostFailOpenBackoff: TimeInterval(max(180, quicHostFailOpenSeconds)),
-            noProgressGracePeriod: TimeInterval(quicNoProgressGraceMs) / 1000,
-            noProgressIdleTimeout: TimeInterval(quicNoProgressIdleMs) / 1000,
-            noProgressAbsoluteTimeout: TimeInterval(quicNoProgressAbsoluteMs) / 1000,
-            noProgressMinimumClientDatagrams: quicNoProgressMinClientDatagrams,
-            maxAuthorityRetryAttempts: quicAuthorityRetryAttempts,
-            certificateMaterialCacheTTL: TimeInterval(quicCertMaterialCacheTTLSeconds),
             dualMITMPolicy: dualMITMPolicy,
             dualMITMCircuitBreakerEnabled: dualMITMCircuitBreakerEnabled,
             dualMITMPolicyEngine: dualMITMPolicyEngine,

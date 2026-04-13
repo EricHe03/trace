@@ -392,32 +392,27 @@ extension NIOMITMHTTPConnectHandler {
     func installWebSocketRelay(
         clientContext: ChannelHandlerContext,
         upstream: Channel,
-        captureState: NIOMITMWebSocketCaptureState,
-        streamRuntime: StreamSessionRuntime? = nil,
+        streamRuntime: StreamSessionRuntime,
         perMessageDeflateEnabled: Bool = false
     ) {
         let clientChannel = clientContext.channel
-        let decisionProvider: (@Sendable (StreamSession, StreamEvent, EventLoop) -> EventLoopFuture<StreamInterceptionDecision>)? = if streamRuntime == nil {
-            nil
-        } else {
-            { [weak self] session, event, eventLoop in
-                guard let self else {
-                    return eventLoop.makeSucceededFuture(.forward)
-                }
-                return self.streamEventInterceptionFuture(session: session, event: event, eventLoop: eventLoop)
+        let decisionProvider: @Sendable (StreamSession, StreamEvent, EventLoop) -> EventLoopFuture<StreamInterceptionDecision> = { [weak self] session, event, eventLoop in
+            guard let self else {
+                return eventLoop.makeSucceededFuture(.forward)
             }
+            return self.streamEventInterceptionFuture(session: session, event: event, eventLoop: eventLoop)
         }
-        let closeNotifier: (@Sendable (StreamSessionStatus, String?, EventLoop) -> Void)? = if let streamRuntime {
-            { [weak self] status, reason, eventLoop in
-                self?.completeStreamRuntime(
-                    streamRuntime,
-                    status: status,
-                    reason: reason,
-                    eventLoop: eventLoop
-                )
-            }
-        } else {
-            nil
+        let eventRecorder: @Sendable (StreamEvent) -> Void = { [weak self] event in
+            guard let self else { return }
+            self.persistStreamEvent(event, runtime: streamRuntime)
+        }
+        let closeNotifier: @Sendable (StreamSessionStatus, String?, EventLoop) -> Void = { [weak self] status, reason, eventLoop in
+            self?.completeStreamRuntime(
+                streamRuntime,
+                status: status,
+                reason: reason,
+                eventLoop: eventLoop
+            )
         }
         removeHandlerIfPresent(name: Self.upstreamHTTPHandlerName, from: upstream)
             .flatMap {
@@ -440,9 +435,9 @@ extension NIOMITMHTTPConnectHandler {
                     NIOMITMWebSocketRelayHandler(
                         peerChannel: clientChannel,
                         direction: .received,
-                        captureState: captureState,
                         streamRuntime: streamRuntime,
                         interceptDecisionProvider: decisionProvider,
+                        streamEventRecorder: eventRecorder,
                         closeNotifier: closeNotifier,
                         perMessageDeflateEnabled: perMessageDeflateEnabled
                     ),
@@ -463,9 +458,9 @@ extension NIOMITMHTTPConnectHandler {
                     NIOMITMWebSocketRelayHandler(
                         peerChannel: upstream,
                         direction: .sent,
-                        captureState: captureState,
                         streamRuntime: streamRuntime,
                         interceptDecisionProvider: decisionProvider,
+                        streamEventRecorder: eventRecorder,
                         closeNotifier: closeNotifier,
                         perMessageDeflateEnabled: perMessageDeflateEnabled
                     ),
@@ -479,21 +474,26 @@ extension NIOMITMHTTPConnectHandler {
                 switch result {
                 case .success:
                     ProxyLog.mitm.info(
-                        "event=proxy.nio_ws_relay_install outcome=success ws_id=\(captureState.connectionID.uuidString, privacy: .public)"
+                        "event=proxy.nio_ws_relay_install outcome=success session_id=\(streamRuntime.snapshot().id.uuidString, privacy: .public)"
                     )
                     self?.eventLog?.append(
                         type: "proxy_nio_ws_relay_install",
-                        msg: "outcome=success mode=\(self?.ingressModeLabel ?? "unknown") id=\(self?.connectionID ?? "unknown") ws_id=\(captureState.connectionID.uuidString)"
+                        msg: "outcome=success mode=\(self?.ingressModeLabel ?? "unknown") id=\(self?.connectionID ?? "unknown") session_id=\(streamRuntime.snapshot().id.uuidString)"
                     )
                     self?.state = .tunnelEstablished
                 case let .failure(error):
-                    captureState.markFailed()
                     ProxyLog.mitm.warning(
-                        "event=proxy.nio_ws_relay_install outcome=failure ws_id=\(captureState.connectionID.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                        "event=proxy.nio_ws_relay_install outcome=failure session_id=\(streamRuntime.snapshot().id.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                     )
                     self?.eventLog?.append(
                         type: "proxy_nio_ws_relay_install",
-                        msg: "outcome=failure mode=\(self?.ingressModeLabel ?? "unknown") id=\(self?.connectionID ?? "unknown") ws_id=\(captureState.connectionID.uuidString) error=\(error.localizedDescription)"
+                        msg: "outcome=failure mode=\(self?.ingressModeLabel ?? "unknown") id=\(self?.connectionID ?? "unknown") session_id=\(streamRuntime.snapshot().id.uuidString) error=\(error.localizedDescription)"
+                    )
+                    self?.completeStreamRuntime(
+                        streamRuntime,
+                        status: .failed,
+                        reason: error.localizedDescription,
+                        eventLoop: clientChannel.eventLoop
                     )
                     self?.state = .closed
                     upstream.close(promise: nil)

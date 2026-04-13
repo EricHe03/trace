@@ -141,6 +141,10 @@ final class HardeningConfigTests: XCTestCase {
         XCTAssertTrue(enabled)
     }
 
+    func testDefaultGRPCStreamInterceptionSyncSnapshotDisabled() {
+        XCTAssertFalse(sut.enableGRPCStreamInterceptionSync)
+    }
+
     // MARK: - Robust Reassembly Configuration Tests
 
     func testSetEnableRobustReassembly() async {
@@ -217,6 +221,21 @@ final class HardeningConfigTests: XCTestCase {
 
         // Then
         XCTAssertEqual(result, enabled)
+    }
+
+    func testSetEnableGRPCStreamInterceptionUpdatesSyncSnapshot() async {
+        await sut.setEnableGRPCStreamInterception(true)
+
+        XCTAssertTrue(await sut.enableGRPCStreamInterception)
+        XCTAssertTrue(sut.enableGRPCStreamInterceptionSync)
+    }
+
+    func testResetToDefaultsClearsGRPCStreamInterceptionSyncSnapshot() async {
+        await sut.setEnableGRPCStreamInterception(true)
+        await sut.resetToDefaults()
+
+        XCTAssertFalse(await sut.enableGRPCStreamInterception)
+        XCTAssertFalse(sut.enableGRPCStreamInterceptionSync)
     }
 
     // MARK: - Rollout Stage Tests

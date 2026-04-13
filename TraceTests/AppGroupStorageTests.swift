@@ -24,6 +24,7 @@ final class AppGroupStorageTests: XCTestCase {
         try? storage.clearAllTransportRequests()
         try? storage.clearAllWebSocketConnections()
         try? storage.clearAllSSEConnections()
+        _ = try? storage.deleteStreamSessions(olderThan: .distantFuture)
         storage.setTransportStoreBudgetBytesForTesting(nil)
         storage.resetStoredSettings()
     }
@@ -34,6 +35,7 @@ final class AppGroupStorageTests: XCTestCase {
         try? storage.clearAllTransportRequests()
         try? storage.clearAllWebSocketConnections()
         try? storage.clearAllSSEConnections()
+        _ = try? storage.deleteStreamSessions(olderThan: .distantFuture)
         storage.setTransportStoreBudgetBytesForTesting(nil)
         storage.resetStoredSettings()
         super.tearDown()
@@ -620,10 +622,45 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(loaded?.endTime, endedAt)
     }
 
-    func testLoadAllWebSocketConnectionsUsesStreamProjectionWhenV2Enabled() throws {
-        try storage.saveHardeningSetting(true, forKey: "hardening.enableStreamInterceptionV2")
-        defer { try? storage.saveHardeningSetting(false, forKey: "hardening.enableStreamInterceptionV2") }
+    func testDeleteStreamSessionsCanFilterByProtocol() throws {
+        let cutoff = Date()
+        let grpcSessionID = UUID()
+        let sseSessionID = UUID()
+        let oldStart = cutoff.addingTimeInterval(-60)
 
+        try storage.upsertStreamSession(
+            StreamSession(
+                id: grpcSessionID,
+                protocolType: .grpc,
+                url: "https://example.com/trace.Echo/Call",
+                startTime: oldStart,
+                endTime: oldStart.addingTimeInterval(1),
+                status: .closed,
+                requestHeaders: [],
+                responseHeaders: []
+            )
+        )
+        try storage.upsertStreamSession(
+            StreamSession(
+                id: sseSessionID,
+                protocolType: .sse,
+                url: "https://example.com/events",
+                startTime: oldStart,
+                endTime: oldStart.addingTimeInterval(1),
+                status: .closed,
+                requestHeaders: [],
+                responseHeaders: []
+            )
+        )
+
+        let deleted = try storage.deleteStreamSessions(olderThan: cutoff, protocolType: .grpc)
+
+        XCTAssertEqual(deleted, 1)
+        XCTAssertNil(try storage.loadStreamSession(grpcSessionID))
+        XCTAssertNotNil(try storage.loadStreamSession(sseSessionID))
+    }
+
+    func testLoadAllWebSocketConnectionsUsesStreamProjection() throws {
         let sessionID = UUID()
         try storage.upsertStreamSession(
             StreamSession(
@@ -653,10 +690,7 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(connections[0].messages[0].textPayload, "from stream")
     }
 
-    func testLoadAllSSEConnectionsUsesStreamProjectionWhenV2Enabled() throws {
-        try storage.saveHardeningSetting(true, forKey: "hardening.enableStreamInterceptionV2")
-        defer { try? storage.saveHardeningSetting(false, forKey: "hardening.enableStreamInterceptionV2") }
-
+    func testLoadAllSSEConnectionsUsesStreamProjection() throws {
         let sessionID = UUID()
         try storage.upsertStreamSession(
             StreamSession(
@@ -745,14 +779,7 @@ final class AppGroupStorageTests: XCTestCase {
             fullTunnelUDPForwardingMode: .split,
             dualMITMPolicy: .strictMITM,
             tcpBypassTTLSeconds: 900,
-            quicHostFailOpenSeconds: 2400,
-            dualMITMCircuitBreakerEnabled: false,
-            quicNoProgressGraceMs: 2600,
-            quicNoProgressIdleMs: 2700,
-            quicNoProgressAbsoluteMs: 7000,
-            quicNoProgressMinClientDatagrams: 4,
-            quicAuthorityRetryAttempts: 2,
-            quicCertMaterialCacheTTLSeconds: 2400
+            dualMITMCircuitBreakerEnabled: false
         )
 
         try storage.saveConfiguration(config)
@@ -774,14 +801,7 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(loaded.fullTunnelUDPForwardingMode, config.fullTunnelUDPForwardingMode)
         XCTAssertEqual(loaded.dualMITMPolicy, config.dualMITMPolicy)
         XCTAssertEqual(loaded.tcpBypassTTLSeconds, config.tcpBypassTTLSeconds)
-        XCTAssertEqual(loaded.quicHostFailOpenSeconds, config.quicHostFailOpenSeconds)
         XCTAssertEqual(loaded.dualMITMCircuitBreakerEnabled, config.dualMITMCircuitBreakerEnabled)
-        XCTAssertEqual(loaded.quicNoProgressGraceMs, config.quicNoProgressGraceMs)
-        XCTAssertEqual(loaded.quicNoProgressIdleMs, config.quicNoProgressIdleMs)
-        XCTAssertEqual(loaded.quicNoProgressAbsoluteMs, config.quicNoProgressAbsoluteMs)
-        XCTAssertEqual(loaded.quicNoProgressMinClientDatagrams, config.quicNoProgressMinClientDatagrams)
-        XCTAssertEqual(loaded.quicAuthorityRetryAttempts, config.quicAuthorityRetryAttempts)
-        XCTAssertEqual(loaded.quicCertMaterialCacheTTLSeconds, config.quicCertMaterialCacheTTLSeconds)
     }
 
     func testLoadConfigurationWithNoFile() {
@@ -947,14 +967,7 @@ final class AppGroupStorageTests: XCTestCase {
 
         XCTAssertEqual(config.dualMITMPolicy, .adaptiveFailOpen)
         XCTAssertEqual(config.tcpBypassTTLSeconds, 180)
-        XCTAssertEqual(config.quicHostFailOpenSeconds, 1800)
         XCTAssertTrue(config.dualMITMCircuitBreakerEnabled)
-        XCTAssertEqual(config.quicNoProgressGraceMs, 6000)
-        XCTAssertEqual(config.quicNoProgressIdleMs, 6000)
-        XCTAssertEqual(config.quicNoProgressAbsoluteMs, 20000)
-        XCTAssertEqual(config.quicNoProgressMinClientDatagrams, 6)
-        XCTAssertEqual(config.quicAuthorityRetryAttempts, 1)
-        XCTAssertEqual(config.quicCertMaterialCacheTTLSeconds, 1800)
     }
 
     func testCaptureConfigurationNormalizedAddsDefaultDNSForFullTunnel() {
@@ -1000,27 +1013,15 @@ final class AppGroupStorageTests: XCTestCase {
     func testCaptureConfigurationNormalizedClampsDualMITMTTLs() {
         var config = CaptureConfiguration.default
         config.tcpBypassTTLSeconds = 5
-        config.quicHostFailOpenSeconds = 100_000
-        config.quicNoProgressGraceMs = 100
-        config.quicNoProgressIdleMs = 11_000
-        config.quicNoProgressAbsoluteMs = 100
-        config.quicNoProgressMinClientDatagrams = 16
-        config.quicAuthorityRetryAttempts = -1
-        config.quicCertMaterialCacheTTLSeconds = 30
 
         let normalized = config.normalized()
 
         XCTAssertEqual(normalized.tcpBypassTTLSeconds, 30)
-        XCTAssertEqual(normalized.quicHostFailOpenSeconds, 86_400)
-        XCTAssertEqual(normalized.quicNoProgressGraceMs, 3_000)
-        XCTAssertEqual(normalized.quicNoProgressIdleMs, 11_000)
-        XCTAssertEqual(normalized.quicNoProgressAbsoluteMs, 8_000)
-        XCTAssertEqual(normalized.quicNoProgressMinClientDatagrams, 8)
-        XCTAssertEqual(normalized.quicAuthorityRetryAttempts, 0)
-        XCTAssertEqual(normalized.quicCertMaterialCacheTTLSeconds, 60)
     }
 
-    func testCaptureConfigurationDecodeWithoutNewQUICFieldsUsesDefaults() throws {
+    func testCaptureConfigurationDecodesLegacyJSONWithoutQUICFields() throws {
+        // Old persisted JSON that contains now-removed quic* fields should
+        // decode cleanly — decodeIfPresent silently ignores unknown keys.
         let json = """
         {
           "isEnabled": true,
@@ -1039,18 +1040,21 @@ final class AppGroupStorageTests: XCTestCase {
           "dualMITMPolicy": "adaptiveFailOpen",
           "tcpBypassTTLSeconds": 180,
           "quicHostFailOpenSeconds": 1800,
+          "quicNoProgressGraceMs": 6000,
+          "quicNoProgressIdleMs": 6000,
+          "quicNoProgressAbsoluteMs": 20000,
+          "quicNoProgressMinClientDatagrams": 6,
+          "quicAuthorityRetryAttempts": 1,
+          "quicCertMaterialCacheTTLSeconds": 1800,
           "dualMITMCircuitBreakerEnabled": true
         }
         """
 
         let config = try JSONDecoder().decode(CaptureConfiguration.self, from: Data(json.utf8))
 
-        XCTAssertEqual(config.quicNoProgressGraceMs, 6000)
-        XCTAssertEqual(config.quicNoProgressIdleMs, 6000)
-        XCTAssertEqual(config.quicNoProgressAbsoluteMs, 20000)
-        XCTAssertEqual(config.quicNoProgressMinClientDatagrams, 6)
-        XCTAssertEqual(config.quicAuthorityRetryAttempts, 1)
-        XCTAssertEqual(config.quicCertMaterialCacheTTLSeconds, 1800)
+        XCTAssertTrue(config.isEnabled)
+        XCTAssertEqual(config.tcpBypassTTLSeconds, 180)
+        XCTAssertTrue(config.dualMITMCircuitBreakerEnabled)
     }
 
     func testFilterModeEnum() {

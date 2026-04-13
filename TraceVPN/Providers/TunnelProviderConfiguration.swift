@@ -124,7 +124,7 @@ struct TunnelProviderConfiguration: Sendable {
     var captureLogMessage: String {
         let trimmedHost = capture.fullTunnelSocks5Host.trimmingCharacters(in: .whitespacesAndNewlines)
         let socksHostHash = LogRedaction.hash(trimmedHost)
-        return "mode=\(captureMode.rawValue) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(capture.fullTunnelSocks5Port) ipv6=\(capture.fullTunnelIPv6Enabled) udp_mode=\(capture.fullTunnelUDPForwardingMode.rawValue) hybrid_tcp_mitm=\(capture.fullTunnelHybridTCPMITMEnabled) tcp_transparent_mitm=\(transparentTCPMITMEnabled) dns_servers=\(capture.fullTunnelDNSServers.count) search_domains=\(capture.fullTunnelSearchDomains.count) dual_mitm_policy=\(capture.dualMITMPolicy.rawValue) tcp_bypass_ttl=\(capture.tcpBypassTTLSeconds) quic_fail_open_ttl=\(capture.quicHostFailOpenSeconds) dual_mitm_breaker=\(capture.dualMITMCircuitBreakerEnabled) quic_mode=\(hardening.quicHandlingMode.rawValue) quic_no_progress_grace_ms=\(capture.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(capture.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(capture.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(capture.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(capture.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(capture.quicCertMaterialCacheTTLSeconds)"
+        return "mode=\(captureMode.rawValue) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(capture.fullTunnelSocks5Port) ipv6=\(capture.fullTunnelIPv6Enabled) udp_mode=\(capture.fullTunnelUDPForwardingMode.rawValue) hybrid_tcp_mitm=\(capture.fullTunnelHybridTCPMITMEnabled) tcp_transparent_mitm=\(transparentTCPMITMEnabled) dns_servers=\(capture.fullTunnelDNSServers.count) search_domains=\(capture.fullTunnelSearchDomains.count) dual_mitm_policy=\(capture.dualMITMPolicy.rawValue) tcp_bypass_ttl=\(capture.tcpBypassTTLSeconds) dual_mitm_breaker=\(capture.dualMITMCircuitBreakerEnabled) quic_mode=\(hardening.quicHandlingMode.rawValue)"
     }
 
     func makePacketFlowConfig(
@@ -159,14 +159,7 @@ struct TunnelProviderConfiguration: Sendable {
             dualMITM: .init(
                 policy: capture.dualMITMPolicy,
                 tcpBypassTTLSeconds: capture.tcpBypassTTLSeconds,
-                quicHostFailOpenSeconds: capture.quicHostFailOpenSeconds,
                 circuitBreakerEnabled: capture.dualMITMCircuitBreakerEnabled,
-                quicNoProgressGraceMs: capture.quicNoProgressGraceMs,
-                quicNoProgressIdleMs: capture.quicNoProgressIdleMs,
-                quicNoProgressAbsoluteMs: capture.quicNoProgressAbsoluteMs,
-                quicNoProgressMinClientDatagrams: capture.quicNoProgressMinClientDatagrams,
-                quicAuthorityRetryAttempts: capture.quicAuthorityRetryAttempts,
-                quicCertMaterialCacheTTLSeconds: capture.quicCertMaterialCacheTTLSeconds,
                 shadowEnabled: hardening.dualMITMPolicyEngineShadow,
                 enforceTCPRouting: hardening.dualMITMPolicyEngineEnforcedTCP,
                 enforceProxyRouting: hardening.dualMITMPolicyEngineEnforcedProxy,

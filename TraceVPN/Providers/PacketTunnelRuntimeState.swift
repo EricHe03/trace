@@ -51,14 +51,7 @@ actor PacketTunnelRuntimeState {
         struct DualMITM {
             let policy: DualMITMPolicy
             let tcpBypassTTLSeconds: Int
-            let quicHostFailOpenSeconds: Int
             let circuitBreakerEnabled: Bool
-            let quicNoProgressGraceMs: Int
-            let quicNoProgressIdleMs: Int
-            let quicNoProgressAbsoluteMs: Int
-            let quicNoProgressMinClientDatagrams: Int
-            let quicAuthorityRetryAttempts: Int
-            let quicCertMaterialCacheTTLSeconds: Int
             let shadowEnabled: Bool
             let enforceTCPRouting: Bool
             let enforceProxyRouting: Bool
@@ -186,15 +179,6 @@ actor PacketTunnelRuntimeState {
             policyMode: config.dualMITM.policy,
             circuitBreakerEnabled: config.dualMITM.circuitBreakerEnabled,
             tcpBypassTTLSeconds: config.dualMITM.tcpBypassTTLSeconds,
-            quicHostFailOpenSeconds: config.dualMITM.quicHostFailOpenSeconds,
-            quicNoProgress: QUICNoProgressConfig(
-                graceMs: config.dualMITM.quicNoProgressGraceMs,
-                idleMs: config.dualMITM.quicNoProgressIdleMs,
-                absoluteMs: config.dualMITM.quicNoProgressAbsoluteMs,
-                minimumClientDatagrams: config.dualMITM.quicNoProgressMinClientDatagrams
-            ),
-            quicAuthorityRetryAttempts: config.dualMITM.quicAuthorityRetryAttempts,
-            quicCertMaterialCacheTTLSeconds: config.dualMITM.quicCertMaterialCacheTTLSeconds,
             quicHandlingMode: quicHandlingMode,
             featureFlags: DualMITMPolicyFeatureFlags(
                 shadowEnabled: config.dualMITM.shadowEnabled,
@@ -251,11 +235,11 @@ actor PacketTunnelRuntimeState {
             let trimmedHost = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines)
             let socksHostHash = LogRedaction.hash(trimmedHost)
             VPNLog.tunnel.info(
-                "event=vpn.packet_flow_config mode=\(config.captureMode.rawValue, privacy: .public) socks_source=\(endpoint.source, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.udp.ipv6Enabled) udp_mode=\(config.udp.forwardingMode.rawValue, privacy: .public) quic_mode=\(self.quicHandlingMode.rawValue, privacy: .public) block_quic=\(self.quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.transparentProxy.enabled) dual_mitm_policy=\(config.dualMITM.policy.rawValue, privacy: .public) breaker=\(config.dualMITM.circuitBreakerEnabled) policy_shadow=\(config.dualMITM.shadowEnabled) policy_enforced_tcp=\(config.dualMITM.enforceTCPRouting) policy_enforced_proxy=\(config.dualMITM.enforceProxyRouting) policy_enforced_quic=\(config.dualMITM.enforceQUICRouting) http2_mitm=\(config.dualMITM.http2MITMEnabled) strict_hard_fail=\(config.dualMITM.strictEnforcementHardFail) quic_no_progress_grace_ms=\(config.dualMITM.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.dualMITM.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.dualMITM.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.dualMITM.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.dualMITM.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.dualMITM.quicCertMaterialCacheTTLSeconds)"
+                "event=vpn.packet_flow_config mode=\(config.captureMode.rawValue, privacy: .public) socks_source=\(endpoint.source, privacy: .public) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.udp.ipv6Enabled) udp_mode=\(config.udp.forwardingMode.rawValue, privacy: .public) quic_mode=\(self.quicHandlingMode.rawValue, privacy: .public) block_quic=\(self.quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.transparentProxy.enabled) dual_mitm_policy=\(config.dualMITM.policy.rawValue, privacy: .public) breaker=\(config.dualMITM.circuitBreakerEnabled) policy_shadow=\(config.dualMITM.shadowEnabled) policy_enforced_tcp=\(config.dualMITM.enforceTCPRouting) policy_enforced_proxy=\(config.dualMITM.enforceProxyRouting) policy_enforced_quic=\(config.dualMITM.enforceQUICRouting) http2_mitm=\(config.dualMITM.http2MITMEnabled) strict_hard_fail=\(config.dualMITM.strictEnforcementHardFail)"
             )
             appendEventLog(
                 type: "packet_flow_config",
-                msg: "mode=\(config.captureMode.rawValue) socks_source=\(endpoint.source) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.udp.ipv6Enabled) udp_mode=\(config.udp.forwardingMode.rawValue) quic_mode=\(quicHandlingMode.rawValue) block_quic=\(quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.transparentProxy.enabled) dual_mitm_policy=\(config.dualMITM.policy.rawValue) breaker=\(config.dualMITM.circuitBreakerEnabled) policy_shadow=\(config.dualMITM.shadowEnabled) policy_enforced_tcp=\(config.dualMITM.enforceTCPRouting) policy_enforced_proxy=\(config.dualMITM.enforceProxyRouting) policy_enforced_quic=\(config.dualMITM.enforceQUICRouting) http2_mitm=\(config.dualMITM.http2MITMEnabled) strict_hard_fail=\(config.dualMITM.strictEnforcementHardFail) quic_no_progress_grace_ms=\(config.dualMITM.quicNoProgressGraceMs) quic_no_progress_idle_ms=\(config.dualMITM.quicNoProgressIdleMs) quic_no_progress_absolute_ms=\(config.dualMITM.quicNoProgressAbsoluteMs) quic_no_progress_min_client_datagrams=\(config.dualMITM.quicNoProgressMinClientDatagrams) quic_authority_retry_attempts=\(config.dualMITM.quicAuthorityRetryAttempts) quic_cert_material_cache_ttl=\(config.dualMITM.quicCertMaterialCacheTTLSeconds)"
+                msg: "mode=\(config.captureMode.rawValue) socks_source=\(endpoint.source) socks_host_hash=\(socksHostHash) socks_host_len=\(trimmedHost.count) socks_port=\(endpoint.port) ipv6=\(config.udp.ipv6Enabled) udp_mode=\(config.udp.forwardingMode.rawValue) quic_mode=\(quicHandlingMode.rawValue) block_quic=\(quicHandlingMode.blocksQUIC) tcp_transparent_mitm=\(config.transparentProxy.enabled) dual_mitm_policy=\(config.dualMITM.policy.rawValue) breaker=\(config.dualMITM.circuitBreakerEnabled) policy_shadow=\(config.dualMITM.shadowEnabled) policy_enforced_tcp=\(config.dualMITM.enforceTCPRouting) policy_enforced_proxy=\(config.dualMITM.enforceProxyRouting) policy_enforced_quic=\(config.dualMITM.enforceQUICRouting) http2_mitm=\(config.dualMITM.http2MITMEnabled) strict_hard_fail=\(config.dualMITM.strictEnforcementHardFail)"
             )
 
             let ipv6Enabled = config.udp.ipv6Enabled
@@ -324,14 +308,7 @@ actor PacketTunnelRuntimeState {
             udpForwardingMode: config.udp.forwardingMode,
             quicHandlingMode: quicHandlingMode,
             dualMITMPolicy: config.dualMITM.policy,
-            quicHostFailOpenSeconds: config.dualMITM.quicHostFailOpenSeconds,
             dualMITMCircuitBreakerEnabled: config.dualMITM.circuitBreakerEnabled,
-            quicNoProgressGraceMs: config.dualMITM.quicNoProgressGraceMs,
-            quicNoProgressIdleMs: config.dualMITM.quicNoProgressIdleMs,
-            quicNoProgressAbsoluteMs: config.dualMITM.quicNoProgressAbsoluteMs,
-            quicNoProgressMinClientDatagrams: config.dualMITM.quicNoProgressMinClientDatagrams,
-            quicAuthorityRetryAttempts: config.dualMITM.quicAuthorityRetryAttempts,
-            quicCertMaterialCacheTTLSeconds: config.dualMITM.quicCertMaterialCacheTTLSeconds,
             dualMITMPolicyEngine: policyEngine,
             quicInterceptor: RequestInterceptor.shared,
             eventLogHandler: eventLogger

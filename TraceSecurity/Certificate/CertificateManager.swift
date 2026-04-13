@@ -819,6 +819,11 @@ public class CertificateManager {
         }
     }
 
+    /// Returns the notAfter date for a certificate when it can be extracted.
+    public func certificateExpirationDate(for certificate: SecCertificate) -> Date? {
+        extractNotAfterDate(from: certificate)
+    }
+
     /// Extracts the notBefore date using SecCertificateCopyValues when available.
     private func extractNotBeforeDate(from certificate: SecCertificate) -> Date? {
         // Prefer swift-certificates parsing on all platforms.
@@ -863,6 +868,15 @@ public class CertificateManager {
         let derData = SecCertificateCopyData(certificate) as Data
         return parseNotBeforeDateFromDER(derData)
         #endif
+    }
+
+    /// Extracts the notAfter date using swift-certificates when available.
+    private func extractNotAfterDate(from certificate: SecCertificate) -> Date? {
+        if let parsed = try? Certificate(certificate) {
+            return parsed.notValidAfter
+        }
+
+        return nil
     }
 
     /// Parses the notBefore date from DER-encoded certificate data.

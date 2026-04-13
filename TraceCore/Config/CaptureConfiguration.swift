@@ -67,14 +67,7 @@ public struct CaptureConfiguration: Codable, Sendable {
     public var fullTunnelHybridTCPMITMEnabled: Bool
     public var dualMITMPolicy: DualMITMPolicy
     public var tcpBypassTTLSeconds: Int
-    public var quicHostFailOpenSeconds: Int
     public var dualMITMCircuitBreakerEnabled: Bool
-    public var quicNoProgressGraceMs: Int
-    public var quicNoProgressIdleMs: Int
-    public var quicNoProgressAbsoluteMs: Int
-    public var quicNoProgressMinClientDatagrams: Int
-    public var quicAuthorityRetryAttempts: Int
-    public var quicCertMaterialCacheTTLSeconds: Int
 
     public static let `default` = {
         let captureDefaults = CaptureOptions.default
@@ -96,14 +89,7 @@ public struct CaptureConfiguration: Codable, Sendable {
             fullTunnelHybridTCPMITMEnabled: false,
             dualMITMPolicy: .adaptiveFailOpen,
             tcpBypassTTLSeconds: 180,
-            quicHostFailOpenSeconds: 1800,
-            dualMITMCircuitBreakerEnabled: true,
-            quicNoProgressGraceMs: 6000,
-            quicNoProgressIdleMs: 6000,
-            quicNoProgressAbsoluteMs: 20000,
-            quicNoProgressMinClientDatagrams: 6,
-            quicAuthorityRetryAttempts: 1,
-            quicCertMaterialCacheTTLSeconds: 1800
+            dualMITMCircuitBreakerEnabled: true
         )
     }()
 
@@ -124,14 +110,7 @@ public struct CaptureConfiguration: Codable, Sendable {
         case fullTunnelHybridTCPMITMEnabled
         case dualMITMPolicy
         case tcpBypassTTLSeconds
-        case quicHostFailOpenSeconds
         case dualMITMCircuitBreakerEnabled
-        case quicNoProgressGraceMs
-        case quicNoProgressIdleMs
-        case quicNoProgressAbsoluteMs
-        case quicNoProgressMinClientDatagrams
-        case quicAuthorityRetryAttempts
-        case quicCertMaterialCacheTTLSeconds
     }
 
     public init(
@@ -151,14 +130,7 @@ public struct CaptureConfiguration: Codable, Sendable {
         fullTunnelHybridTCPMITMEnabled: Bool = false,
         dualMITMPolicy: DualMITMPolicy = .adaptiveFailOpen,
         tcpBypassTTLSeconds: Int = 180,
-        quicHostFailOpenSeconds: Int = 1800,
-        dualMITMCircuitBreakerEnabled: Bool = true,
-        quicNoProgressGraceMs: Int = 6000,
-        quicNoProgressIdleMs: Int = 6000,
-        quicNoProgressAbsoluteMs: Int = 20000,
-        quicNoProgressMinClientDatagrams: Int = 6,
-        quicAuthorityRetryAttempts: Int = 1,
-        quicCertMaterialCacheTTLSeconds: Int = 1800
+        dualMITMCircuitBreakerEnabled: Bool = true
     ) {
         self.isEnabled = isEnabled
         self.filterMode = filterMode
@@ -176,14 +148,7 @@ public struct CaptureConfiguration: Codable, Sendable {
         self.fullTunnelHybridTCPMITMEnabled = fullTunnelHybridTCPMITMEnabled
         self.dualMITMPolicy = dualMITMPolicy
         self.tcpBypassTTLSeconds = tcpBypassTTLSeconds
-        self.quicHostFailOpenSeconds = quicHostFailOpenSeconds
         self.dualMITMCircuitBreakerEnabled = dualMITMCircuitBreakerEnabled
-        self.quicNoProgressGraceMs = quicNoProgressGraceMs
-        self.quicNoProgressIdleMs = quicNoProgressIdleMs
-        self.quicNoProgressAbsoluteMs = quicNoProgressAbsoluteMs
-        self.quicNoProgressMinClientDatagrams = quicNoProgressMinClientDatagrams
-        self.quicAuthorityRetryAttempts = quicAuthorityRetryAttempts
-        self.quicCertMaterialCacheTTLSeconds = quicCertMaterialCacheTTLSeconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -215,22 +180,8 @@ public struct CaptureConfiguration: Codable, Sendable {
             ?? defaults.dualMITMPolicy
         tcpBypassTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .tcpBypassTTLSeconds)
             ?? defaults.tcpBypassTTLSeconds
-        quicHostFailOpenSeconds = try container.decodeIfPresent(Int.self, forKey: .quicHostFailOpenSeconds)
-            ?? defaults.quicHostFailOpenSeconds
         dualMITMCircuitBreakerEnabled = try container.decodeIfPresent(Bool.self, forKey: .dualMITMCircuitBreakerEnabled)
             ?? defaults.dualMITMCircuitBreakerEnabled
-        quicNoProgressGraceMs = try container.decodeIfPresent(Int.self, forKey: .quicNoProgressGraceMs)
-            ?? defaults.quicNoProgressGraceMs
-        quicNoProgressIdleMs = try container.decodeIfPresent(Int.self, forKey: .quicNoProgressIdleMs)
-            ?? defaults.quicNoProgressIdleMs
-        quicNoProgressAbsoluteMs = try container.decodeIfPresent(Int.self, forKey: .quicNoProgressAbsoluteMs)
-            ?? defaults.quicNoProgressAbsoluteMs
-        quicNoProgressMinClientDatagrams = try container.decodeIfPresent(Int.self, forKey: .quicNoProgressMinClientDatagrams)
-            ?? defaults.quicNoProgressMinClientDatagrams
-        quicAuthorityRetryAttempts = try container.decodeIfPresent(Int.self, forKey: .quicAuthorityRetryAttempts)
-            ?? defaults.quicAuthorityRetryAttempts
-        quicCertMaterialCacheTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .quicCertMaterialCacheTTLSeconds)
-            ?? defaults.quicCertMaterialCacheTTLSeconds
         self = normalized()
     }
 
@@ -253,14 +204,7 @@ public struct CaptureConfiguration: Codable, Sendable {
         try container.encode(normalized.fullTunnelHybridTCPMITMEnabled, forKey: .fullTunnelHybridTCPMITMEnabled)
         try container.encode(normalized.dualMITMPolicy, forKey: .dualMITMPolicy)
         try container.encode(normalized.tcpBypassTTLSeconds, forKey: .tcpBypassTTLSeconds)
-        try container.encode(normalized.quicHostFailOpenSeconds, forKey: .quicHostFailOpenSeconds)
         try container.encode(normalized.dualMITMCircuitBreakerEnabled, forKey: .dualMITMCircuitBreakerEnabled)
-        try container.encode(normalized.quicNoProgressGraceMs, forKey: .quicNoProgressGraceMs)
-        try container.encode(normalized.quicNoProgressIdleMs, forKey: .quicNoProgressIdleMs)
-        try container.encode(normalized.quicNoProgressAbsoluteMs, forKey: .quicNoProgressAbsoluteMs)
-        try container.encode(normalized.quicNoProgressMinClientDatagrams, forKey: .quicNoProgressMinClientDatagrams)
-        try container.encode(normalized.quicAuthorityRetryAttempts, forKey: .quicAuthorityRetryAttempts)
-        try container.encode(normalized.quicCertMaterialCacheTTLSeconds, forKey: .quicCertMaterialCacheTTLSeconds)
     }
 
     public func normalized() -> CaptureConfiguration {
@@ -278,13 +222,6 @@ public struct CaptureConfiguration: Codable, Sendable {
         fullTunnelDNSServers = Self.normalizedStringList(fullTunnelDNSServers)
         fullTunnelSearchDomains = Self.normalizedStringList(fullTunnelSearchDomains)
         tcpBypassTTLSeconds = max(30, min(86400, tcpBypassTTLSeconds))
-        quicHostFailOpenSeconds = max(60, min(86400, quicHostFailOpenSeconds))
-        quicNoProgressGraceMs = max(3000, min(20000, quicNoProgressGraceMs))
-        quicNoProgressIdleMs = max(3000, min(20000, quicNoProgressIdleMs))
-        quicNoProgressAbsoluteMs = max(8000, min(30000, quicNoProgressAbsoluteMs))
-        quicNoProgressMinClientDatagrams = max(1, min(8, quicNoProgressMinClientDatagrams))
-        quicAuthorityRetryAttempts = max(0, min(2, quicAuthorityRetryAttempts))
-        quicCertMaterialCacheTTLSeconds = max(60, min(86400, quicCertMaterialCacheTTLSeconds))
 
         if captureMode.usesPacketTunnelRouting, fullTunnelDNSServers.isEmpty {
             fullTunnelDNSServers = Self.defaultFullTunnelDNSServers

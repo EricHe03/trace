@@ -55,6 +55,14 @@ extension NIOMITMHTTPConnectHandler {
                 context: context
             )
             return
+        case .grpc:
+            forwardGRPCWebStream(
+                outboundContext,
+                requestHead: requestHead,
+                outboundHeaders: outboundHeaders,
+                context: context
+            )
+            return
         case .none:
             break
         }
@@ -161,9 +169,6 @@ extension NIOMITMHTTPConnectHandler {
                                     captured.statusCode = Int(response.status.code)
                                     captured.statusMessage = response.status.reasonPhrase
                                     captured.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
-                                    if captured.isGRPC {
-                                        captured.grpcMetadata = GRPCTrailerExtractor.extract(from: forwardedHeaders)
-                                    }
                                     let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
                                     let responseContentType = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-type" })?.value
                                     let responseContentEncoding = responseHeadersTrace.first(where: { $0.key.lowercased() == "content-encoding" })?.value
@@ -183,7 +188,25 @@ extension NIOMITMHTTPConnectHandler {
                                     )
                                     let responseBodyData = self.byteBufferToData(responseBodyBuffer)
                                     if captured.isGRPC {
-                                        captured.grpcMetadata?.responseMessageCount = GRPCTrailerExtractor.countMessages(in: responseBodyData)
+                                        let ct = responseContentType ?? ""
+                                        if GRPCTrailerExtractor.isGRPCWeb(contentType: ct) {
+                                            captured.grpcMetadata = GRPCTrailerExtractor.extractFromWebBody(
+                                                responseBody: responseBodyData, contentType: ct)
+                                        } else {
+                                            captured.grpcMetadata = GRPCTrailerExtractor.extract(from: forwardedHeaders)
+                                        }
+                                        // Request-header-derived fields
+                                        captured.grpcMetadata?.timeout = outboundHeaders["grpc-timeout"].first
+                                        captured.grpcMetadata?.acceptEncoding = outboundHeaders["grpc-accept-encoding"].first
+                                        if captured.grpcMetadata?.statusDetailsBin == nil {
+                                            captured.grpcMetadata?.statusDetailsBin = forwardedHeaders["grpc-status-details-bin"].first
+                                        }
+                                        // Message counts
+                                        captured.grpcMetadata?.requestMessageCount = GRPCTrailerExtractor.countMessages(in: outboundBodyData)
+                                        let isGRPCWebText = GRPCTrailerExtractor.isGRPCWebText(contentType: ct)
+                                        captured.grpcMetadata?.responseMessageCount = isGRPCWebText
+                                            ? GRPCTrailerExtractor.countMessagesInGRPCWebText(in: responseBodyData)
+                                            : GRPCTrailerExtractor.countMessages(in: responseBodyData)
                                     }
                                     self.logResponseCaptureDecision(
                                         pipeline: "buffer_and_intercept",
@@ -265,6 +288,11 @@ extension NIOMITMHTTPConnectHandler {
         if Self.isSSERequest(headers: headers) {
             return .sse
         }
+        // gRPC-Web: POST request with application/grpc-web* content-type.
+        let contentType = headers["content-type"].first ?? ""
+        if requestHead.method == .POST, GRPCTrailerExtractor.isGRPCWeb(contentType: contentType) {
+            return .grpc
+        }
         return .none
     }
 
@@ -274,29 +302,13 @@ extension NIOMITMHTTPConnectHandler {
         outboundHeaders: HTTPHeaders,
         context: ChannelHandlerContext
     ) {
-        streamInterceptionV2EnabledFuture(eventLoop: context.eventLoop).whenComplete { [weak self] result in
-            context.eventLoop.execute {
-                guard let self else { return }
-                let useV2 = (try? result.get()) ?? false
-                guard useV2 else {
-                    self.forwardSSEStreamLegacy(
-                        outboundContext,
-                        requestHead: requestHead,
-                        outboundHeaders: outboundHeaders,
-                        context: context
-                    )
-                    return
-                }
-
-                let flowController = StreamFlowController(connectHandler: self)
-                flowController.forwardSSE(
-                    outboundContext,
-                    requestHead: requestHead,
-                    outboundHeaders: outboundHeaders,
-                    context: context
-                )
-            }
-        }
+        let flowController = StreamFlowController(connectHandler: self)
+        flowController.forwardSSE(
+            outboundContext,
+            requestHead: requestHead,
+            outboundHeaders: outboundHeaders,
+            context: context
+        )
     }
 
     func forwardWebSocketStream(
@@ -305,38 +317,36 @@ extension NIOMITMHTTPConnectHandler {
         outboundHeaders: HTTPHeaders,
         context: ChannelHandlerContext
     ) {
-        streamInterceptionV2EnabledFuture(eventLoop: context.eventLoop).whenComplete { [weak self] result in
-            context.eventLoop.execute {
-                guard let self else { return }
-                let useV2 = (try? result.get()) ?? false
-                guard useV2 else {
-                    self.forwardWebSocketStreamLegacy(
-                        outboundContext,
-                        requestHead: requestHead,
-                        outboundHeaders: outboundHeaders,
-                        context: context
-                    )
-                    return
-                }
-
-                let flowController = StreamFlowController(connectHandler: self)
-                flowController.forwardWebSocket(
-                    outboundContext,
-                    requestHead: requestHead,
-                    outboundHeaders: outboundHeaders,
-                    context: context
-                )
-            }
-        }
+        let flowController = StreamFlowController(connectHandler: self)
+        flowController.forwardWebSocket(
+            outboundContext,
+            requestHead: requestHead,
+            outboundHeaders: outboundHeaders,
+            context: context
+        )
     }
 
-    func forwardSSEStreamLegacy(
+    func forwardGRPCWebStream(
+        _ outboundContext: OutboundRequestContext,
+        requestHead: HTTPRequestHead,
+        outboundHeaders: HTTPHeaders,
+        context: ChannelHandlerContext
+    ) {
+        let flowController = StreamFlowController(connectHandler: self)
+        flowController.forwardGRPCWeb(
+            outboundContext,
+            requestHead: requestHead,
+            outboundHeaders: outboundHeaders,
+            context: context
+        )
+    }
+
+    func forwardSSEStreamTransport(
         _ outboundContext: OutboundRequestContext,
         requestHead: HTTPRequestHead,
         outboundHeaders: HTTPHeaders,
         context: ChannelHandlerContext,
-        streamRuntime: StreamSessionRuntime? = nil,
-        openDecision _: StreamInterceptionDecision? = nil
+        streamRuntime: StreamSessionRuntime
     ) {
         guard let targetURL = URL(string: outboundContext.url),
               let targetHost = targetURL.host
@@ -365,12 +375,6 @@ extension NIOMITMHTTPConnectHandler {
             sendResponse(status: .badRequest, body: "Invalid SSE request headers", closeAfterSend: true, context: context)
             return
         }
-        var sseBaseRequest = outboundContext.requestSnapshot
-        annotateCaptureMetadata(&sseBaseRequest)
-        let sseCapture = NIOMITMSSECaptureState(
-            baseRequest: sseBaseRequest,
-            sessionID: streamRuntime?.snapshot().id
-        )
         let sendableContext = NIOMITMUncheckedSendableBox(value: context)
 
         // Apply host override before connecting: use the overridden IP while keeping
@@ -378,7 +382,7 @@ extension NIOMITMHTTPConnectHandler {
         let capturedURL = outboundContext.url
         let capturedHost = targetHost
         let capturedPort = targetPort
-        Task { [weak self, capturedURL, capturedHost, capturedPort, sendableContext, sseCapture, streamingRequestHead, requestHead] in
+        Task { [weak self, capturedURL, capturedHost, capturedPort, sendableContext, streamingRequestHead, requestHead] in
             guard let self else { return }
             let override = await RequestInterceptor.shared.hostOverride(for: capturedURL)
             let connectHost = override?.ip ?? capturedHost
@@ -416,35 +420,18 @@ extension NIOMITMHTTPConnectHandler {
                                 case let .head(head):
                                     responseHeadSeen = true
                                     closeAfterSend = self.shouldCloseConnection(requestHead: requestHead, responseHeaders: head.headers)
-                                    sseCapture.beginResponse(
-                                        head: head,
-                                        captureConfig: self.captureConfigProvider(),
-                                        onRequestCaptured: self.onRequestCaptured
+                                    streamRuntime.updateResponseHeaders(
+                                        self.captureConfigProvider().captureHeaders
+                                            ? self.traceHeaders(from: head.headers)
+                                            : []
                                     )
-                                    if let streamRuntime {
-                                        streamRuntime.updateResponseHeaders(
-                                            self.captureConfigProvider().captureHeaders
-                                                ? self.traceHeaders(from: head.headers)
-                                                : []
-                                        )
-                                        streamRuntime.setStatus(.streaming)
-                                        self.persistStreamRuntimeSnapshot(streamRuntime)
-                                    }
+                                    streamRuntime.setStatus(.streaming)
+                                    self.persistStreamRuntimeSnapshot(streamRuntime)
                                     var forwardedHead = head
                                     forwardedHead.headers.remove(name: "Proxy-Connection")
                                     context.write(self.wrapOutboundOut(.head(forwardedHead)), promise: nil)
                                 case let .body(buffer):
                                     let chunkData = self.byteBufferToData(buffer)
-                                    guard let streamRuntime else {
-                                        sseCapture.consume(
-                                            bodyChunk: chunkData,
-                                            captureConfig: self.captureConfigProvider(),
-                                            onRequestCaptured: self.onRequestCaptured
-                                        )
-                                        context.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
-                                        return
-                                    }
-
                                     bodyRelayChain = bodyRelayChain.flatMap {
                                         sseInterceptionRuntime.interceptChunk(
                                             chunkData,
@@ -459,15 +446,25 @@ extension NIOMITMHTTPConnectHandler {
                                                     eventLoop: eventLoop
                                                 )
                                             },
+                                            eventRecorder: { [weak self] event in
+                                                guard let self else { return }
+                                                self.persistStreamEvent(
+                                                    event,
+                                                    runtime: streamRuntime,
+                                                    countPayloadBytes: false
+                                                )
+                                            },
                                             replayEngine: .shared,
                                             eventLoop: context.eventLoop
                                         )
                                     }.flatMap { forwardedChunk in
-                                        sseCapture.consume(
-                                            bodyChunk: forwardedChunk,
-                                            captureConfig: self.captureConfigProvider(),
-                                            onRequestCaptured: self.onRequestCaptured
-                                        )
+                                        if !forwardedChunk.isEmpty {
+                                            streamRuntime.recordTransferredBytes(
+                                                direction: .received,
+                                                count: forwardedChunk.count
+                                            )
+                                            self.persistStreamRuntimeSnapshot(streamRuntime)
+                                        }
                                         guard !forwardedChunk.isEmpty else {
                                             return context.eventLoop.makeSucceededVoidFuture()
                                         }
@@ -493,11 +490,6 @@ extension NIOMITMHTTPConnectHandler {
                                     }
                                 case let .end(trailers):
                                     bodyRelayChain.flatMap {
-                                        sseCapture.finish(
-                                            succeeded: true,
-                                            captureConfig: self.captureConfigProvider(),
-                                            onRequestCaptured: self.onRequestCaptured
-                                        )
                                         self.completeStreamRuntime(
                                             streamRuntime,
                                             status: .closed,
@@ -540,11 +532,6 @@ extension NIOMITMHTTPConnectHandler {
                                 ProxyLog.mitm.warning(
                                     "event=proxy.nio_sse_upstream_error outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                                 )
-                                sseCapture.finish(
-                                    succeeded: false,
-                                    captureConfig: self.captureConfigProvider(),
-                                    onRequestCaptured: self.onRequestCaptured
-                                )
                                 self.completeStreamRuntime(
                                     streamRuntime,
                                     status: .failed,
@@ -566,11 +553,6 @@ extension NIOMITMHTTPConnectHandler {
                             let context = sendableContext.value
                             context.eventLoop.execute {
                                 guard let self, self.state == .forwardingHTTPRequest else { return }
-                                sseCapture.finish(
-                                    succeeded: responseHeadSeen,
-                                    captureConfig: self.captureConfigProvider(),
-                                    onRequestCaptured: self.onRequestCaptured
-                                )
                                 self.completeStreamRuntime(
                                     streamRuntime,
                                     status: responseHeadSeen ? .closed : .failed,
@@ -613,11 +595,6 @@ extension NIOMITMHTTPConnectHandler {
                                 self.reportMITMFailure(reason: failureReason)
                                 ProxyLog.mitm.warning(
                                     "event=proxy.nio_sse_setup outcome=failure host=\(targetHost, privacy: .private(mask: .hash)) port=\(targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
-                                )
-                                sseCapture.finish(
-                                    succeeded: false,
-                                    captureConfig: self.captureConfigProvider(),
-                                    onRequestCaptured: self.onRequestCaptured
                                 )
                                 self.completeStreamRuntime(
                                     streamRuntime,
@@ -664,13 +641,193 @@ extension NIOMITMHTTPConnectHandler {
         } // end Task (host override + connect)
     }
 
-    func forwardWebSocketStreamLegacy(
+    func forwardGRPCWebStreamTransport(
         _ outboundContext: OutboundRequestContext,
         requestHead: HTTPRequestHead,
         outboundHeaders: HTTPHeaders,
         context: ChannelHandlerContext,
-        streamRuntime: StreamSessionRuntime? = nil,
-        openDecision _: StreamInterceptionDecision? = nil
+        streamRuntime: StreamSessionRuntime
+    ) {
+        guard let targetURL = URL(string: outboundContext.url),
+              let targetHost = targetURL.host
+        else {
+            finalizeActiveRequestAsHTTPFailure(status: .badRequest, reason: "invalid_grpc_request_target")
+            sendResponse(status: .badRequest, body: "Invalid gRPC request target", closeAfterSend: true, context: context)
+            return
+        }
+        let targetPort = targetURL.port ?? ((targetURL.scheme?.lowercased() == "https") ? 443 : 80)
+        var requestHeaders = sanitizedStreamingRequestHeaders(from: outboundHeaders)
+        // gRPC-Web requires the HTTP transport not to apply content encoding on its own.
+        requestHeaders.remove(name: "Accept-Encoding")
+        requestHeaders.replaceOrAdd(name: "Accept-Encoding", value: "identity")
+        guard let streamingRequestHead = makeStreamingUpstreamRequestHead(
+            url: targetURL,
+            methodToken: outboundContext.methodToken,
+            headers: requestHeaders
+        ) else {
+            finalizeActiveRequestAsHTTPFailure(status: .badRequest, reason: "invalid_grpc_request_headers")
+            sendResponse(status: .badRequest, body: "Invalid gRPC request headers", closeAfterSend: true, context: context)
+            return
+        }
+        let sendableContext = NIOMITMUncheckedSendableBox(value: context)
+        let capturedURL = outboundContext.url
+        let capturedHost = targetHost
+        let capturedPort = targetPort
+        Task { [weak self, capturedURL, capturedHost, capturedPort, sendableContext, streamingRequestHead, requestHead] in
+            guard let self else { return }
+            let override = await RequestInterceptor.shared.hostOverride(for: capturedURL)
+            let connectHost = override?.ip ?? capturedHost
+            let connectPort = override?.port ?? capturedPort
+            let bootstrap = NIOTSConnectionBootstrap(group: self.group)
+            bootstrap.connect(host: connectHost, port: connectPort).whenComplete { [weak self] result in
+                let context = sendableContext.value
+                context.eventLoop.execute {
+                    guard let self, self.state == .forwardingHTTPRequest else {
+                        if case let .success(upstream) = result { upstream.close(promise: nil) }
+                        return
+                    }
+                    switch result {
+                    case let .success(upstream):
+                        self.upstreamChannel = upstream
+                        var closeAfterSend = false
+                        var responseHeadSeen = false
+                        let grpcInterceptionRuntime = GRPCStreamInterceptionRuntime()
+                        var bodyRelayChain = context.eventLoop.makeSucceededVoidFuture()
+
+                        let onPart: @Sendable (HTTPClientResponsePart) -> Void = { [weak self, weak upstream] part in
+                            let context = sendableContext.value
+                            guard let self, let upstream else { return }
+                            context.eventLoop.execute {
+                                guard self.state == .forwardingHTTPRequest else { return }
+                                switch part {
+                                case let .head(head):
+                                    responseHeadSeen = true
+                                    closeAfterSend = self.shouldCloseConnection(requestHead: requestHead, responseHeaders: head.headers)
+                                    streamRuntime.updateResponseHeaders(
+                                        self.captureConfigProvider().captureHeaders
+                                            ? self.traceHeaders(from: head.headers) : []
+                                    )
+                                    streamRuntime.setStatus(.streaming)
+                                    self.persistStreamRuntimeSnapshot(streamRuntime)
+                                    var forwardedHead = head
+                                    forwardedHead.headers.remove(name: "Proxy-Connection")
+                                    context.write(self.wrapOutboundOut(.head(forwardedHead)), promise: nil)
+                                case let .body(buffer):
+                                    let chunkData = self.byteBufferToData(buffer)
+                                    bodyRelayChain = bodyRelayChain.flatMap {
+                                        grpcInterceptionRuntime.interceptChunk(
+                                            chunkData,
+                                            runtime: streamRuntime,
+                                            decisionProvider: { [weak self] session, event, eventLoop in
+                                                guard let self else { return eventLoop.makeSucceededFuture(.forward) }
+                                                return self.streamEventInterceptionFuture(
+                                                    session: session, event: event, eventLoop: eventLoop)
+                                            },
+                                            eventRecorder: { [weak self] event in
+                                                guard let self else { return }
+                                                self.persistStreamEvent(event, runtime: streamRuntime, countPayloadBytes: true)
+                                            },
+                                            replayEngine: .shared,
+                                            eventLoop: context.eventLoop
+                                        )
+                                    }.flatMap { forwardedChunk in
+                                        if !forwardedChunk.isEmpty {
+                                            self.persistStreamRuntimeSnapshot(streamRuntime)
+                                        }
+                                        guard !forwardedChunk.isEmpty else { return context.eventLoop.makeSucceededVoidFuture() }
+                                        let forwardedBuffer = self.byteBuffer(from: forwardedChunk, allocator: context.channel.allocator)
+                                        let promise = context.eventLoop.makePromise(of: Void.self)
+                                        context.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(forwardedBuffer))), promise: promise)
+                                        return promise.futureResult
+                                    }
+                                    bodyRelayChain.whenFailure { [weak self] error in
+                                        guard let self else { return }
+                                        let failureReason = self.classifyMITMFailure(error)
+                                        self.finalizeActiveRequestAsFailure(reason: failureReason)
+                                        self.reportMITMFailure(reason: failureReason)
+                                        self.completeStreamRuntime(streamRuntime, status: .failed, reason: error.localizedDescription, eventLoop: context.eventLoop)
+                                    }
+                                case let .end(trailers):
+                                    bodyRelayChain.flatMap {
+                                        self.completeStreamRuntime(streamRuntime, status: .closed, reason: nil, eventLoop: context.eventLoop)
+                                        let promise = context.eventLoop.makePromise(of: Void.self)
+                                        promise.futureResult.whenComplete { _ in
+                                            self.upstreamChannel = nil
+                                            upstream.close(promise: nil)
+                                            self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
+                                        }
+                                        context.writeAndFlush(self.wrapOutboundOut(.end(trailers)), promise: promise)
+                                        return promise.futureResult
+                                    }.whenFailure { error in
+                                        let failureReason = self.classifyMITMFailure(error)
+                                        self.finalizeActiveRequestAsFailure(reason: failureReason)
+                                        self.reportMITMFailure(reason: failureReason)
+                                        self.completeStreamRuntime(streamRuntime, status: .failed, reason: error.localizedDescription, eventLoop: context.eventLoop)
+                                    }
+                                }
+                            }
+                        }
+                        let onError: @Sendable (Error) -> Void = { [weak self] error in
+                            let context = sendableContext.value
+                            context.eventLoop.execute {
+                                guard let self, self.state == .forwardingHTTPRequest else { return }
+                                let failureReason = self.classifyMITMFailure(error)
+                                self.finalizeActiveRequestAsHTTPFailure(status: .badGateway, reason: failureReason)
+                                self.reportMITMFailure(reason: failureReason)
+                                self.completeStreamRuntime(streamRuntime, status: .failed, reason: error.localizedDescription, eventLoop: context.eventLoop)
+                                self.sendResponse(status: .badGateway, body: "Upstream gRPC request failed", closeAfterSend: true, context: context)
+                                self.state = .closed
+                                self.upstreamChannel = nil
+                            }
+                        }
+                        let onInactive: @Sendable () -> Void = { [weak self] in
+                            let context = sendableContext.value
+                            context.eventLoop.execute {
+                                guard let self, self.state == .forwardingHTTPRequest else { return }
+                                self.completeStreamRuntime(streamRuntime, status: responseHeadSeen ? .closed : .failed,
+                                    reason: responseHeadSeen ? nil : "upstream_inactive", eventLoop: context.eventLoop)
+                                self.state = .closed
+                                context.close(promise: nil)
+                            }
+                        }
+                        self.installStreamingUpstreamHTTPPipeline(on: upstream, onResponsePart: onPart, onError: onError, onInactive: onInactive)
+                        .flatMap {
+                            self.installStreamingUpstreamTLSIfNeeded(on: upstream, url: targetURL, serverHostname: targetHost)
+                        }
+                        .flatMap {
+                            self.writeAndFlushStreamingUpstreamRequest(head: streamingRequestHead, body: outboundContext.body, to: upstream)
+                        }
+                        .whenComplete { [weak self] pipelineResult in
+                            guard let self else { return }
+                            if case let .failure(error) = pipelineResult {
+                                let failureReason = self.classifyMITMFailure(error)
+                                self.finalizeActiveRequestAsHTTPFailure(status: .badGateway, reason: failureReason)
+                                self.reportMITMFailure(reason: failureReason)
+                                self.completeStreamRuntime(streamRuntime, status: .failed, reason: error.localizedDescription, eventLoop: context.eventLoop)
+                                self.sendResponse(status: .badGateway, body: "Failed to establish gRPC upstream", closeAfterSend: true, context: context)
+                                self.state = .closed
+                                self.upstreamChannel = nil
+                                upstream.close(promise: nil)
+                            }
+                        }
+                    case let .failure(error):
+                        let failureReason = self.classifyMITMFailure(error)
+                        self.finalizeActiveRequestAsHTTPFailure(status: .badGateway, reason: failureReason)
+                        self.reportMITMFailure(reason: failureReason)
+                        self.completeStreamRuntime(streamRuntime, status: .failed, reason: error.localizedDescription, eventLoop: context.eventLoop)
+                        self.sendResponse(status: .badGateway, body: "Failed to establish gRPC upstream", closeAfterSend: true, context: context)
+                    }
+                }
+            }
+        } // end Task (host override + connect)
+    }
+
+    func forwardWebSocketStreamTransport(
+        _ outboundContext: OutboundRequestContext,
+        requestHead: HTTPRequestHead,
+        outboundHeaders: HTTPHeaders,
+        context: ChannelHandlerContext,
+        streamRuntime: StreamSessionRuntime
     ) {
         guard let targetURL = URL(string: outboundContext.url),
               let targetHost = targetURL.host
@@ -698,11 +855,6 @@ extension NIOMITMHTTPConnectHandler {
             return
         }
         let normalizedURL = normalizedWebSocketURL(from: outboundContext.url)
-        let wsCapture = NIOMITMWebSocketCaptureState(
-            url: normalizedURL,
-            requestHeaders: traceHeaders(from: requestHeaders),
-            sessionID: streamRuntime?.snapshot().id
-        )
         let sendableContext = NIOMITMUncheckedSendableBox(value: context)
         let taskState = NIOMITMUncheckedSendableBox(
             value: (
@@ -715,8 +867,7 @@ extension NIOMITMHTTPConnectHandler {
                 targetPort: targetPort,
                 normalizedURL: normalizedURL,
                 streamingRequestHead: streamingRequestHead,
-                streamRuntime: streamRuntime,
-                wsCapture: wsCapture
+                streamRuntime: streamRuntime
             )
         )
 
@@ -763,14 +914,12 @@ extension NIOMITMHTTPConnectHandler {
                                         requestHead: state.requestHead,
                                         responseHeaders: head.headers
                                     )
-                                    if let streamRuntime = state.streamRuntime {
-                                        streamRuntime.updateResponseHeaders(
-                                            self.captureConfigProvider().captureHeaders
-                                                ? self.traceHeaders(from: head.headers)
-                                                : []
-                                        )
-                                        self.persistStreamRuntimeSnapshot(streamRuntime)
-                                    }
+                                    state.streamRuntime.updateResponseHeaders(
+                                        self.captureConfigProvider().captureHeaders
+                                            ? self.traceHeaders(from: head.headers)
+                                            : []
+                                    )
+                                    self.persistStreamRuntimeSnapshot(state.streamRuntime)
                                     var forwardedHead = head
                                     forwardedHead.headers.remove(name: "Proxy-Connection")
                                     context.write(self.wrapOutboundOut(.head(forwardedHead)), promise: nil)
@@ -790,7 +939,12 @@ extension NIOMITMHTTPConnectHandler {
                                         self.state = .closed
                                         self.upstreamChannel = nil
                                         upstream.close(promise: nil)
-                                        wsCapture.markFailed()
+                                        self.completeStreamRuntime(
+                                            state.streamRuntime,
+                                            status: .failed,
+                                            reason: "invalid_upstream_response",
+                                            eventLoop: context.eventLoop
+                                        )
                                         return
                                     }
 
@@ -799,28 +953,20 @@ extension NIOMITMHTTPConnectHandler {
                                     if isUpgrade {
                                         let perMessageDeflateEnabled = self.webSocketPerMessageDeflateEnabled(headers: head.headers)
                                         ProxyLog.mitm.info(
-                                            "event=proxy.nio_ws_upgrade outcome=accepted ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) permessage_deflate=\(perMessageDeflateEnabled, privacy: .public)"
+                                            "event=proxy.nio_ws_upgrade outcome=accepted session_id=\(state.streamRuntime.snapshot().id.uuidString, privacy: .public) host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) permessage_deflate=\(perMessageDeflateEnabled, privacy: .public)"
                                         )
                                         self.eventLog?.append(
                                             type: "proxy_nio_ws_upgrade",
-                                            msg: "outcome=accepted mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(state.normalizedURL)) permessage_deflate=\(perMessageDeflateEnabled)"
+                                            msg: "outcome=accepted mode=\(self.ingressModeLabel) id=\(self.connectionID) session_id=\(state.streamRuntime.snapshot().id.uuidString) url_hash=\(LogRedaction.hash(state.normalizedURL)) permessage_deflate=\(perMessageDeflateEnabled)"
                                         )
-                                        wsCapture.markOpen(
-                                            responseHeaders: self.captureConfigProvider().captureHeaders
-                                                ? self.traceHeaders(from: head.headers)
-                                                : []
-                                        )
-                                        if let streamRuntime = state.streamRuntime {
-                                            streamRuntime.setStatus(.open)
-                                            self.persistStreamRuntimeSnapshot(streamRuntime)
-                                        }
+                                        state.streamRuntime.setStatus(.open)
+                                        self.persistStreamRuntimeSnapshot(state.streamRuntime)
                                         let promise = context.eventLoop.makePromise(of: Void.self)
                                         promise.futureResult.whenComplete { [weak self] _ in
                                             guard let self else { return }
                                             self.installWebSocketRelay(
                                                 clientContext: context,
                                                 upstream: upstream,
-                                                captureState: wsCapture,
                                                 streamRuntime: state.streamRuntime,
                                                 perMessageDeflateEnabled: perMessageDeflateEnabled
                                             )
@@ -830,11 +976,11 @@ extension NIOMITMHTTPConnectHandler {
                                     }
 
                                     ProxyLog.mitm.info(
-                                        "event=proxy.nio_ws_upgrade outcome=rejected ws_id=\(wsCapture.connectionID.uuidString, privacy: .public) host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) status=\(Int(head.status.code), privacy: .public)"
+                                        "event=proxy.nio_ws_upgrade outcome=rejected session_id=\(state.streamRuntime.snapshot().id.uuidString, privacy: .public) host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) status=\(Int(head.status.code), privacy: .public)"
                                     )
                                     self.eventLog?.append(
                                         type: "proxy_nio_ws_upgrade",
-                                        msg: "outcome=rejected mode=\(self.ingressModeLabel) id=\(self.connectionID) ws_id=\(wsCapture.connectionID.uuidString) url_hash=\(LogRedaction.hash(state.normalizedURL)) status=\(head.status.code)"
+                                        msg: "outcome=rejected mode=\(self.ingressModeLabel) id=\(self.connectionID) session_id=\(state.streamRuntime.snapshot().id.uuidString) url_hash=\(LogRedaction.hash(state.normalizedURL)) status=\(head.status.code)"
                                     )
                                     let responseBodyData = self.byteBufferToData(responseBody)
                                     let captureConfig = self.captureConfigProvider()
@@ -913,7 +1059,6 @@ extension NIOMITMHTTPConnectHandler {
                                 ProxyLog.mitm.warning(
                                     "event=proxy.nio_ws_upstream_error outcome=failure host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                                 )
-                                wsCapture.markFailed()
                                 self.completeStreamRuntime(
                                     state.streamRuntime,
                                     status: .failed,
@@ -935,7 +1080,6 @@ extension NIOMITMHTTPConnectHandler {
                             let context = sendableContext.value
                             context.eventLoop.execute {
                                 guard let self, self.state == .forwardingHTTPRequest else { return }
-                                wsCapture.markClosed(code: nil, reason: nil)
                                 self.completeStreamRuntime(
                                     state.streamRuntime,
                                     status: .closed,
@@ -979,7 +1123,6 @@ extension NIOMITMHTTPConnectHandler {
                                 ProxyLog.mitm.warning(
                                     "event=proxy.nio_ws_setup outcome=failure host=\(state.targetHost, privacy: .private(mask: .hash)) port=\(state.targetPort, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
                                 )
-                                wsCapture.markFailed()
                                 self.completeStreamRuntime(
                                     state.streamRuntime,
                                     status: .failed,
@@ -1023,53 +1166,6 @@ extension NIOMITMHTTPConnectHandler {
                 }
             }
         } // end Task (host override + connect)
-    }
-
-    func makeRawStreamingRequestBuffer(
-        url: URL,
-        method: String,
-        headers: HTTPHeaders,
-        body: Data,
-        allocator: ByteBufferAllocator
-    ) -> ByteBuffer {
-        var requestHeaders = headers
-        requestHeaders.remove(name: "Proxy-Connection")
-
-        if requestHeaders.first(name: "Host") == nil, let host = url.host {
-            let scheme = (url.scheme ?? "http").lowercased()
-            let defaultPort = scheme == "https" || scheme == "wss" ? 443 : 80
-            let hostValue: String = if let port = url.port, port != defaultPort {
-                "\(host):\(port)"
-            } else {
-                host
-            }
-            requestHeaders.add(name: "Host", value: hostValue)
-        }
-
-        if !body.isEmpty,
-           requestHeaders.first(name: "Content-Length") == nil,
-           requestHeaders.first(name: "Transfer-Encoding") == nil {
-            requestHeaders.add(name: "Content-Length", value: "\(body.count)")
-        }
-
-        var path = url.path
-        if path.isEmpty {
-            path = "/"
-        }
-        if let query = url.query, !query.isEmpty {
-            path += "?\(query)"
-        }
-
-        var buffer = allocator.buffer(capacity: 512 + body.count)
-        buffer.writeString("\(method) \(path) HTTP/1.1\r\n")
-        for header in requestHeaders {
-            buffer.writeString("\(header.name): \(header.value)\r\n")
-        }
-        buffer.writeString("\r\n")
-        if !body.isEmpty {
-            buffer.writeBytes(body)
-        }
-        return buffer
     }
 
     func makeStreamingUpstreamRequestHead(
@@ -1265,12 +1361,22 @@ extension NIOMITMHTTPConnectHandler {
         var responseHead: HTTPResponseHead?
         var responseHeadersTrace: [TraceHTTPHeader] = []
         var responseContentEncoding: String?
-        var sseCapture: NIOMITMSSECaptureState?
         var closeAfterSend = false
         var responseHeadSent = false
         var terminalStateReached = false
         let targetHost = URL(string: outboundContext.url)?.host ?? "unknown"
         let sendableContext = NIOMITMUncheckedSendableBox(value: context)
+        // Native gRPC over HTTP/2 streaming state (gated by enableGRPCStreamInterception flag).
+        // All mutations happen exclusively on context.eventLoop — the @unchecked Sendable
+        // annotation suppresses the Swift 6 concurrency warning without introducing races.
+        final class GRPCNativeStreamState: @unchecked Sendable {
+            var runtime: StreamSessionRuntime?
+            var interception: GRPCStreamInterceptionRuntime?
+            var enabled = false
+        }
+        let grpcState = GRPCNativeStreamState()
+        grpcState.enabled = HardeningConfig.shared.enableGRPCStreamInterceptionSync
+        var grpcBodyRelayChain = context.eventLoop.makeSucceededVoidFuture()
 
         let onHead: @Sendable (HTTPResponseHead) -> EventLoopFuture<Void> = { [weak self] head in
             let context = sendableContext.value
@@ -1312,22 +1418,22 @@ extension NIOMITMHTTPConnectHandler {
                     contentType: responseContentType,
                     contentEncoding: responseContentEncoding
                 )
-                if sseCapture == nil,
-                   let responseContentType,
-                   responseContentType.lowercased().contains("text/event-stream") {
-                    self.annotateCaptureMetadata(&capturedRequest)
-                    sseCapture = NIOMITMSSECaptureState(
-                        baseRequest: capturedRequest,
-                        sessionID: UUID(),
-                        persistStreamEvents: captureConfig.captureBody
-                    )
-                    sseCapture?.beginResponse(
-                        head: head,
-                        captureConfig: captureConfig,
-                        onRequestCaptured: self.onRequestCaptured
-                    )
-                }
                 self.activeCapturedRequest = capturedRequest
+
+                // Lazily initialize native gRPC stream interception for HTTP/2 gRPC responses.
+                if capturedRequest.isGRPC && grpcState.enabled && grpcState.runtime == nil {
+                    let runtime = StreamSessionRuntime(
+                        protocolType: .grpc,
+                        url: outboundContext.url,
+                        requestHeaders: outboundContext.requestSnapshot.requestHeaders,
+                        responseHeaders: captureConfig.captureHeaders ? self.traceHeaders(from: forwardedHeaders) : [],
+                        startTime: Date()
+                    )
+                    runtime.setStatus(.streaming)
+                    grpcState.runtime = runtime
+                    grpcState.interception = GRPCStreamInterceptionRuntime()
+                    self.persistStreamRuntimeSnapshot(runtime)
+                }
 
                 if head.status.code >= 400 {
                     self.logConnectStage(
@@ -1368,14 +1474,7 @@ extension NIOMITMHTTPConnectHandler {
                     receivedBodyBytes += chunkBytes
                 }
 
-                if let sseCapture, chunkBytes > 0 {
-                    let chunkData = self.byteBufferToData(buffer)
-                    sseCapture.consume(
-                        bodyChunk: chunkData,
-                        captureConfig: captureConfig,
-                        onRequestCaptured: self.onRequestCaptured
-                    )
-                } else if effectiveCapturedBodyLimit > 0, chunkBytes > 0 {
+                if effectiveCapturedBodyLimit > 0, chunkBytes > 0 {
                     let remaining = effectiveCapturedBodyLimit - capturedBodyData.count
                     if remaining > 0 {
                         let chunkData = self.byteBufferToData(buffer)
@@ -1388,6 +1487,63 @@ extension NIOMITMHTTPConnectHandler {
                     } else {
                         didTruncateCapturedBody = true
                     }
+                }
+
+                // Emit per-message gRPC stream events for native HTTP/2 gRPC streaming.
+                if let gRPCRuntime = grpcState.runtime, let gRPCInterception = grpcState.interception, chunkBytes > 0 {
+                    let chunkData = self.byteBufferToData(buffer)
+                    grpcBodyRelayChain = grpcBodyRelayChain.flatMap {
+                        gRPCInterception.interceptChunk(
+                            chunkData,
+                            runtime: gRPCRuntime,
+                            decisionProvider: { [weak self] session, event, eventLoop in
+                                guard let self else { return eventLoop.makeSucceededFuture(.forward) }
+                                return self.streamEventInterceptionFuture(session: session, event: event, eventLoop: eventLoop)
+                            },
+                            eventRecorder: { [weak self] event in
+                                guard let self else { return }
+                                self.persistStreamEvent(event, runtime: gRPCRuntime, countPayloadBytes: true)
+                            },
+                            replayEngine: .shared,
+                            eventLoop: context.eventLoop
+                        )
+                    }.flatMap { forwardedChunk in
+                        guard !forwardedChunk.isEmpty else {
+                            promise.succeed(())
+                            return context.eventLoop.makeSucceededVoidFuture()
+                        }
+
+                        let forwardedBuffer = self.byteBuffer(
+                            from: forwardedChunk,
+                            allocator: context.channel.allocator
+                        )
+                        let writeChunk = {
+                            context.writeAndFlush(
+                                self.wrapOutboundOut(.body(.byteBuffer(forwardedBuffer))),
+                                promise: promise
+                            )
+                        }
+                        if forwardedBuffer.readableBytes > 0 {
+                            self.throttle(
+                                direction: .download,
+                                bytes: forwardedBuffer.readableBytes,
+                                context: context,
+                                operation: writeChunk
+                            )
+                        } else {
+                            writeChunk()
+                        }
+                        return promise.futureResult
+                    }
+                    grpcBodyRelayChain.whenFailure { [weak self] error in
+                        guard let self else { return }
+                        promise.fail(error)
+                        let failureReason = self.classifyMITMFailure(error)
+                        self.finalizeActiveRequestAsFailure(reason: failureReason)
+                        self.reportMITMFailure(reason: failureReason)
+                        self.completeStreamRuntime(gRPCRuntime, status: .failed, reason: error.localizedDescription, eventLoop: context.eventLoop)
+                    }
+                    return
                 }
 
                 let writeChunk = {
@@ -1414,34 +1570,32 @@ extension NIOMITMHTTPConnectHandler {
                 guard self.state == .forwardingHTTPRequest, !terminalStateReached else { return }
                 terminalStateReached = true
 
-                if let sseCapture {
-                    sseCapture.finish(
-                        succeeded: responseHeadSent,
-                        captureConfig: captureConfig,
-                        onRequestCaptured: self.onRequestCaptured
-                    )
-                    self.clearActiveCapturedRequest()
-                    let endPromise = context.eventLoop.makePromise(of: Void.self)
-                    endPromise.futureResult.whenComplete { _ in
-                        if metricsAsParsedResponse {
-                            Task {
-                                await ProxyNetworkMetrics.shared.recordHTTPResponseParsed()
-                                await ProxyNetworkMetrics.shared.recordHTTPTransactionCompleted()
-                            }
-                        }
-                        self.transitionAfterResponse(closeAfterSend: closeAfterSend, context: context)
-                    }
-                    context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: endPromise)
-                    return
-                }
-
                 let finalStatus = responseHead?.status ?? .ok
                 capturedRequest.statusCode = Int(finalStatus.code)
                 capturedRequest.statusMessage = finalStatus.reasonPhrase
                 capturedRequest.responseHeaders = captureConfig.captureHeaders ? responseHeadersTrace : []
                 if capturedRequest.isGRPC, let responseHead {
-                    capturedRequest.grpcMetadata = GRPCTrailerExtractor.extract(from: responseHead.headers)
-                    capturedRequest.grpcMetadata?.responseMessageCount = GRPCTrailerExtractor.countMessages(in: capturedBodyData)
+                    let responseContentType = self.responseHeaderValue(name: "content-type", in: responseHeadersTrace) ?? ""
+                    if GRPCTrailerExtractor.isGRPCWeb(contentType: responseContentType) {
+                        capturedRequest.grpcMetadata = GRPCTrailerExtractor.extractFromWebBody(
+                            responseBody: capturedBodyData, contentType: responseContentType)
+                        capturedRequest.grpcMetadata?.responseMessageCount = GRPCTrailerExtractor.isGRPCWebText(contentType: responseContentType)
+                            ? GRPCTrailerExtractor.countMessagesInGRPCWebText(in: capturedBodyData)
+                            : GRPCTrailerExtractor.countMessages(in: capturedBodyData)
+                    } else {
+                        capturedRequest.grpcMetadata = GRPCTrailerExtractor.extract(from: responseHead.headers)
+                        capturedRequest.grpcMetadata?.responseMessageCount = GRPCTrailerExtractor.countMessages(in: capturedBodyData)
+                    }
+                    // Request-header-derived fields
+                    let reqHeaders = outboundContext.requestSnapshot.requestHeaders
+                    capturedRequest.grpcMetadata?.timeout = reqHeaders.first { $0.key.lowercased() == "grpc-timeout" }?.value
+                    capturedRequest.grpcMetadata?.acceptEncoding = reqHeaders.first { $0.key.lowercased() == "grpc-accept-encoding" }?.value
+                    if capturedRequest.grpcMetadata?.statusDetailsBin == nil {
+                        capturedRequest.grpcMetadata?.statusDetailsBin = reqHeaders.first { $0.key.lowercased() == "grpc-status-details-bin" }?.value
+                    }
+                    capturedRequest.grpcMetadata?.requestMessageCount = GRPCTrailerExtractor.countMessages(
+                        in: outboundContext.requestSnapshot.requestBody.getData() ?? Data()
+                    )
                 }
                 let responseCharset = BodyStorage.extractCharset(from: responseHeadersTrace)
                 let observedResponseBodyBytes = max(receivedBodyBytes, capturedBodyData.count)
@@ -1486,6 +1640,11 @@ extension NIOMITMHTTPConnectHandler {
                 NetworkThrottlingController.shared.applyMetadata(to: &capturedRequest)
                 self.queueTerminalCapturedRequest(capturedRequest)
 
+                // Close native gRPC stream session if active.
+                if let gRPCRuntime = grpcState.runtime {
+                    self.completeStreamRuntime(gRPCRuntime, status: .closed, reason: nil, eventLoop: context.eventLoop)
+                }
+
                 let endPromise = context.eventLoop.makePromise(of: Void.self)
                 endPromise.futureResult.whenComplete { _ in
                     self.publishQueuedTerminalCapturedRequest()
@@ -1507,37 +1666,6 @@ extension NIOMITMHTTPConnectHandler {
             context.eventLoop.execute {
                 guard self.state == .forwardingHTTPRequest, !terminalStateReached else { return }
                 terminalStateReached = true
-
-                if let sseCapture {
-                    self.logUpstreamHTTPFailure(
-                        error: error,
-                        methodToken: outboundContext.methodToken,
-                        targetHost: targetHost
-                    )
-                    sseCapture.finish(
-                        succeeded: false,
-                        captureConfig: captureConfig,
-                        onRequestCaptured: self.onRequestCaptured
-                    )
-                    self.clearActiveCapturedRequest()
-                    if responseHeadSent {
-                        self.state = .closed
-                        context.close(promise: nil)
-                    } else {
-                        self.finalizeActiveRequestAsHTTPFailure(
-                            status: .badGateway,
-                            reason: self.classifyMITMFailure(error)
-                        )
-                        self.sendResponse(
-                            status: .badGateway,
-                            body: "Upstream HTTP request failed",
-                            closeAfterSend: true,
-                            context: context
-                        )
-                        self.state = .closed
-                    }
-                    return
-                }
 
                 self.logUpstreamHTTPFailure(
                     error: error,

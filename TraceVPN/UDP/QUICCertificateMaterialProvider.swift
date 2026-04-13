@@ -16,18 +16,17 @@ actor QUICCertificateMaterialProvider {
         let expiresAt: Date
     }
 
-    private let ttl: TimeInterval
+    /// Fallback TTL when the upstream certificate expiry is unknown.
+    private let defaultTTL: TimeInterval = 3600
+    /// Hard cap on derived TTL regardless of how long the upstream cert is valid.
+    private let maxTTL: TimeInterval = 28800
     private let materialGenerator: MaterialGenerator
     private let maxCacheEntries = 4096
 
     private var cache: [String: CachedEntry] = [:]
     private var inflight: [String: Task<QUICMitmCertificateMaterial?, Never>] = [:]
 
-    init(
-        ttl: TimeInterval = 1800,
-        materialGenerator: @escaping MaterialGenerator
-    ) {
-        self.ttl = max(60, ttl)
+    init(materialGenerator: @escaping MaterialGenerator) {
         self.materialGenerator = materialGenerator
     }
 
@@ -51,6 +50,7 @@ actor QUICCertificateMaterialProvider {
         inflight.removeValue(forKey: authority)
 
         if let value {
+            let ttl = derivedTTL(from: value.upstreamNotAfter, now: now)
             cache[authority] = CachedEntry(
                 material: value,
                 expiresAt: now.addingTimeInterval(ttl)
@@ -64,6 +64,15 @@ actor QUICCertificateMaterialProvider {
     func clear() {
         cache.removeAll(keepingCapacity: false)
         inflight.removeAll(keepingCapacity: false)
+    }
+
+    /// Returns a TTL derived from the upstream certificate's remaining validity:
+    /// 90% of remaining validity, capped at `maxTTL`, floored at 60 seconds.
+    /// Falls back to `defaultTTL` when `notAfter` is nil.
+    private func derivedTTL(from notAfter: Date?, now: Date) -> TimeInterval {
+        guard let notAfter else { return defaultTTL }
+        let remaining = notAfter.timeIntervalSince(now)
+        return min(maxTTL, max(60, remaining * 0.9))
     }
 
     private func pruneExpired(now: Date) {

@@ -44,4 +44,19 @@ final class StreamFlowController {
             context: context
         )
     }
+
+    func forwardGRPCWeb(
+        _ outboundContext: NIOMITMHTTPConnectHandler.OutboundRequestContext,
+        requestHead: HTTPRequestHead,
+        outboundHeaders: HTTPHeaders,
+        context: ChannelHandlerContext
+    ) {
+        let handler = GRPCStreamFlowHandler(connectHandler: connectHandler)
+        handler.forward(
+            outboundContext,
+            requestHead: requestHead,
+            outboundHeaders: outboundHeaders,
+            context: context
+        )
+    }
 }

@@ -689,6 +689,8 @@ public struct GRPCMetadata: Codable, Equatable, Sendable {
     public var requestMessageCount: Int?
     /// Number of gRPC length-prefixed messages in the response body.
     public var responseMessageCount: Int?
+    /// True when the content-type is a gRPC-Web variant (application/grpc-web*).
+    public var isGRPCWeb: Bool = false
 
     /// Human-readable name for the status code.
     public var statusName: String? {

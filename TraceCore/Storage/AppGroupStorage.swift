@@ -315,8 +315,7 @@ open class AppGroupStorage: @unchecked Sendable {
             "hardening.dualMitmPolicyEngineEnforcedProxy",
             "hardening.dualMitmPolicyEngineEnforcedQUIC",
             "hardening.dualMitmHttp2MITMEnabled",
-            "hardening.dualMitmStrictEnforcementHardFail",
-            "hardening.enableStreamInterceptionV2"
+            "hardening.dualMitmStrictEnforcementHardFail"
         ]
     }
 
@@ -579,10 +578,6 @@ open class AppGroupStorage: @unchecked Sendable {
             return storageError
         }
         return .databaseUnavailable
-    }
-
-    private var streamInterceptionV2Enabled: Bool {
-        loadSettingValue(Bool.self, scope: SettingScope.hardening, key: "hardening.enableStreamInterceptionV2") ?? false
     }
 
     // MARK: - Request Storage
@@ -1522,11 +1517,9 @@ open class AppGroupStorage: @unchecked Sendable {
 
     /// Loads all WebSocket connections from the shared container
     public func loadAllWebSocketConnections() throws -> [WebSocketConnection] {
-        if streamInterceptionV2Enabled {
-            let projected = try loadProjectedWebSocketConnections()
-            if !projected.isEmpty {
-                return projected
-            }
+        let projected = try loadProjectedWebSocketConnections()
+        if !projected.isEmpty {
+            return projected
         }
 
         do {
@@ -1617,11 +1610,9 @@ open class AppGroupStorage: @unchecked Sendable {
 
     /// Loads all SSE connections from the shared container
     public func loadAllSSEConnections() throws -> [SSEConnection] {
-        if streamInterceptionV2Enabled {
-            let projected = try loadProjectedSSEConnections()
-            if !projected.isEmpty {
-                return projected
-            }
+        let projected = try loadProjectedSSEConnections()
+        if !projected.isEmpty {
+            return projected
         }
 
         do {
@@ -1771,6 +1762,8 @@ open class AppGroupStorage: @unchecked Sendable {
             notifyNewSSE()
         case .websocket:
             notifyNewWebSocket()
+        case .grpc:
+            notifyNewGRPC()
         }
     }
 
@@ -1929,8 +1922,9 @@ open class AppGroupStorage: @unchecked Sendable {
                     }
 
                     let now = Date().timeIntervalSince1970
-                    let bytesIn = event.direction == .received ? payloadSize : 0
-                    let bytesOut = event.direction == .sent ? payloadSize : 0
+                    let countsPayloadBytes = protocolType == .websocket || protocolType == .grpc || protocolType == nil
+                    let bytesIn = countsPayloadBytes && event.direction == .received ? payloadSize : 0
+                    let bytesOut = countsPayloadBytes && event.direction == .sent ? payloadSize : 0
                     try db.execute(
                         sql: """
                         UPDATE stream_sessions
@@ -1966,6 +1960,8 @@ open class AppGroupStorage: @unchecked Sendable {
             notifyNewSSE()
         case .websocket:
             notifyNewWebSocket()
+        case .grpc:
+            notifyNewGRPC()
         case .none:
             break
         }
@@ -2249,19 +2245,36 @@ open class AppGroupStorage: @unchecked Sendable {
     }
 
     /// Deletes stream sessions that ended before a cutoff (or started before cutoff if still open).
+    /// - Parameters:
+    ///   - cutoffDate: Sessions ending before this date are deleted.
+    ///   - protocolType: Optional stream protocol filter.
     /// - Returns: Number of deleted sessions.
-    public func deleteStreamSessions(olderThan cutoffDate: Date) throws -> Int {
+    public func deleteStreamSessions(
+        olderThan cutoffDate: Date,
+        protocolType: StreamProtocolType? = nil
+    ) throws -> Int {
         do {
             var deleted = 0
             try withDatabase { pool in
                 try pool.write { db in
-                    try db.execute(
-                        sql: """
-                        DELETE FROM stream_sessions
-                        WHERE COALESCE(end_time, start_time) < ?
-                        """,
-                        arguments: [cutoffDate.timeIntervalSince1970]
-                    )
+                    if let protocolType {
+                        try db.execute(
+                            sql: """
+                            DELETE FROM stream_sessions
+                            WHERE protocol_type = ?
+                              AND COALESCE(end_time, start_time) < ?
+                            """,
+                            arguments: [protocolType.rawValue, cutoffDate.timeIntervalSince1970]
+                        )
+                    } else {
+                        try db.execute(
+                            sql: """
+                            DELETE FROM stream_sessions
+                            WHERE COALESCE(end_time, start_time) < ?
+                            """,
+                            arguments: [cutoffDate.timeIntervalSince1970]
+                        )
+                    }
                     deleted = db.changesCount
                 }
             }
@@ -2538,6 +2551,7 @@ open class AppGroupStorage: @unchecked Sendable {
     private var transportRequestObservers: [UUID: NotificationObserver] = [:]
     private var webSocketObservers: [UUID: NotificationObserver] = [:]
     private var sseObservers: [UUID: NotificationObserver] = [:]
+    private var grpcObservers: [UUID: NotificationObserver] = [:]
     private var streamObservers: [UUID: NotificationObserver] = [:]
     private var udpFlowObservers: [UUID: NotificationObserver] = [:]
     private var breakpointObservers: [UUID: NotificationObserver] = [:]
@@ -2571,6 +2585,13 @@ open class AppGroupStorage: @unchecked Sendable {
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let notificationName = "com.trace.newSSE" as CFString
 
+        CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
+    }
+
+    /// Notifies the main app that a new gRPC stream session was created/updated
+    private func notifyNewGRPC() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let notificationName = "com.trace.newGRPC" as CFString
         CFNotificationCenterPostNotification(center, CFNotificationName(notificationName), nil, nil, true)
     }
 
@@ -2700,6 +2721,33 @@ open class AppGroupStorage: @unchecked Sendable {
         notificationObserversLock.lock()
         let observers = Array(sseObservers.values)
         sseObservers.removeAll()
+        notificationObserversLock.unlock()
+        observers.forEach { $0.stop() }
+    }
+
+    /// Sets up listener for new gRPC stream session notifications (call from main app).
+    /// - Important: Retain the returned token; it auto-cancels observation on deinit.
+    public func observeNewGRPC(handler: @escaping @Sendable () -> Void) -> AppGroupStorageObserverToken {
+        let id = UUID()
+        let observer = NotificationObserver()
+        observer.observe(notificationName: "com.trace.newGRPC", handler: handler)
+        notificationObserversLock.lock()
+        grpcObservers[id] = observer
+        notificationObserversLock.unlock()
+
+        return AppGroupStorageObserverToken { [weak self] in
+            guard let self else { return }
+            self.notificationObserversLock.lock()
+            let observer = self.grpcObservers.removeValue(forKey: id)
+            self.notificationObserversLock.unlock()
+            observer?.stop()
+        }
+    }
+
+    public func stopObservingNewGRPC() {
+        notificationObserversLock.lock()
+        let observers = Array(grpcObservers.values)
+        grpcObservers.removeAll()
         notificationObserversLock.unlock()
         observers.forEach { $0.stop() }
     }

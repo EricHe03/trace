@@ -18,6 +18,7 @@ enum DetailTab: String, CaseIterable {
     case responseHeaders = "Response"
     case body = "Body"
     case sse = "SSE Events"
+    case grpcStream = "gRPC Stream"
 }
 
 @MainActor
@@ -35,6 +36,10 @@ final class RequestDetailViewModel: ObservableObject {
     @Published private(set) var isLoadingResponseBody = false
     @Published private(set) var requestBodyNotice: String?
     @Published private(set) var responseBodyNotice: String?
+    @Published private(set) var responseProtobufMessages: [[ProtobufDecoder.Field]]?
+    @Published private(set) var requestProtobufMessages: [[ProtobufDecoder.Field]]?
+    @Published private(set) var activeProtobufSchema: ProtobufSchema?
+    @Published var showProtoImport = false
 
     private var requestBodyShareSourceRequest: NetworkRequest?
     private var responseBodyShareSourceRequest: NetworkRequest?
@@ -43,6 +48,9 @@ final class RequestDetailViewModel: ObservableObject {
         var tabs: [DetailTab] = [.overview, .requestHeaders, .responseHeaders, .body]
         if request.isSSE {
             tabs.append(.sse)
+        }
+        if request.isGRPC && (request.grpcMetadata?.responseMessageCount ?? 0) > 1 {
+            tabs.append(.grpcStream)
         }
         return tabs
     }
@@ -69,6 +77,7 @@ final class RequestDetailViewModel: ObservableObject {
             )
         )
         requestBodyShareSourceRequest = sourceRequest
+        let shouldLoadRawRequestData = isBinary || sourceRequest.isGRPC || contentType?.hasPrefix("image/") == true
 
         if isBinary {
             let capturedSize = sourceRequest.requestBody.capturedSize
@@ -92,7 +101,7 @@ final class RequestDetailViewModel: ObservableObject {
                 isTruncated: sourceRequest.requestBody.isTruncated
             )
         } else {
-            if contentType?.hasPrefix("image/") == true {
+            if shouldLoadRawRequestData {
                 requestBodyRawData = await Task.detached(priority: .userInitiated) {
                     sourceRequest.requestBody.getPreview(maxBytes: loadLimit)
                 }.value
@@ -136,6 +145,7 @@ final class RequestDetailViewModel: ObservableObject {
             )
         )
         responseBodyShareSourceRequest = sourceRequest
+        let shouldLoadRawResponseData = isBinary || sourceRequest.isGRPC || contentType?.hasPrefix("image/") == true
 
         if isBinary {
             let capturedSize = sourceRequest.responseBody.capturedSize
@@ -159,7 +169,7 @@ final class RequestDetailViewModel: ObservableObject {
                 isTruncated: sourceRequest.responseBody.isTruncated
             )
         } else {
-            if contentType?.hasPrefix("image/") == true {
+            if shouldLoadRawResponseData {
                 responseBodyRawData = await Task.detached(priority: .userInitiated) {
                     sourceRequest.responseBody.getPreview(maxBytes: loadLimit)
                 }.value
@@ -181,6 +191,10 @@ final class RequestDetailViewModel: ObservableObject {
 
         isResponseBodyPreview = !full && sourceRequest.responseBody.capturedSize > loadLimit
         isLoadingResponseBody = false
+
+        if sourceRequest.isGRPC {
+            decodeProtobufMessages(for: sourceRequest)
+        }
     }
 
     private func sourceRequestForBodyLoading(_ request: NetworkRequest, full: Bool) async -> NetworkRequest {
@@ -189,6 +203,44 @@ final class RequestDetailViewModel: ObservableObject {
         return await Task.detached(priority: .userInitiated) {
             (try? AppGroupStorage.shared.loadRequest(request.id)) ?? request
         }.value
+    }
+
+    // MARK: - Protobuf Decoding
+
+    func decodeProtobufMessages(for request: NetworkRequest) {
+        guard request.isGRPC else { return }
+        let requestDescriptor = protobufDescriptor(for: request, messageKind: .request)
+        let responseDescriptor = protobufDescriptor(for: request, messageKind: .response)
+        let respData = responseBodyRawData
+        let reqData = requestBodyRawData
+        let responseContentType = responseContentType(from: request)
+        let requestContentType = requestContentType(from: request)
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let respMessages = respData.map {
+                ProtobufDecoder.decodeGRPCMessages(
+                    from: $0,
+                    contentType: responseContentType,
+                    descriptor: responseDescriptor
+                )
+            }
+            let reqMessages = reqData.map {
+                ProtobufDecoder.decodeGRPCMessages(
+                    from: $0,
+                    contentType: requestContentType,
+                    descriptor: requestDescriptor
+                )
+            }
+            await MainActor.run { [weak self] in
+                self?.responseProtobufMessages = respMessages
+                self?.requestProtobufMessages = reqMessages
+            }
+        }
+    }
+
+    func importProtoSchema(text: String, for request: NetworkRequest) {
+        guard let schema = try? ProtobufSchema.parse(protoText: text) else { return }
+        activeProtobufSchema = schema
+        decodeProtobufMessages(for: request)
     }
 
     func requestContentType(from request: NetworkRequest) -> String? {
@@ -221,6 +273,44 @@ final class RequestDetailViewModel: ObservableObject {
         }
         let bodySize = request.responseBody.totalSize
         return bodySize > 0 ? bodySize : nil
+    }
+
+    private enum ProtobufMessageKind {
+        case request
+        case response
+    }
+
+    private func protobufDescriptor(
+        for request: NetworkRequest,
+        messageKind: ProtobufMessageKind
+    ) -> ProtobufSchema.MessageDescriptor? {
+        guard let schema = activeProtobufSchema else { return nil }
+
+        if let methodPath = grpcMethodPath(for: request),
+           let rpc = schema.rpcDescriptor(forMethodPath: methodPath)
+        {
+            let typeReference = switch messageKind {
+            case .request:
+                rpc.inputType
+            case .response:
+                rpc.outputType
+            }
+            if let descriptor = schema.descriptor(forTypeReference: typeReference) {
+                return descriptor
+            }
+        }
+
+        return schema.firstMessage
+    }
+
+    private func grpcMethodPath(for request: NetworkRequest) -> String? {
+        if let url = URL(string: request.url), !url.path.isEmpty {
+            return url.path
+        }
+        if request.url.hasPrefix("/") {
+            return request.url
+        }
+        return nil
     }
 
     func copyToClipboard(_ text: String, toastMessage: String = "Copied to clipboard") {
