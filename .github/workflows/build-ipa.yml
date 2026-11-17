@@ -1,0 +1,110 @@
+name: Build Unsigned Trace IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    runs-on: macos-26
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode 26.2
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.2'
+
+      - name: Show toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+          rustc --version || true
+
+      - name: Install Rust targets for quiche
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+
+      - name: Cache Rust build dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ThirdParty/quiche -> build/quiche/cargo-target
+
+      - name: Build and verify QUIC framework
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./Tools/QUIC/build_quiche_apple.sh
+          ./Tools/QUIC/verify_quiche_symbols.sh build/quiche/quiche.xcframework
+
+      - name: Build Trace for physical iOS devices (unsigned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          xcodebuild \
+            -project Trace.xcodeproj \
+            -scheme Trace \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "${GITHUB_WORKSPACE}/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build 2>&1 | tee "${RUNNER_TEMP}/trace-iphoneos-build.log"
+
+      - name: Verify embedded extensions and package IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="${GITHUB_WORKSPACE}/DerivedData/Build/Products/Release-iphoneos/Trace.app"
+          test -d "${APP}" || { echo "::error::Trace.app missing"; exit 1; }
+
+          for extension in TraceVPN.appex TraceWidgetExtension.appex; do
+            test -d "${APP}/PlugIns/${extension}" || {
+              echo "::error::Missing embedded extension: ${extension}"
+              exit 1
+            }
+          done
+
+          echo "App and extension bundle identifiers:"
+          /usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" "${APP}/Info.plist"
+          for extension in TraceVPN.appex TraceWidgetExtension.appex; do
+            /usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" "${APP}/PlugIns/${extension}/Info.plist"
+          done
+
+          mkdir -p "${RUNNER_TEMP}/ipa/Payload"
+          ditto "${APP}" "${RUNNER_TEMP}/ipa/Payload/Trace.app"
+          (
+            cd "${RUNNER_TEMP}/ipa"
+            zip -qry -y "${GITHUB_WORKSPACE}/Trace-unsigned.ipa" Payload
+          )
+          unzip -t "${GITHUB_WORKSPACE}/Trace-unsigned.ipa" | tail -n 1
+          ls -lh "${GITHUB_WORKSPACE}/Trace-unsigned.ipa"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Trace-unsigned-ipa
+          path: Trace-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Trace-build-log
+          path: ${{ runner.temp }}/trace-iphoneos-build.log
+          if-no-files-found: ignore
+          retention-days: 7
