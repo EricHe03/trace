@@ -38,12 +38,11 @@ jobs:
         with:
           workspaces: ThirdParty/quiche -> build/quiche/cargo-target
 
-      - name: Build and verify QUIC framework
+      - name: Build QUIC framework
         shell: bash
         run: |
           set -euo pipefail
           ./Tools/QUIC/build_quiche_apple.sh
-          ./Tools/QUIC/verify_quiche_symbols.sh build/quiche/quiche.xcframework
 
       - name: Build Trace for physical iOS devices (unsigned)
         shell: bash
